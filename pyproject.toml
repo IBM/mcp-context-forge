@@ -1,0 +1,193 @@
+[build-system]
+requires = [ "setuptools>=42", "wheel",]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcpgateway"
+version = "1.0.0"
+description = "A production-ready MCP Gateway built with FastAPI and the official MCP Python SDK"
+keywords = ["MCP", "Gateway", "API", "Agents", "Tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography>=45.0.3",
+    "fastapi>=0.115.12",
+    "gunicorn>=23.0.0",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "jq>=1.8.0",
+    "jsonpath-ng>=1.7.0",
+    "jsonschema>=4.23.0",
+    "mcp>=1.9.1",
+    "parse>=1.20.2",
+    "pydantic>=2.11.5",
+    "pydantic-settings>=2.9.1",
+    "pyjwt>=2.10.1",
+    "sqlalchemy>=2.0.41",
+    "sse-starlette>=2.3.5",
+    "starlette>=0.46.2",
+    "uvicorn>=0.34.2",
+    "zeroconf>=0.147.0",
+]
+[[project.authors]]
+name = "Mihai Criveti"
+email = "redacted@ibm.com"
+
+[project.license]
+text = "Apache License 2.0"
+
+[project.optional-dependencies]
+dev = [
+    "argparse-manpage>=4.6",
+    "autoflake>=2.3.1",
+    "bandit>=1.8.3",
+    "black>=25.1.0",
+    "bump2version>=1.0.1",
+    "check-manifest>=0.50",
+    "code2flow>=2.5.1",
+    "cookiecutter>=2.6.0",
+    "coverage>=7.8.2",
+    "coverage-badge>=1.1.2",
+    "darglint>=1.8.1",
+    "fawltydeps>=0.19.0",
+    "flake8>=7.2.0",
+    "gprof2dot>=2025.4.14",
+    "importchecker>=3.0",
+    "isort>=6.0.1",
+    "mypy>=1.15.0",
+    "pexpect>=4.9.0",
+    "pip-licenses>=5.0.0",
+    "pip_audit>=2.9.0",
+    "pre-commit>=4.2.0",
+    "pydocstyle>=6.3.0",
+    "pylint>=3.3.7",
+    "pylint-pydantic>=0.3.5",
+    "pyre-check>=0.9.23",
+    "pyright>=1.1.401",
+    "pyroma>=4.2",
+    "pyspelling>=2.10",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.1.1",
+    "pytest-examples>=0.0.18",
+    "pytest-md-report>=0.7.0",
+    "pytest-rerunfailures>=15.1",
+    "pytest-xdist>=3.6.1",
+    "pytype>=2024.10.11",
+    "pytype>=2024.10.11",
+    "radon>=6.0.1",
+    "ruff>=0.11.11",
+    "settings-doc>=4.3.2",
+    "snakeviz>=2.2.2",
+    "ty>=0.0.1a6",
+    "types-tabulate>=0.9.0.20241207",
+]
+redis = [
+    "redis>=6.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/IBM/mcp-context-forge"
+Documentation = "https://github.com/IBM/mcp-context-forge/docs"
+Source = "https://github.com/IBM/mcp-context-forge"
+
+[tool.black]
+line-length = 200
+target-version = [ "py310",]
+include = "\\.pyi?$"
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --cov=mcpgateway"
+testpaths = [ "tests",]
+asyncio_mode = "auto"
+
+[tool.setuptools.packages.find]
+where = [ ".",]
+include = [ "mcpgateway*",]
+
+[tool.pytype]
+# Directory-specific options:
+inputs = ["mcpgateway"]
+python_version = "3.11"          # match your default runtime
+
+[tool.check-manifest]
+# Usually you only need 'ignore', but other flags are available.
+ignore = [
+    "docs/**",
+    "tests/**",
+    ".github/**",
+    "Makefile",
+]
+
+[tool.fawltydeps]
+# only parse your main pyproject.toml
+deps = ["pyproject.toml"]
+
+# ignore all of your 'dev' extras so they won't show up
+ignore_unused = [
+  "autoflake",
+  "argparse-manpage",
+  "bandit",
+  "black",
+  "bump2version",
+  "check-manifest",
+  "code2flow",
+  "cookiecutter",
+  "coverage",
+  "coverage-badge",
+  "darglint",
+  "flake8",
+  "fawltydeps",
+  "gprof2dot",
+  "gunicorn",
+  "importchecker",
+  "isort",
+  "ty",
+  "mypy",
+  "pexpect",
+  "pip-licenses",
+  "pip_audit",
+  "pre-commit",
+  "pydocstyle",
+  "pylint",
+  "pylint-pydantic",
+  "pyre-check",
+  "pyright",
+  "pyroma",
+  "pyspelling",
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-examples",
+  "pytest-md-report",
+  "pytest-rerunfailures",
+  "pytest-xdist",
+  "pytype",
+  "radon",
+  "ruff",
+  "settings-doc",
+  "snakeviz",
+  "types-tabulate",
+  "uvicorn"
+]

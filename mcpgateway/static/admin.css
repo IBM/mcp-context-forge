@@ -1,0 +1,9 @@
+.error-status {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 4px;
+  transition: opacity 0.3s ease;
+  background: #f2dede;
+  color: #a94442;
+  border: 1px solid #ebccd1;
+}
