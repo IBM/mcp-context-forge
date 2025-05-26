@@ -6,8 +6,9 @@ owner: Mihai Criveti
 
 # MCP Gateway
 
-MCP Gateway is a production-ready, standards-compliant orchestration layer for the **Model Context Protocol (MCP)**. It acts as a unified interface for tools, resources, prompts, virtual servers, and federated gateways — all accessible via rich multi-transport APIs and an interactive web-based Admin UI.
+A flexible FastAPI-based gateway and router for **Model Context Protocol (MCP)** with support for virtual servers. It acts as a unified interface for tools, resources, prompts, virtual servers, and federated gateways — all accessible via rich multi-transport APIs and an interactive web-based Admin UI.
 
+![MCP Gateway](images/mcpgateway.gif)
 ---
 
 ## What it Does
@@ -53,4 +54,8 @@ Check out the [Quick Start](overview/index.md) for installation and usage, or go
 
 !!! note "The latest version can always be found here: https://pages.github.com/ibm/mcp-context-forge/"
 
-[Download PDF](pdf/mcpgateway-docs.pdf){ .md-button } [Download DOCX](out/mcpgateway-docs.docx){ .md-button }
+<!-- [Download PDF](pdf/mcpgateway-docs.pdf){ .md-button } [Download DOCX](out/mcpgateway-docs.docx){ .md-button } -->
+
+## Authors and Contributors
+
+- Mihai Criveti - IBM Distinguished Engineer, Agentic AI
