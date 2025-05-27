@@ -25,7 +25,7 @@ Start the MCP Gateway to expose its tools via OpenAPI endpoints. For example:
 
 ```bash
 uv run mcpgateway
-````
+```
 
 Ensure that the MCP Gateway is accessible at a known URL, such as `http://localhost:4444`.
 
