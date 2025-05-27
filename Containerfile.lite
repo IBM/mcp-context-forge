@@ -63,7 +63,7 @@ COPY . /app
 RUN set -euo pipefail \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
-    && /app/.venv/bin/uv pip install . \
+    && /app/.venv/bin/uv pip install .[redis,postgres] \
     && rm -rf /root/.cache /var/cache/dnf
 
 # ----------------------------------------------------------------------------
