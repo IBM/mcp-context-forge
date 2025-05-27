@@ -1,16 +1,23 @@
+# ----------------------------------------------------------------
+# 💡 Build system (PEP 517)
+#     • setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     • wheel is needed by most build front-ends
+# ----------------------------------------------------------------
 [build-system]
-requires = [ "setuptools>=42", "wheel",]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# ----------------------------------------------------------------
+# 📦 Core project metadata (PEP 621)
+# ----------------------------------------------------------------
 [project]
 name = "mcpgateway"
-version = "1.0.0"
-description = "A production-ready MCP Gateway built with FastAPI and the official MCP Python SDK"
+version = "0.1.0"
+description = "A production-ready MCP Gateway built with FastAPI and support for virtual servers"
 keywords = ["MCP", "Gateway", "API", "Agents", "Tools"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -18,7 +25,20 @@ classifiers = [
     "Framework :: FastAPI",
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
+
+# SPDX licence expression + explicit licence file (PEP 639)
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+# Maintainers
+maintainers = [
+    {name = "Mihai Criveti", email = "redacted@ibm.com"}
+]
+
+# ----------------------------------------------------------------
+# Runtime dependencies
+# ----------------------------------------------------------------
 dependencies = [
     "cryptography>=45.0.3",
     "fastapi>=0.115.12",
@@ -39,14 +59,18 @@ dependencies = [
     "uvicorn>=0.34.2",
     "zeroconf>=0.147.0",
 ]
-[[project.authors]]
-name = "Mihai Criveti"
-email = "redacted@ibm.com"
 
-[project.license]
-text = "Apache License 2.0"
-
+# ----------------------------------------------------------------
+# Optional dependency groups (extras)
+# ----------------------------------------------------------------
 [project.optional-dependencies]
+
+# Optional dependency groups (runtime)
+redis = [
+    "redis>=6.1.0",
+]
+
+# Optional dependency groups (development)
 dev = [
     "argparse-manpage>=4.6",
     "autoflake>=2.3.1",
@@ -84,26 +108,75 @@ dev = [
     "pytest-rerunfailures>=15.1",
     "pytest-xdist>=3.6.1",
     "pytype>=2024.10.11",
-    "pytype>=2024.10.11",
     "radon>=6.0.1",
     "ruff>=0.11.11",
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "ty>=0.0.1a6",
+    "twine>=6.1.0",
     "types-tabulate>=0.9.0.20241207",
 ]
-redis = [
-    "redis>=6.1.0",
-]
+
+# Convenience meta-extras
+all = ["mcpgateway[redis]"]
+dev-all = ["mcpgateway[redis,dev]"]
+
+# --------------------------------------------------------------------
+#  Authors and URLs
+# --------------------------------------------------------------------
+[[project.authors]]
+name = "Mihai Criveti"
+email = "redacted@ibm.com"
 
 [project.urls]
-Homepage = "https://github.com/IBM/mcp-context-forge"
-Documentation = "https://github.com/IBM/mcp-context-forge/docs"
-Source = "https://github.com/IBM/mcp-context-forge"
+Homepage = "https://ibm.github.io/mcp-context-forge/"
+Documentation = "https://ibm.github.io/mcp-context-forge/"
+Repository = "https://github.com/IBM/mcp-context-forge"
+"Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
+Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
+
+# --------------------------------------------------------------------
+#  🔧 setuptools-specific configuration
+# --------------------------------------------------------------------
+[tool.setuptools]
+include-package-data = true          # ensure wheels include the data files
+
+# Automatic discovery: keep every package that starts with "mcpgateway"
+[tool.setuptools.packages.find]
+include = ["mcpgateway*"]
+exclude = ["tests*"]
+
+##  Runtime data files  ------------------------------------------------
+#  - py.typed  -> advertises inline type hints (PEP 561)
+#  - static/*  -> CSS/JS for the admin UI
+#  - templates -> Jinja2 templates shipped at runtime
+[tool.setuptools.package-data]
+mcpgateway = [
+  "py.typed",
+  "static/*.css",
+  "static/*.js",
+  "templates/*.html"
+]
+
+# --------------------------------------------------------------------
+#  🛠  Tool configurations (black, mypy, etc.)
+# --------------------------------------------------------------------
+[tool.pytype]
+# Directory-specific options:
+inputs = ["mcpgateway"]
+python_version = "3.11"          # match default runtime
+
+[tool.check-manifest]
+ignore = [
+    "docs/**",
+    "tests/**",
+    ".github/**",
+    "Makefile",
+]
 
 [tool.black]
 line-length = 200
-target-version = [ "py310",]
+target-version = ["py310", "py311", "py312"]
 include = "\\.pyi?$"
 
 [tool.isort]
@@ -115,6 +188,9 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+strict = true
+show_error_codes = true
+warn_unreachable = true
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -122,29 +198,12 @@ addopts = "-ra -q --cov=mcpgateway"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 
-[tool.setuptools.packages.find]
-where = [ ".",]
-include = [ "mcpgateway*",]
-
-[tool.pytype]
-# Directory-specific options:
-inputs = ["mcpgateway"]
-python_version = "3.11"          # match your default runtime
-
-[tool.check-manifest]
-# Usually you only need 'ignore', but other flags are available.
-ignore = [
-    "docs/**",
-    "tests/**",
-    ".github/**",
-    "Makefile",
-]
-
+# ── fawltydeps ─────────────────────────────────────────────────────
 [tool.fawltydeps]
-# only parse your main pyproject.toml
+# only parse main pyproject.toml
 deps = ["pyproject.toml"]
 
-# ignore all of your 'dev' extras so they won't show up
+# ignore 'dev' extras so they won't show up in fawltydeps
 ignore_unused = [
   "autoflake",
   "argparse-manpage",
@@ -189,5 +248,6 @@ ignore_unused = [
   "settings-doc",
   "snakeviz",
   "types-tabulate",
+  "twine",
   "uvicorn"
 ]

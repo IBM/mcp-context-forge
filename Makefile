@@ -688,6 +688,41 @@ containerfile-update:
 	@sed -i.bak -E 's|^(FROM\s+\S+):[^\s]+|\1:latest|' Containerfile && rm -f Containerfile.bak
 	@echo "✅ Base image updated to latest."
 
+
+# =============================================================================
+# 📦 PACKAGING & PUBLISHING
+# =============================================================================
+# help: 📦 PACKAGING & PUBLISHING
+# help: dist                 - Clean-build wheel *and* sdist into ./dist
+# help: wheel                - Build wheel only
+# help: sdist                - Build source distribution only
+# help: verify               - Build + twine + check-manifest + pyroma (no upload)
+# help: publish              - Verify, then upload to PyPI (needs TWINE_* creds)
+# =============================================================================
+.PHONY: dist wheel sdist verify publish
+
+dist: clean                ## Build wheel + sdist
+	python -m build
+	@echo "🛠  Wheel & sdist written to ./dist"
+
+wheel:                     ## Build wheel only
+	python -m build -w
+	@echo "🛠  Wheel written to ./dist"
+
+sdist:                     ## Build source distribution only
+	python -m build -s
+	@echo "🛠  Source distribution written to ./dist"
+
+verify: dist               ## Build, run metadata & manifest checks
+	twine check dist/*                 # metadata sanity
+	check-manifest                     # sdist completeness
+	pyroma -d .                        # metadata quality score
+	@echo "✅  Package verified – ready to publish."
+
+publish: verify            ## Verify, then upload to PyPI
+	twine upload dist/*               # creds via env vars or ~/.pypirc
+	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
+
 # =============================================================================
 # 🦭 PODMAN CONTAINER BUILD & RUN
 # =============================================================================
