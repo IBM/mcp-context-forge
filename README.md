@@ -58,7 +58,7 @@ MCP Gateway builds on the MCP spec by sitting **in front of** MCP Server or REST
 
 ```bash
 make venv install serve
-````
+```
 
 What it does:
 
@@ -401,7 +401,7 @@ IBMCLOUD_API_KEY=your_api_key_here   # Optional – omit to use interactive `ibm
 IBMCLOUD_CPU=1                       # vCPUs for the app
 IBMCLOUD_MEMORY=4G                   # Memory allocation
 IBMCLOUD_REGISTRY_SECRET=my-regcred  # Name of the Container Registry secret
-````
+```
 
 > ✅ **Quick check:** `make ibmcloud-check-env`
 
