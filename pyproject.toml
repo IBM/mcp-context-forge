@@ -70,6 +70,10 @@ redis = [
     "redis>=6.1.0",
 ]
 
+postgres = [
+    "psycopg2-binary>=2.9.10",
+]
+
 # Optional dependency groups (development)
 dev = [
     "argparse-manpage>=4.6",

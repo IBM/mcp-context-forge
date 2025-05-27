@@ -71,6 +71,7 @@ os-deps: $(OS_DEPS_SCRIPT)
 # help: activate             - Activate the virtual environment in the current shell
 # help: install              - Install project into the venv
 # help: install-dev          - Install project (incl. dev deps) into the venv
+# help: install-db           - Install project (incl. postgres and redis) into venv
 # help: update               - Update all installed deps inside the venv
 .PHONY: venv
 venv:
@@ -90,6 +91,10 @@ activate:
 .PHONY: install
 install: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install ."
+
+.PHONY: install-db
+install-db: venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install .[redis,postgres]"
 
 .PHONY: install-dev
 install-dev: venv
