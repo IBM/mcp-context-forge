@@ -365,7 +365,7 @@ ibmcloud ce secret create --name mcpgw-redis-url \
 ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
     --env-from-secret mcpgw-redis-url \
     --env CACHE_TYPE=redis
-````
+```
 
 ### Choosing the right Redis size
 
