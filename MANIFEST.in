@@ -1,0 +1,50 @@
+# ──────────────────────────────────────────────────────────────
+# MANIFEST.in – source-distribution contents for mcpgateway
+# ──────────────────────────────────────────────────────────────
+
+# 1️⃣  Core project files that SDists/Wheels should always carry
+include LICENSE
+include README.md
+include pyproject.toml
+include gunicorn.config.py
+include Containerfile
+include Containerfile.lite
+
+# 2️⃣  Top-level config, examples and helper scripts
+include *.py
+include *.md
+include *.example
+include *.lock
+include *.properties
+include *.toml
+include *.yaml
+include *.yml
+include *.json
+include *.sh
+include *.txt
+
+# 3️⃣  Tooling/lint configuration dot-files (explicit so they're not lost)
+include .darglint
+include .dockerignore
+include .flake8
+include .htmlhintrc
+include .pycodestyle
+include .pylintrc
+include .whitesource
+include .coveragerc
+#include .gitignore            # purely optional but many projects ship it
+
+# 4️⃣  Runtime data that lives *inside* the package at import time
+recursive-include mcpgateway/templates *.html
+recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
+recursive-include mcpgateway *.pyi py.typed
+
+# 5️⃣  (Optional) include MKDocs-based docs in the sdist
+graft docs
+
+# 6️⃣  Never publish caches, compiled or build outputs
+global-exclude __pycache__ *.py[cod] *.so *.dylib
+prune build
+prune dist
+prune .eggs
+prune *.egg-info
