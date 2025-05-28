@@ -468,7 +468,7 @@ async def get_server(server_id: int, db: Session = Depends(get_db), user: str = 
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-
+@server_router.post("", response_model=ServerRead, status_code=201)
 @server_router.post("/", response_model=ServerRead, status_code=201)
 async def create_server(
     server: ServerCreate,
@@ -1224,7 +1224,7 @@ async def list_prompts(
     logger.debug(f"User: {user} requested prompt list with include_inactive={include_inactive}, cursor={cursor}")
     return await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive)
 
-
+@prompt_router.post("", response_model=PromptRead)
 @prompt_router.post("/", response_model=PromptRead)
 async def create_prompt(
     prompt: PromptCreate,
@@ -1522,7 +1522,7 @@ async def list_roots(
     logger.debug(f"User '{user}' requested list of roots")
     return await root_service.list_roots()
 
-
+@root_router.post("", response_model=Root)
 @root_router.post("/", response_model=Root)
 async def add_root(
     root: Root,  # Accept JSON body using the Root model from types.py
