@@ -18,7 +18,7 @@ npx @modelcontextprotocol/inspector uv --directory "/home/cmihai/mcpgateway-wrap
 
 Supergateway runs a MCP stdio-based servers over SSE (Server-Sent Events) with one command. This is useful for remote access, debugging, or connecting to SSE-based clients when your MCP server only speaks stdio.
 
-`npx -y supergateway --stdio "uvx mcp-server-git"``
+`npx -y supergateway --stdio "uvx run mcp-server-git"``
 
 SSE endpoint: GET http://localhost:8000/sse
 POST messages: POST http://localhost:8000/message
