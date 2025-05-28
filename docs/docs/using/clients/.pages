@@ -3,6 +3,7 @@ nav:
   - index.md
   - mcp-inspector.md
   - claude-desktop.md
+  - copilot.md
   - cline.md
   - continue.md
   - openwebui.md
