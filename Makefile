@@ -737,6 +737,7 @@ publish: verify            ## Verify, then upload to PyPI
 # help: podman-run           - Run the container on HTTP  (port 4444)
 # help: podman-run-shell     - Run the container on HTTP  (port 4444) and start a shell
 # help: podman-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
+# help: podman-run-ssl-host  - Run the container on HTTPS with --network-host (port 4444, self-signed)
 # help: podman-stop          - Stop & remove the container
 # help: podman-test          - Quick curl smoke-test against the container
 # help: podman-logs          - Follow container logs (⌃C to quit)
@@ -810,6 +811,24 @@ podman-run-ssl: certs
 		--health-start-period=30s --health-timeout=10s \
 		-d $(IMG_PROD)
 	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1
+
+podman-run-ssl-host: certs
+	@echo "🚀  Starting podman container (TLS)…"
+	-podman stop $(PROJECT_NAME) 2>/dev/null || true
+	-podman rm   $(PROJECT_NAME) 2>/dev/null || true
+	podman run --name $(PROJECT_NAME) \
+		--network=host \
+		--env-file=.env \
+		-e SSL=true \
+		-e CERT_FILE=certs/cert.pem \
+		-e KEY_FILE=certs/key.pem \
+		-v $(PWD)/certs:/app/certs:ro,Z \
+		--restart=always --memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(IMG_PROD)
+	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1	
 
 podman-stop:
 	@echo "🛑  Stopping podman container…"
