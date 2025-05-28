@@ -113,6 +113,7 @@ HEY_CMD=(
   -m "$METHOD"
   -T "$CONTENT_TYPE"
   -D "$PAYLOAD_FILE"
+  -t 60
 )
 
 # Append each header

@@ -6,7 +6,7 @@
 >
 > 1. Tune the **runtime environment** via `.env` and configure mcpgateway to use PostgreSQL and Redis.
 > 2. Adjust **Gunicorn** workers & time‑outs in `gunicorn.conf.py`.
-> 3. Right‑size **CPU/RAM** for the container or spin up more instances (with shared Redis state).
+> 3. Right‑size **CPU/RAM** for the container or spin up more instances (with shared Redis state) and change the database settings (ex: connection limits).
 > 4. Benchmark with **hey** (or your favourite load‑generator) before & after.
 
 ---
@@ -50,6 +50,8 @@ Edit the file **before** building the image, then redeploy.
 | `4 × 16 GB`+ | Heavy prod            | Combine with async workers or autoscaling.         |
 
 > Always test with **your** workload; JSON‑RPC payload size and backend model latency change the equation.
+
+To change your database connection settings, see the respective documentation for your selected database or managed service. For example, when using IBM Cloud Databases for PostgreSQL - you can [raise the maximum number of connections](https://cloud.ibm.com/docs/databases-for-postgresql?topic=databases-for-postgresql-managing-connections&locale=en#postgres-connection-limits).
 
 ---
 
