@@ -523,7 +523,7 @@ class GatewayService:
         finally:
             self._event_subscribers.remove(queue)
 
-    async def _initialize_gateway(self, url: str, authentication: Optional[Dict[str, str]] = {}) -> Any:
+    async def _initialize_gateway(self, url: str, authentication: Optional[Dict[str, str]] = None) -> Any:
         """Initialize connection to a gateway and retrieve its capabilities.
 
         Args:
@@ -537,8 +537,10 @@ class GatewayService:
             GatewayConnectionError: If initialization fails.
         """
         try:
+            if authentication is None:
+                authentication = {}
 
-            async def connect_to_sse_server(server_url: str, authentication: Optional[Dict[str, str]] = {}):
+            async def connect_to_sse_server(server_url: str, authentication: Optional[Dict[str, str]] = None):
                 """
                 Connect to an MCP server running with SSE transport
 
@@ -549,25 +551,22 @@ class GatewayService:
                 Returns:
                     list, list: List of capabilities and tools
                 """
+                if authentication is None:
+                    authentication = {}
                 # Store the context managers so they stay alive
                 decoded_auth = decode_auth(authentication)
-                _streams_context = sse_client(url=server_url, headers=decoded_auth)
-                streams = await _streams_context.__aenter__()  # line 551
 
-                _session_context = ClientSession(*streams)
-                session: ClientSession = await _session_context.__aenter__()  # line 554
+                # Use async with for both sse_client and ClientSession
+                async with sse_client(url=server_url, headers=decoded_auth) as streams:
+                    async with ClientSession(*streams) as session:
+                        # Initialize the session
+                        response = await session.initialize()
+                        capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
 
-                # Initialize
-                response = await session.initialize()
-                capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-
-                response = await session.list_tools()
-                tools = response.tools
-                tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
-                tools = [ToolCreate.model_validate(tool) for tool in tools]
-
-                await _session_context.__aexit__(None, None, None)
-                await _streams_context.__aexit__(None, None, None)  # line 566
+                        response = await session.list_tools()
+                        tools = response.tools
+                        tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                        tools = [ToolCreate.model_validate(tool) for tool in tools]
 
                 return capabilities, tools
 
