@@ -305,9 +305,12 @@ Scale up at any time with:
 ```bash
 ibmcloud cdb deployment-scaling-set mcpgw-db \
     --members 3 --memory-gb 16
+
+# Update the number of maximum connections:
+ibmcloud cdb deployment-configuration YOUR_DB_CRN '{"configuration":{"max_connections":215}}'    
 ```
 
-The gateway will reconnect transparently because the host name remains stable.
+The gateway will reconnect transparently because the host name remains stable. See the [documentation for more details](https://cloud.ibm.com/docs/databases-for-postgresql?topic=databases-for-postgresql-managing-connections&locale=en#raise-connection-limit).
 
 ---
 
