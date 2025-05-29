@@ -8,14 +8,17 @@ This section explains how to deploy MCP Gateway in various environments — from
 
 MCP Gateway supports multiple deployment strategies:
 
-| Method | Description |
-|--------|-------------|
-| [Local](local.md) | Run directly on your dev machine using `make` or `uvicorn` |
-| [Container](container.md) | Package and run as a container using Docker or Podman |
-| [Kubernetes / OpenShift](kubernetes.md) | Deploy to any K8s-compliant platform using a Helm chart or manifests |
-| [IBM Code Engine](ibm-code-engine.md) | Run in serverless containers on IBM Cloud |
-| [AWS](aws.md) | Deploy to ECS, EKS, or EC2 instances |
-| [Azure](azure.md) | Run using Azure Container Apps, Web Apps, or AKS |
+| Method                                | Description                                                                               |
+| ------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [Local](local.md)                     | Run directly on your dev machine using `make`, `uvicorn`, or a virtual-env                |
+| [Container](container.md)             | Package and run as a single container image using Podman or Docker                        |
+| [Compose Stack](compose.md)           | Bring up Gateway + Postgres + Redis (and optional MPC servers) with Podman/Docker Compose |
+| [Minikube](minikube.md)               | Launch a local single-node Kubernetes cluster and deploy the Gateway stack                |
+| [Kubernetes](kubernetes.md)           | Generic manifests or Helm chart for any K8s-compliant platform                            |
+| [OpenShift](openshift.md)             | OpenShift-specific deployment using Routes, SCCs, and Operator-managed back-ends          |
+| [IBM Code Engine](ibm-code-engine.md) | Serverless container build & run on IBM Cloud                                             |
+| [AWS](aws.md)                         | Deploy on ECS Fargate, EKS, or EC2-hosted containers                                      |
+| [Azure](azure.md)                     | Run on Azure Container Apps, App Service, or AKS                                          |
 
 ---
 
