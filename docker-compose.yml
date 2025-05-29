@@ -67,7 +67,7 @@ services:
       start_period: 20s
 
     # volumes:
-    #   - ./certs:/app/certs:ro   # mount certs folder read-only      
+    #   - ./certs:/app/certs:ro   # mount certs folder read-only
 
 ###############################################################################
 #  DATABASES – enable ONE of these blocks and adjust DATABASE_URL
@@ -216,7 +216,7 @@ services:
 
   #   environment:
   #     # ──────────────────────────────────────────────────────────────────────
-  #     # LEGACY HOST LIST (for showing in UI — not used for TLS)             
+  #     # LEGACY HOST LIST (for showing in UI — not used for TLS)
   #     # ──────────────────────────────────────────────────────────────────────
   #     - REDIS_HOSTS=local:redis:6379
 
@@ -231,18 +231,18 @@ services:
   #     - CLUSTER_NO_TLS_VALIDATION=true  # <— skip SNI/hostname checks in clusters
 
   #     # ──────────────────────────────────────────────────────────────────────
-  #     # SELF-SIGNED: trust no-CA by default                                 
+  #     # SELF-SIGNED: trust no-CA by default
   #     # ──────────────────────────────────────────────────────────────────────
   #     - NODE_TLS_REJECT_UNAUTHORIZED=0  # <— Node.js will accept your self-signed cert
 
   #     # ──────────────────────────────────────────────────────────────────────
-  #     # HTTP BASIC-AUTH FOR THE WEB UI                                       
+  #     # HTTP BASIC-AUTH FOR THE WEB UI
   #     # ──────────────────────────────────────────────────────────────────────
   #     - HTTP_USER=admin                # <— change your UI username
   #     - HTTP_PASSWORD=changeme         # <— change your UI password
 
   #     # ──────────────────────────────────────────────────────────────────────
-  #     # OPTIONAL: ENABLE REAL CERT VALIDATION (instead of skipping checks)    
+  #     # OPTIONAL: ENABLE REAL CERT VALIDATION (instead of skipping checks)
   #     # ──────────────────────────────────────────────────────────────────────
   #     # - REDIS_TLS_CA_CERT_FILE=/certs/selfsigned.crt
   #     # - REDIS_TLS_SERVER_NAME=redis.example.com

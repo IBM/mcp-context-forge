@@ -119,4 +119,3 @@ SELECT content FROM mcp_messages WHERE session_id = 'abc123';
 ---
 
 These tables are cleaned automatically when session TTLs expire, but can also be purged manually if needed.
-

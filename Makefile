@@ -829,7 +829,7 @@ podman-run-ssl-host: certs
 		--health-interval=1m --health-retries=3 \
 		--health-start-period=30s --health-timeout=10s \
 		-d $(IMG_PROD)
-	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1	
+	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1
 
 podman-stop:
 	@echo "🛑  Stopping podman container…"
@@ -1211,4 +1211,3 @@ ibmcloud-ce-status:
 ibmcloud-ce-rm:
 	@echo "🗑️  Deleting Code Engine app: $(IBMCLOUD_CODE_ENGINE_APP)…"
 	@ibmcloud ce application delete --name $(IBMCLOUD_CODE_ENGINE_APP) -f
-
