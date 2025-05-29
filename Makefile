@@ -733,7 +733,8 @@ publish: verify            ## Verify, then upload to PyPI
 # =============================================================================
 # help: 🦭 PODMAN CONTAINER BUILD & RUN
 # help: podman-dev           - Build development container image
-# help: podman               - Build production container image
+# help: podman               - Build container image
+# help: podman-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
 # help: podman-run           - Run the container on HTTP  (port 4444)
 # help: podman-run-shell     - Run the container on HTTP  (port 4444) and start a shell
 # help: podman-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
@@ -873,6 +874,7 @@ podman-shell:
 # help: 🐋 DOCKER BUILD & RUN
 # help: docker-dev           - Build development Docker image
 # help: docker               - Build production Docker image
+# help: docker-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
 # help: docker-run           - Run the container on HTTP  (port 4444)
 # help: docker-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
 # help: docker-stop          - Stop & remove the container
@@ -891,6 +893,16 @@ docker-dev:
 docker:
 	@echo "🐋  Building production Docker image…"
 	docker build --platform=linux/amd64 -t $(IMG_DOCKER_PROD) -f Containerfile .
+
+docker-prod:
+	@echo "🦭  Building production container from Containerfile.lite (ubi-micro → scratch)…"
+	docker build --ssh default \
+	             --platform=linux/amd64 \
+	             --squash \
+	             -f Containerfile.lite \
+	             -t $(IMG_PROD) \
+	             .
+	docker images $(IMG_PROD)
 
 ## --------------------  R U N   (HTTP)  ---------------------------------------
 docker-run:
@@ -957,6 +969,86 @@ docker-top:
 docker-shell:
 	@echo "🔧  Opening shell in Docker container…"
 	@docker exec -it $(PROJECT_NAME) bash || docker exec -it $(PROJECT_NAME) /bin/sh
+
+
+# =============================================================================
+# 🛠️  COMPOSE STACK (Docker Compose v2, podman compose or podman-compose)
+# =============================================================================
+# help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
+# help: compose-up           - Bring the whole stack up (detached)
+# help: compose-restart      - Recreate changed containers, pulling / building as needed
+# help: compose-build        - Build (or rebuild) images defined in the compose file
+# help: compose-pull         - Pull the latest images only
+# help: compose-logs         - Tail logs from all services (Ctrl-C to exit)
+# help: compose-ps           - Show container status table
+# help: compose-shell        - Open an interactive shell in the “gateway” container
+# help: compose-stop         - Gracefully stop the stack (keep containers)
+# help: compose-down         - Stop & remove containers (keep named volumes)
+# help: compose-rm           - Remove *stopped* containers
+# help: compose-clean        - ✨ Down **and** delete named volumes (data-loss ⚠)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# You may **force** a specific binary by exporting COMPOSE_CMD, e.g.:
+#   export COMPOSE_CMD=podman-compose          # classic wrapper
+#   export COMPOSE_CMD="podman compose"        # Podman v4/v5 built-in
+#   export COMPOSE_CMD="docker compose"        # Docker CLI plugin (v2)
+#
+# If COMPOSE_CMD is empty, we autodetect in this order:
+#   1. podman-compose   2. podman compose   3. docker compose
+# ─────────────────────────────────────────────────────────────────────────────
+COMPOSE_CMD ?=
+ifeq ($(strip $(COMPOSE_CMD)),)
+  COMPOSE_CMD := $(shell \
+    command -v podman-compose    >/dev/null 2>&1 && echo podman-compose   || \
+    command -v "podman compose" >/dev/null 2>&1 && echo "podman compose" || \
+    echo "docker compose" )
+endif
+COMPOSE_FILE ?= podman-compose-mcpgateway.yaml
+
+define COMPOSE
+$(COMPOSE_CMD) -f $(COMPOSE_FILE)
+endef
+
+.PHONY: compose-up compose-restart compose-build compose-pull \
+        compose-logs compose-ps compose-shell compose-stop compose-down \
+        compose-rm compose-clean
+
+compose-up:
+	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
+	$(COMPOSE) up -d
+
+compose-restart:
+	@echo "🔄  Restarting stack (build + pull if needed)…"
+	$(COMPOSE) up -d --pull=missing --build
+
+compose-build:
+	$(COMPOSE) build
+
+compose-pull:
+	$(COMPOSE) pull
+
+compose-logs:
+	$(COMPOSE) logs -f
+
+compose-ps:
+	$(COMPOSE) ps
+
+compose-shell:
+	$(COMPOSE) exec gateway /bin/sh
+
+compose-stop:
+	$(COMPOSE) stop
+
+compose-down:
+	$(COMPOSE) down
+
+compose-rm:
+	$(COMPOSE) rm -f
+
+# Removes **containers + named volumes** – irreversible!
+compose-clean:
+	$(COMPOSE) down -v
+
 
 # =============================================================================
 # ☁️ IBM CLOUD CODE ENGINE
@@ -1120,3 +1212,4 @@ ibmcloud-ce-status:
 ibmcloud-ce-rm:
 	@echo "🗑️  Deleting Code Engine app: $(IBMCLOUD_CODE_ENGINE_APP)…"
 	@ibmcloud ce application delete --name $(IBMCLOUD_CODE_ENGINE_APP) -f
+
