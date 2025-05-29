@@ -12,6 +12,7 @@ volumes:                # Named volumes survive podman-compose down/up
   mariadbdata:
   mysqldata:
   mongodata:
+  pgadmindata:
 
 ###############################################################################
 #  CORE SERVICE – MCP Gateway
@@ -38,6 +39,7 @@ services:
       # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mysql:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
+      - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET_KEY=changeme
       - BASIC_AUTH_USER=admin
@@ -115,7 +117,62 @@ services:
     networks: [mcpnet]
 
 ###############################################################################
-#  OPTIONAL MPC SERVERS – drop-in helpers the Gateway can call
+#  OPTIONAL ADMIN TOOLS – handy web UIs for DB & cache (disabled by default)
+###############################################################################
+  # pgadmin:              # 🔧 Postgres admin UI
+  #   image: dpage/pgadmin4:8
+  #   environment:
+  #     - PGADMIN_DEFAULT_EMAIL=admin@localhost
+  #     - PGADMIN_DEFAULT_PASSWORD=changeme
+  #   ports:
+  #     - "5050:80"      # http://localhost:5050
+  #   volumes:
+  #     - pgadmindata:/var/lib/pgadmin
+  #   networks: [mcpnet]
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+  # redis_commander:       # 🔧 Redis key browser
+  #   image: rediscommander/redis-commander:latest
+  #   environment:
+  #     - REDIS_HOSTS=local:redis:6379
+  #   ports:
+  #     - "8081:8081"    # http://localhost:8081
+  #   networks: [mcpnet]
+  #   depends_on:
+  #     redis:
+  #       condition: service_started
+
+  # mongo_express:         # 🔧 MongoDB GUI (works if mongodb service is enabled)
+  #   image: mongo-express:1
+  #   environment:
+  #     - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
+  #     - ME_CONFIG_MONGODB_ADMINPASSWORD=changeme
+  #     - ME_CONFIG_MONGODB_SERVER=mongodb
+  #   ports:
+  #     - "8082:8081"    # http://localhost:8082
+  #   networks: [mcpnet]
+  #   depends_on:
+  #     mongodb:
+  #       condition: service_started
+
+  # phpmyadmin:            # 🔧 MySQL / MariaDB GUI
+  #   image: phpmyadmin:latest
+  #   environment:
+  #     - PMA_HOST=mysql   # or mariadb
+  #     - PMA_USER=mysql
+  #     - PMA_PASSWORD=changeme
+  #     - PMA_ARBITRARY=1  # allow login to any host if you switch DBs
+  #   ports:
+  #     - "8083:80"      # http://localhost:8083
+  #   networks: [mcpnet]
+  #   depends_on:
+  #     mysql:
+  #       condition: service_started
+
+###############################################################################
+#  OPTIONAL MCP SERVERS – drop-in helpers the Gateway can call
 ###############################################################################
   mcp_time:
     image: mcp/time:latest
