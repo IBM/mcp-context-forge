@@ -108,16 +108,13 @@ Named volumes (`pgdata`, `mariadbdata`, `mysqldata`, `mongodata`) isolate persis
 
 ---
 
-````markdown
----
-
 ## 🔍 Troubleshooting port publishing on WSL2 (rootless Podman)
 
 ```bash
 # Verify the port is listening (dual-stack)
 ss -tlnp | grep 4444        # modern tool
 netstat -anp | grep 4444    # legacy fallback
-````
+```
 
 > A line like `:::4444 LISTEN rootlessport` is **normal** – the IPv6
 > wildcard socket (`::`) also accepts IPv4 when `net.ipv6.bindv6only=0`
