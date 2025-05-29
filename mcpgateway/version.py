@@ -145,46 +145,88 @@ def _database_version() -> tuple[str, bool]:
 
 def _system_metrics() -> Dict[str, Any]:
     """
-    Gather system and process metrics using psutil if available.
+    Gather system-wide and per-process metrics using psutil, falling back gracefully
+    if psutil is not installed or certain APIs are unavailable.
 
     Returns:
-        Dict[str, Any]: Metrics including CPU, memory, disk, and process details.
+        Dict[str, Any]: A dictionary containing:
+            - boot_time (str): ISO-formatted system boot time.
+            - cpu_percent (float): Total CPU utilization percentage.
+            - cpu_count (int): Number of logical CPU cores.
+            - cpu_freq_mhz (int | None): Current CPU frequency in MHz, or None if unavailable.
+            - load_avg (tuple[float | None, float | None, float | None]):
+                System load average over 1, 5, and 15 minutes, or (None, None, None)
+                on platforms without getloadavg.
+            - mem_total_mb (int): Total physical memory in megabytes.
+            - mem_used_mb (int): Used physical memory in megabytes.
+            - swap_total_mb (int): Total swap memory in megabytes.
+            - swap_used_mb (int): Used swap memory in megabytes.
+            - disk_total_gb (float): Total size of the root disk partition in gigabytes.
+            - disk_used_gb (float): Used space of the root disk partition in gigabytes.
+            - process (Dict[str, Any]): A nested dict with per-process metrics:
+                * pid (int): Current process ID.
+                * threads (int): Number of active threads.
+                * rss_mb (float): Resident Set Size memory usage in megabytes.
+                * vms_mb (float): Virtual Memory Size usage in megabytes.
+                * open_fds (int | None): Number of open file descriptors, or None if unsupported.
+                * proc_cpu_percent (float): CPU utilization percentage for this process.
+        {}: Empty dict if psutil is not installed.
     """
     if not psutil:
         return {}
+
+    # System memory and swap
     vm = psutil.virtual_memory()
     swap = psutil.swap_memory()
+
+    # Load average (Unix); on Windows returns (None, None, None)
     try:
         load = tuple(round(x, 2) for x in os.getloadavg())
     except (AttributeError, OSError):
         load = (None, None, None)
+
+    # CPU metrics
     freq = psutil.cpu_freq()
+    cpu_pct = psutil.cpu_percent(interval=0.3)
+    cpu_count = psutil.cpu_count(logical=True)
+
+    # Process metrics
     proc = psutil.Process()
     try:
         open_fds = proc.num_fds()
     except Exception:
         open_fds = None
-    root = Path(os.getenv("SystemDrive", "C:\\")) if os.name == "nt" else Path("/")
-    disk = psutil.disk_usage(root)
+    proc_cpu_pct = proc.cpu_percent(interval=0.1)
+    rss_mb = round(proc.memory_info().rss / 1_048_576, 2)
+    vms_mb = round(proc.memory_info().vms / 1_048_576, 2)
+    threads = proc.num_threads()
+    pid = proc.pid
+
+    # Disk usage for root partition (ensure str on Windows)
+    root = os.getenv("SystemDrive", "C:\\") if os.name == "nt" else "/"
+    disk = psutil.disk_usage(str(root))
+    disk_total_gb = round(disk.total / 1_073_741_824, 2)
+    disk_used_gb = round(disk.used / 1_073_741_824, 2)
+
     return {
         "boot_time": datetime.fromtimestamp(psutil.boot_time()).isoformat(),
-        "cpu_percent": psutil.cpu_percent(interval=0.3),
-        "cpu_count": psutil.cpu_count(logical=True),
+        "cpu_percent": cpu_pct,
+        "cpu_count": cpu_count,
         "cpu_freq_mhz": round(freq.current) if freq else None,
         "load_avg": load,
         "mem_total_mb": round(vm.total / 1_048_576),
         "mem_used_mb": round(vm.used / 1_048_576),
         "swap_total_mb": round(swap.total / 1_048_576),
         "swap_used_mb": round(swap.used / 1_048_576),
-        "disk_total_gb": round(disk.total / 1_073_741_824, 2),
-        "disk_used_gb": round(disk.used / 1_073_741_824, 2),
+        "disk_total_gb": disk_total_gb,
+        "disk_used_gb": disk_used_gb,
         "process": {
-            "pid": proc.pid,
-            "threads": proc.num_threads(),
-            "rss_mb": round(proc.memory_info().rss / 1_048_576, 2),
-            "vms_mb": round(proc.memory_info().vms / 1_048_576, 2),
+            "pid": pid,
+            "threads": threads,
+            "rss_mb": rss_mb,
+            "vms_mb": vms_mb,
             "open_fds": open_fds,
-            "proc_cpu_percent": proc.cpu_percent(interval=0.1),
+            "proc_cpu_percent": proc_cpu_pct,
         },
     }
 
