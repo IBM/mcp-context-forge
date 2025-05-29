@@ -43,7 +43,7 @@ def encode_auth(auth_value: dict) -> str:
     Returns:
         str: A base64-url-safe encrypted string representing the dictionary, or None if input is None.
     """
-    if auth_value is None:
+    if not auth_value:
         return None
     plaintext = json.dumps(auth_value)
     key = get_key()
@@ -65,7 +65,7 @@ def decode_auth(encoded_value: str) -> dict:
     Returns:
         dict: The decrypted authentication dictionary, or empty dict if input is None.
     """
-    if encoded_value is None:
+    if not encoded_value:
         return {}
     key = get_key()
     aesgcm = AESGCM(key)
