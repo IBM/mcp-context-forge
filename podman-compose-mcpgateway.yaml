@@ -1,0 +1,150 @@
+version: "3.9"          # Supported by both podman-compose and Docker Compose v2+
+
+###############################################################################
+#  NETWORKS + VOLUMES – declared first so they can be referenced later
+###############################################################################
+networks:
+  mcpnet:               # Single user-defined bridge network keeps traffic private
+    driver: bridge
+
+volumes:                # Named volumes survive podman-compose down/up
+  pgdata:
+  mariadbdata:
+  mysqldata:
+  mongodata:
+
+###############################################################################
+#  CORE SERVICE – MCP Gateway
+###############################################################################
+services:
+
+  gateway:
+    image: localhost/mcpgateway/mcpgateway
+    build:
+      context: .
+      dockerfile: Containerfile     # Same one the Makefile builds
+    restart: unless-stopped
+    ports:
+      - "4444:4444"                 # HTTP (or HTTPS if SSL=true is set)
+    networks: [mcpnet]
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Environment – pick ONE database URL line, comment the rest
+    # ──────────────────────────────────────────────────────────────────────
+    environment:
+      - HOST="0.0.0.0"
+      - PORT="4444"
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mysql:3306/mcp
+      # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
+      # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET_KEY=change-me
+      - BASIC_AUTH_USER=admin
+      - BASIC_AUTH_PASSWORD=change-me
+
+    depends_on:          # Default stack: Postgres + Redis
+      postgres:
+        condition: service_healthy   # ▶ wait for DB
+      redis:
+        condition: service_started
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4444/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+###############################################################################
+#  DATABASES – enable ONE of these blocks and adjust DATABASE_URL
+###############################################################################
+
+  postgres:              # Official image – super-easy defaults
+    image: postgres:17
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=mysecretpassword
+      - POSTGRES_DB=mcp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [mcpnet]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # mariadb:
+  #   image: mariadb:11
+  #   environment:
+  #     - MARIADB_ROOT_PASSWORD=mysecretpassword
+  #     - MARIADB_DATABASE=mcp
+  #     - MARIADB_USER=admin
+  #     - MARIADB_PASSWORD=changeme
+  #   volumes: [mariadbdata:/var/lib/mysql]
+  #   networks: [mcpnet]
+
+  # mysql:
+  #   image: mysql:8
+  #   environment:
+  #     - MYSQL_ROOT_PASSWORD=mysecretpassword
+  #     - MYSQL_DATABASE=mcp
+  #     - MYSQL_USER=mysql
+  #     - MYSQL_PASSWORD=changeme
+  #   volumes: [mysqldata:/var/lib/mysql]
+  #   networks: [mcpnet]
+
+  # mongodb:
+  #   image: mongo:7
+  #   environment:
+  #     - MONGO_INITDB_ROOT_USERNAME=admin
+  #     - MONGO_INITDB_ROOT_PASSWORD=changeme
+  #     - MONGO_INITDB_DATABASE=mcp
+  #   volumes: [mongodata:/data/db]
+  #   networks: [mcpnet]
+
+###############################################################################
+#  CACHE
+###############################################################################
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"      # expose only if you want host access
+    networks: [mcpnet]
+
+###############################################################################
+#  OPTIONAL MPC SERVERS – drop-in helpers the Gateway can call
+###############################################################################
+  mcp_time:
+    image: mcp/time:latest
+    networks: [mcpnet]
+
+  mcp_playwright:
+    image: mcp/playwright:latest
+    networks: [mcpnet]
+
+  mcp_postgres:
+    image: mcp/postgres:latest
+    networks: [mcpnet]
+
+  mcp_github:
+    image: mcp/github:latest
+    networks: [mcpnet]
+
+  mcp_filesystem:
+    image: mcp/filesystem:latest
+    networks: [mcpnet]
+
+  mcp_perplexity_ask:
+    image: mcp/perplexity-ask:latest
+    networks: [mcpnet]
+
+  mcp_memory:
+    image: mcp/memory:latest
+    networks: [mcpnet]
+
+  mcp_fetch:
+    image: mcp/fetch:latest
+    networks: [mcpnet]
