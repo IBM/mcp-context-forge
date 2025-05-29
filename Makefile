@@ -896,9 +896,8 @@ docker:
 
 docker-prod:
 	@echo "🦭  Building production container from Containerfile.lite (ubi-micro → scratch)…"
-	docker build --ssh default \
+	docker build \
 	             --platform=linux/amd64 \
-	             --squash \
 	             -f Containerfile.lite \
 	             -t $(IMG_PROD) \
 	             .
@@ -1003,7 +1002,7 @@ ifeq ($(strip $(COMPOSE_CMD)),)
     command -v "podman compose" >/dev/null 2>&1 && echo "podman compose" || \
     echo "docker compose" )
 endif
-COMPOSE_FILE ?= podman-compose-mcpgateway.yaml
+COMPOSE_FILE ?= docker-compose.yml
 
 define COMPOSE
 $(COMPOSE_CMD) -f $(COMPOSE_FILE)
