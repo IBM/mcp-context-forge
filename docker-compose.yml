@@ -44,6 +44,9 @@ services:
       - JWT_SECRET_KEY=changeme
       - BASIC_AUTH_USER=admin
       - BASIC_AUTH_PASSWORD=changeme
+      # - SSL=true
+      # - CERT_FILE=/app/certs/cert.pem
+      # - KEY_FILE=/app/certs/key.pem
 
     depends_on:          # Default stack: Postgres + Redis
       postgres:
@@ -53,10 +56,14 @@ services:
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4444/health"]
+      #test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 20s
+
+    # volumes:
+    #   - ./certs:/app/certs:ro   # mount certs folder read-only      
 
 ###############################################################################
 #  DATABASES – enable ONE of these blocks and adjust DATABASE_URL
@@ -111,7 +118,7 @@ services:
 #  CACHE
 ###############################################################################
   redis:
-    image: redis:7
+    image: redis:latest
     ports:
       - "6379:6379"      # expose only if you want host access
     networks: [mcpnet]
@@ -119,30 +126,30 @@ services:
 ###############################################################################
 #  OPTIONAL ADMIN TOOLS – handy web UIs for DB & cache (disabled by default)
 ###############################################################################
-  # pgadmin:              # 🔧 Postgres admin UI
-  #   image: dpage/pgadmin4:8
-  #   environment:
-  #     - PGADMIN_DEFAULT_EMAIL=admin@localhost
-  #     - PGADMIN_DEFAULT_PASSWORD=changeme
-  #   ports:
-  #     - "5050:80"      # http://localhost:5050
-  #   volumes:
-  #     - pgadmindata:/var/lib/pgadmin
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
+  pgadmin:              # 🔧 Postgres admin UI
+    image: dpage/pgadmin4:latest
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@example.com
+      - PGADMIN_DEFAULT_PASSWORD=changeme
+    ports:
+      - "5050:80"      # http://localhost:5050
+    volumes:
+      - pgadmindata:/var/lib/pgadmin
+    networks: [mcpnet]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
-  # redis_commander:       # 🔧 Redis key browser
-  #   image: rediscommander/redis-commander:latest
-  #   environment:
-  #     - REDIS_HOSTS=local:redis:6379
-  #   ports:
-  #     - "8081:8081"    # http://localhost:8081
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     redis:
-  #       condition: service_started
+  redis_commander:       # 🔧 Redis key browser
+    image: rediscommander/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"    # http://localhost:8081
+    networks: [mcpnet]
+    depends_on:
+      redis:
+        condition: service_started
 
   # mongo_express:         # 🔧 MongoDB GUI (works if mongodb service is enabled)
   #   image: mongo-express:1
@@ -173,35 +180,35 @@ services:
 
 ###############################################################################
 #  OPTIONAL MCP SERVERS – drop-in helpers the Gateway can call
-###############################################################################
-  mcp_time:
-    image: mcp/time:latest
-    networks: [mcpnet]
+# ###############################################################################
+#   mcp_time:
+#     image: mcp/time:latest
+#     networks: [mcpnet]
 
-  mcp_playwright:
-    image: mcp/playwright:latest
-    networks: [mcpnet]
+#   mcp_playwright:
+#     image: mcp/playwright:latest
+#     networks: [mcpnet]
 
-  mcp_postgres:
-    image: mcp/postgres:latest
-    networks: [mcpnet]
+#   mcp_postgres:
+#     image: mcp/postgres:latest
+#     networks: [mcpnet]
 
-  mcp_github:
-    image: mcp/github:latest
-    networks: [mcpnet]
+#   mcp_github:
+#     image: mcp/github:latest
+#     networks: [mcpnet]
 
-  mcp_filesystem:
-    image: mcp/filesystem:latest
-    networks: [mcpnet]
+#   mcp_filesystem:
+#     image: mcp/filesystem:latest
+#     networks: [mcpnet]
 
-  mcp_perplexity_ask:
-    image: mcp/perplexity-ask:latest
-    networks: [mcpnet]
+#   mcp_perplexity_ask:
+#     image: mcp/perplexity-ask:latest
+#     networks: [mcpnet]
 
-  mcp_memory:
-    image: mcp/memory:latest
-    networks: [mcpnet]
+#   mcp_memory:
+#     image: mcp/memory:latest
+#     networks: [mcpnet]
 
-  mcp_fetch:
-    image: mcp/fetch:latest
-    networks: [mcpnet]
+#   mcp_fetch:
+#     image: mcp/fetch:latest
+#     networks: [mcpnet]
