@@ -32,16 +32,16 @@ services:
     # Environment – pick ONE database URL line, comment the rest
     # ──────────────────────────────────────────────────────────────────────
     environment:
-      - HOST="0.0.0.0"
-      - PORT="4444"
+      - HOST=0.0.0.0
+      - PORT=4444
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mysql:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET_KEY=change-me
+      - JWT_SECRET_KEY=changeme
       - BASIC_AUTH_USER=admin
-      - BASIC_AUTH_PASSWORD=change-me
+      - BASIC_AUTH_PASSWORD=changeme
 
     depends_on:          # Default stack: Postgres + Redis
       postgres:
