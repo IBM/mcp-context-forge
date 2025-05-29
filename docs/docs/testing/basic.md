@@ -1,6 +1,6 @@
 # MCP Gateway - Basic
 
-Test script for MCP Gateway development environments.  
+Test script for MCP Gateway development environments.
 Verifies API readiness, JWT auth, Gateway/Tool/Server lifecycle, and RPC invocation.
 
 ---

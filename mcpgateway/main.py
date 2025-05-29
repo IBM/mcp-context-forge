@@ -52,7 +52,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Import the admin routes from the new module
 from mcpgateway.admin import admin_router
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
@@ -117,6 +116,9 @@ from mcpgateway.validation.jsonrpc import (
     JSONRPCError,
     validate_request,
 )
+
+# Import the admin routes from the new module
+from mcpgateway.version import router as version_router
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -467,6 +469,7 @@ async def get_server(server_id: int, db: Session = Depends(get_db), user: str = 
         return await server_service.get_server(db, server_id)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
 
 @server_router.post("", response_model=ServerRead, status_code=201)
 @server_router.post("/", response_model=ServerRead, status_code=201)
@@ -1224,6 +1227,7 @@ async def list_prompts(
     logger.debug(f"User: {user} requested prompt list with include_inactive={include_inactive}, cursor={cursor}")
     return await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive)
 
+
 @prompt_router.post("", response_model=PromptRead)
 @prompt_router.post("/", response_model=PromptRead)
 async def create_prompt(
@@ -1521,6 +1525,7 @@ async def list_roots(
     """
     logger.debug(f"User '{user}' requested list of roots")
     return await root_service.list_roots()
+
 
 @root_router.post("", response_model=Root)
 @root_router.post("/", response_model=Root)
@@ -1961,6 +1966,7 @@ async def lifespan() -> AsyncIterator[None]:
 app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 
 # Include routers
+app.include_router(version_router)
 app.include_router(protocol_router)
 app.include_router(tool_router)
 app.include_router(resource_router)
