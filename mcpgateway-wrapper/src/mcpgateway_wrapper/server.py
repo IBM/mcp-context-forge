@@ -1,31 +1,55 @@
+# -*- coding: utf-8 -*-
+"""MCP Gateway Wrapper server.
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Keval Mahajan, Mihai Criveti, Madhav Kandukuri
+
+This module implements a wrapper bridge that facilitates 
+interaction between the MCP client and the MCP gateway. 
+It provides several functionalities, including listing tools, invoking tools, managing resources , 
+retrieving prompts, and handling tool calls via the MCP gateway.
+"""
+
 import asyncio
 import os
-from typing import List, Dict, Any
-import jwt
-import datetime
+from typing import List, Dict, Any, Optional, Union
+from urllib.parse import urlparse
+
 
 import httpx
 from pydantic import AnyUrl
 
-import mcp.types as types
+from mcp import types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 import mcp.server.stdio
 
-from urllib.parse import urlparse
 
 def extract_base_url(url: str) -> str:
+    """
+    Extracts the base URL (scheme + netloc) from a given URL string.
+
+    Args:
+        url (str): The full URL string to be parsed.
+
+    Returns:
+        str: The base URL, including the scheme (http, https) and the netloc (domain).
+
+    Example:
+        >>> extract_base_url("https://www.example.com/path/to/resource")
+        'https://www.example.com'
+    """
     parsed_url = urlparse(url)
     return f"{parsed_url.scheme}://{parsed_url.netloc}"
+
 
 # Default Values
 
 mcp_servers_raw = os.getenv("MCP_SERVER_CATALOG_URLS", "")
 MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN", "")
 
-mcp_servers_urls = (
-    mcp_servers_raw.split(",") if "," in mcp_servers_raw else [mcp_servers_raw]
-)
+mcp_servers_urls = mcp_servers_raw.split(",") if "," in mcp_servers_raw else [mcp_servers_raw]
 BASE_URL = extract_base_url(mcp_servers_urls[0])
 TOOL_CALL_TIMEOUT = 90
 
@@ -61,12 +85,7 @@ async def get_tools_from_mcp_server(catalog_urls: List[str]) -> List[str]:
     if response.status_code != 200:
         raise ValueError(f"Failed to fetch server catalog: {response.status_code}")
     server_catalog = response.json()
-    tool_ids = [
-        tool
-        for server in server_catalog
-        if str(server["id"]) in server_ids
-        for tool in server["associatedTools"]
-    ]
+    tool_ids = [tool for server in server_catalog if str(server["id"]) in server_ids for tool in server["associatedTools"]]
     return tool_ids
 
 
@@ -87,7 +106,7 @@ async def tools_metadata(tool_ids: List[str]) -> List[Dict[str, Any]]:
         raise ValueError(f"Failed to fetch tools metadata: {response.status_code}")
     all_tools = response.json()
     if tool_ids == [0]:
-        return all_tools  
+        return all_tools
     tools = [tool for tool in all_tools if tool["id"] in tool_ids]
     return tools
 
@@ -107,12 +126,7 @@ async def get_prompts_from_mcp_server(catalog_urls: List[str]) -> List[str]:
     if response.status_code != 200:
         raise ValueError(f"Failed to fetch server catalog: {response.status_code}")
     server_catalog = response.json()
-    prompt_ids = [
-        prompt
-        for server in server_catalog
-        if str(server["id"]) in server_ids
-        for prompt in server.get("associatedPrompts", [])
-    ]
+    prompt_ids = [prompt for server in server_catalog if str(server["id"]) in server_ids for prompt in server.get("associatedPrompts", [])]
     return prompt_ids
 
 
@@ -133,7 +147,7 @@ async def prompts_metadata(prompt_ids: List[str]) -> List[Dict[str, Any]]:
         raise ValueError(f"Failed to fetch prompts metadata: {response.status_code}")
     all_prompts = response.json()
     if prompt_ids == [0]:
-        return all_prompts 
+        return all_prompts
     prompts = [prompt for prompt in all_prompts if prompt["id"] in prompt_ids]
     return prompts
 
@@ -153,12 +167,7 @@ async def get_resources_from_mcp_server(catalog_urls: List[str]) -> List[str]:
     if response.status_code != 200:
         raise ValueError(f"Failed to fetch server catalog: {response.status_code}")
     server_catalog = response.json()
-    resource_ids = [
-        resource
-        for server in server_catalog
-        if str(server["id"]) in server_ids
-        for resource in server.get("associatedResources", [])
-    ]
+    resource_ids = [resource for server in server_catalog if str(server["id"]) in server_ids for resource in server.get("associatedResources", [])]
     return resource_ids
 
 
@@ -213,10 +222,9 @@ async def handle_list_tools() -> list[types.Tool]:
     except Exception as e:
         raise RuntimeError(f"Error listing tools: {e}")
 
+
 @server.call_tool()
-async def handle_call_tool(
-    name: str, arguments: dict | None
-) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+async def handle_call_tool(name: str, arguments: Optional[dict] = None) -> list[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]]:
     """Handle tool execution requests.
 
     Args:
@@ -255,9 +263,7 @@ async def handle_call_tool(
     except httpx.RequestError as e:
         raise ConnectionError(f"An error occurred while calling tool {name}: {e}")
     except httpx.HTTPStatusError as e:
-        raise RuntimeError(
-            f"Tool call failed with status code {e.response.status_code}"
-        )
+        raise RuntimeError(f"Tool call failed with status code {e.response.status_code}")
     except Exception as e:
         raise RuntimeError(f"Unexpected error calling tool: {e}")
 
@@ -335,9 +341,7 @@ async def handle_list_prompts() -> list[types.Prompt]:
 
 
 @server.get_prompt()
-async def handle_get_prompt(
-    name: str, arguments: dict[str, str] | None
-) -> types.GetPromptResult:
+async def handle_get_prompt(name: str, arguments: Optional[dict[str, str]] = None) -> types.GetPromptResult:
     """Generate a prompt by combining the remote prompt template with provided arguments.
 
     Args:
