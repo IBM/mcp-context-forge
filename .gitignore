@@ -52,6 +52,7 @@ certs/
 __pycache__/
 *.py[cod]
 *$py.class
+mcpgateway-wrapper/src/mcp_gateway_wrapper/__pycache__/
 
 # Bak
 *.bak
