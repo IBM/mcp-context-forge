@@ -49,6 +49,18 @@ from sqlalchemy.orm import (
 from mcpgateway.config import settings
 from mcpgateway.types import ResourceContent
 
+base_connect_args = {}
+# Add the SQLite-only flag when appropriate
+if settings.database_url.startswith("sqlite"):
+    base_connect_args["check_same_thread"] = False
+elif settings.database_url.startswith("postgres"):
+    base_connect_args = {
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 5,
+        "keepalives_count": 5,
+    }
+
 # Create SQLAlchemy engine with connection pooling
 engine = create_engine(
     settings.database_url,
@@ -57,13 +69,7 @@ engine = create_engine(
     max_overflow=settings.db_max_overflow,
     pool_timeout=settings.db_pool_timeout,
     pool_recycle=settings.db_pool_recycle,
-    connect_args = {
-        "keepalives": 1,
-        "keepalives_idle": 30,
-        "keepalives_interval": 5,
-        "keepalives_count": 5,
-    }
-    # connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
+    connect_args=base_connect_args
 )
 
 # Session factory
