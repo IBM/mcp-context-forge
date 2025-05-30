@@ -24,7 +24,7 @@ services:
   # MCP Gateway - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
-    image: localhost/mcpgateway/mcpgateway
+    image: mcpgateway/mcpgateway
     build:
       context: .
       dockerfile: Containerfile     # Same one the Makefile builds
