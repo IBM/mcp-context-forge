@@ -5,25 +5,23 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan, Mihai Criveti, Madhav Kandukuri
 
-This module implements a wrapper bridge that facilitates 
-interaction between the MCP client and the MCP gateway. 
-It provides several functionalities, including listing tools, invoking tools, managing resources , 
+This module implements a wrapper bridge that facilitates
+interaction between the MCP client and the MCP gateway.
+It provides several functionalities, including listing tools, invoking tools, managing resources ,
 retrieving prompts, and handling tool calls via the MCP gateway.
 """
 
 import asyncio
 import os
-from typing import List, Dict, Any, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
-
 import httpx
-from pydantic import AnyUrl
-
+import mcp.server.stdio
 from mcp import types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
-import mcp.server.stdio
+from pydantic import AnyUrl
 
 
 def extract_base_url(url: str) -> str:

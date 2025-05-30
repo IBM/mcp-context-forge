@@ -33,8 +33,8 @@ from sqlalchemy import (
     Text,
     create_engine,
     func,
-    select,
     make_url,
+    select,
 )
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
@@ -50,30 +50,29 @@ from sqlalchemy.orm import (
 from mcpgateway.config import settings
 from mcpgateway.types import ResourceContent
 
-
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", …)
 #    and the specific driver ("psycopg2", "asyncpg", empty string = default).
 # ---------------------------------------------------------------------------
 url = make_url(settings.database_url)
-backend = url.get_backend_name()      # e.g. 'postgresql', 'sqlite' 
-driver  = url.get_driver_name() or "default"
+backend = url.get_backend_name()  # e.g. 'postgresql', 'sqlite'
+driver = url.get_driver_name() or "default"
 
 # Start with an empty dict and add options only when the driver can accept
-# them; this prevents unexpected TypeError at connect time. 
+# them; this prevents unexpected TypeError at connect time.
 connect_args: dict[str, object] = {}
 
 # ---------------------------------------------------------------------------
 # 2. PostgreSQL (synchronous psycopg2 only)
 #    The keep-alive parameters below are recognised exclusively by libpq /
-#    psycopg2 and let the kernel detect broken network links quickly. 
+#    psycopg2 and let the kernel detect broken network links quickly.
 # ---------------------------------------------------------------------------
 if backend == "postgresql" and driver in ("psycopg2", "default", ""):
     connect_args.update(
-        keepalives=1,            # enable TCP keep-alive probes
-        keepalives_idle=30,      # seconds of idleness before first probe
-        keepalives_interval=5,   # seconds between probes
-        keepalives_count=5,      # drop the link after N failed probes
+        keepalives=1,  # enable TCP keep-alive probes
+        keepalives_idle=30,  # seconds of idleness before first probe
+        keepalives_interval=5,  # seconds between probes
+        keepalives_count=5,  # drop the link after N failed probes
     )
 
 # ---------------------------------------------------------------------------
@@ -90,7 +89,7 @@ elif backend == "sqlite":
 # ---------------------------------------------------------------------------
 engine = create_engine(
     settings.database_url,
-    pool_pre_ping=True,                 # quick liveness check per checkout
+    pool_pre_ping=True,  # quick liveness check per checkout
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_timeout=settings.db_pool_timeout,

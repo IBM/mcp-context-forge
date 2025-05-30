@@ -16,7 +16,7 @@ If an MCP client doesn't support SSE but does support stdio, use this wrapper to
 
 The server extends tools from the server catalogs of mcp gateway
 
-### Resources 
+### Resources
 
 The server fetched resources from the server catalogs of mcp gateway
 
@@ -78,7 +78,7 @@ This parameter specifies one or more URLs pointing to the MCP server catalog. UR
 ```bash
 "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1,http://localhost:4444/servers/2,http://localhost:4444/servers/3"
 ```
-3.3 All tools, prompts, resources (gateway URL): 
+3.3 All tools, prompts, resources (gateway URL):
 ```bash
 "MCP_SERVER_CATALOG_URLS": "http://localhost:4444"
 ```
