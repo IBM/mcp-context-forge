@@ -34,6 +34,7 @@ from sqlalchemy import (
     create_engine,
     func,
     select,
+    make_url,
 )
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
@@ -49,27 +50,52 @@ from sqlalchemy.orm import (
 from mcpgateway.config import settings
 from mcpgateway.types import ResourceContent
 
-base_connect_args = {}
-# Add the SQLite-only flag when appropriate
-if settings.database_url.startswith("sqlite"):
-    base_connect_args["check_same_thread"] = False
-elif settings.database_url.startswith("postgres"):
-    base_connect_args = {
-        "keepalives": 1,
-        "keepalives_idle": 30,
-        "keepalives_interval": 5,
-        "keepalives_count": 5,
-    }
 
-# Create SQLAlchemy engine with connection pooling
+# ---------------------------------------------------------------------------
+# 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", …)
+#    and the specific driver ("psycopg2", "asyncpg", empty string = default).
+# ---------------------------------------------------------------------------
+url = make_url(settings.database_url)
+backend = url.get_backend_name()      # e.g. 'postgresql', 'sqlite' 
+driver  = url.get_driver_name() or "default"
+
+# Start with an empty dict and add options only when the driver can accept
+# them; this prevents unexpected TypeError at connect time. 
+connect_args: dict[str, object] = {}
+
+# ---------------------------------------------------------------------------
+# 2. PostgreSQL (synchronous psycopg2 only)
+#    The keep-alive parameters below are recognised exclusively by libpq /
+#    psycopg2 and let the kernel detect broken network links quickly. 
+# ---------------------------------------------------------------------------
+if backend == "postgresql" and driver in ("psycopg2", "default", ""):
+    connect_args.update(
+        keepalives=1,            # enable TCP keep-alive probes
+        keepalives_idle=30,      # seconds of idleness before first probe
+        keepalives_interval=5,   # seconds between probes
+        keepalives_count=5,      # drop the link after N failed probes
+    )
+
+# ---------------------------------------------------------------------------
+# 3. SQLite (optional) – only one extra flag and it is *SQLite-specific*.
+# ---------------------------------------------------------------------------
+elif backend == "sqlite":
+    # Allow pooled connections to hop across threads.
+    connect_args["check_same_thread"] = False
+
+# 4. Other backends (MySQL, MSSQL, etc.) leave `connect_args` empty.
+
+# ---------------------------------------------------------------------------
+# 5. Build the Engine with a single, clean connect_args mapping.
+# ---------------------------------------------------------------------------
 engine = create_engine(
     settings.database_url,
-    pool_pre_ping=True,
+    pool_pre_ping=True,                 # quick liveness check per checkout
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_timeout=settings.db_pool_timeout,
     pool_recycle=settings.db_pool_recycle,
-    connect_args=base_connect_args
+    connect_args=connect_args,
 )
 
 # Session factory
