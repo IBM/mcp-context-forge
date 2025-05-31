@@ -5,13 +5,13 @@
 # This workflow:
 #   • Builds and tags the container image (`latest` + timestamp)
 #   • Re-uses a BuildKit layer cache for faster rebuilds
-#   • Lints the Dockerfile with Hadolint (CLI) → SARIF
-#   • Lints the finished image with Dockle (CLI) → SARIF
-#   • Generates an SPDX SBOM with Syft
-#   • Scans the image for CRITICAL/HIGH CVEs with Trivy
+#   • Lints the Dockerfile with **Hadolint** (CLI) → SARIF
+#   • Lints the finished image with **Dockle** (CLI) → SARIF
+#   • Generates an SPDX SBOM with **Syft**
+#   • Scans the image for CRITICAL/HIGH CVEs with **Trivy**
 #   • Uploads Hadolint, Dockle and Trivy results as SARIF files
-#   • Pushes the image to GitHub Container Registry (GHCR)
-#   • Signs & attests the image with Cosign **key-less (OIDC)**
+#   • Pushes the image to **GitHub Container Registry (GHCR)**
+#   • Signs & attests the image with **Cosign (key-less OIDC)**
 #
 # Triggers:
 #   • Every push / PR to `main`
@@ -26,24 +26,23 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '17 18 * * 2'        # Tuesday @ 18:17 UTC
+    - cron: '17 18 * * 2'   # Tuesday @ 18:17 UTC
 
 # -----------------------------------------------------------------
-# GitHub permission scopes for this job
+# Minimal permissions – keep the principle of least privilege
 # -----------------------------------------------------------------
 permissions:
-  contents: read
-  packages: write          # push to ghcr.io with built-in GITHUB_TOKEN
-  security-events: write   # upload SARIF to “Code-scanning alerts”
-  actions: read            # needed by upload-sarif in private repos
+  contents:        read
+  packages:        write   # push to ghcr.io via GITHUB_TOKEN
+  security-events: write   # upload SARIF to “Code scanning”
+  actions:         read    # needed by upload-sarif in private repos
 
 jobs:
   build-scan-sign:
     runs-on: ubuntu-latest
 
     env:
-      IMAGE_NAME: ghcr.io/${{ github.repository }}
-      CACHE_DIR: /tmp/.buildx-cache          # BuildKit layer cache dir
+      CACHE_DIR: /tmp/.buildx-cache   # BuildKit layer cache dir
 
     steps:
     # -------------------------------------------------------------
@@ -53,18 +52,26 @@ jobs:
       uses: actions/checkout@v4
 
     # -------------------------------------------------------------
+    # 0️⃣.5️⃣  Derive lower-case IMAGE_NAME for Docker tag
+    # -------------------------------------------------------------
+    - name: 🏷️  Set IMAGE_NAME (lower-case repo path)
+      run: |
+        IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+        echo "IMAGE_NAME=$IMAGE" >> "$GITHUB_ENV"
+        echo "Will build & push: $IMAGE_NAME"
+
+    # -------------------------------------------------------------
     # 1️⃣  Dockerfile lint (Hadolint CLI → SARIF)
     # -------------------------------------------------------------
-    - name: 🔍 Dockerfile lint (Hadolint)
+    - name: 🔍  Dockerfile lint (Hadolint)
       id: hadolint
-      continue-on-error: true                # still upload SARIF on failure
+      continue-on-error: true
       run: |
         curl -sSL https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint
         chmod +x /usr/local/bin/hadolint
         hadolint -f sarif Containerfile.lite > hadolint-results.sarif
         echo "HADOLINT_EXIT=$?" >> "$GITHUB_ENV"
-        exit 0                               # ensure step reports success
-
+        exit 0
     - name: ☁️  Upload Hadolint SARIF
       if: always()
       uses: github/codeql-action/upload-sarif@v3
@@ -90,7 +97,7 @@ jobs:
     - name: 🏗️  Build Docker image
       run: |
         TAG=$(date +%s)
-        echo "TAG=$TAG" >> "$GITHUB_ENV"     # reuse in push step
+        echo "TAG=$TAG" >> "$GITHUB_ENV"
         docker buildx build \
           --file Containerfile.lite \
           --tag $IMAGE_NAME:$TAG \
@@ -98,12 +105,12 @@ jobs:
           --cache-from type=local,src=${{ env.CACHE_DIR }} \
           --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
           --load \
-          .                                  # build context is mandatory
+          .   # build context is mandatory
 
     # -------------------------------------------------------------
     # 4️⃣  Image lint (Dockle CLI → SARIF)
     # -------------------------------------------------------------
-    - name: 🔍 Image lint (Dockle)
+    - name: 🔍  Image lint (Dockle)
       id: dockle
       continue-on-error: true
       env:
@@ -111,13 +118,11 @@ jobs:
       run: |
         curl -sSL "https://github.com/goodwithtech/dockle/releases/download/v${DOCKLE_VERSION}/dockle_${DOCKLE_VERSION}_Linux-64bit.tar.gz" \
           | tar -xz -C /usr/local/bin dockle
-        dockle --exit-code 1 \
-               --format sarif \
+        dockle --exit-code 1 --format sarif \
                --output dockle-results.sarif \
                $IMAGE_NAME:latest
         echo "DOCKLE_EXIT=$?" >> "$GITHUB_ENV"
         exit 0
-
     - name: ☁️  Upload Dockle SARIF
       if: always()
       uses: github/codeql-action/upload-sarif@v3
@@ -127,26 +132,25 @@ jobs:
     # -------------------------------------------------------------
     # 5️⃣  Generate SPDX SBOM with Syft
     # -------------------------------------------------------------
-    - name: 📄 Generate SBOM (Syft)
+    - name: 📄  Generate SBOM (Syft)
       uses: anchore/sbom-action@v0
       with:
         image: ${{ env.IMAGE_NAME }}:latest
         output-file: sbom.spdx.json
 
     # -------------------------------------------------------------
-    # 6️⃣  Trivy CVE scan → SARIF  (fails on CRITICAL/HIGH)
+    # 6️⃣  Trivy CVE scan → SARIF
     # -------------------------------------------------------------
     - name: 🛡️  Trivy vulnerability scan
       id: trivy
-      continue-on-error: true                # allow SARIF upload
+      continue-on-error: true
       uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
       with:
         image-ref: ${{ env.IMAGE_NAME }}:latest
         format: sarif
         output: trivy-results.sarif
         severity: CRITICAL,HIGH
-        exit-code: 1                         # non-zero on vulns
-
+        exit-code: 1
     - name: ☁️  Upload Trivy SARIF
       if: always()
       uses: github/codeql-action/upload-sarif@v3
@@ -154,29 +158,29 @@ jobs:
         sarif_file: trivy-results.sarif
 
     # -------------------------------------------------------------
-    # 7️⃣  Push both tags to GHCR (built-in GITHUB_TOKEN)
+    # 7️⃣  Push both tags to GHCR
     # -------------------------------------------------------------
-    - name: 🔑 Log in to GHCR
+    - name: 🔑  Log in to GHCR
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: 🚀 Push image to GHCR
+    - name: 🚀  Push image to GHCR
       run: |
         docker push $IMAGE_NAME:${{ env.TAG }}
         docker push $IMAGE_NAME:latest
 
     # -------------------------------------------------------------
-    # 8️⃣  Key-less Cosign sign (OIDC) + provenance
+    # 8️⃣  Key-less Cosign sign + attest
     # -------------------------------------------------------------
     - name: 📥 Install Cosign
       uses: sigstore/cosign-installer@v3
 
-    - name: 🔏 Sign & attest image
+    - name: 🔏  Sign & attest image
       env:
-        COSIGN_EXPERIMENTAL: "1"             # enable OIDC flow
+        COSIGN_EXPERIMENTAL: "1"   # enable OIDC flow
       run: |
         cosign sign   --yes $IMAGE_NAME:latest
         cosign attest --yes --predicate sbom.spdx.json $IMAGE_NAME:latest
@@ -184,7 +188,7 @@ jobs:
     # -------------------------------------------------------------
     # 9️⃣  Single gate – fail job on any scanner error
     # -------------------------------------------------------------
-    - name: ⛔ Enforce lint & vuln gates
+    - name: ⛔  Enforce lint & vuln gates
       if: |
         env.HADOLINT_EXIT != '0' ||
         env.DOCKLE_EXIT   != '0' ||
