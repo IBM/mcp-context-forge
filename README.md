@@ -133,6 +133,20 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/tools | jq
 ```
 
+### Running the mcpgateway-wrapper
+
+The mcpgateway-wrapper lets you connect to the gateway over stdio.
+
+```bash
+docker run -d --name mcpgateway-wrapper \
+  --entrypoint uv \
+  -e UV_CACHE_DIR=/tmp/uv-cache \
+  -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444 \
+  -e MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN \
+  ghcr.io/ibm/mcp-context-forge:latest \
+  run mcpgateway-wrapper
+```
+
 ---
 
 ## Quick Start (manual install)
