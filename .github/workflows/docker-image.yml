@@ -36,6 +36,7 @@ permissions:
   packages:        write   # push to ghcr.io via GITHUB_TOKEN
   security-events: write   # upload SARIF to “Code scanning”
   actions:         read    # needed by upload-sarif in private repos
+  id-token: write  # required for OIDC token generation
 
 jobs:
   build-scan-sign:
@@ -180,17 +181,17 @@ jobs:
 
     - name: 🔏 Sign & attest images (latest + timestamp)
       env:
-        COSIGN_EXPERIMENTAL: "1"           # required for key-less flow
-        OIDC_ISSUER: https://token.actions.githubusercontent.com
+        COSIGN_EXPERIMENTAL: "1"
       run: |
         for REF in $IMAGE_NAME:latest $IMAGE_NAME:${{ env.TAG }}; do
           echo "🔑 Signing $REF"
-          cosign sign --yes --oidc-issuer "$OIDC_ISSUER" "$REF"        # key-less sign
+          cosign sign --yes "$REF"
+          
           echo "📝 Attesting SBOM for $REF"
           cosign attest --yes \
-                         --predicate sbom.spdx.json \
-                         --oidc-issuer "$OIDC_ISSUER" \
-                         "$REF"                                         # SBOM attestation
+                       --predicate sbom.spdx.json \
+                       --type spdxjson \
+                       "$REF"
         done
 
     # -------------------------------------------------------------
