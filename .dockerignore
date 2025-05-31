@@ -1,3 +1,6 @@
+docker-compose.yml
+podman-compose-sonarqube.yaml
+
 node_modules
 docs/
 .vscode

@@ -30,6 +30,7 @@ FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1747318857 AS base
 # Builder stage
 ###########################
 FROM registry.access.redhat.com/ubi9/ubi:9.6-1747219013 AS builder
+SHELL ["/bin/bash", "-c"]
 
 ARG PYTHON_VERSION
 ARG ROOTFS_PATH
@@ -63,7 +64,7 @@ COPY . /app
 RUN set -euo pipefail \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
-    && /app/.venv/bin/uv pip install .[redis,postgres] \
+    && /app/.venv/bin/uv pip install ".[redis,postgres]" \
     && rm -rf /root/.cache /var/cache/dnf
 
 # ----------------------------------------------------------------------------
