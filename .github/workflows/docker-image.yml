@@ -54,7 +54,8 @@ jobs:
 
     - name: Enable Content Trust
       run: |
-        export DOCKER_CONTENT_TRUST=1
+        echo "DOCKER_CONTENT_TRUST=1" >> "$GITHUB_ENV"
+
     # -------------------------------------------------------------
     # 0️⃣.5️⃣  Derive lower-case IMAGE_NAME for Docker tag
     # -------------------------------------------------------------
