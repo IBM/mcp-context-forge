@@ -92,7 +92,50 @@ graph TD
 
 ---
 
-## Quick Start
+## Quick Start (Pre-built Image)
+
+If you just want to run the gateway using the official image from GitHub Container Registry:
+
+```bash
+docker run -d --name mcpgateway \
+  -p 4444:4444 \
+  -e HOST=0.0.0.0 \
+  -e JWT_SECRET_KEY=my-secret-key \
+  -e BASIC_AUTH_USER=admin \
+  -e BASIC_AUTH_PASSWORD=changeme \
+  -e AUTH_REQUIRED=true \
+  -e DATABASE_URL=sqlite:///./mcp.db \
+  ghcr.io/ibm/mcp-context-forge:latest
+
+docker logs mcpgateway
+```
+
+> 💡 You can also use `--env-file .env` if you have a config file already. See the provided [.env.example](.env.example)
+
+### Optional: Mount a local volume for persistent SQLite storage
+
+```bash
+-v $(pwd)/data:/app
+```
+
+### Generate a token for API access
+
+```bash
+export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080)
+```
+
+### Smoke-test the running container
+
+```bash
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:4444/health
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:4444/tools | jq
+```
+
+---
+
+## Quick Start (manual install)
 
 ### Prerequisites
 
