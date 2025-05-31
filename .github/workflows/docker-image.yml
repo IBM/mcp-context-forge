@@ -173,17 +173,25 @@ jobs:
         docker push $IMAGE_NAME:latest
 
     # -------------------------------------------------------------
-    # 8️⃣  Key-less Cosign sign + attest
+    # 8️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
     # -------------------------------------------------------------
     - name: 📥 Install Cosign
-      uses: sigstore/cosign-installer@v3
+      uses: sigstore/cosign-installer@v3   # provides the matching CLI
 
-    - name: 🔏  Sign & attest image
+    - name: 🔏 Sign & attest images (latest + timestamp)
       env:
-        COSIGN_EXPERIMENTAL: "1"   # enable OIDC flow
+        COSIGN_EXPERIMENTAL: "1"           # required for key-less flow
+        OIDC_ISSUER: https://token.actions.githubusercontent.com
       run: |
-        cosign sign   --yes $IMAGE_NAME:latest
-        cosign attest --yes --predicate sbom.spdx.json $IMAGE_NAME:latest
+        for REF in $IMAGE_NAME:latest $IMAGE_NAME:${{ env.TAG }}; do
+          echo "🔑 Signing $REF"
+          cosign sign --yes --oidc-issuer "$OIDC_ISSUER" "$REF"        # key-less sign
+          echo "📝 Attesting SBOM for $REF"
+          cosign attest --yes \
+                         --predicate sbom.spdx.json \
+                         --oidc-issuer "$OIDC_ISSUER" \
+                         "$REF"                                         # SBOM attestation
+        done
 
     # -------------------------------------------------------------
     # 9️⃣  Single gate – fail job on any scanner error
