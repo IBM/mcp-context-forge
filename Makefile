@@ -293,6 +293,7 @@ images:
 # help: isort                - Organise & sort imports with isort
 # help: flake8               - PEP-8 style & logical errors
 # help: pylint               - Pylint static analysis
+# help: markdownlint         - Lint Markdown files with markdownlint (requires markdownlint-cli)
 # help: mypy                 - Static type-checking with mypy
 # help: bandit               - Security scan with bandit
 # help: pydocstyle           - Docstring style checker
@@ -320,11 +321,11 @@ images:
 # List of individual lint targets; lint loops over these
 LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
            ruff pyright radon pyroma pyre spellcheck importchecker \
-		   pytype check-manifest
+		   pytype check-manifest markdownlint
 
 .PHONY: lint $(LINTERS) black fawltydeps wily depend snakeviz pstats \
-        spellcheck-sort tox \
-		pytype check-manifest
+        spellcheck-sort tox pytype sbom
+
 
 ## --------------------------------------------------------------------------- ##
 ##  Master target
@@ -356,6 +357,9 @@ flake8:                             ## 🐍  flake8 checks
 pylint:                             ## 🐛  pylint checks
 	pylint mcpgateway
 
+markdownlint:					    ## 📖  Markdown linting
+	markdownlint -c .markdownlint.json .
+
 mypy:                               ## 🏷️  mypy type-checking
 	mypy mcpgateway
 
@@ -374,7 +378,7 @@ pre-commit:                         ## 🪄  Run pre-commit hooks
 ruff:                               ## ⚡  Ruff lint + format
 	ruff check mcpgateway && ruff format mcpgateway
 
-ty:                               ## ⚡  Ty type checker
+ty:                                 ## ⚡  Ty type checker
 	ty check mcpgateway
 
 pyright:                            ## 🏷️  Pyright type-checking
@@ -428,8 +432,7 @@ tox:                                ## 🧪  Multi-Python tox matrix
 	pdm python install 3.11 3.12
 	python -m tox -p 2
 
-.PHONY: sbom
-sbom:
+sbom:								## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report…"
 	@rm -Rf "$(VENV_DIR).sbom"
 	@python3 -m venv "$(VENV_DIR).sbom"
@@ -440,11 +443,11 @@ sbom:
 	@trivy sbom $(PROJECT_NAME).sbom.json | tee -a $(DOCS_DIR)/docs/test/sbom.md
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pdm outdated | tee -a $(DOCS_DIR)/docs/test/sbom.md"
 
-pytype:
+pytype:								## 🧠  Pytype static type analysis
 	@echo "🧠  Pytype analysis…"
 	pytype -V 3.12 -j auto mcpgateway
 
-check-manifest:
+check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness…"
 	check-manifest
 
