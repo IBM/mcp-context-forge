@@ -4,11 +4,10 @@
 #
 # This workflow:
 #   • Scans JavaScript/TypeScript, Python, and GitHub Actions workflows
-#   • Detects security vulnerabilities and code quality issues
-#   • Uploads SARIF results to the “Code scanning” tab in GitHub Security
-#   • Caches databases and dependencies to speed up analysis
-#   • Runs on every push/PR to `main` and weekly (Wednesday @ 21:15 UTC)
-#
+#   • Detects security vulnerabilities & code-quality issues with CodeQL
+#   • Uploads SARIF results to the “Code scanning” tab
+#   • Caches databases & dependencies to speed up re-runs
+#   • Runs on every push/PR to `main` and weekly (Wed 21:15 UTC)
 # ---------------------------------------------------------------
 
 name: CodeQL Advanced
@@ -19,16 +18,16 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '15 21 * * 3'   # Weekly on Wednesday at 21:15 UTC
+    - cron: '15 21 * * 3'   # Wednesday @ 21:15 UTC
 
 # -----------------------------------------------------------------
 # Minimal permissions – principle of least privilege
 # -----------------------------------------------------------------
 permissions:
-  contents:        read            # for checking out the code
-  security-events: write           # required to upload SARIF results
-  actions:         read            # required in private repositories
-  packages:        read            # required to download CodeQL packs
+  contents:        read            # checkout
+  security-events: write           # upload SARIF
+  actions:         read            # needed in private repos
+  packages:        read            # download query packs
 
 jobs:
   analyze:
@@ -54,7 +53,7 @@ jobs:
       uses: actions/checkout@v4
 
     # -------------------------------------------------------------
-    # 1️⃣  Optional setup – runtimes for specific languages
+    # 1️⃣  Optional runtimes (harmless for interpreted languages)
     # -------------------------------------------------------------
     - name: 🐍 Setup Python
       if: matrix.language == 'python'
@@ -76,18 +75,17 @@ jobs:
       with:
         languages: ${{ matrix.language }}
         dependency-caching: true
-        queries: |
-          +security-extended
-          +security-and-quality
+        # NOTE: Comma-separated list — no "+" prefix needed
+        queries: security-extended,security-and-quality
 
     # -------------------------------------------------------------
-    # 3️⃣  Manual build step (not needed for JS/Python/Actions)
+    # 3️⃣  Manual build placeholder (not required here)
     # -------------------------------------------------------------
     - if: matrix.build == 'manual'
       name: ⚙️ Manual build (placeholder)
       shell: bash
       run: |
-        echo "Add manual build commands here if needed."
+        echo "Add build commands here for compiled languages."
         exit 1
 
     # -------------------------------------------------------------
