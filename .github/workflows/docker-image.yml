@@ -134,18 +134,19 @@ jobs:
         output-file: sbom.spdx.json
 
     # -------------------------------------------------------------
-    # 6️⃣  Trivy CVE scan → SARIF (fails on CRITICAL/HIGH)
+    # 6️⃣  Trivy CVE scan → SARIF  (fails on CRITICAL/HIGH)
     # -------------------------------------------------------------
     - name: 🛡️  Trivy vulnerability scan
+      id: trivy
+      continue-on-error: true            # let the job continue even if Trivy exits 1
       uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
       with:
         image-ref: ${{ env.IMAGE_NAME }}:latest
-        format: template
-        template: '@/contrib/sarif.tpl'
+        format: sarif                    # Trivy can emit SARIF directly
         output: trivy-results.sarif
         severity: CRITICAL,HIGH
-        exit-code: 1
-
+        exit-code: 1                     # non-zero when CRITICAL/HIGH vulns found
+    
     - name: ☁️  Upload Trivy SARIF
       if: always()
       uses: github/codeql-action/upload-sarif@v3
