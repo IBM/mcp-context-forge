@@ -52,6 +52,9 @@ jobs:
     - name: ⬇️  Checkout code
       uses: actions/checkout@v4
 
+    - name: Enable Content Trust
+      run: |
+        export DOCKER_CONTENT_TRUST=1
     # -------------------------------------------------------------
     # 0️⃣.5️⃣  Derive lower-case IMAGE_NAME for Docker tag
     # -------------------------------------------------------------
