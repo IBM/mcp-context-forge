@@ -15,6 +15,52 @@ MCP Gateway builds on the MCP spec by sitting **in front of** MCP Server or REST
 * **Adapt** arbitrary REST/HTTP APIs into MCP tools with JSON-Schema input validation, retry/rate-limit policies and transparent JSON-RPC invocation
 * **Simplify** deployments with a full admin UI, rich transports, pre-built DX pipelines and production-grade observability
 
+```mermaid
+graph TD
+    subgraph UI_and_Auth
+        UI[🖥️ Admin UI]
+        Auth[🔐 Auth - JWT and Basic]
+        UI --> Core
+        Auth --> Core
+    end
+
+    subgraph Gateway_Core
+        Core[🚪 MCP Gateway Core]
+        Protocol[📡 Protocol - Init Ping Completion]
+        Federation[🌐 Federation Manager]
+        Transports[🔀 Transports - HTTP WS SSE Stdio]
+
+        Core --> Protocol
+        Core --> Federation
+        Core --> Transports
+    end
+
+    subgraph Services
+        Tools[🧰 Tool Service]
+        Resources[📁 Resource Service]
+        Prompts[📝 Prompt Service]
+        Servers[🧩 Server Service]
+
+        Core --> Tools
+        Core --> Resources
+        Core --> Prompts
+        Core --> Servers
+    end
+
+    subgraph Persistence
+        DB[💾 Database - SQLAlchemy]
+        Tools --> DB
+        Resources --> DB
+        Prompts --> DB
+        Servers --> DB
+    end
+
+    subgraph Caching
+        Cache[⚡ Cache - Redis or Memory]
+        Core --> Cache
+    end
+```
+
 ---
 
 ## Features
