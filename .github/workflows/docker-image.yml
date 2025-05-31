@@ -11,7 +11,7 @@
 #   • Scans the image for CRITICAL/HIGH CVEs with Trivy
 #   • Uploads Hadolint, Dockle and Trivy results as SARIF files
 #   • Pushes the image to GitHub Container Registry (GHCR)
-#   • Signs + attests the image with Cosign **key-less (OIDC)**
+#   • Signs & attests the image with Cosign **key-less (OIDC)**
 #
 # Triggers:
 #   • Every push / PR to `main`
@@ -26,16 +26,16 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '17 18 * * 2'   # every Tuesday @ 18:17 UTC
+    - cron: '17 18 * * 2'        # Tuesday @ 18:17 UTC
 
 # -----------------------------------------------------------------
 # GitHub permission scopes for this job
 # -----------------------------------------------------------------
 permissions:
   contents: read
-  packages: write
-  security-events: write
-  actions: read
+  packages: write          # push to ghcr.io with built-in GITHUB_TOKEN
+  security-events: write   # upload SARIF to “Code-scanning alerts”
+  actions: read            # needed by upload-sarif in private repos
 
 jobs:
   build-scan-sign:
@@ -57,14 +57,13 @@ jobs:
     # -------------------------------------------------------------
     - name: 🔍 Dockerfile lint (Hadolint)
       id: hadolint
-      continue-on-error: true                # capture result; fail later
+      continue-on-error: true                # still upload SARIF on failure
       run: |
-        set -e
         curl -sSL https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint
         chmod +x /usr/local/bin/hadolint
-        # Run lint; exit code >0 on rule violations
         hadolint -f sarif Containerfile.lite > hadolint-results.sarif
         echo "HADOLINT_EXIT=$?" >> "$GITHUB_ENV"
+        exit 0                               # ensure step reports success
 
     - name: ☁️  Upload Hadolint SARIF
       if: always()
@@ -82,9 +81,8 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ${{ env.CACHE_DIR }}
-        key: ${{ runner.os }}-buildx-${{ github.sha }}
-        restore-keys: |
-          ${{ runner.os }}-buildx-
+        key:  ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: ${{ runner.os }}-buildx-
 
     # -------------------------------------------------------------
     # 3️⃣  Build & tag image (timestamp + latest)
@@ -92,13 +90,15 @@ jobs:
     - name: 🏗️  Build Docker image
       run: |
         TAG=$(date +%s)
+        echo "TAG=$TAG" >> "$GITHUB_ENV"     # reuse in push step
         docker buildx build \
           --file Containerfile.lite \
           --tag $IMAGE_NAME:$TAG \
           --tag $IMAGE_NAME:latest \
           --cache-from type=local,src=${{ env.CACHE_DIR }} \
           --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
-          --load
+          --load \
+          .                                  # build context is mandatory
 
     # -------------------------------------------------------------
     # 4️⃣  Image lint (Dockle CLI → SARIF)
@@ -109,14 +109,14 @@ jobs:
       env:
         DOCKLE_VERSION: 0.4.15
       run: |
-        set -e
         curl -sSL "https://github.com/goodwithtech/dockle/releases/download/v${DOCKLE_VERSION}/dockle_${DOCKLE_VERSION}_Linux-64bit.tar.gz" \
           | tar -xz -C /usr/local/bin dockle
         dockle --exit-code 1 \
-              --format sarif \
-              --output dockle-results.sarif \
-              $IMAGE_NAME:latest || true
+               --format sarif \
+               --output dockle-results.sarif \
+               $IMAGE_NAME:latest
         echo "DOCKLE_EXIT=$?" >> "$GITHUB_ENV"
+        exit 0
 
     - name: ☁️  Upload Dockle SARIF
       if: always()
@@ -138,15 +138,15 @@ jobs:
     # -------------------------------------------------------------
     - name: 🛡️  Trivy vulnerability scan
       id: trivy
-      continue-on-error: true            # let the job continue even if Trivy exits 1
+      continue-on-error: true                # allow SARIF upload
       uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
       with:
         image-ref: ${{ env.IMAGE_NAME }}:latest
-        format: sarif                    # Trivy can emit SARIF directly
+        format: sarif
         output: trivy-results.sarif
         severity: CRITICAL,HIGH
-        exit-code: 1                     # non-zero when CRITICAL/HIGH vulns found
-    
+        exit-code: 1                         # non-zero on vulns
+
     - name: ☁️  Upload Trivy SARIF
       if: always()
       uses: github/codeql-action/upload-sarif@v3
@@ -154,7 +154,7 @@ jobs:
         sarif_file: trivy-results.sarif
 
     # -------------------------------------------------------------
-    # 7️⃣  Push both tags to GHCR (using built-in GITHUB_TOKEN)
+    # 7️⃣  Push both tags to GHCR (built-in GITHUB_TOKEN)
     # -------------------------------------------------------------
     - name: 🔑 Log in to GHCR
       uses: docker/login-action@v3
@@ -165,8 +165,7 @@ jobs:
 
     - name: 🚀 Push image to GHCR
       run: |
-        TIMESTAMP_TAG=$(docker images --format '{{.Tag}}' $IMAGE_NAME | grep -v latest)
-        docker push $IMAGE_NAME:$TIMESTAMP_TAG
+        docker push $IMAGE_NAME:${{ env.TAG }}
         docker push $IMAGE_NAME:latest
 
     # -------------------------------------------------------------
@@ -177,17 +176,21 @@ jobs:
 
     - name: 🔏 Sign & attest image
       env:
-        COSIGN_EXPERIMENTAL: "1"   # enable key-less OIDC flow
+        COSIGN_EXPERIMENTAL: "1"             # enable OIDC flow
       run: |
         cosign sign   --yes $IMAGE_NAME:latest
         cosign attest --yes --predicate sbom.spdx.json $IMAGE_NAME:latest
 
     # -------------------------------------------------------------
-    # 9️⃣  Fail job if any linter exit codes captured non-zero
+    # 9️⃣  Single gate – fail job on any scanner error
     # -------------------------------------------------------------
-    - name: ⛔ Enforce lint gates
-      if: ${{ env.HADOLINT_EXIT != '0' || env.DOCKLE_EXIT != '0' }}
+    - name: ⛔ Enforce lint & vuln gates
+      if: |
+        env.HADOLINT_EXIT != '0' ||
+        env.DOCKLE_EXIT   != '0' ||
+        steps.trivy.outcome == 'failure'
       run: |
         echo "Hadolint exit: $HADOLINT_EXIT"
         echo "Dockle  exit: $DOCKLE_EXIT"
+        echo "Trivy   status: ${{ steps.trivy.outcome }}"
         exit 1
