@@ -1,8 +1,11 @@
-# .github/codeql-config.yml
-paths-ignore:
-  - tests/**
+name: "CodeQL config"
 queries:
-  - exclude:
-      id: js/useless-assignment
-  - exclude:
-      id: js/useless-assignment-to-local
+  - name: Run custom queries
+    uses: ./queries
+  # Run all extra query suites
+  - uses: security-experimental
+  - uses: security-extended
+  - uses: security-and-quality
+paths-ignore:
+  - tests
+  - docs
