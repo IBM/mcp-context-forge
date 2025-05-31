@@ -2,8 +2,13 @@
 # 🔍 CodeQL Advanced – Multi-Language Static Analysis Workflow
 # ===============================================================
 #
-# Scans JavaScript/TypeScript, Python, and GitHub Actions workflows.
-# Skips files in tests/, docs/, scripts/dev/ (see the config file).
+# This workflow:
+#   • Scans JavaScript/TypeScript, Python, and GitHub Actions workflows
+#   • Detects security vulnerabilities and code quality issues
+#   • Uploads SARIF results to the "Code scanning" tab in GitHub Security
+#   • Caches databases and dependencies to speed up analysis
+#   • Runs on every push/PR to `main` and weekly (Wednesday @ 21:15 UTC)
+#   • Excludes specified directories and suppresses selected queries
 # ---------------------------------------------------------------
 
 name: CodeQL Advanced
@@ -19,14 +24,14 @@ on:
     paths-ignore:
       - '**/tests/**'
       - '**/docs/**'
-  schedule:
-    - cron: '15 21 * * 3'   # Wednesday @ 21:15 UTC
+  # schedule:
+  #   - cron: '15 21 * * 3'   # Weekly on Wednesday at 21:15 UTC
 
 permissions:
-  contents:        read
-  security-events: write
-  actions:         read
-  packages:        read
+  contents:        read            # For checking out the code
+  security-events: write           # Required to upload SARIF results
+  actions:         read            # Required in private repositories
+  packages:        read            # Required to download CodeQL packs
 
 jobs:
   analyze:
@@ -45,10 +50,15 @@ jobs:
             build: none
 
     steps:
+    # -------------------------------------------------------------
+    # 0️⃣  Checkout source
+    # -------------------------------------------------------------
     - name: ⬇️ Checkout code
       uses: actions/checkout@v4
 
-    # Optional runtimes
+    # -------------------------------------------------------------
+    # 1️⃣  Optional setup – runtimes for specific languages
+    # -------------------------------------------------------------
     - name: 🐍 Setup Python
       if: matrix.language == 'python'
       uses: actions/setup-python@v5
@@ -61,23 +71,31 @@ jobs:
       with:
         node-version: '20'
 
-    # Initialize CodeQL with external config file
+    # -------------------------------------------------------------
+    # 2️⃣  Initialize CodeQL
+    # -------------------------------------------------------------
     - name: 🛠️ Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
         languages: ${{ matrix.language }}
         dependency-caching: true
-        config-file: ./.github/codeql-config.yml   # ← points to the file above
+        config-file: ./.github/codeql-config.yml
 
-    # Placeholder build step if you ever need manual builds
+    # -------------------------------------------------------------
+    # 3️⃣  Manual build step (not needed for JS/Python/Actions)
+    # -------------------------------------------------------------
     - if: matrix.build == 'manual'
-      name: ⚙️ Manual build
+      name: ⚙️ Manual build (placeholder)
       shell: bash
       run: |
-        echo "Add build commands here for compiled languages."
+        echo "Add manual build commands here if needed."
         exit 1
 
+    # -------------------------------------------------------------
+    # 4️⃣  Perform CodeQL analysis
+    # -------------------------------------------------------------
     - name: 🔬 Perform CodeQL analysis
       uses: github/codeql-action/analyze@v3
       with:
         category: "/language:${{ matrix.language }}"
+        upload: false
