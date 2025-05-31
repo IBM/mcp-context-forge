@@ -30,6 +30,52 @@ A flexible FastAPI-based gateway and router for **Model Context Protocol (MCP)**
 - **Security**: JWT and Basic Auth, rate limits, SSL validation
 - **Caching & Observability**: In-memory or Redis/database-backed LRU+TTL caching, structured logs
 
+```mermaid
+graph TD
+    subgraph UI_and_Auth
+        UI[🖥️ Admin UI]
+        Auth[🔐 Auth - JWT and Basic]
+        UI --> Core
+        Auth --> Core
+    end
+
+    subgraph Gateway_Core
+        Core[🚪 MCP Gateway Core]
+        Protocol[📡 Protocol - Init Ping Completion]
+        Federation[🌐 Federation Manager]
+        Transports[🔀 Transports - HTTP WS SSE Stdio]
+
+        Core --> Protocol
+        Core --> Federation
+        Core --> Transports
+    end
+
+    subgraph Services
+        Tools[🧰 Tool Service]
+        Resources[📁 Resource Service]
+        Prompts[📝 Prompt Service]
+        Servers[🧩 Server Service]
+
+        Core --> Tools
+        Core --> Resources
+        Core --> Prompts
+        Core --> Servers
+    end
+
+    subgraph Persistence
+        DB[💾 Database - SQLAlchemy]
+        Tools --> DB
+        Resources --> DB
+        Prompts --> DB
+        Servers --> DB
+    end
+
+    subgraph Caching
+        Cache[⚡ Cache - Redis or Memory]
+        Core --> Cache
+    end
+```
+
 ---
 
 ## Audience
