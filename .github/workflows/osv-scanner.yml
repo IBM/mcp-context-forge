@@ -1,0 +1,71 @@
+# ===============================================================
+# 🛡️  OSV-Scanner – Open-Source Vulnerability Scan Workflow
+# ===============================================================
+#
+# This workflow:
+#   • **scan-pr** ─ Diffs dependency changes in every PR / merge-queue
+#                   and fails only if the PR introduces *new* vulns.
+#   • **scan-scheduled** ─ Runs a full scan of the default branch
+#                   on pushes & weekly cron to catch newly-published CVEs.
+#   • Uploads SARIF results to “Security → Code scanning”.
+#
+# Action reference:
+#   • Docs:  https://google.github.io/osv-scanner/github-action/
+#   • Repo:  https://github.com/google/osv-scanner-action  (Apache-2.0)
+#
+# Tips:
+#   • Ignore a CVE by creating .osv-scanner.toml or using --ignore-vuln.
+#   • Add “--skip-git” so the scan isn’t cluttered with .git metadata.
+# ===============================================================
+
+name: OSV-Scanner
+
+on:
+  # ───────── Pull-request diff scan ─────────
+  pull_request:
+    branches: [ "main" ]
+  merge_group:
+    branches: [ "main" ]
+
+  # ───────── Full scans ─────────
+  push:
+    branches: [ "main" ]
+  schedule:
+    - cron: '20 22 * * 0'   # Sunday @ 22:20 UTC
+
+# -----------------------------------------------------------------
+# Least-privilege permissions
+# -----------------------------------------------------------------
+permissions:
+  contents:        read          # checkout / version diff
+  security-events: write         # upload SARIF results
+  actions:         read          # needed by upload-sarif for private repos
+
+jobs:
+  # =============================================================
+  # 1️⃣  Full scan on push / cron
+  # =============================================================
+  scan-scheduled:
+    if: ${{ github.event_name == 'push' || github.event_name == 'schedule' }}
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@1f124291d8a60496dd1874b24b62b2370ed4c78"  # v1.7.1
+    with:
+      # CLI flags (line-split)
+      scan-args: |-
+        -r              # recurse into sub-dirs
+        --skip-git      # ignore .git dir
+        ./              # repo root
+
+  # =============================================================
+  # 2️⃣  Diff scan on PR / merge-queue
+  #     Fails if the PR adds *new* vulns vs. base branch
+  # =============================================================
+  scan-pr:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@1f124291d8a60496dd1874b24b62b2370ed4c78"  # v1.7.1
+    with:
+      scan-args: |-
+        -r
+        --skip-git
+        ./
+      # Fail the check when new vulns are introduced (default true)
+      fail-on-vuln: true
