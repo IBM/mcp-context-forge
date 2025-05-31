@@ -121,7 +121,7 @@ docker logs mcpgateway
 ### Generate a token for API access
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080)
+export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
 ```
 
 ### Smoke-test the running container
@@ -138,15 +138,45 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 The mcpgateway-wrapper lets you connect to the gateway over stdio.
 
 ```bash
-docker run -d --name mcpgateway-wrapper \
+docker run -i --name mcpgateway-wrapper \
   --entrypoint uv \
   -e UV_CACHE_DIR=/tmp/uv-cache \
   -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444 \
   -e MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN \
   ghcr.io/ibm/mcp-context-forge:latest \
-  run mcpgateway-wrapper
+  run --directory mcpgateway-wrapper mcpgateway-wrapper
 ```
 
+### Running from a MCP Client
+
+```json
+{
+  "servers": {
+    "mcpgateway-wrapper": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/1",
+        "-e",
+        "MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}",
+        "--entrypoint",
+        "uv",        
+        "ghcr.io/ibm/mcp-context-forge:latest",
+        "run",
+        "--directory",
+        "mcpgateway-wrapper",        
+        "mcpgateway-wrapper"
+      ],
+      "env": {
+        "MCPGATEWAY_BEARER_TOKEN": "${MCPGATEWAY_BEARER_TOKEN}"
+      }
+    }
+  }
+}
+```
 ---
 
 ## Quick Start (manual install)
