@@ -52,10 +52,6 @@ jobs:
     - name: ⬇️  Checkout code
       uses: actions/checkout@v4
 
-    - name: Enable Content Trust
-      run: |
-        echo "DOCKER_CONTENT_TRUST=1" >> "$GITHUB_ENV"
-
     # -------------------------------------------------------------
     # 0️⃣.5️⃣  Derive lower-case IMAGE_NAME for Docker tag
     # -------------------------------------------------------------
@@ -100,6 +96,8 @@ jobs:
     # 3️⃣  Build & tag image (timestamp + latest)
     # -------------------------------------------------------------
     - name: 🏗️  Build Docker image
+      env:
+        DOCKER_CONTENT_TRUST: "1"
       run: |
         TAG=$(date +%s)
         echo "TAG=$TAG" >> "$GITHUB_ENV"
@@ -173,6 +171,8 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: 🚀  Push image to GHCR
+      env:
+        DOCKER_CONTENT_TRUST: "1"
       run: |
         docker push $IMAGE_NAME:${{ env.TAG }}
         docker push $IMAGE_NAME:latest
@@ -190,7 +190,7 @@ jobs:
         for REF in $IMAGE_NAME:latest $IMAGE_NAME:${{ env.TAG }}; do
           echo "🔑 Signing $REF"
           cosign sign --yes "$REF"
-          
+
           echo "📝 Attesting SBOM for $REF"
           cosign attest --yes \
                        --predicate sbom.spdx.json \
