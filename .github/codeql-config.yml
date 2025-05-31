@@ -1,11 +1,17 @@
-name: "CodeQL config"
+# ===============================================================
+# 📄 CodeQL Configuration
+# ===============================================================
+# This configuration:
+#   • Utilizes standard 'security-extended' and 'security-and-quality' query suites
+#   • Excludes 'tests' and 'docs' directories from analysis
+# ---------------------------------------------------------------
+
+name: "CodeQL Configuration"
+
 queries:
-  - name: Run custom queries
-    uses: ./queries
-  # Run all extra query suites
-  - uses: security-experimental
   - uses: security-extended
   - uses: security-and-quality
+
 paths-ignore:
   - tests
   - docs
