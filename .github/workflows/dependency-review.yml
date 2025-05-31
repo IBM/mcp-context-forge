@@ -74,9 +74,7 @@ jobs:
           SSPL-1.0,
           RPL-1.5,
           OSL-3.0,
-          CPAL-1.0,
-          CeCILL-C,
-          LicenseRef-clearlydefined-OTHER
+          CPAL-1.0
         license-check: true             # (default)
 
         # ───────── UX tweaks ─────────
