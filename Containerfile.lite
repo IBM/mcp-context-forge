@@ -78,8 +78,20 @@ RUN set -euo pipefail \
          python${PYTHON_VERSION} \
     && dnf clean all --installroot="${ROOTFS_PATH}"
 
+# ----------------------------------------------------------------------------
+# Create `python3` symlink in the rootfs for compatibility
+# ----------------------------------------------------------------------------
+RUN ln -s /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH}/usr/bin/python3
+
+# ----------------------------------------------------------------------------
+# Copy application directory into the rootfs and fix permissions for non-root
+# ----------------------------------------------------------------------------
+RUN cp -r /app ${ROOTFS_PATH}/app \
+    && chown -R 1001:0 ${ROOTFS_PATH}/app \
+    && chmod -R g=u ${ROOTFS_PATH}/app
+
 ###########################
-# Runtime stage
+# Final runtime (squashed)
 ###########################
 FROM scratch AS runtime
 
@@ -95,24 +107,18 @@ LABEL maintainer="Mihai Criveti" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # ----------------------------------------------------------------------------
-# Populate the scratch filesystem
-#  - Copy in the minimal Python runtime
-#  - Copy in the application directory
+# Copy the entire prepared root filesystem from the builder stage
 # ----------------------------------------------------------------------------
 COPY --from=builder ${ROOTFS_PATH}/ /
-COPY --from=builder /app /app
 
 # ----------------------------------------------------------------------------
-# Create `python3` symlink for compatibility
+# Ensure our virtual environment binaries have priority in PATH
 # ----------------------------------------------------------------------------
-RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
+ENV PATH="/app/.venv/bin:${PATH}"
 
 # ----------------------------------------------------------------------------
-# Fix permissions for non-root user (1001) and OpenShift compatibility
-# ----------------------------------------------------------------------------
-RUN chown -R 1001:0 /app && chmod -R g=u /app
-
 # Application working directory
+# ----------------------------------------------------------------------------
 WORKDIR /app
 
 # ----------------------------------------------------------------------------
@@ -121,14 +127,9 @@ WORKDIR /app
 EXPOSE 4444
 
 # ----------------------------------------------------------------------------
-# Run as non-root user
+# Run as non-root user (1001)
 # ----------------------------------------------------------------------------
 USER 1001
-
-# ----------------------------------------------------------------------------
-# Ensure our virtual environment binaries have priority in PATH
-# ----------------------------------------------------------------------------
-ENV PATH="/app/.venv/bin:${PATH}"
 
 # ----------------------------------------------------------------------------
 # Entrypoint
