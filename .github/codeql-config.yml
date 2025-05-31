@@ -1,0 +1,8 @@
+# .github/codeql-config.yml
+paths-ignore:
+  - tests/**
+queries:
+  - exclude:
+      id: js/useless-assignment
+  - exclude:
+      id: js/useless-assignment-to-local
