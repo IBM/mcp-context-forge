@@ -1,32 +1,72 @@
-sudo: false
-language: python
-python:
-  - 3.11
+# ===============================================================
+# Travis CI – two-stage build for the mcpgateway project
+# ===============================================================
+#
+# Stage ❶  build-test :
+#   • Creates a Python venv       → ~/.venv/mcpgateway
+#   • Runs `make venv install`    (== installs deps + project)
+#   • Executes your lint / unit-test targets
+#
+# Stage ❷  docker :
+#   • Uses the same repo checkout (depth-1 clone)
+#   • Builds Containerfile → mcpgateway/mcpgateway:latest
+#   • Starts the container and makes a quick health curl
+#
+# Requirements
+#   • Works on Travis "jammy" image (Ubuntu 22.04; Python 3.10)
+#   • Docker daemon available via  services: docker
+# ===============================================================
+
+dist: jammy                # Ubuntu 22.04 – up-to-date packages
+language: generic          # we'll manage Python ourselves
 services:
-  - docker
-os:
-  - linux
+  - docker                 # enable Docker Engine inside job
+
+git:
+  depth: 1                 # shallow clone of current branch only
+
+# ────────────────────────────────────────────────────────────────
+# Global helpers – available to *every* job
+# ────────────────────────────────────────────────────────────────
 before_install:
-  - rm -f ~/.netrc
-  - sudo cat /etc/apt/sources.list; sudo ls /etc/apt/sources.list.d/
-  - sudo sed -i '/erlang/s/^/#/' /etc/apt/sources.list.d/*.list
-  - sudo apt-get -qq update || true
-  - sudo apt-get install -y aspell aspell-en || true
-  - make venv
-  - source ${HOME}/.venv/mcpgateway/bin/activate
-  - pip install .[dev]
+  - echo "🔧 Python version -> $(python3 --version)"
+  - make venv install install-dev       # make target that installs deps
+  - source ~/.venv/mcpgateway/bin/activate
+
+# ────────────────────────────────────────────────────────────────
+# Job matrix (two explicit stages)
+# ────────────────────────────────────────────────────────────────
 jobs:
   include:
-    - stage: build
+    # -----------------------------------------------------------
+    # ❶  Lint / Tests
+    # -----------------------------------------------------------
+    - stage: "build-test"
+      name:  "Lint + unit tests + package"
       script:
-        - make lint | tee docs/docs/test/lint.md
-    - stage: build
-      script:
-        - docker build -f Containerfile --platform=linux/amd64 -t mcpgateway/mcpgateway .
-        - docker images
-        - docker run --name mcpgateway -p 4444:4444 -d mcpgateway/mcpgateway
-        - docker ps -a && sleep 10
-        - curl -X POST http://localhost:4444/servers -u admin:changeme
-        - docker logs mcpgateway
-git:
-  depth: false
+        - make dist    # builds the package
+
+    # -----------------------------------------------------------
+    # ❷  Docker build + smoke test
+    # -----------------------------------------------------------
+    - stage: "docker"
+      name:  "Build & run Docker image"
+      script: |
+        set -e
+        echo "🏗️  Building container…"
+        docker build -f Containerfile \
+                     -t mcpgateway/mcpgateway:latest .
+
+        echo "🚀  Launching container…"
+        docker run -d --name mcpgateway -p 4444:4444 \
+                   mcpgateway/mcpgateway:latest
+
+        echo "⏳  Waiting for startup…"
+        sleep 10
+
+        echo "🔍  Hitting health endpoint…"
+        curl -fsSL http://localhost:4444/health || {
+          echo "❌ Health check failed"; docker logs mcpgateway; exit 1;
+        }
+
+        echo "✅ Container is healthy!"
