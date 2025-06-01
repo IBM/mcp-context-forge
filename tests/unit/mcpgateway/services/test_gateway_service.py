@@ -8,16 +8,13 @@ Authors: Mihai Criveti
 Tests for the Gateway Service implementation.
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate
+from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayError,

@@ -165,11 +165,11 @@ docker run -i --name mcpgateway-wrapper \
         "-e",
         "MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}",
         "--entrypoint",
-        "uv",        
+        "uv",
         "ghcr.io/ibm/mcp-context-forge:latest",
         "run",
         "--directory",
-        "mcpgateway-wrapper",        
+        "mcpgateway-wrapper",
         "mcpgateway-wrapper"
       ],
       "env": {

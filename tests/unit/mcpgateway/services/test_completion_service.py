@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 """
+
 import pytest
 
 from mcpgateway.services.completion_service import (  # :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}

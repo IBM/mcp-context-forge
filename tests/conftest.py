@@ -6,17 +6,16 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 """
+
 import asyncio
 import os
-from typing import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import FastAPI
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
-from mcpgateway.config import Settings, get_settings
+from mcpgateway.config import Settings
 from mcpgateway.db import Base
 
 

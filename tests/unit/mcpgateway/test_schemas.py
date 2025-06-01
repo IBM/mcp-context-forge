@@ -13,14 +13,12 @@ defined in the types.py module.
 import json
 import os
 from datetime import datetime
-from typing import Dict, List
 
 import pytest
 from pydantic import ValidationError
 
 from mcpgateway.types import (
     ClientCapabilities,
-    ContentType,
     CreateMessageResult,
     ImageContent,
     Implementation,

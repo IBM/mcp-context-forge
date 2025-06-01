@@ -8,15 +8,12 @@ Authors: Mihai Criveti
 Tests for the main API endpoints.
 """
 
-import json
 import os
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from mcpgateway.config import settings
 from mcpgateway.schemas import ResourceRead, ServerRead, ToolRead
 from mcpgateway.types import InitializeResult, ResourceContent, ServerCapabilities
 

@@ -8,11 +8,9 @@ Authors: Mihai Criveti
 Tests for server service implementation.
 """
 
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource

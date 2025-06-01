@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 """
+
 import pytest
 
 from mcpgateway.validation.jsonrpc import (

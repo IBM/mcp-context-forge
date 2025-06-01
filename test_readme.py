@@ -14,8 +14,6 @@ import os
 import sys
 from pathlib import Path
 
-import pytest
-
 # Add the parent directory to the path so that we can import the module
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
 

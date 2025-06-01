@@ -59,7 +59,7 @@ jobs:
 
         echo "🚀  Launching container…"
         docker run -d --name mcpgateway -p 4444:4444 \
-                   mcpgateway/mcpgateway:latest
+                   -e HOST=0.0.0.0 mcpgateway/mcpgateway:latest
 
         echo "⏳  Waiting for startup…"
         sleep 10

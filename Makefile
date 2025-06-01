@@ -343,10 +343,10 @@ lint:
 ## --------------------------------------------------------------------------- ##
 autoflake:                          ## 🧹  Strip unused imports / vars
 	autoflake --in-place --remove-all-unused-imports \
-	          --remove-unused-variables -r mcpgateway
+	          --remove-unused-variables -r mcpgateway mcpgateway-wrapper tests
 
 black:                              ## 🎨  Reformat code with black
-	@echo "🎨  black …" && black -l 200 mcpgateway
+	@echo "🎨  black …" && black -l 200 mcpgateway mcpgateway-wrapper tests
 
 isort:                              ## 🔀  Sort imports
 	@echo "🔀  isort …" && isort .
@@ -376,19 +376,19 @@ pre-commit:                         ## 🪄  Run pre-commit hooks
 	pre-commit run --all-files --show-diff-on-failure
 
 ruff:                               ## ⚡  Ruff lint + format
-	ruff check mcpgateway && ruff format mcpgateway
+	ruff check mcpgateway && ruff format mcpgateway mcpgateway-wrapper tests
 
 ty:                                 ## ⚡  Ty type checker
-	ty check mcpgateway
+	ty check mcpgateway mcpgateway-wrapper tests
 
 pyright:                            ## 🏷️  Pyright type-checking
-	pyright mcpgateway
+	pyright mcpgateway mcpgateway-wrapper tests
 
 radon:                              ## 📈  Complexity / MI metrics
-	radon mi -s mcpgateway && \
-	radon cc -s mcpgateway && \
-	radon hal mcpgateway && \
-	radon raw -s mcpgateway
+	radon mi -s mcpgateway mcpgateway-wrapper tests && \
+	radon cc -s mcpgateway mcpgateway-wrapper tests && \
+	radon hal mcpgateway mcpgateway-wrapper tests && \
+	radon raw -s mcpgateway mcpgateway-wrapper tests
 
 pyroma:                             ## 📦  Packaging metadata check
 	pyroma -d .
@@ -445,7 +445,7 @@ sbom:								## 🛡️  Generate SBOM & security report
 
 pytype:								## 🧠  Pytype static type analysis
 	@echo "🧠  Pytype analysis…"
-	pytype -V 3.12 -j auto mcpgateway
+	pytype -V 3.12 -j auto mcpgateway mcpgateway-wrapper tests
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness…"
