@@ -6,13 +6,13 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 """
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from mcpgateway.schemas import ResourceCreate, ResourceRead
 from mcpgateway.services.resource_service import (
-    ResourceError,
     ResourceNotFoundError,
     ResourceService,
     ResourceURIConflictError,

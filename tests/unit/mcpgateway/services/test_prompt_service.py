@@ -8,11 +8,9 @@ Authors: Mihai Criveti
 Tests for prompt service implementation.
 """
 
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptRead, PromptUpdate

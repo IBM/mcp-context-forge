@@ -8,11 +8,9 @@ Authors: Mihai Criveti
 Tests for tool service implementation.
 """
 
-import json
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from mcpgateway.db import Tool as DbTool

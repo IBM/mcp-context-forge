@@ -9,8 +9,7 @@ Tests for the MCP Gateway WebSocket transport implementation.
 """
 
 import asyncio
-import json
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import WebSocket, WebSocketDisconnect
@@ -144,7 +143,6 @@ class TestWebSocketTransport:
         """Test the ping loop with valid response."""
         # Mock dependencies
         with patch("mcpgateway.config.settings") as mock_settings, patch("asyncio.sleep", new_callable=AsyncMock):
-
             # Configure settings
             mock_settings.websocket_ping_interval = 0.1  # Short interval for testing
 

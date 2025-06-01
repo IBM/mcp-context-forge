@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 """
+
 import asyncio
 import os
 from urllib.parse import urlparse
@@ -14,7 +15,6 @@ import pytest
 
 from mcpgateway.config import settings
 from mcpgateway.services.root_service import RootService, RootServiceError
-from mcpgateway.types import Root
 
 
 @pytest.mark.asyncio
@@ -63,7 +63,7 @@ async def test_add_root_duplicate_raises():
 async def test_remove_root_and_list():
     service = RootService()
     uri = "http://example.com/to-remove"
-    root = await service.add_root(uri)
+    await service.add_root(uri)
     # Ensure it's listed
     roots = await service.list_roots()
     assert any(r.uri == uri for r in roots)

@@ -19,16 +19,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from mcpgateway.admin import (
-    GatewayCreate,
-    GatewayUpdate,
-    PromptCreate,
-    PromptUpdate,
-    ResourceCreate,
-    ResourceUpdate,
-    ServerCreate,
-    ServerUpdate,
-    ToolCreate,
-    ToolUpdate,
     admin_add_gateway,
     admin_add_prompt,
     admin_add_resource,
@@ -63,7 +53,6 @@ from mcpgateway.admin import (
     admin_toggle_resource,
     admin_toggle_server,
     admin_toggle_tool,
-    admin_ui,
 )
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.prompt_service import PromptService
@@ -71,7 +60,6 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerNotFoundError, ServerService
 from mcpgateway.services.tool_service import (
-    ToolError,
     ToolNameConflictError,
     ToolService,
 )
