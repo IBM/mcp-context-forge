@@ -496,6 +496,41 @@ format-web: install-web-linters
 	                 "mcpgateway/static/**/*.js"
 
 
+################################################################################
+# 🛡️  OSV-SCANNER  ▸  vulnerabilities scanner
+################################################################################
+# help: osv-install          - Install/upgrade osv-scanner (Go)
+# help: osv-scan-source      - Scan source & lockfiles for CVEs
+# help: osv-scan-image       - Scan the built container image for CVEs
+# help: osv-scan             - Run all osv-scanner checks (source, image, licence)
+
+.PHONY: osv-install osv-scan-source osv-scan-image osv-scan
+
+osv-install:                  ## Install/upgrade osv-scanner
+	go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
+
+# ─────────────── Source directory scan ────────────────────────────────────────
+osv-scan-source:
+	@echo "🔍  osv-scanner source scan…"
+	@osv-scanner scan source --recursive .
+
+# ─────────────── Container image scan ─────────────────────────────────────────
+osv-scan-image:
+	@echo "🔍  osv-scanner image scan…"
+	@CONTAINER_CLI=$$(command -v docker || command -v podman) ; \
+	  if [ -n "$$CONTAINER_CLI" ]; then \
+	    osv-scanner scan image $(DOCKLE_IMAGE) || true ; \
+	  else \
+	    TARBALL=$$(mktemp /tmp/$(PROJECT_NAME)-osvscan-XXXXXX.tar) ; \
+	    podman save --format=docker-archive $(DOCKLE_IMAGE) -o "$$TARBALL" ; \
+	    osv-scanner scan image --archive "$$TARBALL" ; \
+	    rm -f "$$TARBALL" ; \
+	  fi
+
+# ─────────────── Umbrella target ─────────────────────────────────────────────
+osv-scan: osv-scan-source osv-scan-image
+	@echo "✅  osv-scanner checks complete."
+
 # =============================================================================
 # 📡 SONARQUBE ANALYSIS (SERVER + SCANNERS)
 # =============================================================================
@@ -983,7 +1018,7 @@ docker-shell:
 # help: compose-pull         - Pull the latest images only
 # help: compose-logs         - Tail logs from all services (Ctrl-C to exit)
 # help: compose-ps           - Show container status table
-# help: compose-shell        - Open an interactive shell in the “gateway” container
+# help: compose-shell        - Open an interactive shell in the "gateway" container
 # help: compose-stop         - Gracefully stop the stack (keep containers)
 # help: compose-down         - Stop & remove containers (keep named volumes)
 # help: compose-rm           - Remove *stopped* containers
