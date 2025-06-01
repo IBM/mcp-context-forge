@@ -1,0 +1,8 @@
+# All files in the repo
+* @crivetimihai
+
+# Ownership for the mcpgateway-wrapper
+/mcpgateway-wrapper/ @crivetimihai @kevalmahajan @madhav165
+
+# Ownership for all tests
+/tests/ @crivetimihai @kevalmahajan @madhav165
