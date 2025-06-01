@@ -18,26 +18,26 @@ Feel free to include feature requests to develop new components, MCP servers, to
 
 Please select the most appropriate category:
 
-- [ ] Enhancement to existing functionality 
-- [ ] New feature or capability 
-- [ ] New MCP-compliant server 
-- [ ] New component or integration 
-- [ ] Developer tooling or test improvement 
+- [ ] Enhancement to existing functionality
+- [ ] New feature or capability
+- [ ] New MCP-compliant server
+- [ ] New component or integration
+- [ ] Developer tooling or test improvement
 - [ ] Packaging, automation and deployment (ex: pypi, docker, quay.io, kubernetes, terraform)
 - [ ] Other (please describe below)
 
 ### 🧭 Epic
 
-**Title:** <High-level feature or capability>  
-**Goal:** What is the big-picture objective of this feature set?  
+**Title:** <High-level feature or capability>
+**Goal:** What is the big-picture objective of this feature set?
 **Why now:** Why is this needed? Who benefits?
 
 ---
 
 ### 🙋‍♂️ User Story 1
 
-**As a:** <type of user>  
-**I want:** <some goal>  
+**As a:** <type of user>
+**I want:** <some goal>
 **So that:** <some reason / value>
 
 #### ✅ Acceptance Criteria
@@ -57,8 +57,8 @@ Scenario: Second scenario title
 
 ### 🙋‍♂️ User Story 2
 
-**As a:** <another type of user>  
-**I want:** <a different goal>  
+**As a:** <another type of user>
+**I want:** <a different goal>
 **So that:** <a different reason>
 
 #### ✅ Acceptance Criteria
