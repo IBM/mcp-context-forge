@@ -1,0 +1,12 @@
+title: Decision Records
+nav:
+  - 1 Adopt FastAPI + Pydantic: 001-adopt-fastapi-pydantic.md
+  - 2 Use Async SQLAlchemy ORM: 002-use-async-sqlalchemy-orm.md
+  - 3 Expose Multi-Transport Endpoints: 003-expose-multi-transport-endpoints.md
+  - 4 Combine JWT & Basic Auth: 004-combine-jwt-and-basic-auth.md
+  - 5 Structured JSON Logging: 005-structured-json-logging.md
+  - 6 Gateway & Tool-Level Rate Limiting: 006-gateway-tool-rate-limiting.md
+  - 7 Pluggable Cache Backend: 007-pluggable-cache-backend.md
+  - 8 Federation & Auto-Discovery via DNS-SD: 008-federation-discovery.md
+  - 9 Built-in Health Checks: 000-built-in-health-checks.md
+  - 10 Observability via Prometheus: 010-observability-prometheus.md
