@@ -38,13 +38,13 @@ What should have happened instead?
 
 ---
 
-### 📓 Logs / Error Output  
-Paste any relevant stack traces or logs here.  
+### 📓 Logs / Error Output
+Paste any relevant stack traces or logs here.
 ⚠️ **Do not paste secrets, credentials, or tokens.**
 
 ---
 
-### 🧠 Environment Info  
+### 🧠 Environment Info
 You can retrieve most of this from the `/version` endpoint.
 
 | Key | Value |
