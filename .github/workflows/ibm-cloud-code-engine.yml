@@ -3,24 +3,38 @@
 # ===============================================================
 #
 # This workflow:
-#   • Restores / updates a local BuildKit layer cache  ❄️
-#   • Builds the Docker image (Containerfile.lite)     🏗️
-#   • Pushes it to IBM Container Registry (ICR)        📤
-#   • Creates or updates a Code Engine app             🚀
+#   • Restores / updates a local **BuildKit layer cache**  ❄️
+#   • Builds the Docker image from **Containerfile.lite**  🏗️
+#   • Pushes the image to **IBM Container Registry (ICR)** 📤
+#   • Creates / updates an **IBM Cloud Code Engine** app   🚀
 #
-# All sensitive values are read from GitHub **repository secrets**
-# ┌────────────────────────────┬────────────────────────────────┐
-# │ Secret name                │ Example value                  │
-# ├────────────────────────────┼────────────────────────────────┤
-# │ IBM_CLOUD_API_KEY          │ abcdef-123456…                 │
-# │ IBM_CLOUD_REGION           │ us-south                       │
-# │ ICR_NAMESPACE              │ myspace                        │
-# │ REGISTRY_HOSTNAME          │ us.icr.io                      │
-# │ APP_NAME                   │ mcpgateway                     │
-# │ CODE_ENGINE_PROJECT        │ my-ce-project                  │
-# │ CODE_ENGINE_REGISTRY_SECRET│ my-registry-secret             │
-# │ CODE_ENGINE_PORT           │ "4444"                         │
-# └────────────────────────────┴────────────────────────────────┘
+# ---------------------------------------------------------------
+# Required repository **secret**
+# ---------------------------------------------------------------
+#  ┌────────────────────┬──────────────────────────────────────┐
+#  │ Secret name        │ Example value                        │
+#  ├────────────────────┼──────────────────────────────────────┤
+#  │ IBM_CLOUD_API_KEY  │ abcdef-1234567890abcdef-1234567890   │
+#  └────────────────────┴──────────────────────────────────────┘
+#
+# ---------------------------------------------------------------
+# Required repository **variables**
+# ---------------------------------------------------------------
+#  ┌────────────────────────────┬──────────────────────────────┐
+#  │ Variable name              │ Example value                │
+#  ├────────────────────────────┼──────────────────────────────┤
+#  │ IBM_CLOUD_REGION           │ us-south                     │
+#  │ REGISTRY_HOSTNAME          │ us.icr.io                    │
+#  │ ICR_NAMESPACE              │ myspace                      │
+#  │ APP_NAME                   │ mcpgateway                   │
+#  │ CODE_ENGINE_PROJECT        │ my-ce-project                │
+#  │ CODE_ENGINE_REGISTRY_SECRET│ my-registry-secret           │
+#  │ CODE_ENGINE_PORT           │ "4444"                       │
+#  └────────────────────────────┴──────────────────────────────┘
+# * Note: CODE_ENGINE_REGISTRY_SECRET is the name of the secret, 
+#         not the secret value.
+# Triggers:
+#   • Every push to `main`
 # ---------------------------------------------------------------
 
 name: Deploy to IBM Code Engine
@@ -29,31 +43,37 @@ on:
   push:
     branches: [ "main" ]
 
+# -----------------------------------------------------------------
+# Minimal permissions (Principle of Least Privilege)
+# -----------------------------------------------------------------
 permissions:
-  contents: read            # least-privilege
+  contents: read
 
+# -----------------------------------------------------------------
+# Global environment (secrets & variables)
+# -----------------------------------------------------------------
 env:
   # Build metadata
-  GITHUB_SHA: ${{ github.sha }}
-  CACHE_DIR:  /tmp/.buildx-cache      # BuildKit layer cache dir
+  GITHUB_SHA:   ${{ github.sha }}
+  CACHE_DIR:    /tmp/.buildx-cache           # BuildKit layer cache dir
 
-  # IBM Cloud auth / region
+  # IBM Cloud authentication (secret) & region (variable)
   IBM_CLOUD_API_KEY: ${{ secrets.IBM_CLOUD_API_KEY }}
-  IBM_CLOUD_REGION:  ${{ secrets.IBM_CLOUD_REGION }}
+  IBM_CLOUD_REGION:  ${{ vars.IBM_CLOUD_REGION }}
 
-  # Registry coords
-  REGISTRY_HOSTNAME: ${{ secrets.REGISTRY_HOSTNAME }}
-  ICR_NAMESPACE:     ${{ secrets.ICR_NAMESPACE }}
+  # Registry coordinates (variables)
+  REGISTRY_HOSTNAME: ${{ vars.REGISTRY_HOSTNAME }}
+  ICR_NAMESPACE:     ${{ vars.ICR_NAMESPACE }}
 
-  # Image / app naming
-  IMAGE_NAME: ${{ secrets.APP_NAME }}
-  IMAGE_TAG:  ${{ github.sha }}
+  # Image / app naming (variables)
+  IMAGE_NAME:        ${{ vars.APP_NAME }}
+  IMAGE_TAG:         ${{ github.sha }}
 
-  # Code Engine deployment
-  CODE_ENGINE_APP_NAME:        ${{ secrets.APP_NAME }}
-  CODE_ENGINE_PROJECT:         ${{ secrets.CODE_ENGINE_PROJECT }}
-  CODE_ENGINE_REGISTRY_SECRET: ${{ secrets.CODE_ENGINE_REGISTRY_SECRET }}
-  PORT:                        ${{ secrets.CODE_ENGINE_PORT }}
+  # Code Engine deployment (variables)
+  CODE_ENGINE_APP_NAME:        ${{ vars.APP_NAME }}
+  CODE_ENGINE_PROJECT:         ${{ vars.CODE_ENGINE_PROJECT }}
+  CODE_ENGINE_REGISTRY_SECRET: ${{ vars.CODE_ENGINE_REGISTRY_SECRET }}
+  PORT:                        ${{ vars.CODE_ENGINE_PORT }}
 
 jobs:
   build-push-deploy:
@@ -96,7 +116,7 @@ jobs:
         ibmcloud --version
 
     # -----------------------------------------------------------
-    # 4️⃣  Authenticate to IBM Cloud & select CE project
+    # 4️⃣  Authenticate to IBM Cloud & select Code Engine project
     # -----------------------------------------------------------
     - name: 🔐  IBM Cloud login
       run: |
@@ -106,7 +126,7 @@ jobs:
         ibmcloud ce project select --name "$CODE_ENGINE_PROJECT"
 
     # -----------------------------------------------------------
-    # 5️⃣  Build & tag image (uses cache, updates cache dir)
+    # 5️⃣  Build & tag image (cache-aware)
     # -----------------------------------------------------------
     - name: 🏗️  Build Docker image (with cache)
       run: |
