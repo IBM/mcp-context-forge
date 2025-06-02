@@ -17,20 +17,20 @@
 #   • Docker daemon available via  services: docker
 # ===============================================================
 
-dist: jammy                # Ubuntu 22.04 – up-to-date packages
-language: generic          # we'll manage Python ourselves
+dist: jammy # Ubuntu 22.04 – up-to-date packages
+language: generic # we'll manage Python ourselves
 services:
-  - docker                 # enable Docker Engine inside job
+  - docker # enable Docker Engine inside job
 
 git:
-  depth: 1                 # shallow clone of current branch only
+  depth: 1 # shallow clone of current branch only
 
 # ────────────────────────────────────────────────────────────────
 # Global helpers – available to *every* job
 # ────────────────────────────────────────────────────────────────
 before_install:
   - echo "🔧 Python version -> $(python3 --version)"
-  - make venv install install-dev       # make target that installs deps
+  - make venv install install-dev # make target that installs deps
   - source ~/.venv/mcpgateway/bin/activate
 
 # ────────────────────────────────────────────────────────────────
@@ -42,15 +42,15 @@ jobs:
     # ❶  Lint / Tests
     # -----------------------------------------------------------
     - stage: "build-test"
-      name:  "Lint + unit tests + package"
+      name: "Lint + unit tests + package"
       script:
-        - make dist    # builds the package
+        - make dist # builds the package
 
     # -----------------------------------------------------------
     # ❷  Docker build + smoke test
     # -----------------------------------------------------------
     - stage: "docker"
-      name:  "Build & run Docker image"
+      name: "Build & run Docker image"
       script: |
         set -e
         echo "🏗️  Building container…"

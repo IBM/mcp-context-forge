@@ -25,64 +25,63 @@ name: Dependency Review
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
   # Weekly safety-net run — useful for catching newly-disclosed CVEs
   # or upstream license changes even when no PR is open.
   schedule:
-    - cron: '31 12 * * 6'   # Saturday @ 12:31 UTC
+    - cron: "31 12 * * 6" # Saturday @ 12:31 UTC
 
 # -----------------------------------------------------------------
 # Minimal permissions – principle of least privilege
 # -----------------------------------------------------------------
 permissions:
-  contents:        read          # for actions/checkout
-  security-events: write         # upload SARIF results
-  pull-requests:   write         # post / overwrite PR comment
+  contents: read # for actions/checkout
+  security-events: write # upload SARIF results
+  pull-requests: write # post / overwrite PR comment
 
 jobs:
   dependency-review:
     runs-on: ubuntu-latest
 
     steps:
-    # -----------------------------------------------------------
-    # 0️⃣  Check out the repository
-    # -----------------------------------------------------------
-    - name: ⬇️  Checkout code
-      uses: actions/checkout@v4
+      # -----------------------------------------------------------
+      # 0️⃣  Check out the repository
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v4
 
-    # -----------------------------------------------------------
-    # 1️⃣  Dependency & License gate
-    # -----------------------------------------------------------
-    - name: 🔍  Dependency Review
-      id: dep-scan
-      uses: actions/dependency-review-action@v4
-      with:
-        # ───────── Vulnerability policy ─────────
-        fail-on-severity: moderate      # MODERATE, HIGH, CRITICAL ⇒ ❌
-        vulnerability-check: true       # (default)
+      # -----------------------------------------------------------
+      # 1️⃣  Dependency & License gate
+      # -----------------------------------------------------------
+      - name: 🔍  Dependency Review
+        id: dep-scan
+        uses: actions/dependency-review-action@v4
+        with:
+          # ───────── Vulnerability policy ─────────
+          fail-on-severity: moderate # MODERATE, HIGH, CRITICAL ⇒ ❌
+          vulnerability-check: true # (default)
 
-        # ───────── License policy ─────────
-        # Hard-deny strong- or service-copyleft licenses that would
-        # "infect" an Apache-2.0 project.  (LGPL/MPL/EPL are *not*
-        # listed — they’re weak/file-level copyleft.  Add them here
-        # if your org chooses to forbid them outright.)
-        deny-licenses: >
-          GPL-1.0, GPL-2.0, GPL-3.0,
-          AGPL-3.0,
-          SSPL-1.0,
-          RPL-1.5,
-          OSL-3.0,
-          CPAL-1.0
-        license-check: true             # (default)
+          # ───────── License policy ─────────
+          # Hard-deny strong- or service-copyleft licenses that would
+          # "infect" an Apache-2.0 project.  (LGPL/MPL/EPL are *not*
+          # listed — they’re weak/file-level copyleft.  Add them here
+          # if your org chooses to forbid them outright.)
+          deny-licenses: >
+            GPL-1.0, GPL-2.0, GPL-3.0,
+            AGPL-3.0,
+            SSPL-1.0,
+            RPL-1.5,
+            OSL-3.0,
+            CPAL-1.0
+          license-check: true # (default)
+          # ───────── UX tweaks ─────────
+          warn-only: false # actually fail the workflow
+          comment-summary-in-pr: on-failure
 
-        # ───────── UX tweaks ─────────
-        warn-only: false                # actually fail the workflow
-        comment-summary-in-pr: on-failure
-
-        # ───────── Refs for non-PR events ─────────
-        # These are ignored on pull_request events but allow the
-        # scheduled run to compare HEAD against `main`.
-        base-ref: main
-        head-ref: ${{ github.sha }}
+          # ───────── Refs for non-PR events ─────────
+          # These are ignored on pull_request events but allow the
+          # scheduled run to compare HEAD against `main`.
+          base-ref: main
+          head-ref: ${{ github.sha }}

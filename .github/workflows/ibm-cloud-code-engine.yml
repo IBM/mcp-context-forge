@@ -41,7 +41,7 @@ name: Deploy to IBM Code Engine
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 # -----------------------------------------------------------------
 # Minimal permissions (Principle of Least Privilege)
@@ -54,26 +54,26 @@ permissions:
 # -----------------------------------------------------------------
 env:
   # Build metadata
-  GITHUB_SHA:   ${{ github.sha }}
-  CACHE_DIR:    /tmp/.buildx-cache           # BuildKit layer cache dir
+  GITHUB_SHA: ${{ github.sha }}
+  CACHE_DIR: /tmp/.buildx-cache # BuildKit layer cache dir
 
   # IBM Cloud authentication (secret) & region (variable)
   IBM_CLOUD_API_KEY: ${{ secrets.IBM_CLOUD_API_KEY }}
-  IBM_CLOUD_REGION:  ${{ vars.IBM_CLOUD_REGION }}
+  IBM_CLOUD_REGION: ${{ vars.IBM_CLOUD_REGION }}
 
   # Registry coordinates (variables)
   REGISTRY_HOSTNAME: ${{ vars.REGISTRY_HOSTNAME }}
-  ICR_NAMESPACE:     ${{ vars.ICR_NAMESPACE }}
+  ICR_NAMESPACE: ${{ vars.ICR_NAMESPACE }}
 
   # Image / app naming (variables)
-  IMAGE_NAME:        ${{ vars.APP_NAME }}
-  IMAGE_TAG:         ${{ github.sha }}
+  IMAGE_NAME: ${{ vars.APP_NAME }}
+  IMAGE_TAG: ${{ github.sha }}
 
   # Code Engine deployment (variables)
-  CODE_ENGINE_APP_NAME:        ${{ vars.APP_NAME }}
-  CODE_ENGINE_PROJECT:         ${{ vars.CODE_ENGINE_PROJECT }}
+  CODE_ENGINE_APP_NAME: ${{ vars.APP_NAME }}
+  CODE_ENGINE_PROJECT: ${{ vars.CODE_ENGINE_PROJECT }}
   CODE_ENGINE_REGISTRY_SECRET: ${{ vars.CODE_ENGINE_REGISTRY_SECRET }}
-  PORT:                        ${{ vars.CODE_ENGINE_PORT }}
+  PORT: ${{ vars.CODE_ENGINE_PORT }}
 
 jobs:
   build-push-deploy:
@@ -82,93 +82,93 @@ jobs:
     environment: production
 
     steps:
-    # -----------------------------------------------------------
-    # 0️⃣  Checkout repository
-    # -----------------------------------------------------------
-    - name: ⬇️  Checkout source
-      uses: actions/checkout@v4
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout repository
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout source
+        uses: actions/checkout@v4
 
-    # -----------------------------------------------------------
-    # 1️⃣  Set up Docker Buildx
-    # -----------------------------------------------------------
-    - name: 🛠️  Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      # -----------------------------------------------------------
+      # 1️⃣  Set up Docker Buildx
+      # -----------------------------------------------------------
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    # -----------------------------------------------------------
-    # 2️⃣  Restore BuildKit layer cache
-    # -----------------------------------------------------------
-    - name: 🔄  Restore BuildKit cache
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.CACHE_DIR }}
-        key:  ${{ runner.os }}-buildx-${{ github.sha }}
-        restore-keys: ${{ runner.os }}-buildx-
+      # -----------------------------------------------------------
+      # 2️⃣  Restore BuildKit layer cache
+      # -----------------------------------------------------------
+      - name: 🔄  Restore BuildKit cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CACHE_DIR }}
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-buildx-
 
-    # -----------------------------------------------------------
-    # 3️⃣  Install IBM Cloud CLI + plugins
-    # -----------------------------------------------------------
-    - name: 🧰  Install IBM Cloud CLI
-      run: |
-        curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
-        ibmcloud config --check-version=false
-        ibmcloud plugin install -f container-registry
-        ibmcloud plugin install -f code-engine
-        ibmcloud --version
+      # -----------------------------------------------------------
+      # 3️⃣  Install IBM Cloud CLI + plugins
+      # -----------------------------------------------------------
+      - name: 🧰  Install IBM Cloud CLI
+        run: |
+          curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+          ibmcloud config --check-version=false
+          ibmcloud plugin install -f container-registry
+          ibmcloud plugin install -f code-engine
+          ibmcloud --version
 
-    # -----------------------------------------------------------
-    # 4️⃣  Authenticate to IBM Cloud & select Code Engine project
-    # -----------------------------------------------------------
-    - name: 🔐  IBM Cloud login
-      run: |
-        ibmcloud login --apikey "$IBM_CLOUD_API_KEY" -r "$IBM_CLOUD_REGION" -g default
-        ibmcloud cr region-set "$IBM_CLOUD_REGION"
-        ibmcloud cr login
-        ibmcloud ce project select --name "$CODE_ENGINE_PROJECT"
+      # -----------------------------------------------------------
+      # 4️⃣  Authenticate to IBM Cloud & select Code Engine project
+      # -----------------------------------------------------------
+      - name: 🔐  IBM Cloud login
+        run: |
+          ibmcloud login --apikey "$IBM_CLOUD_API_KEY" -r "$IBM_CLOUD_REGION" -g default
+          ibmcloud cr region-set "$IBM_CLOUD_REGION"
+          ibmcloud cr login
+          ibmcloud ce project select --name "$CODE_ENGINE_PROJECT"
 
-    # -----------------------------------------------------------
-    # 5️⃣  Build & tag image (cache-aware)
-    # -----------------------------------------------------------
-    - name: 🏗️  Build Docker image (with cache)
-      run: |
-        docker buildx build \
-          --file Containerfile.lite \
-          --tag "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
-          --cache-from type=local,src=${{ env.CACHE_DIR }} \
-          --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
-          --load \
-          .
+      # -----------------------------------------------------------
+      # 5️⃣  Build & tag image (cache-aware)
+      # -----------------------------------------------------------
+      - name: 🏗️  Build Docker image (with cache)
+        run: |
+          docker buildx build \
+            --file Containerfile.lite \
+            --tag "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
+            --cache-from type=local,src=${{ env.CACHE_DIR }} \
+            --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
+            --load \
+            .
 
-    # -----------------------------------------------------------
-    # 6️⃣  Push image to IBM Container Registry
-    # -----------------------------------------------------------
-    - name: 📤  Push image to ICR
-      run: |
-        docker push "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG"
+      # -----------------------------------------------------------
+      # 6️⃣  Push image to IBM Container Registry
+      # -----------------------------------------------------------
+      - name: 📤  Push image to ICR
+        run: |
+          docker push "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG"
 
-    # -----------------------------------------------------------
-    # 7️⃣  Deploy (create or update) Code Engine application
-    # -----------------------------------------------------------
-    - name: 🚀  Deploy to Code Engine
-      run: |
-        if ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME" > /dev/null 2>&1; then
-          echo "🔁 Updating existing application…"
-          ibmcloud ce application update \
-            --name  "$CODE_ENGINE_APP_NAME" \
-            --image "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
-            --registry-secret "$CODE_ENGINE_REGISTRY_SECRET" \
-            --cpu 1 --memory 2G
-        else
-          echo "🆕 Creating new application…"
-          ibmcloud ce application create \
-            --name  "$CODE_ENGINE_APP_NAME" \
-            --image "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
-            --registry-secret "$CODE_ENGINE_REGISTRY_SECRET" \
-            --port  "$PORT" \
-            --cpu 1 --memory 2G
-        fi
+      # -----------------------------------------------------------
+      # 7️⃣  Deploy (create or update) Code Engine application
+      # -----------------------------------------------------------
+      - name: 🚀  Deploy to Code Engine
+        run: |
+          if ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME" > /dev/null 2>&1; then
+            echo "🔁 Updating existing application…"
+            ibmcloud ce application update \
+              --name  "$CODE_ENGINE_APP_NAME" \
+              --image "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
+              --registry-secret "$CODE_ENGINE_REGISTRY_SECRET" \
+              --cpu 1 --memory 2G
+          else
+            echo "🆕 Creating new application…"
+            ibmcloud ce application create \
+              --name  "$CODE_ENGINE_APP_NAME" \
+              --image "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
+              --registry-secret "$CODE_ENGINE_REGISTRY_SECRET" \
+              --port  "$PORT" \
+              --cpu 1 --memory 2G
+          fi
 
-    # -----------------------------------------------------------
-    # 8️⃣  Show deployment status
-    # -----------------------------------------------------------
-    - name: 📈  Display deployment status
-      run: ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME"
+      # -----------------------------------------------------------
+      # 8️⃣  Show deployment status
+      # -----------------------------------------------------------
+      - name: 📈  Display deployment status
+        run: ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME"

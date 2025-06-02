@@ -451,6 +451,39 @@ check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness…"
 	check-manifest
 
+# -----------------------------------------------------------------------------
+# 📑 YAML / JSON / TOML LINTERS
+# -----------------------------------------------------------------------------
+# help: yamllint            - Lint YAML files (uses .yamllint)
+# help: jsonlint            - Validate every *.json file with jq (‐‐exit-status)
+# help: tomllint            - Validate *.toml files with tomlcheck
+#
+# ➊  Add the new linters to the master list
+LINTERS += yamllint jsonlint tomllint
+
+# ➋  Individual targets
+.PHONY: yamllint jsonlint tomllint
+
+yamllint:                         ## 📑 YAML linting
+	@command -v yamllint >/dev/null 2>&1 || { \
+	  echo '❌  yamllint not installed  ➜  pip install yamllint'; exit 1; }
+	@echo '📑  yamllint …' && yamllint -c .yamllint .
+
+jsonlint:                         ## 📑 JSON validation (jq)
+	@command -v jq >/dev/null 2>&1 || { \
+	  echo '❌  jq not installed  ➜  sudo apt-get install jq'; exit 1; }
+	@echo '📑  jsonlint (jq) …'
+	@find . -type f -name '*.json' -not -path './node_modules/*' -print0 \
+	  | xargs -0 -I{} sh -c 'jq empty "{}"' \
+	&& echo '✅  All JSON valid'
+
+tomllint:                         ## 📑 TOML validation (tomlcheck)
+	@command -v tomlcheck >/dev/null 2>&1 || { \
+	  echo '❌  tomlcheck not installed  ➜  pip install tomlcheck'; exit 1; }
+	@echo '📑  tomllint (tomlcheck) …'
+	@find . -type f -name '*.toml' -print0 \
+	  | xargs -0 -I{} tomlcheck "{}"
+
 # =============================================================================
 # 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS
 # =============================================================================
