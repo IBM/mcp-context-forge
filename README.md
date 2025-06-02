@@ -498,7 +498,7 @@ curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/t
 
 ---
 
-## ☁️ AAWS / Azure / OpenShift
+## ☁️ AWS / Azure / OpenShift
 
 Deployment details can be found in the GitHub Pages.
 

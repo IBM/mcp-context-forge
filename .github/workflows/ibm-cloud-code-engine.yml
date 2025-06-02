@@ -31,7 +31,7 @@
 #  │ CODE_ENGINE_REGISTRY_SECRET│ my-registry-secret           │
 #  │ CODE_ENGINE_PORT           │ "4444"                       │
 #  └────────────────────────────┴──────────────────────────────┘
-# * Note: CODE_ENGINE_REGISTRY_SECRET is the name of the secret, 
+# * Note: CODE_ENGINE_REGISTRY_SECRET is the name of the secret,
 #         not the secret value.
 # Triggers:
 #   • Every push to `main`
