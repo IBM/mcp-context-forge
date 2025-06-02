@@ -1,4 +1,4 @@
-# Azure Deployment
+# 🔷 Azure
 
 MCP Gateway can be deployed on Azure in multiple ways:
 
