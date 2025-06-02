@@ -455,7 +455,7 @@ async def admin_ui(
         },
     )
 
-    response.set_cookie(key="jwt_token", value=jwt_token, httponly=True, secure=False, samesite="Strict")  # JavaScript CAN’T read it  # only over HTTPS  # or "Lax" per your needs
+    response.set_cookie(key="jwt_token", value=jwt_token, httponly=True, secure=False, samesite="Strict")  # JavaScript CAN'T read it  # only over HTTPS  # or "Lax" per your needs
     return response
 
 

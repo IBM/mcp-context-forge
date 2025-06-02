@@ -56,7 +56,7 @@ Once Claude launches:
 
 ## 🚀 Advanced: Pre-installed Wrapper Mode
 
-If you’ve published the wrapper to PyPI or have it globally installed:
+If you've published the wrapper to PyPI or have it globally installed:
 
 ```json
 "mcpServers": {

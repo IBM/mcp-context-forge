@@ -1,6 +1,6 @@
 # Gateway Tuning Guide
 
-> This page collects practical levers for squeezing the most performance, reliability, and observability out of **MCP Gateway**—no matter where you run the container (Code Engine, Kubernetes, Docker Compose, Nomad, etc.).
+> This page collects practical levers for squeezing the most performance, reliability, and observability out of **MCP Gateway**—no matter where you run the container (Code Engine, Kubernetes, Docker Compose, Nomad, etc.).
 >
 > **TL;DR**
 >
@@ -11,27 +11,27 @@
 
 ---
 
-## 1 · Environment variables (`.env`)
+## 1 · Environment variables (`.env`)
 
-|  Variable        |  Default       |  Why you might change it                                                            |
+|  Variable        |  Default       |  Why you might change it                                                            |
 | ---------------- | -------------- | ----------------------------------------------------------------------------------- |
 | `AUTH_REQUIRED`  | `true`         | Disable for internal/behind‑VPN deployments to shave a few ms per request.          |
-| `JWT_SECRET_KEY` | random         | Longer key ➜ slower HMAC verify; still negligible—leave as is.                      |
+| `JWT_SECRET_KEY` | random         | Longer key ➜ slower HMAC verify; still negligible—leave as is.                      |
 | `CACHE_TYPE`     | `database`     | Switch to `redis` or `memory` if your workload is read‑heavy and latency‑sensitive. |
 | `DATABASE_URL`   | SQLite         | Move to managed PostgreSQL + connection pooling for anything beyond dev tests.      |
 | `HOST`/`PORT`    | `0.0.0.0:4444` | Expose a different port or bind only to `127.0.0.1` behind a reverse‑proxy.         |
 
-> **Tip**  Any change here requires rebuilding or restarting the container if you pass the file with `--env‑file`.
+> **Tip**  Any change here requires rebuilding or restarting the container if you pass the file with `--env‑file`.
 
 ---
 
-## 2 · Gunicorn settings (`gunicorn.conf.py`)
+## 2 · Gunicorn settings (`gunicorn.conf.py`)
 
-|  Knob                    |  Purpose            |  Rule of thumb                                                    |
+|  Knob                    |  Purpose            |  Rule of thumb                                                    |
 | ------------------------ | ------------------- | ----------------------------------------------------------------- |
 | `workers`                | Parallel processes  | `2–4 × vCPU` for CPU‑bound work; fewer if memory‑bound.           |
 | `threads`                | Per‑process threads | Use only with `sync` worker; keeps memory low for I/O workloads.  |
-| `timeout`                | Kill stuck worker   | Set ≥ end‑to‑end model latency. E.g. 600 s for LLM calls.         |
+| `timeout`                | Kill stuck worker   | Set ≥ end‑to‑end model latency. E.g. 600 s for LLM calls.         |
 | `preload_app`            | Load app once       | Saves RAM; safe for pure‑Python apps.                             |
 | `worker_class`           | Async workers       | `gevent` or `eventlet` for many concurrent requests / websockets. |
 | `max_requests(+_jitter)` | Self‑healing        | Recycle workers to mitigate memory leaks.                         |
@@ -40,14 +40,14 @@ Edit the file **before** building the image, then redeploy.
 
 ---
 
-## 3 · Container resources
+## 3 · Container resources
 
-| vCPU × RAM   | Good for              | Notes                                              |
+| vCPU × RAM   | Good for              | Notes                                              |
 | ------------ | --------------------- | -------------------------------------------------- |
-| `0.5 × 1 GB` | Smoke tests / CI      | Smallest footprint; likely CPU‑starved under load. |
-| `1 × 4 GB`   | Typical dev / staging | Handles a few hundred RPS with default 8 workers.  |
-| `2 × 8 GB`   | Small prod            | Allows \~16–20 workers; good concurrency.          |
-| `4 × 16 GB`+ | Heavy prod            | Combine with async workers or autoscaling.         |
+| `0.5 × 1 GB` | Smoke tests / CI      | Smallest footprint; likely CPU‑starved under load. |
+| `1 × 4 GB`   | Typical dev / staging | Handles a few hundred RPS with default 8 workers.  |
+| `2 × 8 GB`   | Small prod            | Allows \~16–20 workers; good concurrency.          |
+| `4 × 16 GB`+ | Heavy prod            | Combine with async workers or autoscaling.         |
 
 > Always test with **your** workload; JSON‑RPC payload size and backend model latency change the equation.
 
@@ -55,7 +55,7 @@ To change your database connection settings, see the respective documentation fo
 
 ---
 
-## 4 · Performance testing
+## 4 · Performance testing
 
 ### 4.1 Tooling: **hey**
 
@@ -72,7 +72,7 @@ go install github.com/rakyll/hey@latest  # $GOPATH/bin must be in PATH
 
 ```bash
 #!/usr/bin/env bash
-# Run 10 000 requests with 200 concurrent workers.
+# Run 10 000 requests with 200 concurrent workers.
 JWT="$(cat jwt.txt)"   # <- place a valid token here
 hey -n 10000 -c 200 \
     -m POST \
@@ -115,18 +115,18 @@ hey -n 10000 -c 200 \
 
 ---
 
-## 5 · Logging & observability
+## 5 · Logging & observability
 
 * Set `loglevel = "debug"` in `gunicorn.conf.py` during tests; revert to `info` in prod.
-* Forward `stdout`/`stderr` from the container to your platform’s log stack (e.g. `kubectl logs`, `docker logs`).
+* Forward `stdout`/`stderr` from the container to your platform's log stack (e.g. `kubectl logs`, `docker logs`).
 * Expose `/metrics` via Prometheus exporter (coming soon) for request timing & queue depth.
 
 ---
 
-## 6 · Security tips while tuning
+## 6 · Security tips while tuning
 
 * Never commit real `JWT_SECRET_KEY`, DB passwords, or tokens—use `.env.example` as a template.
-* Prefer platform secrets (K8s Secrets, Code Engine secrets) over baking creds into the image.
+* Prefer platform secrets (K8s Secrets, Code Engine secrets) over baking creds into the image.
 * If you enable `gevent`/`eventlet`, pin their versions and run **bandit** or **trivy** scans.
 
 ---

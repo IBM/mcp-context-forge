@@ -165,7 +165,7 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
-# others
+# others
 .pdm-build
 .vscode
 

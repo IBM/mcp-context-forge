@@ -27,7 +27,7 @@ jobs:
   bandit:
     permissions:
       contents: read # required by actions/checkout
-      security-events: write # upload SARIF to “Code scanning”
+      security-events: write # upload SARIF to "Code scanning"
       actions: read # needed only for private repos
 
     runs-on: ubuntu-latest

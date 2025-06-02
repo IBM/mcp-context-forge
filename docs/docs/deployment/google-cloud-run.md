@@ -1,86 +1,142 @@
-# ☁️ Google Cloud Run
+# ☁️ Deploying MCP Gateway on Google Cloud Run
 
-MCP Gateway can be deployed to [Google Cloud Run](https://cloud.google.com/run), a fully managed, autoscaling platform for containers with built-in HTTPS, identity, and integration with other GCP services like Cloud SQL and Memorystore.
-
-This guide walks through provisioning a PostgreSQL and Redis backend, deploying the container, injecting secrets, and verifying access using JWT.
+MCP Gateway can be deployed to [Google Cloud Run](https://cloud.google.com/run), a fully managed, autoscaling platform for containerized applications. This guide provides step-by-step instructions to provision PostgreSQL and Redis backends, deploy the container, configure environment variables, authenticate using JWT, and monitor logs—all optimized for cost-efficiency.
 
 ---
 
 ## ✅ Overview
 
-Cloud Run is ideal for MCP Gateway use cases:
+Google Cloud Run is an ideal platform for MCP Gateway due to its:
 
-- **Serverless and cost-efficient** (scale to zero)
-- **Public HTTPS endpoints** with zero config
-- Built-in **integration with Cloud SQL (PostgreSQL)** and **Memorystore (Redis)**
-- Compatible with public container registries like GitHub’s `ghcr.io`
+* **Serverless and cost-efficient** model with scale-to-zero capability.
+* **Public HTTPS endpoints** with automatic TLS configuration.
+* Seamless integration with **Cloud SQL (PostgreSQL)** and **Memorystore (Redis)**.
+* Compatibility with public container registries like GitHub's `ghcr.io`.
 
 You can deploy the public image directly:
 
 ```text
 ghcr.io/ibm/mcp-context-forge:latest
-````
+```
 
 ---
 
 ## 🛠 Prerequisites
 
-* Google Cloud project with billing enabled
+### 1. Install and Initialize Google Cloud CLI (`gcloud`)
 
-* `gcloud` CLI authenticated (`gcloud init`)
+Install the Google Cloud SDK:
 
-* Enabled APIs:
+* **macOS (Homebrew):**
 
   ```bash
-  gcloud services enable run.googleapis.com sqladmin.googleapis.com redis.googleapis.com
+  brew install --cask google-cloud-sdk
   ```
 
-* Docker (for local testing or JWT token generation)
+* **Debian/Ubuntu:**
 
-* `.env` values for:
+  ```bash
+  sudo apt-get install google-cloud-cli
+  ```
 
-  * `JWT_SECRET_KEY`
-  * `DATABASE_URL`
-  * `REDIS_URL`
-  * `AUTH_REQUIRED`, `BASIC_AUTH_USER`, etc.
+* **Windows (PowerShell):**
+
+  ```powershell
+  winget install --id Google.CloudSDK
+  ```
+
+After installation, initialize the CLI:
+
+```bash
+gcloud init
+```
+
+Authenticate with your Google Cloud account:
+
+```bash
+gcloud auth login
+```
+
+### 2. Enable Required APIs
+
+Enable the necessary Google Cloud APIs:
+
+```bash
+gcloud services enable \
+  run.googleapis.com \
+  sqladmin.googleapis.com \
+  redis.googleapis.com
+```
+
+### 3. Install Docker
+
+Ensure Docker is installed for local testing and JWT token generation. Visit [Docker's official website](https://www.docker.com/get-started/) for installation instructions.
+
+### 4. Set Environment Variables
+
+Prepare the following environment variables:
+
+| Variable              | Description                                           |
+| --------------------- | ----------------------------------------------------- |
+| `JWT_SECRET_KEY`      | Secret key for signing JWT tokens                     |
+| `BASIC_AUTH_USER`     | Username for HTTP Basic Authentication                |
+| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic Authentication                |
+| `AUTH_REQUIRED`       | Set to `true` to enforce authentication               |
+| `DATABASE_URL`        | PostgreSQL connection string                          |
+| `REDIS_URL`           | Redis connection string                               |
+| `CACHE_TYPE`          | Set to `redis` for production environments            |
+| `PORT`                | Port number the application listens on (e.g., `4444`) |
 
 ---
 
 ## ⚙️ Setup Steps
 
-### 1. 🗄️ Provision Cloud SQL (PostgreSQL)
+### 1. Provision Cloud SQL (PostgreSQL)
+
+Create a PostgreSQL instance using the `db-f1-micro` tier for cost efficiency:
 
 ```bash
 gcloud sql instances create mcpgw-db \
-  --database-version=POSTGRES_14 \
-  --cpu=2 --memory=4GiB \
+  --database-version=POSTGRES_17 \
+  --tier=db-f1-micro \
   --region=us-central1
+```
 
+Set the password for the `postgres` user:
+
+```bash
 gcloud sql users set-password postgres \
-  --instance=mcpgw-db --password=mysecretpassword
+  --instance=mcpgw-db \
+  --password=mysecretpassword
+```
 
+Create the `mcpgw` database:
+
+```bash
 gcloud sql databases create mcpgw --instance=mcpgw-db
 ```
 
-Find the IP address:
+Retrieve the IP address of the instance:
 
 ```bash
 gcloud sql instances describe mcpgw-db \
   --format="value(ipAddresses.ipAddress)"
 ```
 
----
+> **Note:** The `db-f1-micro` tier is a shared-core instance designed for low-cost development and testing environments. It is not covered by the Cloud SQL SLA.
 
-### 2. ⚡ Provision Memorystore (Redis)
+### 2. Provision Memorystore (Redis)
+
+Create a Redis instance using the Basic Tier with 1 GiB capacity:
 
 ```bash
 gcloud redis instances create mcpgw-redis \
   --region=us-central1 \
-  --tier=STANDARD_HA \
+  --tier=BASIC \
   --size=1
 ```
 
-Get the Redis IP:
+Retrieve the host IP address:
 
 ```bash
 gcloud redis instances describe mcpgw-redis \
@@ -88,9 +144,11 @@ gcloud redis instances describe mcpgw-redis \
   --format="value(host)"
 ```
 
----
+> **Note:** The Basic Tier provides a standalone Redis instance suitable for applications that can tolerate potential data loss during failures.
 
-### 3. 🚀 Deploy to Google Cloud Run
+### 3. Deploy to Google Cloud Run
+
+Deploy the MCP Gateway container with minimal resource allocation:
 
 ```bash
 gcloud run deploy mcpgateway \
@@ -99,8 +157,8 @@ gcloud run deploy mcpgateway \
   --platform=managed \
   --allow-unauthenticated \
   --port=4444 \
-  --cpu=2 \
-  --memory=2Gi \
+  --cpu=1 \
+  --memory=256Mi \
   --max-instances=1 \
   --set-env-vars=\
 JWT_SECRET_KEY=your-secret,\
@@ -112,28 +170,30 @@ REDIS_URL=redis://<REDIS_IP>:6379/0,\
 CACHE_TYPE=redis
 ```
 
-> 🔐 Be sure to replace `<SQL_IP>` and `<REDIS_IP>` with the actual addresses you retrieved.
+> **Replace `<SQL_IP>` and `<REDIS_IP>`** with the actual IP addresses obtained from the previous steps.
 
 ---
 
-## 🔒 Auth & Access
+## 🔒 Authentication and Access
 
-### Generate a Bearer Token
+### Generate a JWT Bearer Token
 
-You can use the official container to generate a token:
+Use the MCP Gateway container to generate a JWT token:
 
 ```bash
 docker run -it --rm ghcr.io/ibm/mcp-context-forge:latest \
   python3 -m mcpgateway.utils.create_jwt_token -u admin
 ```
 
-Export it:
+Export the token as an environment variable:
 
 ```bash
 export MCPGATEWAY_BEARER_TOKEN=<paste-token-here>
 ```
 
-### Smoke Test
+### Perform Smoke Tests
+
+Test the `/health` and `/tools` endpoints:
 
 ```bash
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -143,46 +203,97 @@ curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      https://<your-cloud-run-url>/tools
 ```
 
+> **Replace `<your-cloud-run-url>`** with the URL provided after deploying the service.
+
+---
+
+## 📊 Logs and Monitoring
+
+### View Logs via CLI
+
+Tail real-time logs:
+
+```bash
+gcloud run services logs tail mcpgateway --region us-central1
+```
+
+Read recent logs:
+
+```bash
+gcloud run services logs read mcpgateway --limit 50
+```
+
+Filter logs by severity:
+
+```bash
+gcloud run services logs read mcpgateway --severity=ERROR
+```
+
+### Access Logs via Console
+
+Navigate to the [Cloud Run Console](https://console.cloud.google.com/run) and select your service to view logs and metrics.
+
 ---
 
 ## 📦 GitHub Actions Deployment (Optional)
 
-You can automate builds and deployments using GitHub Actions. See:
+Automate builds and deployments using GitHub Actions. Refer to the workflow file:
 
 ```
 .github/workflows/google-cloud-run.yml
 ```
 
-It builds from `Containerfile.lite`, pushes to Artifact Registry, and deploys to Cloud Run with `--max-instances=1`.
+This workflow:
+
+* Restores and updates a local BuildKit layer cache.
+* Builds the Docker image from `Containerfile.lite`.
+* Pushes the image to Google Artifact Registry.
+* Deploys to Google Cloud Run with `--max-instances=1`.
 
 ---
 
-## 📘 Notes & Tips
+## 📘 Notes and Tips
 
-* Cloud Run endpoints are public HTTPS by default
-* Add a custom domain via Cloud Run settings (optional)
-* Use Secret Manager or env vars for sensitive values
-* To avoid cold starts, you can enable **minimum instance = 1**
-* Logs and metrics available via Cloud Console
+* **HTTPS by Default:** Cloud Run services are accessible over HTTPS without additional configuration.
 
----
+* **Custom Domains:** You can map custom domains via the Cloud Run settings.
 
-## 🧩 Summary
+* **Secret Management:** Consider using [Secret Manager](https://cloud.google.com/secret-manager) for managing sensitive environment variables.
 
-| Feature              | Supported               |
-| -------------------- | ----------------------- |
-| HTTPS (built-in)     | ✅                      |
-| Custom domains       | ✅                      |
-| Postgres (Cloud SQL) | ✅                      |
-| Redis (Memorystore)  | ✅                      |
-| Auto-scaling         | ✅                      |
-| Scale-to-zero        | ✅                      |
-| Max instance limit   | ✅                      |
+* **Cold Starts:** To reduce cold start latency, set a minimum number of instances:
+
+  ```bash
+  --min-instances=1
+  ```
+
+* **Monitoring:** Utilize [Cloud Monitoring](https://cloud.google.com/monitoring) for detailed metrics and alerts.
 
 ---
 
-## 🧠 Resources
+## 🧩 Feature Summary
 
-* [Cloud Run documentation](https://cloud.google.com/run/docs)
-* [Cloud SQL connection tips](https://cloud.google.com/sql/docs/postgres/connect-run)
-* [Memorystore overview](https://cloud.google.com/memorystore/docs/redis)
+| Feature                | Supported |
+| ---------------------- | --------- |
+| HTTPS (built-in)       | ✅        |
+| Custom domains         | ✅        |
+| PostgreSQL (Cloud SQL) | ✅        |
+| Redis (Memorystore)    | ✅        |
+| Auto-scaling           | ✅        |
+| Scale-to-zero          | ✅        |
+| Max instance limit     | ✅        |
+
+---
+
+## 🧠 Additional Resources
+
+* [Cloud Run Documentation](https://cloud.google.com/run/docs)
+* [Cloud SQL for PostgreSQL Documentation](https://cloud.google.com/sql/docs/postgres)
+* [Memorystore for Redis Documentation](https://cloud.google.com/memorystore/docs/redis)
+* [Google Cloud SDK Installation Guide](https://cloud.google.com/sdk/docs/install)
+* [Cloud Run Pricing](https://cloud.google.com/run/pricing)
+* [Cloud SQL Pricing](https://cloud.google.com/sql/pricing)
+* [Memorystore Pricing](https://cloud.google.com/memorystore/docs/redis/pricing)
+
+---
+
+By following this guide, you can deploy MCP Gateway on Google Cloud Run using the most cost-effective configurations, ensuring efficient resource utilization and seamless scalability.
