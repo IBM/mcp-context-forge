@@ -43,7 +43,7 @@ Selection is driven by the `CACHE_TYPE` environment variable. Code paths use a c
 |--------|---------|
 | **Hardcoded Redis** | Adds operational overhead and single point of failure for dev. |
 | **Memory-only cache** | Incompatible with horizontal scale or restart resilience. |
-| **External CDN or HTTP cache** | Doesn’t address in-process sessions, discovery, or tool state. |
+| **External CDN or HTTP cache** | Doesn't address in-process sessions, discovery, or tool state. |
 | **Disk-based cache (e.g., shelve, pickle)** | Complex invalidation and concurrency issues; not cloud-ready. |
 
 ## Status

@@ -36,7 +36,7 @@ It provides tabbed access to:
 |--------|-----|
 | Register a tool | Use the Tools tab → Add Tool form |
 | View prompt output | Go to Prompts → click View |
-| Toggle server activity | Use the “Activate/Deactivate” buttons in Servers tab |
+| Toggle server activity | Use the "Activate/Deactivate" buttons in Servers tab |
 | Delete a resource | Navigate to Resources → click Delete (after confirming) |
 
 All actions are reflected in the live API via `/tools`, `/prompts`, etc.

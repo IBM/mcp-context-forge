@@ -6,7 +6,7 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 
 ---
 
-## 🧭 What’s Covered
+## 🧭 What's Covered
 
 | Page | Description |
 |------|-------------|

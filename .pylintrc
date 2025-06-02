@@ -619,8 +619,8 @@ signature-mutators=
 
 [VARIABLES]
 
-# List of additional names supposed to be defined in builtins. Remember that
-# you should avoid defining new builtins when possible.
+# List of additional names supposed to be defined in builtins.
+# You should avoid defining new builtins when possible.
 additional-builtins=
 
 # Tells whether unused global variables should be treated as a violation.

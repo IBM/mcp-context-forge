@@ -8,7 +8,7 @@ This section focuses on how to use MCP Gateway effectively as a developer, integ
 
 - You want to expose tools, prompts, or resources via MCP.
 - You want to use `mcpgateway-wrapper` to connect to any MCP Gateway service using `stdio`, while still supporting authentication to the gateway.
-- You’re building a client or agent framework that speaks the MCP protocol.
+- You're building a client or agent framework that speaks the MCP protocol.
 - You want to consume Gateway APIs from an LLM agent, browser app, or CLI tool.
 
 ---

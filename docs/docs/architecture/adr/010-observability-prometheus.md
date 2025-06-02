@@ -22,7 +22,7 @@ The gateway needs to surface this without requiring external instrumentation or 
 We will implement native observability features using:
 
 1. **Structured JSON logs** with optional plaintext fallback:
-   - Controlled by `LOG_FORMAT=json|text` and `LOG_LEVEL`:contentReference[oaicite:0]{index=0}
+   - Controlled by `LOG_FORMAT=json|text` and `LOG_LEVEL`
    - Includes fields: timestamp, level, logger name, request ID, route, auth user, latency
 
 2. **Prometheus-compatible `/metrics` endpoint**:

@@ -69,7 +69,7 @@ oc new-app -f https://raw.githubusercontent.com/openshift/origin/master/examples
   -p POSTGRESQL_USER=postgres,POSTGRESQL_PASSWORD=secret,POSTGRESQL_DATABASE=mcp
 ```
 
-The template creates a DeploymentConfig, Service and a 1 Gi PVC bound to the cluster’s default storage class.
+The template creates a DeploymentConfig, Service and a 1 Gi PVC bound to the cluster's default storage class.
 
 ### Redis
 
@@ -118,7 +118,7 @@ spec:
           periodSeconds: 20
         securityContext:
           allowPrivilegeEscalation: false
-          runAsUser: 1001        # UBI non-root UID works with restricted SCC:contentReference[oaicite:6]{index=6}:contentReference[oaicite:7]{index=7}
+          runAsUser: 1001        # UBI non-root UID works with restricted SCC
 ---
 apiVersion: v1
 kind: Service
@@ -132,7 +132,7 @@ spec:
     targetPort: 4444
 ```
 
-*The readiness/liveness probes follow OpenShift’s health-check guidance*.
+*The readiness/liveness probes follow OpenShift's health-check guidance*.
 
 ---
 
@@ -153,7 +153,7 @@ spec:
     termination: edge
 ```
 
-Routes are OpenShift’s native form of ingress; the router automatically provisions a hostname such as `mcpgateway-myproj.apps.cluster.example.com`.
+Routes are OpenShift's native form of ingress; the router automatically provisions a hostname such as `mcpgateway-myproj.apps.cluster.example.com`.
 
 ---
 

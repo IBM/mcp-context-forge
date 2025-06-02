@@ -35,9 +35,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install build   # PyPA-endorsed PEP 517 builder
 
-      # 4️⃣  Invoke the Makefile ‘dist’ target (creates ./dist/*.whl & *.tar.gz)
+      # 4️⃣  Invoke the Makefile 'dist' target (creates ./dist/*.whl & *.tar.gz)
       - name: Build distributions
-        run: make dist                 # Uses the Makefile’s `dist` rule
+        run: make dist                 # Uses the Makefile's `dist` rule
 
       # 5️⃣  Upload built artifacts so they can be downloaded from the run page
       - name: Upload distributions

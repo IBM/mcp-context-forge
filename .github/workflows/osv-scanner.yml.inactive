@@ -7,7 +7,7 @@
 #                   and fails only if the PR introduces *new* vulns.
 #   • **scan-scheduled** ─ Runs a full scan of the default branch
 #                   on pushes & weekly cron to catch newly-published CVEs.
-#   • Uploads SARIF results to “Security → Code scanning”.
+#   • Uploads SARIF results to "Security → Code scanning".
 #
 # Action reference:
 #   • Docs:  https://google.github.io/osv-scanner/github-action/
@@ -15,7 +15,7 @@
 #
 # Tips:
 #   • Ignore a CVE by creating .osv-scanner.toml or using --ignore-vuln.
-#   • Add “--skip-git” so the scan isn’t cluttered with .git metadata.
+#   • Add "--skip-git" so the scan isn't cluttered with .git metadata.
 # ===============================================================
 
 name: OSV-Scanner
