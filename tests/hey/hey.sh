@@ -137,7 +137,7 @@ log "  URL:           $URL"
 log "  Log file:      $LOG_FILE"
 
 if [ "$DRY_RUN" = true ]; then
-  echo -e "\nDry-run mode: Here’s the command that would be executed:\n"
+  echo -e "\nDry-run mode: Here's the command that would be executed:\n"
   printf ' %q' "${HEY_CMD[@]}"
   echo
   exit 0

@@ -17,7 +17,7 @@ Minikube is self-contained: one command spins up the control-plane, container ru
 | **CPU/RAM**          | Minikube recommends **2 CPUs + 2 GiB** at minimum. For smooth builds: 4 CPUs / 6 GiB.                    |
 | **Disk**             | ≥20 GiB free space.                                                                                      |
 | **Container driver** | Docker 20.10+ or Podman 4.7+; Docker driver is simplest on macOS/Windows.                                |
-| **kubectl**          | Automatically configured by `minikube start`; or use `minikube kubectl -- …` if kubectl isn’t installed. |
+| **kubectl**          | Automatically configured by `minikube start`; or use `minikube kubectl -- …` if kubectl isn't installed. |
 
 ---
 
@@ -69,7 +69,7 @@ minikube start \
 
 * `--driver=docker` avoids nested virtualization on macOS and Windows Home.
 * `ingress` addon gives you NGINX with LoadBalancer semantics on localhost.
-* `ingress-dns` resolves `*.local` hostnames automatically when you add Minikube’s IP to your OS DNS list.
+* `ingress-dns` resolves `*.local` hostnames automatically when you add Minikube's IP to your OS DNS list.
 * Flags `--cpus` and `--memory` accept **`max`** to use everything available.
 
 > Check everything is healthy:
@@ -94,7 +94,7 @@ make docker            # or docker build -t mcpgateway:latest -f Containerfile .
 ### Option B – Push pre-built images into Minikube cache
 
 ```bash
-minikube cache add quay.io/your_ns/mcpgateway:latest   # stores & pre-loads next boot:contentReference[oaicite:10]{index=10}
+minikube cache add quay.io/your_ns/mcpgateway:latest   # stores & pre-loads next boot
 minikube cache reload                                  # run if you rebuilt the tag
 ```
 
@@ -180,7 +180,7 @@ curl http://gateway.local/health
 4. Load / cache images inside Minikube
    [https://minikube.sigs.k8s.io/docs/handbook/pushing/](https://minikube.sigs.k8s.io/docs/handbook/pushing/)
 
-5. Using Minikube’s built-in kubectl
+5. Using Minikube's built-in kubectl
    [https://minikube.sigs.k8s.io/docs/handbook/kubectl/](https://minikube.sigs.k8s.io/docs/handbook/kubectl/)
 
 6. Allocate max CPU/RAM flags

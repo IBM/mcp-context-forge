@@ -135,7 +135,7 @@ service reachable from Windows and the LAN.
 ## 📚 References
 
 * Docker Compose CLI (`up`, `logs`, `down`) – official docs
-* Podman’s integrated **compose** wrapper – man page
+* Podman's integrated **compose** wrapper – man page
 * `podman-compose` rootless implementation – GitHub project
 * Health-check gating with `depends_on: condition: service_healthy`
 * [UBI9 runtime on Apple Silicon limitations (`x86_64-v2` glibc)](https://github.com/containers/podman/issues/15456)

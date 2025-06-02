@@ -1098,7 +1098,7 @@ class ServerCreate(BaseModelWithConfig):
     Attributes:
         name: The server's name (required).
         description: Optional text description.
-        icon: Optional URL for the server’s icon.
+        icon: Optional URL for the server's icon.
         associated_tools: Optional list of tool IDs (as strings).
         associated_resources: Optional list of resource IDs (as strings).
         associated_prompts: Optional list of prompt IDs (as strings).

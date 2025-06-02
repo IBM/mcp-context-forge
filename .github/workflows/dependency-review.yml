@@ -7,7 +7,7 @@
 #   • **Fails** when a change introduces either of the following:
 #       ↳ A vulnerability of severity ≥ MODERATE
 #       ↳ A dependency under a "strong-copyleft" license incompatible
-#         with this project’s Apache-2.0 license (see deny-list below)
+#         with this project's Apache-2.0 license (see deny-list below)
 #   • Uploads a SARIF report to "Security → Dependency review"
 #   • Adds (or overwrites) a comment on the PR **only on failure**
 #
@@ -66,7 +66,7 @@ jobs:
           # ───────── License policy ─────────
           # Hard-deny strong- or service-copyleft licenses that would
           # "infect" an Apache-2.0 project.  (LGPL/MPL/EPL are *not*
-          # listed — they’re weak/file-level copyleft.  Add them here
+          # listed — they're weak/file-level copyleft.  Add them here
           # if your org chooses to forbid them outright.)
           deny-licenses: >
             GPL-1.0, GPL-2.0, GPL-3.0,
