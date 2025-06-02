@@ -52,10 +52,10 @@ PORT=4444
 
 ## (A) Local SQLite  (good for smoke-tests / CI only)
 ## --------------------------------------------------
-## • SQLite lives on the container’s ephemeral file system.
+## • SQLite lives on the container's ephemeral file system.
 ## • On Code Engine every new instance starts fresh; scale-out, restarts or
 ##   deploys will wipe data.  **Not suitable for production.**
-## • If you still need file persistence, attach Code Engine’s file-system
+## • If you still need file persistence, attach Code Engine's file-system
 ##   mount or an external filesystem / COS bucket.
 #CACHE_TYPE=database
 #DATABASE_URL=sqlite:////tmp/mcp.db

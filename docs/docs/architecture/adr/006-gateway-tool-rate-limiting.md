@@ -43,7 +43,7 @@ Backend options:
 |--------|---------|
 | **No rate limiting** | Leaves gateway and tools vulnerable to overload or accidental DoS. |
 | **Global rate limit only** | Heavy tools can starve lightweight tools; no fine-grained control. |
-| **Proxy-level throttling (e.g. NGINX, Envoy)** | Can’t distinguish tools or users inside payload; lacks granularity. |
+| **Proxy-level throttling (e.g. NGINX, Envoy)** | Can't distinguish tools or users inside payload; lacks granularity. |
 
 ## Status
 

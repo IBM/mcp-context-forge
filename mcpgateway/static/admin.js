@@ -218,7 +218,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (mode === "ui") {
         window.schemaEditor.setValue(generateSchema());
       }
-      // Save CodeMirror editors’ contents into the underlying textareas
+      // Save CodeMirror editors' contents into the underlying textareas
       if (window.headersEditor) {
         window.headersEditor.save();
       }

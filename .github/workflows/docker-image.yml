@@ -34,7 +34,7 @@ on:
 permissions:
   contents: read
   packages: write # push to ghcr.io via GITHUB_TOKEN
-  security-events: write # upload SARIF to “Code scanning”
+  security-events: write # upload SARIF to "Code scanning"
   actions: read # needed by upload-sarif in private repos
   id-token: write # required for OIDC token generation
 

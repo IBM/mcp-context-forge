@@ -9,12 +9,12 @@ Authors: Mihai Criveti
 
 import pytest
 
-from mcpgateway.services.completion_service import (  # :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
+from mcpgateway.services.completion_service import (
     CompletionError,
     CompletionService,
 )
 from mcpgateway.types import (
-    CompleteResult,  # :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
+    CompleteResult,
 )
 
 

@@ -170,7 +170,7 @@ services:
     # Preconfigure Redis connection(s) via env vars
     # ──────────────────────────────────────────────────────────────────────
     environment:
-      # Single connection (omit “*” since only one):
+      # Single connection (omit "*" since only one):
       - RI_REDIS_HOST=redis         # <— your Redis hostname
       - RI_REDIS_PORT=6379          # <— your Redis port
       - RI_REDIS_USERNAME=default   # <— ACL/username (Redis 6+)

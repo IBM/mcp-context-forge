@@ -1,6 +1,6 @@
 # 🧠 Microsoft GitHub Copilot + MCP Gateway
 
-Extend GitHub Copilot’s functionality in VS Code by connecting it to your **MCP Gateway**, enabling powerful tool invocation, resource access, and dynamic integration—all via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
+Extend GitHub Copilot's functionality in VS Code by connecting it to your **MCP Gateway**, enabling powerful tool invocation, resource access, and dynamic integration—all via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
 
 GitHub Copilot can also be configured to use local models via [Ollama](https://ollama.com/).
 
@@ -125,7 +125,7 @@ Try prompting:
 #echo { "message": "Hello" }
 ```
 
-Expected: Copilot invokes the Gateway’s `echo` tool and displays the response.
+Expected: Copilot invokes the Gateway's `echo` tool and displays the response.
 
 ---
 

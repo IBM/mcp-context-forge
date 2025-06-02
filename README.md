@@ -13,7 +13,7 @@ MCP Gateway builds on the MCP spec by sitting **in front of** MCP Server or REST
 
 * **Act as a true gateway**, centralizing tool, resource and prompt registries while preserving the official MCP 2025-03-26 protocol
 * **Federate** multiple MCP servers into one unified endpoint—auto-discover peers (mDNS or explicit), health-check them, and merge their capabilities
-* **Virtualize** non-MCP services as “virtual servers” so you can register any REST API or function endpoint and expose it under MCP semantics
+* **Virtualize** non-MCP services as "virtual servers" so you can register any REST API or function endpoint and expose it under MCP semantics
 * **Adapt** arbitrary REST/HTTP APIs into MCP tools with JSON-Schema input validation, retry/rate-limit policies and transparent JSON-RPC invocation
 * **Simplify** deployments with a full admin UI, rich transports, pre-built DX pipelines and production-grade observability
 
@@ -960,7 +960,7 @@ make lint            # Run lint tools
 ## API Documentation
 
 * **Swagger UI** → [http://localhost:4444/docs](http://localhost:4444/docs)
-* **ReDoc**    → [http://localhost:4444/redoc](http://localhost:4444/redoc)
+* **ReDoc**    → [http://localhost:4444/redoc](http://localhost:4444/redoc)
 * **Admin Panel** → [http://localhost:4444/admin](http://localhost:4444/admin)
 
 ---

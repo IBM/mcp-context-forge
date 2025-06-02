@@ -13,9 +13,9 @@ The gateway config supports health-related settings:
 
 - `HEALTH_CHECK_INTERVAL`: frequency of peer checks
 - `HEALTH_CHECK_TIMEOUT`: request timeout per probe
-- `UNHEALTHY_THRESHOLD`: number of failures before a peer is marked unhealthy:contentReference[oaicite:0]{index=0}
+- `UNHEALTHY_THRESHOLD`: number of failures before a peer is marked unhealthy
 
-The README and architecture describe `/health` and `/metrics` endpoints as built-in features:contentReference[oaicite:1]{index=1}.
+The README and architecture describe `/health` and `/metrics` endpoints as built-in features
 
 ## Decision
 
@@ -28,7 +28,7 @@ Implement two health-check levels:
 2. **Federated peer liveness**:
    - Every `HEALTH_CHECK_INTERVAL`, we ping all registered peers via HTTP
    - If a peer fails `UNHEALTHY_THRESHOLD` times consecutively, it's temporarily deactivated
-   - A separate background task handles this (see `FederationManager`):contentReference[oaicite:2]{index=2}
+   - A separate background task handles this (see `FederationManager`)
 
 Health info is also published to `/metrics` in Prometheus format.
 
