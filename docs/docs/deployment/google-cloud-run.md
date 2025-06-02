@@ -150,7 +150,7 @@ curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 You can automate builds and deployments using GitHub Actions. See:
 
 ```
-.github/workflows/deploy-gcr.yml
+.github/workflows/google-cloud-run.yml
 ```
 
 It builds from `Containerfile.lite`, pushes to Artifact Registry, and deploys to Cloud Run with `--max-instances=1`.
