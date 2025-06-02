@@ -1,0 +1,5 @@
+extends: relaxed        # start from the built-in relaxed preset
+rules:
+  line-length:
+    max: 200            # allow lines up to 200 chars
+    level: warning      # keep it a warning (default); use "error" to fail
