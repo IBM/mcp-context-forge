@@ -199,7 +199,7 @@ repos:
       - id: yamllint
         name: ✅ YAMLlint - YAML Linter
         description: A linter for YAML files.
-        args: [-d, relaxed]
+        args: [ -c, .yamllint ]
 
 #   - repo: https://github.com/igorshubovych/markdownlint-cli
 #     rev: v0.45.0
