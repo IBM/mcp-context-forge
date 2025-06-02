@@ -1,4 +1,4 @@
-# Deploying MCP Gateway to IBM Code Engine
+# ⚙️ IBM Code Engine
 
 This guide covers two supported deployment paths for the **MCP Gateway**:
 

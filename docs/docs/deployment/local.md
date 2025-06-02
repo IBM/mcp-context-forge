@@ -1,4 +1,4 @@
-# Local Deployment
+# 🐍 Local Deployment
 
 This guide walks you through running MCP Gateway on your local machine using a virtual environment or directly via Python.
 
