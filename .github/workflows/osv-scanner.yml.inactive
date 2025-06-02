@@ -23,23 +23,23 @@ name: OSV-Scanner
 on:
   # ───────── Pull-request diff scan ─────────
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
   merge_group:
-    branches: [ "main" ]
+    branches: ["main"]
 
   # ───────── Full scans ─────────
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   schedule:
-    - cron: '20 22 * * 0'   # Sunday @ 22:20 UTC
+    - cron: "20 22 * * 0" # Sunday @ 22:20 UTC
 
 # -----------------------------------------------------------------
 # Least-privilege permissions
 # -----------------------------------------------------------------
 permissions:
-  contents:        read          # checkout / version diff
-  security-events: write         # upload SARIF results
-  actions:         read          # needed by upload-sarif for private repos
+  contents: read # checkout / version diff
+  security-events: write # upload SARIF results
+  actions: read # needed by upload-sarif for private repos
 
 jobs:
   # =============================================================
@@ -61,7 +61,7 @@ jobs:
   # =============================================================
   scan-pr:
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
-    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@1f1242919d8a60496dd1874b24b62b2370ed4c78"  # v1.7.1
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@1f1242919d8a60496dd1874b24b62b2370ed4c78" # v1.7.1
     with:
       scan-args: |-
         -r
