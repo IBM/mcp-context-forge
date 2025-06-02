@@ -15,23 +15,23 @@ name: CodeQL Advanced
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
     paths-ignore:
-      - '**/tests/**'
-      - '**/docs/**'
+      - "**/tests/**"
+      - "**/docs/**"
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
     paths-ignore:
-      - '**/tests/**'
-      - '**/docs/**'
+      - "**/tests/**"
+      - "**/docs/**"
   # schedule:
   #   - cron: '15 21 * * 3'   # Weekly on Wednesday at 21:15 UTC
 
 permissions:
-  contents:        read            # For checking out the code
-  security-events: write           # Required to upload SARIF results
-  actions:         read            # Required in private repositories
-  packages:        read            # Required to download CodeQL packs
+  contents: read # For checking out the code
+  security-events: write # Required to upload SARIF results
+  actions: read # Required in private repositories
+  packages: read # Required to download CodeQL packs
 
 jobs:
   analyze:
@@ -50,52 +50,52 @@ jobs:
             build: none
 
     steps:
-    # -------------------------------------------------------------
-    # 0️⃣  Checkout source
-    # -------------------------------------------------------------
-    - name: ⬇️ Checkout code
-      uses: actions/checkout@v4
+      # -------------------------------------------------------------
+      # 0️⃣  Checkout source
+      # -------------------------------------------------------------
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
 
-    # -------------------------------------------------------------
-    # 1️⃣  Optional setup – runtimes for specific languages
-    # -------------------------------------------------------------
-    - name: 🐍 Setup Python
-      if: matrix.language == 'python'
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
+      # -------------------------------------------------------------
+      # 1️⃣  Optional setup – runtimes for specific languages
+      # -------------------------------------------------------------
+      - name: 🐍 Setup Python
+        if: matrix.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
-    - name: 🟢 Setup Node.js
-      if: matrix.language == 'javascript-typescript'
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
+      - name: 🟢 Setup Node.js
+        if: matrix.language == 'javascript-typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
-    # -------------------------------------------------------------
-    # 2️⃣  Initialize CodeQL
-    # -------------------------------------------------------------
-    - name: 🛠️ Initialize CodeQL
-      uses: github/codeql-action/init@v3
-      with:
-        languages: ${{ matrix.language }}
-        dependency-caching: true
-        config-file: ./.github/codeql-config.yml
+      # -------------------------------------------------------------
+      # 2️⃣  Initialize CodeQL
+      # -------------------------------------------------------------
+      - name: 🛠️ Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          dependency-caching: true
+          config-file: ./.github/codeql-config.yml
 
-    # -------------------------------------------------------------
-    # 3️⃣  Manual build step (not needed for JS/Python/Actions)
-    # -------------------------------------------------------------
-    - if: matrix.build == 'manual'
-      name: ⚙️ Manual build (placeholder)
-      shell: bash
-      run: |
-        echo "Add manual build commands here if needed."
-        exit 1
+      # -------------------------------------------------------------
+      # 3️⃣  Manual build step (not needed for JS/Python/Actions)
+      # -------------------------------------------------------------
+      - if: matrix.build == 'manual'
+        name: ⚙️ Manual build (placeholder)
+        shell: bash
+        run: |
+          echo "Add manual build commands here if needed."
+          exit 1
 
-    # -------------------------------------------------------------
-    # 4️⃣  Perform CodeQL analysis
-    # -------------------------------------------------------------
-    - name: 🔬 Perform CodeQL analysis
-      uses: github/codeql-action/analyze@v3
-      with:
-        category: "/language:${{ matrix.language }}"
-        upload: false
+      # -------------------------------------------------------------
+      # 4️⃣  Perform CodeQL analysis
+      # -------------------------------------------------------------
+      - name: 🔬 Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+          upload: false
