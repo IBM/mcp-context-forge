@@ -1,4 +1,4 @@
-# AWS Deployment
+# 🟧 AWS
 
 MCP Gateway can be deployed to AWS using multiple container-based services:
 

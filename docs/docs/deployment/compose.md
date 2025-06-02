@@ -1,4 +1,4 @@
-# 🚀 Docker Compose
+# 🧩 Docker Compose
 
 Running **MCP Gateway** with **Compose** spins up a full stack (Gateway, Postgres, Redis, optional MPC servers) behind a single YAML file.
 The Makefile detects Podman or Docker automatically, and you can override it with `COMPOSE_ENGINE=`.
