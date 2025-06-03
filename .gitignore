@@ -1,3 +1,4 @@
+.env.gcr
 packages-lock.json
 packages.json
 node_modules/
