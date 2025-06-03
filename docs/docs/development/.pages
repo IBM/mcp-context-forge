@@ -1,5 +1,6 @@
 title: Development
 nav:
   - index.md
+  - github.md
   - building.md
   - packaging.md
