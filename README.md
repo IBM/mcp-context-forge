@@ -319,7 +319,7 @@ You can get started by copying the provided `.env.examples` to `.env` and making
 > 🔐 `BASIC_AUTH_USER`/`PASSWORD` are used for:
 >
 > * Logging into the web-based Admin UI
-> * Accessing APIs via Basic Auth (`curl -u admin:changeme`)
+> * Accessing APIs via Basic Auth (`curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"`)
 >
 > 🔑 `JWT_SECRET_KEY` is used to:
 >
@@ -576,11 +576,30 @@ make ibmcloud-ce-logs
 
 ## API Endpoints
 
+Generate an API Bearer token, and test the various API endpoints:
+
+```bash
+# Generate a bearer token using the configured secret key (use the same as your .env)
+export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+echo ${MCPGATEWAY_BEARER_TOKEN}
+
+# Quickly confirm that authentication works and the gateway is healthy
+curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/health
+
+# Quickly confirm the gateway version & DB connectivity
+curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/version | jq
+```
+
+You can test the API endpoints through curl, or Swagger UI, and check detailed documentation on ReDoc:
+
+* **Swagger UI** → [http://localhost:4444/docs](http://localhost:4444/docs)
+* **ReDoc**    → [http://localhost:4444/redoc](http://localhost:4444/redoc)
+
 ### Protocol APIs (MCP)
 
 ```bash
 # Initialize MCP session
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
            "protocol_version":"2025-03-26",
@@ -590,13 +609,13 @@ curl -X POST -u admin:changeme \
      http://localhost:4444/protocol/initialize
 
 # Ping (JSON-RPC style)
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' \
      http://localhost:4444/protocol/ping
 
 # Completion for prompt/resource arguments
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
            "ref":{"type":"ref/prompt","name":"example_prompt"},
@@ -605,7 +624,7 @@ curl -X POST -u admin:changeme \
      http://localhost:4444/protocol/completion/complete
 
 # Sampling (streaming)
-curl -N -X POST -u admin:changeme \
+curl -N -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
            "messages":[{"role":"user","content":{"type":"text","text":"Hello"}}],
@@ -620,7 +639,7 @@ curl -N -X POST -u admin:changeme \
 
 ```bash
 # Generic JSON-RPC calls (tools, gateways, roots, etc.)
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"jsonrpc":"2.0","id":1,"method":"list_tools"}' \
      http://localhost:4444/rpc
@@ -634,7 +653,7 @@ Handles any method name: `list_tools`, `list_gateways`, `prompts/get`, or invoke
 
 ```bash
 # Register a new tool
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
            "name":"clock_tool",
@@ -649,23 +668,23 @@ curl -X POST -u admin:changeme \
      http://localhost:4444/tools
 
 # List tools
-curl -u admin:changeme http://localhost:4444/tools
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
 
 # Get tool by ID
-curl -u admin:changeme http://localhost:4444/tools/1
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1
 
 # Update tool
-curl -X PUT -u admin:changeme \
+curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{ "description":"Updated desc" }' \
      http://localhost:4444/tools/1
 
 # Toggle active status
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/tools/1/toggle?activate=false
 
 # Delete tool
-curl -X DELETE -u admin:changeme http://localhost:4444/tools/1
+curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1
 ```
 
 ---
@@ -674,29 +693,29 @@ curl -X DELETE -u admin:changeme http://localhost:4444/tools/1
 
 ```bash
 # Register a peer gateway
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"name":"peer_gateway","url":"http://peer:4444"}' \
      http://localhost:4444/gateways
 
 # List gateways
-curl -u admin:changeme http://localhost:4444/gateways
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways
 
 # Get gateway by ID
-curl -u admin:changeme http://localhost:4444/gateways/1
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways/1
 
 # Update gateway
-curl -X PUT -u admin:changeme \
+curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"description":"New description"}' \
      http://localhost:4444/gateways/1
 
 # Toggle active status
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/gateways/1/toggle?activate=false
 
 # Delete gateway
-curl -X DELETE -u admin:changeme http://localhost:4444/gateways/1
+curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways/1
 ```
 
 ---
@@ -705,7 +724,7 @@ curl -X DELETE -u admin:changeme http://localhost:4444/gateways/1
 
 ```bash
 # Register resource
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
            "uri":"config://app/settings",
@@ -715,22 +734,22 @@ curl -X POST -u admin:changeme \
      http://localhost:4444/resources
 
 # List resources
-curl -u admin:changeme http://localhost:4444/resources
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/resources
 
 # Read a resource
-curl -u admin:changeme http://localhost:4444/resources/config://app/settings
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/resources/config://app/settings
 
 # Update resource
-curl -X PUT -u admin:changeme \
+curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"content":"new=value"}' \
      http://localhost:4444/resources/config://app/settings
 
 # Delete resource
-curl -X DELETE -u admin:changeme http://localhost:4444/resources/config://app/settings
+curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/resources/config://app/settings
 
 # Subscribe to updates (SSE)
-curl -N -u admin:changeme http://localhost:4444/resources/subscribe/config://app/settings
+curl -N -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/resources/subscribe/config://app/settings
 ```
 
 ---
@@ -739,7 +758,7 @@ curl -N -u admin:changeme http://localhost:4444/resources/subscribe/config://app
 
 ```bash
 # Create prompt template
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
            "name":"greet",
@@ -753,29 +772,29 @@ curl -X POST -u admin:changeme \
      http://localhost:4444/prompts
 
 # List prompts
-curl -u admin:changeme http://localhost:4444/prompts
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/prompts
 
 # Get prompt (with args)
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"user":"Alice"}' \
      http://localhost:4444/prompts/greet
 
 # Get prompt (no args)
-curl -u admin:changeme http://localhost:4444/prompts/greet
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/prompts/greet
 
 # Update prompt
-curl -X PUT -u admin:changeme \
+curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"template":"Hi, {{ user }}!"}' \
      http://localhost:4444/prompts/greet
 
 # Toggle active
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/prompts/5/toggle?activate=false
 
 # Delete prompt
-curl -X DELETE -u admin:changeme http://localhost:4444/prompts/greet
+curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/prompts/greet
 ```
 
 ---
@@ -784,19 +803,19 @@ curl -X DELETE -u admin:changeme http://localhost:4444/prompts/greet
 
 ```bash
 # List roots
-curl -u admin:changeme http://localhost:4444/roots
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/roots
 
 # Add root
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"uri":"/data","name":"Data Root"}' \
      http://localhost:4444/roots
 
 # Remove root
-curl -X DELETE -u admin:changeme http://localhost:4444/roots/%2Fdata
+curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/roots/%2Fdata
 
 # Subscribe to root changes (SSE)
-curl -N -u admin:changeme http://localhost:4444/roots/changes
+curl -N -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/roots/changes
 ```
 
 ---
@@ -805,25 +824,25 @@ curl -N -u admin:changeme http://localhost:4444/roots/changes
 
 ```bash
 # List servers
-curl -u admin:changeme http://localhost:4444/servers
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers
 
 # Get server
-curl -u admin:changeme http://localhost:4444/servers/1
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers/1
 
 # Create server
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"name":"db","description":"Database"}' \
      http://localhost:4444/servers
 
 # Update server
-curl -X PUT -u admin:changeme \
+curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"description":"Updated"}' \
      http://localhost:4444/servers/1
 
 # Toggle active
-curl -X POST -u admin:changeme \
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/servers/1/toggle?activate=false
 ```
 
@@ -833,11 +852,11 @@ curl -X POST -u admin:changeme \
 
 ```bash
 # Get aggregated metrics
-curl -u admin:changeme http://localhost:4444/metrics
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/metrics
 
 # Reset metrics (all or per-entity)
-curl -X POST -u admin:changeme http://localhost:4444/metrics/reset
-curl -X POST -u admin:changeme http://localhost:4444/metrics/reset?entity=tool&id=1
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/metrics/reset
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/metrics/reset?entity=tool&id=1
 ```
 
 ---
@@ -846,7 +865,7 @@ curl -X POST -u admin:changeme http://localhost:4444/metrics/reset?entity=tool&i
 
 ```bash
 # SSE: all events
-curl -N -u admin:changeme http://localhost:4444/events
+curl -N -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/events
 
 # WebSocket
 wscat -c ws://localhost:4444/ws \
