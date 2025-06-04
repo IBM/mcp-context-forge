@@ -398,6 +398,32 @@ This workflow:
 * Pushes the image to Google Artifact Registry.
 * Deploys to Google Cloud Run with `--max-instances=1`.
 
+### Setting up permissions for Google Cloud Run deployment
+
+Instead of project-wide permissions, grant permissions on specific resources:
+
+```bash
+# Create service account
+gcloud iam service-accounts create github-mcpgateway \
+  --display-name="GitHub MCP Gateway Deploy"
+
+# Grant permission ONLY on the specific Cloud Run service
+gcloud run services add-iam-policy-binding mcpgateway \
+  --region=us-central1 \
+  --member="serviceAccount:github-mcpgateway@YOUR-PROJECT-ID.iam.gserviceaccount.com" \
+  --role="roles/run.developer"
+
+# Grant permission ONLY on the specific Artifact Registry repository
+gcloud artifacts repositories add-iam-policy-binding mcpgateway \
+  --location=us-central1 \
+  --member="serviceAccount:github-mcpgateway@YOUR-PROJECT-ID.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.writer"
+
+# Create the key
+gcloud iam service-accounts keys create restricted-key.json \
+  --iam-account=github-mcpgateway@YOUR-PROJECT-ID.iam.gserviceaccount.com
+```
+
 ---
 
 ## 📘 Notes and Tips
