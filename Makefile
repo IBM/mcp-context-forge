@@ -1282,3 +1282,102 @@ ibmcloud-ce-status:
 ibmcloud-ce-rm:
 	@echo "🗑️  Deleting Code Engine app: $(IBMCLOUD_CODE_ENGINE_APP)…"
 	@ibmcloud ce application delete --name $(IBMCLOUD_CODE_ENGINE_APP) -f
+
+
+# =============================================================================
+# 🧪 MINIKUBE LOCAL CLUSTER
+# =============================================================================
+# help: 🧪 MINIKUBE LOCAL CLUSTER
+# help: minikube-install      - Install Minikube (macOS, Linux, or Windows via choco)
+# help: minikube-start        - Start local Minikube cluster with Ingress + DNS + metrics-server
+# help: minikube-stop         - Stop the Minikube cluster
+# help: minikube-delete       - Delete the Minikube cluster
+# help: minikube-image-load   - Build and load ghcr.io/ibm/mcp-context-forge:latest into Minikube
+# help: minikube-k8s-apply    - Apply Kubernetes manifests from k8s/
+# help: minikube-status       - Show status of Minikube and ingress pods
+
+.PHONY: minikube-install minikube-start minikube-stop minikube-delete \
+        minikube-image-load minikube-k8s-apply minikube-status
+
+minikube-install:
+	@echo "💻 Detecting OS and installing Minikube + kubectl…"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+	  echo "🍎 Installing via Homebrew…"; \
+	  brew install minikube kubernetes-cli; \
+	elif [ "$$(uname)" = "Linux" ]; then \
+	  echo "🐧 Installing via direct download…"; \
+	  curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && \
+	  sudo install minikube-linux-amd64 /usr/local/bin/minikube && \
+	  rm minikube-linux-amd64; \
+	  echo "🔧 Installing kubectl…"; \
+	  curl -LO "https://dl.k8s.io/release/$$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+	  chmod +x kubectl && sudo mv kubectl /usr/local/bin/; \
+	elif command -v powershell.exe >/dev/null; then \
+	  echo "🪟 Installing via Chocolatey…"; \
+	  powershell.exe -Command "choco install -y minikube kubernetes-cli"; \
+	else \
+	  echo "❌ Unsupported OS. Please install manually."; \
+	  exit 1; \
+	fi
+
+minikube-start:
+	@echo "🚀 Starting Minikube with profile 'mcpgw'..."
+	minikube start \
+	  --driver=docker \
+	  --cpus=4 --memory=6g \
+	  --profile=mcpgw
+	@echo "🔌 (Re)enabling required addons…"
+	minikube addons enable ingress -p mcpgw
+	minikube addons enable ingress-dns -p mcpgw
+	minikube addons enable metrics-server -p mcpgw
+
+minikube-stop:
+	@echo "🛑 Stopping Minikube cluster..."
+	minikube stop -p mcpgw
+
+minikube-delete:
+	@echo "🗑 Deleting Minikube cluster..."
+	minikube delete -p mcpgw
+
+minikube-image-load:
+	@echo "📦 Loading image into Minikube (must be pre-built)..."
+	@if ! docker image inspect ghcr.io/ibm/mcp-context-forge:latest >/dev/null 2>&1; then \
+	  echo "❌ Image ghcr.io/ibm/mcp-context-forge:latest not found. Download or build it first."; \
+	  exit 1; \
+	fi
+	minikube image load ghcr.io/ibm/mcp-context-forge:latest -p mcpgw
+	@echo "🔍 Verifying image presence inside Minikube..."
+	minikube ssh -p mcpgw "sudo crictl images | grep ghcr.io/ibm/mcp-context-forge || echo '❌ Image not found in Minikube runtime'"
+
+minikube-k8s-apply:
+	@echo "🧩 Applying Kubernetes manifests..."
+	kubectl apply -f k8s/postgres-config.yaml || true
+	kubectl apply -f k8s/postgres-pv.yaml || true
+	kubectl apply -f k8s/postgres-pvc.yaml || true
+	kubectl apply -f k8s/postgres-deployment.yaml
+	kubectl apply -f k8s/postgres-service.yaml
+	kubectl apply -f k8s/redis-deployment.yaml
+	kubectl apply -f k8s/redis-service.yaml
+	kubectl apply -f k8s/mcp-context-forge-deployment.yaml
+	kubectl apply -f k8s/mcp-context-forge-service.yaml
+	kubectl apply -f k8s/mcp-context-forge-ingress.yaml
+	minikube status -p mcpgw
+
+minikube-status:
+	@echo "📊 Minikube cluster status:"
+	minikube status -p mcpgw
+
+	@echo "\n📦 Addon status (ingress, ingress-dns, metrics-server):"
+	minikube addons list | grep -E 'ingress|ingress-dns|metrics-server'
+
+	@echo "\n🚦 Ingress controller pods:"
+	kubectl get pods -n ingress-nginx -o wide || true
+
+	@echo "\n🧭 Ingress-DNS pods (coredns):"
+	kubectl get pods -n kube-system -l k8s-app=kube-dns -o wide || true
+
+	@echo "\n🧩 Application services:"
+	kubectl get svc || true
+
+	@echo "\n🌐 Application ingress:"
+	kubectl get ingress || true
