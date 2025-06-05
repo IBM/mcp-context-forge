@@ -159,7 +159,7 @@ resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settin
 # Initialize FastAPI app
 app = FastAPI(
     title=settings.app_name,
-    version="1.0.0",
+    version=__version__,
     description="A FastAPI-based MCP Gateway with federation support",
     root_path=settings.app_root_path,
 )
