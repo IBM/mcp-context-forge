@@ -1289,6 +1289,7 @@ ibmcloud-ce-rm:
 # =============================================================================
 # help: 🧪 MINIKUBE LOCAL CLUSTER
 # help: minikube-install      - Install Minikube (macOS, Linux, or Windows via choco)
+# help: helm-install          - Install Helm CLI (macOS, Linux, or Windows)
 # help: minikube-start        - Start local Minikube cluster with Ingress + DNS + metrics-server
 # help: minikube-stop         - Stop the Minikube cluster
 # help: minikube-delete       - Delete the Minikube cluster
@@ -1296,7 +1297,7 @@ ibmcloud-ce-rm:
 # help: minikube-k8s-apply    - Apply Kubernetes manifests from k8s/
 # help: minikube-status       - Show status of Minikube and ingress pods
 
-.PHONY: minikube-install minikube-start minikube-stop minikube-delete \
+.PHONY: minikube-install helm-install minikube-start minikube-stop minikube-delete \
         minikube-image-load minikube-k8s-apply minikube-status
 
 minikube-install:
@@ -1317,6 +1318,19 @@ minikube-install:
 	  powershell.exe -Command "choco install -y minikube kubernetes-cli"; \
 	else \
 	  echo "❌ Unsupported OS. Please install manually."; \
+	  exit 1; \
+	fi
+
+helm-install:
+	@echo "📦 Installing Helm CLI…"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+	  brew install helm; \
+	elif [ "$$(uname)" = "Linux" ]; then \
+	  curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash; \
+	elif command -v powershell.exe >/dev/null; then \
+	  powershell.exe -Command "choco install -y kubernetes-helm"; \
+	else \
+	  echo "❌ Unsupported OS. Please install Helm manually."; \
 	  exit 1; \
 	fi
 
@@ -1381,3 +1395,45 @@ minikube-status:
 
 	@echo "\n🌐 Application ingress:"
 	kubectl get ingress || true
+
+# -----------------------------------------------------------------------------
+# 🛠️ HELM CHART TASKS
+# -----------------------------------------------------------------------------
+# help: 🛠️ HELM CHART TASKS
+# help: helm-lint            - Lint the Helm chart (static analysis)
+# help: helm-package         - Package the chart into dist/ as mcp-stack-<ver>.tgz
+# help: helm-deploy          - Upgrade/Install chart into Minikube (profile mcpgw)
+# help: helm-delete          - Uninstall the chart release from Minikube
+# -----------------------------------------------------------------------------
+
+.PHONY: helm-lint helm-package helm-deploy helm-delete
+
+CHART_DIR      ?= charts/mcp-stack
+RELEASE_NAME   ?= mcp-stack
+NAMESPACE      ?= mcp
+VALUES         ?= $(CHART_DIR)/values.yaml
+
+helm-lint:
+	@echo "🔍 Helm lint..."
+	helm lint $(CHART_DIR)
+
+helm-package:
+	@echo "📦 Packaging chart into ./dist ..."
+	@mkdir -p dist
+	helm package $(CHART_DIR) -d dist
+
+helm-deploy: helm-lint
+	@echo "🚀 Deploying $(RELEASE_NAME) into Minikube (ns=$(NAMESPACE))..."
+	helm upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
+	  --namespace $(NAMESPACE) --create-namespace \
+	  -f $(VALUES) \
+	  --wait
+	@echo "✅ Deployed."
+	@echo "\n📊 Release status:"
+	helm status $(RELEASE_NAME) -n $(NAMESPACE)
+	@echo "\n📦 Pods:"
+	kubectl get pods -n $(NAMESPACE)
+
+helm-delete:
+	@echo "🗑  Deleting $(RELEASE_NAME) release..."
+	helm uninstall $(RELEASE_NAME) -n $(NAMESPACE) || true

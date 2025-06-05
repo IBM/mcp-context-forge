@@ -1,0 +1,93 @@
+global:
+  imagePullSecrets: []
+  nameOverride: ""
+  fullnameOverride: ""
+
+mcpContextForge:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  containerPort: 4444
+  resources:
+    limits:
+      cpu: 200m
+      memory: 1024Mi
+    requests:
+      cpu: 100m
+      memory: 512Mi
+  ingress:
+    enabled: true
+    className: nginx
+    host: gateway.local
+    path: /
+    pathType: Prefix
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+  env:
+    host: 0.0.0.0
+    postgres:
+      host: postgres
+      port: 5432
+      db: postgresdb
+      userKey: POSTGRES_USER
+      passwordKey: POSTGRES_PASSWORD
+    redis:
+      host: redis
+      port: 6379
+
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "10.1"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 5432
+  persistence:
+    enabled: true
+    storageClassName: manual
+    accessModes: [ReadWriteMany]
+    size: 5Gi
+  credentials:
+    database: postgresdb
+    user: admin
+    password: test123
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 6379
+
+pgadmin:
+  enabled: false
+  image:
+    repository: dpage/pgadmin4
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  env:
+    email: admin@local.test
+    password: admin123
+
+redisCommander:
+  enabled: false
+  image:
+    repository: rediscommander/redis-commander
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8081

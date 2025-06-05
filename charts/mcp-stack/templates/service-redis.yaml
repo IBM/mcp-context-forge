@@ -1,0 +1,21 @@
+{{- /*
+Redis Service
+*/ -}}
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-redis
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: redis
+spec:
+  type: {{ .Values.redis.service.type }}
+  selector:
+    app: redis
+    release: {{ .Release.Name }}
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+      targetPort: redis
+{{- end }}
