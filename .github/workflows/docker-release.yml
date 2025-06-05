@@ -49,11 +49,37 @@ jobs:
           TAG="${{ github.event.release.tag_name }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-          # Fetch the commit SHA for this tag
-          git init -q
-          git remote add origin "https://github.com/${{ github.repository }}"
-          git fetch --depth=1 origin "refs/tags/$TAG"
-          SHA=$(git rev-list -n 1 "$TAG")
+          # Method 1: Use the target_commitish from the release event if available
+          if [ -n "${{ github.event.release.target_commitish }}" ]; then
+            SHA="${{ github.event.release.target_commitish }}"
+            echo "Using release target_commitish: $SHA"
+          else
+            # Method 2: Use GitHub API to get the commit SHA for the tag
+            SHA=$(curl -sSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG" \
+              | jq -r '.object.sha')
+
+            # If it's an annotated tag, we need to get the commit it points to
+            if [ -z "$SHA" ] || [ "$SHA" = "null" ]; then
+              # Try getting the tag object
+              TAG_SHA=$(curl -sSL \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG" \
+                | jq -r '.object.sha')
+
+              # Get the commit SHA from the tag object
+              SHA=$(curl -sSL \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/git/tags/$TAG_SHA" \
+                | jq -r '.object.sha')
+            fi
+          fi
+
+          echo "Resolved commit SHA: $SHA"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
       # ----------------------------------------------------------------------
