@@ -52,6 +52,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from mcpgateway import __version__
 from mcpgateway.admin import admin_router
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
@@ -159,7 +160,7 @@ resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settin
 # Initialize FastAPI app
 app = FastAPI(
     title=settings.app_name,
-    version="1.0.0",
+    version=__version__,
     description="A FastAPI-based MCP Gateway with federation support",
     root_path=settings.app_root_path,
 )
