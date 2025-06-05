@@ -1,0 +1,21 @@
+{{- /*
+Redis-Commander Service
+*/ -}}
+{{- if .Values.redisCommander.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-redis-commander
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: redis-commander
+spec:
+  type: {{ .Values.redisCommander.service.type }}
+  selector:
+    app: redis-commander
+    release: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.redisCommander.service.port }}
+      targetPort: http
+{{- end }}

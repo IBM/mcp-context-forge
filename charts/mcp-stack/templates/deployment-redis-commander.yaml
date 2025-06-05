@@ -1,0 +1,38 @@
+{{- /*
+Redis-Commander Deployment
+*/ -}}
+{{- if .Values.redisCommander.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-redis-commander
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: redis-commander
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-commander
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: redis-commander
+        release: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: redis-commander
+          image: "{{ .Values.redisCommander.image.repository }}:{{ .Values.redisCommander.image.tag }}"
+          imagePullPolicy: {{ .Values.redisCommander.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.redisCommander.service.port }}
+          env:
+            # Format: alias:host:port
+            - name: REDIS_HOSTS
+              value: "local:{{ .Values.mcpContextForge.env.redis.host }}:{{ .Values.mcpContextForge.env.redis.port }}"
+          {{- with .Values.redisCommander.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
