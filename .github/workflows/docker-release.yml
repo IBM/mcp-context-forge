@@ -1,0 +1,111 @@
+# ======================================================================
+# 🐳  Docker Release Workflow - Tag and Push on GitHub Release
+# ======================================================================
+#
+# This workflow re-tags a Docker image (built by a previous workflow)
+# when a GitHub Release is published, giving it a semantic version tag
+# like `v0.1.0`. It assumes the CI build has already pushed an image
+# tagged with the commit SHA, and that all checks on that commit passed.
+#
+# ➤ Trigger: Release published (e.g. from GitHub UI or `gh release` CLI)
+# ➤ Assumes: Existing image tagged with the commit SHA is available
+# ➤ Result: Image re-tagged as `ghcr.io/OWNER/REPO:v0.1.0`
+#
+# ======================================================================
+
+name: "Docker image - release tag"
+
+# ----------------------------------------------------------------------------
+# Trigger: When a release is published (NOT draft or prerelease)
+# ----------------------------------------------------------------------------
+on:
+  release:
+    types: [published]
+
+jobs:
+  tag-and-push:
+    # ------------------------------------------------------------------------
+    # Only run if the release tag starts with 'v', and is not a draft/prerelease
+    # ------------------------------------------------------------------------
+    if: |
+      startsWith(github.event.release.tag_name, 'v') &&
+      github.event.release.draft == false &&
+      github.event.release.prerelease == false
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read      # read repository info
+      packages: write     # push Docker image
+      statuses: read      # check status API to ensure commit checks passed
+
+    steps:
+      # ----------------------------------------------------------------------
+      # Step 1: Capture release tag and resolve the commit SHA it points to
+      # ----------------------------------------------------------------------
+      - name: 🏷️  Extract tag & commit SHA
+        id: meta
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Fetch the commit SHA for this tag
+          git init -q
+          git remote add origin "https://github.com/${{ github.repository }}"
+          git fetch --depth=1 origin "refs/tags/$TAG"
+          SHA=$(git rev-list -n 1 "$TAG")
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------------------
+      # Step 2: Confirm all checks on that commit were successful
+      # ----------------------------------------------------------------------
+      - name: ✅  Verify commit checks passed
+        env:
+          SHA: ${{ steps.meta.outputs.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          STATUS=$(curl -sSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/status" \
+            | jq -r '.state')
+          echo "Combined status: $STATUS"
+          if [ "$STATUS" != "success" ]; then
+            echo "Required workflows have not all succeeded - aborting." >&2
+            exit 1
+          fi
+
+      # ----------------------------------------------------------------------
+      # Step 3: Authenticate with GitHub Container Registry (GHCR)
+      # ----------------------------------------------------------------------
+      - name: 🔐  Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ----------------------------------------------------------------------
+      # Step 4: Pull the image using the commit SHA tag
+      # ----------------------------------------------------------------------
+      - name: ⬇️  Pull image by commit SHA
+        run: |
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          docker pull "$IMAGE:${{ steps.meta.outputs.sha }}"
+
+      # ----------------------------------------------------------------------
+      # Step 5: Tag the image with the semantic version tag
+      # ----------------------------------------------------------------------
+      - name: 🏷️  Tag image with version
+        run: |
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          docker tag "$IMAGE:${{ steps.meta.outputs.sha }}" "$IMAGE:${{ steps.meta.outputs.tag }}"
+
+      # ----------------------------------------------------------------------
+      # Step 6: Push the new tag to GHCR
+      # ----------------------------------------------------------------------
+      - name: 🚀  Push new version tag
+        run: |
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          docker push "$IMAGE:${{ steps.meta.outputs.tag }}"
