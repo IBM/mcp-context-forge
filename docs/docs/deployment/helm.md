@@ -1,24 +1,67 @@
-# 🚀 Helm Quick-Start Guide (any Kubernetes cluster)
+# 🚀 Deploying the MCP Gateway Stack with Helm
 
-This doc shows how to use Helm to install, upgrade, and remove the MCP Gateway with PostgreSQL, Redis, PgAdmin and Redis on **any** Kubernetes cluster—local (*kind*, Docker Desktop, Minikube), on-prem (RKE, Rancher), or managed (*EKS*, *AKS*, *GKE*, *Openshift*, etc.).
+This guide walks you through installing, upgrading, and removing the full **MCP Gateway Stack** using Helm. The stack includes:
+
+* 🧠 MCP Context Forge (the gateway)
+* 🗄 PostgreSQL database
+* ⚡ Redis cache
+* 🧑‍💻 PgAdmin UI (optional)
+* 🧰 Redis Commander UI (optional)
+
+Everything is deployable via Helm on any Kubernetes cluster (Minikube, kind, EKS, AKS, GKE, OpenShift, etc.).
+
+> 📦 Helm chart location:
+> [https://github.com/IBM/mcp-context-forge/tree/main/charts/mcp-stack](https://github.com/IBM/mcp-context-forge/tree/main/charts/mcp-stack)
 
 ---
 
 ## 📋 Prerequisites
 
-| Requirement                   | Notes & Minimum Versions                                                                       |
-| ----------------------------- | ---------------------------------------------------------------------------------------------- |
-| **Kubernetes**                | Cluster reachable by `kubectl`; tested on v1.23 – v1.30                                        |
-| **Helm 3**                    | [https://helm.sh/docs/intro/install/](https://helm.sh/docs/intro/install/)                     |
-| **kubectl**                   | `kubectl version --short` should return client *and* server                                    |
-| **Container registry access** | If images are private, configure `imagePullSecrets` or `docker login` on all nodes             |
-| **(Ingress)**                 | Either an Ingress controller **or** a cloud LB Service class, depending on how you expose HTTP |
+| Requirement        | Notes                                                        |
+| ------------------ | ------------------------------------------------------------ |
+| Kubernetes ≥ 1.23  | Local (Minikube/kind) or managed (EKS, AKS, GKE, etc.)       |
+| Helm 3             | Used for installing and managing releases                    |
+| kubectl            | Configured to talk to your target cluster                    |
+| Ingress Controller | NGINX, Traefik, or cloud-native (or disable via values.yaml) |
+| StorageClass (RWX) | Required for PostgreSQL PVC unless persistence is disabled   |
 
 ---
 
-## 1 — Install Helm & kubectl
+## 🧭 Architecture
 
-### macOS (Homebrew)
+```mermaid
+flowchart TD
+    subgraph Ingress Layer
+        ingress[NGINX Ingress Controller]
+    end
+
+    subgraph Application Layer
+        mcp[MCP Context Forge]
+        pgadmin[PgAdmin UI<br/>optional]
+        rediscommander[Redis Commander UI<br/>optional]
+    end
+
+    subgraph Data Layer
+        postgres[(PostgreSQL)]
+        redis[(Redis)]
+    end
+
+    ingress --> mcp
+    ingress --> pgadmin
+    ingress --> rediscommander
+
+    mcp --> postgres
+    mcp --> redis
+
+    pgadmin --> postgres
+    rediscommander --> redis
+```
+
+---
+
+## 🛠 Step 1 - Install Helm & kubectl
+
+### macOS
 
 ```bash
 brew install helm kubernetes-cli
@@ -27,148 +70,190 @@ brew install helm kubernetes-cli
 ### Linux
 
 ```bash
+# Helm
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-# kubectl:
+
+# kubectl
 curl -LO "https://dl.k8s.io/release/$(curl -sSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-sudo install -m 0755 kubectl /usr/local/bin
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin
 ```
 
-### Windows (PowerShell + Chocolatey)
+### Windows (PowerShell)
 
 ```powershell
 choco install -y kubernetes-helm kubernetes-cli
 ```
 
-Verify:
+Verify installation:
 
 ```bash
 helm version
 kubectl version --short
-kubectl config get-contexts   # choose your target context
+kubectl config get-contexts
 ```
 
 ---
 
-## 2 — Lint and (optionally) package
+## 📦 Step 2 - Clone and inspect the chart
 
 ```bash
-# Static template check
-helm lint charts/mcp-stack
-
-# Optional: package into dist/ for CI or air-gapped clusters
-mkdir -p dist
-helm package charts/mcp-stack -d dist
+git clone https://github.com/IBM/mcp-context-forge.git
+cd mcp-context-forge/charts/mcp-stack
+helm lint .
 ```
 
 ---
 
-## 3 — Deploy / Upgrade
+## 🧾 Step 3 - Customize values
 
-### 3-A Minimal install (namespace `mcp`)
+Copy and modify the default `values.yaml`:
 
 ```bash
-helm upgrade --install mcp-stack charts/mcp-stack \
+cp values.yaml my-values.yaml
+```
+
+Then edit fields such as:
+
+```yaml
+mcpContextForge:
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: latest
+
+  ingress:
+    enabled: true
+    host: gateway.local
+    className: nginx
+
+postgres:
+  credentials:
+    user: admin
+    password: test123
+
+pgadmin:
+  enabled: true
+
+redisCommander:
+  enabled: true
+```
+
+---
+
+## 🚀 Step 4 - Install / Upgrade the stack
+
+```bash
+helm upgrade --install mcp-stack . \
   --namespace mcp --create-namespace \
-  --wait     # blocks until Deployments & Jobs are ready
+  -f my-values.yaml \
+  --wait
 ```
-
-### 3-B With environment overrides file
-
-```bash
-helm upgrade --install mcp-stack charts/mcp-stack \
-  -n mcp --create-namespace \
-  -f envs/prod-values.yaml \
-  --set mcpContextForge.image.tag=v1.2.3
-```
-
-*(The chart's `values.yaml` documents every knob—replicas, resources, ingress host, DB credentials, persistence, …)*
 
 ---
 
-## 4 — Verify
+## ✅ Step 5 - Verify deployment
 
 ```bash
-# All resources in the namespace
 kubectl get all -n mcp
-
-# Release status
 helm status mcp-stack -n mcp
-
-# Tail logs
-kubectl logs -n mcp deploy/mcp-stack-app -f
 ```
 
-### Ingress / Service exposure
-
-* **Ingress controller present** → run `kubectl get ingress -n mcp`.
-* **No Ingress** → change `mcpContextForge.service.type` to `LoadBalancer` or `NodePort`.
-
----
-
-## 5 — Updates & Rollbacks
-
-### Rolling upgrade
+If using Ingress:
 
 ```bash
-helm upgrade mcp-stack charts/mcp-stack -n mcp \
-  --set mcpContextForge.image.tag=v1.3.0
+kubectl get ingress -n mcp
+curl http://gateway.local/health
 ```
 
-### Diff before upgrade (requires plugin)
+If not using Ingress:
 
 ```bash
-helm plugin install https://github.com/databus23/helm-diff   # once
-helm diff upgrade mcp-stack charts/mcp-stack -n mcp -f values.yaml
-```
-
-### Roll back
-
-```bash
-helm rollback mcp-stack <REVISION> -n mcp
-# list revisions:
-helm history mcp-stack -n mcp
+kubectl port-forward svc/mcp-stack-app 8080:80 -n mcp
+curl http://localhost:8080/health
 ```
 
 ---
 
-## 6 — Uninstall
+## 🔄 Step 6 - Upgrade & Rollback
+
+### Upgrade (e.g. new image tag)
+
+```bash
+helm upgrade mcp-stack . -n mcp \
+  --set mcpContextForge.image.tag=v1.2.3 \
+  --wait
+```
+
+### Preview changes (diff plugin)
+
+```bash
+helm plugin install https://github.com/databus23/helm-diff
+helm diff upgrade mcp-stack . -n mcp -f my-values.yaml
+```
+
+### Rollback
+
+```bash
+helm rollback mcp-stack 1 -n mcp
+```
+
+---
+
+## 🧹 Step 7 - Uninstall
 
 ```bash
 helm uninstall mcp-stack -n mcp
-# Optional: delete namespace / PVCs
-kubectl delete ns mcp
+kubectl delete ns mcp  # optional cleanup
 ```
 
-Persistent volumes created with the namespace remain until you delete the PVC/PV objects (or the storage class policy garbage-collects them).
+---
+
+## 🧪 CI/CD: Packaging & OCI Push
+
+```bash
+helm lint .
+helm package . -d dist/
+helm push dist/mcp-stack-*.tgz oci://ghcr.io/<your-org>/charts
+```
+
+Used with GitOps tools like Argo CD or Flux.
 
 ---
 
-## 7 — Troubleshooting Cheatsheet
+## 🧯 Troubleshooting
 
-| Symptom                              | Quick check                                           |                                                      |
-| ------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------- |
-| Pods stuck in `ImagePullBackOff`     | `kubectl describe pod …` → pull secret / repo access  |                                                      |
-| `CrashLoopBackOff`                   | `kubectl logs …` → env vars, DB connectivity          |                                                      |
-| Ingress 404 / no address             | \`kubectl get svc -A                                  | grep ingress\` – controller running? LB provisioned? |
-| Helm hook failures (Jobs)            | `kubectl get jobs -n mcp && kubectl logs job/<name>`  |                                                      |
-| Template error during `helm install` | `helm lint charts/mcp-stack` or run \`helm template … | yq\`                                                 |
-
----
-
-## 8 — CI/CD tips
-
-* **Package once** → push chart (`.tgz`) to OCI registry (`helm push` with `oci://` URLs) or `chartmuseum`.
-* **Values per environment** → `values-dev.yaml`, `values-prod.yaml`, etc.
-* **GitOps** → use Argo CD / Flux to watch the chart + values in Git and auto-sync.
+| Symptom             | Command / Fix                                      |                                    |
+| ------------------- | -------------------------------------------------- | ---------------------------------- |
+| ImagePullBackOff    | Check pull secrets & image name                    |                                    |
+| Ingress 404 / no IP | \`kubectl get svc -A                               | grep ingress\` - controller ready? |
+| CrashLoopBackOff    | `kubectl logs -n mcp deploy/mcp-stack-app`         |                                    |
+| Job fails           | `kubectl get jobs -n mcp && kubectl logs job/…`    |                                    |
+| Invalid values      | `helm lint . && helm template . -f my-values.yaml` |                                    |
 
 ---
 
-## 🌐 Further reading
+## 🧾 values.yaml - Common Keys
 
-* Helm docs – [https://helm.sh/docs/](https://helm.sh/docs/)
-* Kubernetes Ingress concepts – [https://kubernetes.io/docs/concepts/services-networking/ingress/](https://kubernetes.io/docs/concepts/services-networking/ingress/)
-* Persistent Volumes – [https://kubernetes.io/docs/concepts/storage/persistent-volumes/](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
+| Key                                          | Default     | Purpose                            |
+| -------------------------------------------- | ----------- | ---------------------------------- |
+| `mcpContextForge.image.tag`                  | `latest`    | Image version for the Gateway      |
+| `mcpContextForge.ingress.enabled`            | `true`      | Enables ingress                    |
+| `mcpContextForge.service.type`               | `ClusterIP` | Change to `LoadBalancer` if needed |
+| `postgres.persistence.enabled`               | `true`      | Enables a persistent volume claim  |
+| `pgadmin.enabled` / `redisCommander.enabled` | `false`     | Optional admin UIs                 |
+
+See full annotations in `values.yaml`.
 
 ---
 
-Deploying with Helm turns your stack into a versioned, repeatable artefact—ideal for local dev, staging, and production alike.
+## 📚 Further Reading
+
+* Helm: [https://helm.sh/docs/](https://helm.sh/docs/)
+* Kubernetes Ingress: [https://kubernetes.io/docs/concepts/services-networking/ingress/](https://kubernetes.io/docs/concepts/services-networking/ingress/)
+* Persistent Volumes: [https://kubernetes.io/docs/concepts/storage/persistent-volumes/](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
+* Helm OCI Registry: [https://helm.sh/docs/topics/registries/](https://helm.sh/docs/topics/registries/)
+* Argo CD: [https://argo-cd.readthedocs.io](https://argo-cd.readthedocs.io)
+
+---
+
+✅ You now have a production-ready Helm workflow for MCP Context Forge. It's CI-friendly, customizable, and tested across Kubernetes distributions.
