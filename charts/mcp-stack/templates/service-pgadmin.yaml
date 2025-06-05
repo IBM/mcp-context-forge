@@ -1,0 +1,21 @@
+{{- /*
+PgAdmin Service
+*/ -}}
+{{- if .Values.pgadmin.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-pgadmin
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: pgadmin
+spec:
+  type: {{ .Values.pgadmin.service.type }}
+  selector:
+    app: pgadmin
+    release: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.pgadmin.service.port }}
+      targetPort: http
+{{- end }}

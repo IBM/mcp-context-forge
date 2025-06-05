@@ -7,6 +7,7 @@ nav:
   - kubernetes.md
   - openshift.md
   - minikube.md
+  - helm.md
   - google-cloud-run.md
   - ibm-code-engine.md
   - aws.md

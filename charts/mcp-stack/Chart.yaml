@@ -1,0 +1,11 @@
+apiVersion: v2
+name: mcp-stack
+description: |
+  A complete Helm chart for MCP Gateway stack (Context Forge) including:
+    * MCP Application
+    * PostgreSQL database with persistence
+    * Redis cache
+    * Optional PgAdmin & Redis Commander UIs
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

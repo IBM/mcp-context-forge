@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-app
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.mcpContextForge.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-app
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-app
+    spec:
+      containers:
+        - name: mcp-context-forge
+          image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
+          imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.mcpContextForge.containerPort }}
+          env:
+            - name: HOST
+              value: "{{ .Values.mcpContextForge.env.host }}"
+            - name: POSTGRES_HOST
+              value: "{{ .Values.mcpContextForge.env.postgres.host }}"
+            - name: POSTGRES_PORT
+              value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
+            - name: REDIS_HOST
+              value: "{{ .Values.mcpContextForge.env.redis.host }}"
+            - name: REDIS_PORT
+              value: "{{ .Values.mcpContextForge.env.redis.port }}"
+          resources: {{- toYaml .Values.mcpContextForge.resources | nindent 12 }}

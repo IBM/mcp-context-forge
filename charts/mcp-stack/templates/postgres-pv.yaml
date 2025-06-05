@@ -1,0 +1,16 @@
+{{- if and .Values.postgres.enabled .Values.postgres.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-pv-volume
+  labels:
+    type: local
+    app: postgres
+spec:
+  storageClassName: {{ .Values.postgres.persistence.storageClassName }}
+  capacity:
+    storage: {{ .Values.postgres.persistence.size }}
+  accessModes: {{- toYaml .Values.postgres.persistence.accessModes | nindent 4 }}
+  hostPath:
+    path: "/mnt/data"
+{{- end }}
