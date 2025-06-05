@@ -1,12 +1,27 @@
 # 🧩 Docker Compose
 
 Running **MCP Gateway** with **Compose** spins up a full stack (Gateway, Postgres, Redis, optional MPC servers) behind a single YAML file.
-The Makefile detects Podman or Docker automatically, and you can override it with `COMPOSE_ENGINE=`.
+The Makefile detects Podman or Docker automatically, and you can override it with `COMPOSE_CMD=`.
 Health-checks (`service_healthy`) gate the Gateway until the database is ready, preventing race conditions.
 
 ---
 
+## Configure the compose command to use
+
+For example, install and use Docker Compose v2:
+
+```bash
+sudo apt install docker-buildx docker-compose-v2
+export COMPOSE_CMD="docker compose"
+```
+
 ## 🐳/🦭 Build the images
+
+```bash
+docker pull ghcr.io/ibm/mcp-context-forge:latest
+```
+
+## 🐳/🦭 Build the images (when doing local development)
 
 ### Using Make (preferred)
 
@@ -16,6 +31,8 @@ Health-checks (`service_healthy`) gate the Gateway until the database is ready, 
 | `make podman-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Ultra-slim UBI 9-micro build  |
 | `make docker`      | `mcpgateway:latest`     | **Containerfile**      | Docker Desktop / CI runners   |
 | `make docker-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same multi-stage "lite" build |
+
+Remember to tag the image or configure the correct image in `docker-compose.yml`
 
 ### Manual equivalents
 

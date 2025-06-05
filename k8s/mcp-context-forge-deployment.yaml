@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-context-forge
+  labels:
+    app: mcp-context-forge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-context-forge
+  template:
+    metadata:
+      labels:
+        app: mcp-context-forge
+    spec:
+      containers:
+        - name: mcp-context-forge
+          image: ghcr.io/ibm/mcp-context-forge:latest
+          ports:
+            - containerPort: 4444
+          env:
+            - name: HOST
+              value: 0.0.0.0
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PORT
+              value: "6379"
