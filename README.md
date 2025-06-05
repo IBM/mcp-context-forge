@@ -102,7 +102,7 @@ If you just want to run the gateway using the official image from GitHub Contain
 docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=my-secret-key \
+  -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
@@ -111,6 +111,8 @@ docker run -d --name mcpgateway \
 
 docker logs mcpgateway
 ```
+
+You can now access the UI at [http://localhost:4444/admin](http://localhost:4444/admin)
 
 > 💡 You can also use `--env-file .env` if you have a config file already. See the provided [.env.example](.env.example)
 
@@ -123,16 +125,19 @@ docker logs mcpgateway
 ### Generate a token for API access
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 100800 --secret my-test-key)
+echo ${MCPGATEWAY_BEARER_TOKEN}
 ```
 
 ### Smoke-test the running container
 
 ```bash
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/health
+     http://localhost:4444/health | jq
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/tools | jq
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:4444/version | jq
 ```
 
 ### Running the mcpgateway-wrapper
@@ -210,19 +215,14 @@ make lint          # optional: run style checks (ruff, mypy, etc.)
 
 ### Containerised (self-signed TLS)
 
+
+> You can use docker or podman, ex:
+
 ```bash
 make podman            # build production image
 make podman-run-ssl    # run at https://localhost:4444
-```
-
-### Generate an admin JWT
-
-```bash
-python -m mcpgateway.utils.create_jwt_token \
-       -u admin \
-       -e 10080 | tee token.txt   # 7 days (minutes)
-
-export MCPGATEWAY_BEARER_TOKEN=$(cat token.txt)
+# or listen on port 4444 on your host directly, adds --network=host to podman
+make podman-run-ssl-host
 ```
 
 ### Smoke-test the API
@@ -614,7 +614,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' \
      http://localhost:4444/protocol/ping
 
-# Completion for prompt/resource arguments
+# Completion for prompt/resource arguments (not implemented)
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
@@ -623,7 +623,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
          }' \
      http://localhost:4444/protocol/completion/complete
 
-# Sampling (streaming)
+# Sampling (streaming) (not implemented)
 curl -N -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
@@ -682,6 +682,8 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 # Toggle active status
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/tools/1/toggle?activate=false
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:4444/tools/1/toggle?activate=true
 
 # Delete tool
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1
@@ -692,7 +694,7 @@ curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localh
 ### Gateway Management (`/gateways`)
 
 ```bash
-# Register a peer gateway
+# Register an MCP server as a new gateway provider
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"name":"peer_gateway","url":"http://peer:4444"}' \
@@ -896,7 +898,7 @@ curl -X POST -H "Content-Type: application/json" \
 ## Testing
 
 ```bash
-make tests           # Run unit tests
+make test            # Run unit tests
 make lint            # Run lint tools
 ```
 

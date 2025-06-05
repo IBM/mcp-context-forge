@@ -24,7 +24,7 @@ services:
   # MCP Gateway - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
-    image: mcpgateway/mcpgateway
+    image: ghcr.io/ibm/mcp-context-forge:latest
     build:
       context: .
       dockerfile: Containerfile     # Same one the Makefile builds

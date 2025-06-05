@@ -1,61 +1,81 @@
 # ⚡️ Minikube
 
-1. Install Minikube and a container driver (Docker or Podman).
-2. Start a local cluster with enough CPU/RAM and the **Ingress** addon enabled.
-3. Load or build the `mcpgateway` image into the cluster.
-4. Apply the same Kubernetes manifests you use in other environments.
-5. Access the Gateway at [http://gateway.local](http://gateway.local) (or `127.0.0.1:80`) via NGINX Ingress.
+1. **Install Minikube and kubectl** (Docker or Podman driver required).
+2. Start a local cluster with Ingress and DNS addons.
+3. Load the `ghcr.io/ibm/mcp-context-forge:latest` image into Minikube.
+4. Apply your Kubernetes manifests.
+5. Access the Gateway at [http://gateway.local](http://gateway.local) or `127.0.0.1:80` via NGINX Ingress.
 
-Minikube is self-contained: one command spins up the control-plane, container runtime, CNI, and a registry‐mirroring image loader. You can therefore replicate almost any production feature—including persistent volumes and TLS—entirely on your laptop.
+Minikube provides a self-contained environment, enabling you to replicate production features like persistent volumes and TLS on your local machine.
 
 ---
 
 ## 📋 Prerequisites
 
-| Requirement          | Notes                                                                                                    |
-| -------------------- | -------------------------------------------------------------------------------------------------------- |
-| **CPU/RAM**          | Minikube recommends **2 CPUs + 2 GiB** at minimum. For smooth builds: 4 CPUs / 6 GiB.                    |
-| **Disk**             | ≥20 GiB free space.                                                                                      |
-| **Container driver** | Docker 20.10+ or Podman 4.7+; Docker driver is simplest on macOS/Windows.                                |
-| **kubectl**          | Automatically configured by `minikube start`; or use `minikube kubectl -- …` if kubectl isn't installed. |
+| Requirement          | Notes                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **CPU / RAM**        | Minimum **2 vCPU + 2 GiB**; recommended 4 vCPU / 6 GiB for smoother operation.                             |
+| **Disk**             | At least 20 GiB of free space.                                                                             |
+| **Container driver** | Docker 20.10+ or Podman 4.7+; Docker is the simplest choice on macOS and Windows.                          |
+| **kubectl**          | Automatically configured by `minikube start`; alternatively, use `minikube kubectl -- …` if not installed. |
 
 ---
 
-## 🚀 Step 1 – Install Minikube
+## 🚀 Step 1 – Install Minikube and kubectl
 
-### macOS
+> **Make target**
 
 ```bash
-brew install minikube
+make minikube-install
 ```
 
-### Linux
+This target checks for existing installations of `minikube` and `kubectl`. If missing, it installs them using:
+
+* **Homebrew** on macOS
+* The official binary on Linux
+* **Chocolatey** on Windows
+
+<details>
+<summary>Manual installation (optional)</summary>
+
+### macOS (Homebrew)
 
 ```bash
+brew install minikube kubernetes-cli
+```
+
+### Linux (Generic binary)
+
+```bash
+# Minikube
 curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-sudo install minikube-linux-amd64 /usr/local/bin/minikube
+sudo install minikube-linux-amd64 /usr/local/bin/minikube && rm minikube-linux-amd64
+
+# kubectl (latest stable)
+curl -LO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl && sudo mv kubectl /usr/local/bin/
 ```
 
-### Windows (PowerShell)
+### Windows (PowerShell + Chocolatey)
 
 ```powershell
-choco install minikube
+choco install -y minikube kubernetes-cli
 ```
 
-A detailed Windows walkthrough (including WSL 2) is available from Ambassador Labs.
+</details>
 
 ---
 
 ## ⚙️ Step 2 – Start the cluster
 
 > **Make target**
->
-> ```bash
-> make minikube-start
-> ```
+
+```bash
+make minikube-start
+```
 
 <details>
-<summary>Manual command (Docker driver)</summary>
+<summary>Equivalent manual command</summary>
 
 ```bash
 minikube start \
@@ -68,77 +88,169 @@ minikube start \
 </details>
 
 * `--driver=docker` avoids nested virtualization on macOS and Windows Home.
-* `ingress` addon gives you NGINX with LoadBalancer semantics on localhost.
-* `ingress-dns` resolves `*.local` hostnames automatically when you add Minikube's IP to your OS DNS list.
-* Flags `--cpus` and `--memory` accept **`max`** to use everything available.
+* `ingress` provides an NGINX LoadBalancer on localhost.
+* `ingress-dns` resolves `*.local` domains when you add the Minikube IP to your OS DNS list.
+* `--cpus` and `--memory` can be set to `max` to utilize all available resources.
 
-> Check everything is healthy:
->
-> ```bash
-> minikube status
-> kubectl get pods -n ingress-nginx
-> ```
+**Check cluster status:**
+
+```bash
+make minikube-status
+# or:
+minikube status -p mcpgw
+kubectl get pods -n ingress-nginx
+```
 
 ---
 
 ## 🏗 Step 3 – Load the Gateway image
 
-### Option A – Build inside the Docker driver
-
-> The Docker engine used by Minikube is **your host Docker daemon**, so `docker build` automatically makes the image visible.
+> **Make target**
 
 ```bash
-make docker            # or docker build -t mcpgateway:latest -f Containerfile .
+make minikube-image-load
 ```
 
-### Option B – Push pre-built images into Minikube cache
+This target builds the `ghcr.io/ibm/mcp-context-forge:latest` image and loads it into Minikube.
 
-```bash
-minikube cache add quay.io/your_ns/mcpgateway:latest   # stores & pre-loads next boot
-minikube cache reload                                  # run if you rebuilt the tag
-```
+### Alternative methods
 
-### Option C – Load a local tarball
+* **Pre-cache a remote image:**
 
-```bash
-docker save mcpgateway:latest | \
-  minikube image load -                                     # alt: minikube image load mcpgateway:latest
-```
+  ```bash
+  minikube cache add ghcr.io/ibm/mcp-context-forge:latest
+  minikube cache reload
+  ```
 
-Stack Overflow documents both `image load` and `cache add` patterns.
+* **Load a local tarball:**
+
+  ```bash
+  docker save ghcr.io/ibm/mcp-context-forge:latest | minikube image load -
+  ```
 
 ---
 
 ## 📄 Step 4 – Apply Kubernetes manifests
 
-Reuse the YAML from `docs/kubernetes.md` (Deployment + Service + Ingress).
-If you enable `ingress-dns`, define an Ingress host such as `gateway.local`; otherwise omit the `host:` and access via NodePort.
+> **Make target**
 
 ```bash
-kubectl apply -f k8s/postgres.yaml      # or Helm chart for Postgres
-kubectl apply -f k8s/redis.yaml
-kubectl apply -f k8s/mcpgateway.yaml
-kubectl apply -f k8s/mcpgateway-ingress.yaml
+make minikube-k8s-apply
 ```
 
-Minikube auto-configures `kubectl` context on cluster creation; if not, run:
+This applies the Kubernetes manifests. Alternative manual step:
 
 ```bash
-kubectl config use-context minikube    # or: minikube kubectl -- apply -f …
+# PostgreSQL
+kubectl apply -f k8s/postgres-config.yaml
+kubectl apply -f k8s/postgres-pv.yaml
+kubectl apply -f k8s/postgres-pvc.yaml
+kubectl apply -f k8s/postgres-deployment.yaml
+kubectl apply -f k8s/postgres-service.yaml
+
+# Redis
+kubectl apply -f k8s/redis-deployment.yaml
+kubectl apply -f k8s/redis-service.yaml
+
+# MCP Gateway
+kubectl apply -f k8s/mcp-context-forge-deployment.yaml
+kubectl apply -f k8s/mcp-context-forge-service.yaml
+kubectl apply -f k8s/mcp-context-forge-ingress.yaml
 ```
 
+If you've enabled `ingress-dns`, set the Ingress `host:` to `gateway.local`. Otherwise, omit the `host:` and access via NodePort.
 
+**Note:** Minikube automatically configures the `kubectl` context upon cluster creation. If not, set it manually:
+
+```bash
+kubectl config use-context minikube
+# or:
+minikube kubectl -- apply -f …
+```
 
 ---
 
-## 🌐 Step 5 – Test access
+## 🧪 Step 5 – Verify deployment status
+
+Before hitting your endpoint, confirm the application is up and healthy.
+
+### 🔍 Check pod status
 
 ```bash
-# IP-based
-minikube service mcpgateway --url        # prints http://127.0.0.1:xxxx
-curl $(minikube service mcpgateway --url)/health
+kubectl get pods
+```
 
-# Ingress DNS (after editing system DNS => minikube ip)
+Expect output like:
+
+```
+NAME                                      READY   STATUS    RESTARTS   AGE
+postgres-5b66bdf445-rp8kl                 1/1     Running   0          15s
+redis-668976c4f9-2hljd                    1/1     Running   0          15s
+mcp-context-forge-6d87f8c5d8-nnmgx        1/1     Running   0          10s
+```
+
+---
+
+### 📜 Check logs (optional)
+
+```bash
+kubectl logs deploy/mcp-context-forge
+```
+
+This can help diagnose startup errors or missing dependencies (e.g. bad env vars, Postgres connection issues).
+
+---
+
+### 🚥 Wait for rollout (optional)
+
+```bash
+kubectl rollout status deploy/mcp-context-forge
+```
+
+If the pod gets stuck in `CrashLoopBackOff`, run:
+
+```bash
+kubectl describe pod <pod-name>
+```
+
+And:
+
+```bash
+kubectl logs <pod-name>
+```
+
+---
+
+### ✅ Confirm Ingress is live
+
+```bash
+kubectl get ingress
+```
+
+Should show something like:
+
+```
+NAME                        CLASS    HOSTS           ADDRESS        PORTS   AGE
+mcp-context-forge-ingress   nginx    gateway.local   192.168.49.2   80      1m
+```
+
+If `ADDRESS` is empty, the ingress controller may still be warming up.
+
+You may want to add this to `/etc/hosts`. Ex:
+
+```
+192.168.49.2 gateway.local
+```
+
+---
+
+## 🌐 Step 6 – Test access
+
+```bash
+# Via NodePort:
+curl $(minikube service mcp-context-forge --url)/health
+
+# Via DNS:
 curl http://gateway.local/health
 ```
 
@@ -146,11 +258,11 @@ curl http://gateway.local/health
 
 ## 🧹 Cleaning up
 
-| Action               | Make                   | Manual                                    |
-| -------------------- | ---------------------- | ----------------------------------------- |
-| Pause cluster        | `make minikube-stop`   | `minikube stop -p mcpgw`                  |
-| Delete cluster       | `make minikube-delete` | `minikube delete -p mcpgw`                |
-| Remove cached images | —                      | `minikube cache delete mcpgateway:latest` |
+| Action              | Make target            | Manual command                                               |
+| ------------------- | ---------------------- | ------------------------------------------------------------ |
+| Pause cluster       | `make minikube-stop`   | `minikube stop -p mcpgw`                                     |
+| Delete cluster      | `make minikube-delete` | `minikube delete -p mcpgw`                                   |
+| Remove cached image | —                      | `minikube cache delete ghcr.io/ibm/mcp-context-forge:latest` |
 
 ---
 
@@ -159,10 +271,10 @@ curl http://gateway.local/health
 | Task                     | Command                                               |
 | ------------------------ | ----------------------------------------------------- |
 | Start with Podman driver | `minikube start --driver=podman --network-plugin=cni` |
-| View dashboard           | `minikube dashboard`                                  |
+| Open dashboard           | `minikube dashboard`                                  |
 | SSH into node            | `minikube ssh`                                        |
 | Enable metrics-server    | `minikube addons enable metrics-server`               |
-| Upgrade Minikube         | `minikube delete && brew upgrade minikube`            |
+| Upgrade Minikube (macOS) | `minikube delete && brew upgrade minikube`            |
 
 ---
 

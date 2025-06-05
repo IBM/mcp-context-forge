@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-context-forge
+  labels:
+    app: mcp-context-forge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-context-forge
+  template:
+    metadata:
+      labels:
+        app: mcp-context-forge
+    spec:
+      containers:
+        - name: mcp-context-forge
+          image: ghcr.io/ibm/mcp-context-forge:latest
+          ports:
+            - containerPort: 4444
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "512Mi"
+            limits:
+              cpu: "200m"
+              memory: "1024Mi"

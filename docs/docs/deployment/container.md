@@ -1,6 +1,6 @@
 # 📦 Container Deployment
 
-You can run MCP Gateway as a fully self-contained container. This is the recommended method for production or platform-agnostic deployments.
+You can run MCP Gateway as a fully self-contained container. This is the recommended method for production or platform-agnostic deployments. You can use any container engine (ex: Docker or Podman).
 
 ---
 
