@@ -17,16 +17,23 @@ name: "Docker image - release tag"
 
 # ----------------------------------------------------------------------------
 # Trigger: When a release is published (NOT draft or prerelease)
+# OR manually via workflow_dispatch
 # ----------------------------------------------------------------------------
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.1.0)'
+        required: true
+        type: string
 
 jobs:
   tag-and-push:
-    # ------------------------------------------------------------------------
-    # Only run if the release tag starts with 'v', and is not a draft/prerelease
-    # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Only run if the release tag starts with 'v', and is not draft/prerelease
+    # ------------------------------------------------------------------
     if: |
       startsWith(github.event.release.tag_name, 'v') &&
       github.event.release.draft == false &&
@@ -35,60 +42,42 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read      # read repository info
+      contents: read      # read repo info
       packages: write     # push Docker image
-      statuses: read      # check status API to ensure commit checks passed
+      statuses: read      # check commit status API
 
     steps:
-      # ----------------------------------------------------------------------
-      # Step 1: Capture release tag and resolve the commit SHA it points to
-      # ----------------------------------------------------------------------
+      # ----------------------------------------------------------------
+      # Step 1  Capture release tag and resolve the commit SHA it points to
+      # ----------------------------------------------------------------
       - name: 🏷️  Extract tag & commit SHA
         id: meta
+        shell: bash
         run: |
+          set -euo pipefail
           TAG="${{ github.event.release.tag_name }}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
 
-          # Method 1: Use the target_commitish from the release event if available
-          if [ -n "${{ github.event.release.target_commitish }}" ]; then
+          # Ask the remote repo which commit the tag points to
+          SHA=$(git ls-remote --quiet --refs \
+                "https://github.com/${{ github.repository }}.git" \
+                "refs/tags/$TAG" | cut -f1)
+
+          # Fallback to the release's target_commitish (covers annotated tags/branch releases)
+          if [ -z "$SHA" ] || [ "$SHA" = "null" ]; then
             SHA="${{ github.event.release.target_commitish }}"
-            echo "Using release target_commitish: $SHA"
-          else
-            # Method 2: Use GitHub API to get the commit SHA for the tag
-            SHA=$(curl -sSL \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG" \
-              | jq -r '.object.sha')
-
-            # If it's an annotated tag, we need to get the commit it points to
-            if [ -z "$SHA" ] || [ "$SHA" = "null" ]; then
-              # Try getting the tag object
-              TAG_SHA=$(curl -sSL \
-                -H "Accept: application/vnd.github+json" \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/$TAG" \
-                | jq -r '.object.sha')
-
-              # Get the commit SHA from the tag object
-              SHA=$(curl -sSL \
-                -H "Accept: application/vnd.github+json" \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/repos/${{ github.repository }}/git/tags/$TAG_SHA" \
-                | jq -r '.object.sha')
-            fi
           fi
 
           echo "Resolved commit SHA: $SHA"
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >>"$GITHUB_OUTPUT"
 
-      # ----------------------------------------------------------------------
-      # Step 2: Confirm all checks on that commit were successful
-      # ----------------------------------------------------------------------
+      # ----------------------------------------------------------------
+      # Step 2  Confirm all checks on that commit were successful
+      # ----------------------------------------------------------------
       - name: ✅  Verify commit checks passed
         env:
-          SHA: ${{ steps.meta.outputs.sha }}
-          REPO: ${{ github.repository }}
+          SHA:   ${{ steps.meta.outputs.sha }}
+          REPO:  ${{ github.repository }}
         run: |
           set -euo pipefail
           STATUS=$(curl -sSL \
@@ -98,13 +87,13 @@ jobs:
             | jq -r '.state')
           echo "Combined status: $STATUS"
           if [ "$STATUS" != "success" ]; then
-            echo "Required workflows have not all succeeded - aborting." >&2
+            echo "Required workflows have not all succeeded – aborting." >&2
             exit 1
           fi
 
-      # ----------------------------------------------------------------------
-      # Step 3: Authenticate with GitHub Container Registry (GHCR)
-      # ----------------------------------------------------------------------
+      # ----------------------------------------------------------------
+      # Step 3  Authenticate with GitHub Container Registry (GHCR)
+      # ----------------------------------------------------------------
       - name: 🔐  Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -112,25 +101,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ----------------------------------------------------------------------
-      # Step 4: Pull the image using the commit SHA tag
-      # ----------------------------------------------------------------------
+      # ----------------------------------------------------------------
+      # Step 4  Pull the image using the commit SHA tag
+      # ----------------------------------------------------------------
       - name: ⬇️  Pull image by commit SHA
         run: |
           IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           docker pull "$IMAGE:${{ steps.meta.outputs.sha }}"
 
-      # ----------------------------------------------------------------------
-      # Step 5: Tag the image with the semantic version tag
-      # ----------------------------------------------------------------------
+      # ----------------------------------------------------------------
+      # Step 5  Tag the image with the semantic version tag
+      # ----------------------------------------------------------------
       - name: 🏷️  Tag image with version
         run: |
           IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          docker tag "$IMAGE:${{ steps.meta.outputs.sha }}" "$IMAGE:${{ steps.meta.outputs.tag }}"
+          docker tag "$IMAGE:${{ steps.meta.outputs.sha }}" \
+                     "$IMAGE:${{ steps.meta.outputs.tag }}"
 
-      # ----------------------------------------------------------------------
-      # Step 6: Push the new tag to GHCR
-      # ----------------------------------------------------------------------
+      # ----------------------------------------------------------------
+      # Step 6  Push the new tag to GHCR
+      # ----------------------------------------------------------------
       - name: 🚀  Push new version tag
         run: |
           IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
