@@ -290,7 +290,7 @@ repos:
         name: ✅ Check YAML
         description: Checks YAML files for parseable syntax.
         types: [yaml]
-        exclude: ^docs/
+        exclude: ^(docs/|charts/mcp-stack/)
 
       - id: check-toml
         name: ✅ Check TOML
@@ -314,6 +314,9 @@ repos:
         name: ✅ YAMLlint - YAML Linter
         description: A linter for YAML files.
         args: [-c, .yamllint]
+        # Lint *.yml|*.yaml everywhere EXCEPT charts/mcp-stack/**
+        files: ^.*\.(yml|yaml)$
+        exclude: ^charts/mcp-stack/
 
   #   - repo: https://github.com/igorshubovych/markdownlint-cli
   #     rev: v0.45.0
