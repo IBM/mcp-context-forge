@@ -157,12 +157,71 @@ session_registry = SessionRegistry(
 # Initialize cache
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
 
+
+####################
+# Startup/Shutdown #
+####################
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """
+    Manage the application's startup and shutdown lifecycle.
+
+    The function initialises every core service on entry and then
+    shuts them down in reverse order on exit.
+
+    Args:
+        app (FastAPI): FastAPI app
+
+    Yields:
+        None
+
+    Raises:
+        Exception: Any unhandled error that occurs during service
+            initialisation or shutdown is re-raised to the caller.
+    """
+    logger.info("Starting MCP Gateway services")
+    try:
+        await tool_service.initialize()
+        await resource_service.initialize()
+        await prompt_service.initialize()
+        await gateway_service.initialize()
+        await root_service.initialize()
+        await completion_service.initialize()
+        await logging_service.initialize()
+        await sampling_handler.initialize()
+        await resource_cache.initialize()
+        logger.info("All services initialized successfully")
+        yield
+    except Exception as e:
+        logger.error(f"Error during startup: {str(e)}")
+        raise
+    finally:
+        logger.info("Shutting down MCP Gateway services")
+        for service in [
+            resource_cache,
+            sampling_handler,
+            logging_service,
+            completion_service,
+            root_service,
+            gateway_service,
+            prompt_service,
+            resource_service,
+            tool_service,
+        ]:
+            try:
+                await service.shutdown()
+            except Exception as e:
+                logger.error(f"Error shutting down {service.__class__.__name__}: {str(e)}")
+        logger.info("Shutdown complete")
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
     description="A FastAPI-based MCP Gateway with federation support",
     root_path=settings.app_root_path,
+    lifespan=lifespan,
 )
 
 
@@ -620,7 +679,7 @@ async def sse_endpoint(request: Request, server_id: int, user: str = Depends(req
         await session_registry.add_session(transport.session_id, transport)
         response = await transport.create_sse_response(request)
 
-        asyncio.create_task(session_registry.respond(server_id, user, session_id=transport.session_id))
+        asyncio.create_task(session_registry.respond(server_id, user, session_id=transport.session_id, base_url=base_url))
 
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
@@ -1744,7 +1803,7 @@ async def utility_sse_endpoint(request: Request, user: str = Depends(require_aut
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
 
-        asyncio.create_task(session_registry.respond(None, user, session_id=transport.session_id))
+        asyncio.create_task(session_registry.respond(None, user, session_id=transport.session_id, base_url=base_url))
 
         response = await transport.create_sse_response(request)
         tasks = BackgroundTasks()
@@ -1907,60 +1966,6 @@ async def healthcheck(db: Session = Depends(get_db)):
         logger.error(error_message)
         return {"status": "unhealthy", "error": error_message}
     return {"status": "healthy"}
-
-
-####################
-# Startup/Shutdown #
-####################
-@asynccontextmanager
-async def lifespan() -> AsyncIterator[None]:
-    """
-    Manage the application's startup and shutdown lifecycle.
-
-    The function initialises every core service on entry and then
-    shuts them down in reverse order on exit.
-
-    Yields:
-        None
-
-    Raises:
-        Exception: Any unhandled error that occurs during service
-            initialisation or shutdown is re-raised to the caller.
-    """
-    logger.info("Starting MCP Gateway services")
-    try:
-        await tool_service.initialize()
-        await resource_service.initialize()
-        await prompt_service.initialize()
-        await gateway_service.initialize()
-        await root_service.initialize()
-        await completion_service.initialize()
-        await logging_service.initialize()
-        await sampling_handler.initialize()
-        await resource_cache.initialize()
-        logger.info("All services initialized successfully")
-        yield
-    except Exception as e:
-        logger.error(f"Error during startup: {str(e)}")
-        raise
-    finally:
-        logger.info("Shutting down MCP Gateway services")
-        for service in [
-            resource_cache,
-            sampling_handler,
-            logging_service,
-            completion_service,
-            root_service,
-            gateway_service,
-            prompt_service,
-            resource_service,
-            tool_service,
-        ]:
-            try:
-                await service.shutdown()
-            except Exception as e:
-                logger.error(f"Error shutting down {service.__class__.__name__}: {str(e)}")
-        logger.info("Shutdown complete")
 
 
 # Mount static files

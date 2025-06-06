@@ -126,7 +126,7 @@ class SSETransport(Transport):
         """Create SSE response for streaming.
 
         Args:
-            request: FastAPI request
+            _request: FastAPI request
 
         Returns:
             SSE response object
@@ -209,7 +209,7 @@ class SSETransport(Transport):
         """Check if client has disconnected.
 
         Args:
-            request: FastAPI Request object
+            _request: FastAPI Request object
 
         Returns:
             bool: True if client disconnected

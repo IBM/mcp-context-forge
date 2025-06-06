@@ -36,6 +36,9 @@ if [[ "${SSL}" == "true" ]]; then
     echo "✓  TLS enabled – using ${CERT_FILE} / ${KEY_FILE}"
 fi
 
+# Initialize databases
+python -m mcpgateway.db
+
 exec gunicorn -c gunicorn.config.py \
     --worker-class uvicorn.workers.UvicornWorker \
     --workers "${GUNICORN_WORKERS}" \
