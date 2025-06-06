@@ -1,3 +1,4 @@
+.htpasswd
 .env.gcr
 packages-lock.json
 packages.json

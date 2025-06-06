@@ -1437,3 +1437,379 @@ helm-deploy: helm-lint
 helm-delete:
 	@echo "🗑  Deleting $(RELEASE_NAME) release..."
 	helm uninstall $(RELEASE_NAME) -n $(NAMESPACE) || true
+
+# =============================================================================
+# 🏠 LOCAL PYPI SERVER
+# Currently blocked by: https://github.com/pypiserver/pypiserver/issues/630
+# =============================================================================
+# help: 🏠 LOCAL PYPI SERVER
+# help: local-pypi-install   - Install pypiserver for local testing
+# help: local-pypi-start     - Start local PyPI server on :8084 (no auth)
+# help: local-pypi-start-auth - Start local PyPI server with basic auth (admin/admin)
+# help: local-pypi-stop      - Stop local PyPI server
+# help: local-pypi-upload    - Upload existing package to local PyPI (no auth)
+# help: local-pypi-upload-auth - Upload existing package to local PyPI (with auth)
+# help: local-pypi-test      - Install package from local PyPI
+# help: local-pypi-clean     - Full cycle: build → upload → install locally
+
+.PHONY: local-pypi-install local-pypi-start local-pypi-start-auth local-pypi-stop local-pypi-upload \
+        local-pypi-upload-auth local-pypi-test local-pypi-clean
+
+LOCAL_PYPI_DIR := $(HOME)/local-pypi
+LOCAL_PYPI_URL := http://localhost:8085
+LOCAL_PYPI_PID := /tmp/pypiserver.pid
+LOCAL_PYPI_AUTH := $(LOCAL_PYPI_DIR)/.htpasswd
+
+local-pypi-install:
+	@echo "📦  Installing pypiserver..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install 'pypiserver>=2.3.0' passlib"
+	@mkdir -p $(LOCAL_PYPI_DIR)
+
+local-pypi-start: local-pypi-install local-pypi-stop
+	@echo "🚀  Starting local PyPI server on http://localhost:8084..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	export PYPISERVER_BOTTLE_MEMFILE_MAX_OVERRIDE_BYTES=10485760 && \
+	pypi-server run -p 8084 -a . -P . $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
+	@sleep 2
+	@echo "✅  Local PyPI server started at http://localhost:8084"
+	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
+	@echo "🔓  No authentication required (open mode)"
+
+local-pypi-start-auth: local-pypi-install local-pypi-stop
+	@echo "🚀  Starting local PyPI server with authentication on $(LOCAL_PYPI_URL)..."
+	@echo "🔐  Creating htpasswd file (admin/admin)..."
+	@mkdir -p $(LOCAL_PYPI_DIR)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	python3 -c \"import passlib.hash; print('admin:' + passlib.hash.sha256_crypt.hash('admin'))\" > $(LOCAL_PYPI_AUTH)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	export PYPISERVER_BOTTLE_MEMFILE_MAX_OVERRIDE_BYTES=10485760 && \
+	pypi-server run -p 8085 -P $(LOCAL_PYPI_AUTH) -a update,download,list $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
+	@sleep 2
+	@echo "✅  Local PyPI server started at $(LOCAL_PYPI_URL)"
+	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
+	@echo "🔐  Username: admin, Password: admin"
+
+local-pypi-stop:
+	@echo "🛑  Stopping local PyPI server..."
+	@if [ -f $(LOCAL_PYPI_PID) ]; then \
+		kill $(cat $(LOCAL_PYPI_PID)) 2>/dev/null || true; \
+		rm -f $(LOCAL_PYPI_PID); \
+	fi
+	@# Kill any pypi-server processes on ports 8084 and 8085
+	@pkill -f "pypi-server.*808[45]" 2>/dev/null || true
+	@# Wait a moment for cleanup
+	@sleep 1
+	@if lsof -i :8084 >/dev/null 2>&1; then \
+		echo "⚠️   Port 8084 still in use, force killing..."; \
+		sudo fuser -k 8084/tcp 2>/dev/null || true; \
+	fi
+	@if lsof -i :8085 >/dev/null 2>&1; then \
+		echo "⚠️   Port 8085 still in use, force killing..."; \
+		sudo fuser -k 8085/tcp 2>/dev/null || true; \
+	fi
+	@sleep 1
+	@echo "✅  Server stopped"
+
+local-pypi-upload:
+	@echo "📤  Uploading existing package to local PyPI (no auth)..."
+	@if [ ! -d "dist" ] || [ -z "$$(ls -A dist/ 2>/dev/null)" ]; then \
+		echo "❌  No dist/ directory or files found. Run 'make dist' first."; \
+		exit 1; \
+	fi
+	@if ! curl -s http://localhost:8084 >/dev/null 2>&1; then \
+		echo "❌  Local PyPI server not running on port 8084. Run 'make local-pypi-start' first."; \
+		exit 1; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	twine upload --verbose --repository-url http://localhost:8084 --skip-existing dist/*"
+	@echo "✅  Package uploaded to local PyPI"
+	@echo "🌐  Browse packages: http://localhost:8084"
+
+local-pypi-upload-auth:
+	@echo "📤  Uploading existing package to local PyPI with auth..."
+	@if [ ! -d "dist" ] || [ -z "$$(ls -A dist/ 2>/dev/null)" ]; then \
+		echo "❌  No dist/ directory or files found. Run 'make dist' first."; \
+		exit 1; \
+	fi
+	@if ! curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+		echo "❌  Local PyPI server not running on port 8085. Run 'make local-pypi-start-auth' first."; \
+		exit 1; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	twine upload --verbose --repository-url $(LOCAL_PYPI_URL) --username admin --password admin --skip-existing dist/*"
+	@echo "✅  Package uploaded to local PyPI"
+	@echo "🌐  Browse packages: $(LOCAL_PYPI_URL)"
+
+local-pypi-test:
+	@echo "📥  Installing from local PyPI..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	pip install --index-url $(LOCAL_PYPI_URL)/simple/ \
+	            --extra-index-url https://pypi.org/simple/ \
+	            --force-reinstall $(PROJECT_NAME)"
+	@echo "✅  Installed from local PyPI"
+
+local-pypi-clean: clean dist local-pypi-start-auth local-pypi-upload-auth local-pypi-test
+	@echo "🎉  Full local PyPI cycle complete!"
+	@echo "📊  Package info:"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show $(PROJECT_NAME)"
+
+# Convenience target to restart server
+local-pypi-restart: local-pypi-stop local-pypi-start
+
+local-pypi-restart-auth: local-pypi-stop local-pypi-start-auth
+
+# Show server status
+local-pypi-status:
+	@echo "🔍  Local PyPI server status:"
+	@if [ -f $(LOCAL_PYPI_PID) ] && kill -0 $(cat $(LOCAL_PYPI_PID)) 2>/dev/null; then \
+		echo "✅  Server running (PID: $(cat $(LOCAL_PYPI_PID)))"; \
+		if curl -s http://localhost:8084 >/dev/null 2>&1; then \
+			echo "🌐  Server on port 8084: http://localhost:8084"; \
+		elif curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+			echo "🌐  Server on port 8085: $(LOCAL_PYPI_URL)"; \
+		fi; \
+		echo "📂  Directory: $(LOCAL_PYPI_DIR)"; \
+	else \
+		echo "❌  Server not running"; \
+	fi
+
+# Debug target - run server in foreground with verbose logging
+local-pypi-debug:
+	@echo "🐛  Running local PyPI server in debug mode (Ctrl+C to stop)..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	export PYPISERVER_BOTTLE_MEMFILE_MAX_OVERRIDE_BYTES=10485760 && \
+	export BOTTLE_CHILD=true && \
+	pypi-server run -p 8085 --disable-fallback -a . -P . --server=auto $(LOCAL_PYPI_DIR) -v"
+
+
+# =============================================================================
+# 🏠 LOCAL DEVPI SERVER
+# =============================================================================
+# help: 🏠 LOCAL DEVPI SERVER
+# help: devpi-install        - Install devpi server and client
+# help: devpi-init           - Initialize devpi server (first time only)
+# help: devpi-start          - Start devpi server
+# help: devpi-stop           - Stop devpi server
+# help: devpi-setup-user     - Create user and dev index
+# help: devpi-upload         - Upload existing package to devpi
+# help: devpi-test           - Install package from devpi
+# help: devpi-clean          - Full cycle: build → upload → install locally
+# help: devpi-status         - Show devpi server status
+# help: devpi-web            - Open devpi web interface
+
+.PHONY: devpi-install devpi-init devpi-start devpi-stop devpi-setup-user devpi-upload \
+        devpi-test devpi-clean devpi-status devpi-web devpi-restart
+
+DEVPI_HOST := localhost
+DEVPI_PORT := 3141
+DEVPI_URL := http://$(DEVPI_HOST):$(DEVPI_PORT)
+DEVPI_USER := $(USER)
+DEVPI_PASS := dev123
+DEVPI_INDEX := $(DEVPI_USER)/dev
+DEVPI_DATA_DIR := $(HOME)/.devpi
+DEVPI_PID := /tmp/devpi-server.pid
+
+devpi-install:
+	@echo "📦  Installing devpi server and client..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	pip install devpi-server devpi-client devpi-web"
+	@echo "✅  DevPi installed"
+
+devpi-init: devpi-install
+	@echo "🔧  Initializing devpi server (first time setup)..."
+	@if [ -d "$(DEVPI_DATA_DIR)/server" ] && [ -f "$(DEVPI_DATA_DIR)/server/.serverversion" ]; then \
+		echo "⚠️   DevPi already initialized at $(DEVPI_DATA_DIR)"; \
+	else \
+		mkdir -p $(DEVPI_DATA_DIR)/server; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		devpi-init --serverdir=$(DEVPI_DATA_DIR)/server"; \
+		echo "✅  DevPi server initialized at $(DEVPI_DATA_DIR)/server"; \
+	fi
+
+devpi-start: devpi-init devpi-stop
+	@echo "🚀  Starting devpi server on $(DEVPI_URL)..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	devpi-server --serverdir=$(DEVPI_DATA_DIR)/server \
+	             --host=$(DEVPI_HOST) \
+	             --port=$(DEVPI_PORT) &"
+	@# Wait for server to start and get the PID
+	@sleep 3
+	@ps aux | grep "[d]evpi-server" | grep "$(DEVPI_PORT)" | awk '{print $2}' > $(DEVPI_PID) || true
+	@# Wait a bit more and test if server is responding
+	@sleep 2
+	@if curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
+		if [ -s $(DEVPI_PID) ]; then \
+			echo "✅  DevPi server started at $(DEVPI_URL)"; \
+			echo "📊  PID: $(cat $(DEVPI_PID))"; \
+		else \
+			echo "✅  DevPi server started at $(DEVPI_URL)"; \
+		fi; \
+		echo "🌐  Web interface: $(DEVPI_URL)"; \
+		echo "📂  Data directory: $(DEVPI_DATA_DIR)"; \
+	else \
+		echo "❌  Failed to start devpi server or server not responding"; \
+		echo "🔍  Check logs with: make devpi-logs"; \
+		exit 1; \
+	fi
+
+devpi-stop:
+	@echo "🛑  Stopping devpi server..."
+	@# Kill process by PID if exists
+	@if [ -f $(DEVPI_PID) ] && [ -s $(DEVPI_PID) ]; then \
+		pid=$(cat $(DEVPI_PID)); \
+		if kill -0 $pid 2>/dev/null; then \
+			echo "🔄  Stopping devpi server (PID: $pid)"; \
+			kill $pid 2>/dev/null || true; \
+			sleep 2; \
+			kill -9 $pid 2>/dev/null || true; \
+		fi; \
+		rm -f $(DEVPI_PID); \
+	fi
+	@# Kill any remaining devpi-server processes
+	@pids=$(pgrep -f "devpi-server.*$(DEVPI_PORT)" 2>/dev/null || true); \
+	if [ -n "$pids" ]; then \
+		echo "🔄  Killing remaining devpi processes: $pids"; \
+		echo "$pids" | xargs -r kill 2>/dev/null || true; \
+		sleep 1; \
+		echo "$pids" | xargs -r kill -9 2>/dev/null || true; \
+	fi
+	@# Force kill anything using the port
+	@if lsof -ti :$(DEVPI_PORT) >/dev/null 2>&1; then \
+		echo "⚠️   Port $(DEVPI_PORT) still in use, force killing..."; \
+		lsof -ti :$(DEVPI_PORT) | xargs -r kill -9 2>/dev/null || true; \
+		sleep 1; \
+	fi
+	@echo "✅  DevPi server stopped"
+
+devpi-setup-user: devpi-start
+	@echo "👤  Setting up devpi user and index..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	devpi use $(DEVPI_URL) && \
+	(devpi user -c $(DEVPI_USER) password=$(DEVPI_PASS) email=$(DEVPI_USER)@localhost.local 2>/dev/null || \
+	 echo 'User $(DEVPI_USER) already exists') && \
+	devpi login $(DEVPI_USER) --password=$(DEVPI_PASS) && \
+	(devpi index -c dev bases=root/pypi volatile=False 2>/dev/null || \
+	 echo 'Index dev already exists') && \
+	devpi use $(DEVPI_INDEX)"
+	@echo "✅  User '$(DEVPI_USER)' and index 'dev' configured"
+	@echo "📝  Login: $(DEVPI_USER) / $(DEVPI_PASS)"
+	@echo "📍  Using index: $(DEVPI_INDEX)"
+
+devpi-upload: devpi-setup-user
+	@echo "📤  Uploading existing package to devpi..."
+	@if [ ! -d "dist" ] || [ -z "$$(ls -A dist/ 2>/dev/null)" ]; then \
+		echo "❌  No dist/ directory or files found. Run 'make dist' first."; \
+		exit 1; \
+	fi
+	@if ! curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
+		echo "❌  DevPi server not running. Run 'make devpi-start' first."; \
+		exit 1; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	devpi use $(DEVPI_INDEX) && \
+	devpi upload dist/*"
+	@echo "✅  Package uploaded to devpi"
+	@echo "🌐  Browse packages: $(DEVPI_URL)/$(DEVPI_INDEX)"
+
+devpi-test:
+	@echo "📥  Installing package from devpi..."
+	@if ! curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
+		echo "❌  DevPi server not running. Run 'make devpi-start' first."; \
+		exit 1; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
+	            --extra-index-url https://pypi.org/simple/ \
+	            --force-reinstall $(PROJECT_NAME)"
+	@echo "✅  Installed $(PROJECT_NAME) from devpi"
+
+devpi-clean: clean dist devpi-upload devpi-test
+	@echo "🎉  Full devpi cycle complete!"
+	@echo "📊  Package info:"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show $(PROJECT_NAME)"
+
+devpi-status:
+	@echo "🔍  DevPi server status:"
+	@if curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
+		echo "✅  Server running at $(DEVPI_URL)"; \
+		if [ -f $(DEVPI_PID) ] && [ -s $(DEVPI_PID) ]; then \
+			echo "📊  PID: $$(cat $(DEVPI_PID))"; \
+		fi; \
+		echo "📂  Data directory: $(DEVPI_DATA_DIR)"; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		devpi use $(DEVPI_URL) >/dev/null 2>&1 && \
+		devpi user --list 2>/dev/null || echo '📝  Not logged in'"; \
+	else \
+		echo "❌  Server not running"; \
+	fi
+
+devpi-web:
+	@echo "🌐  Opening devpi web interface..."
+	@if curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
+		echo "📱  Web interface: $(DEVPI_URL)"; \
+		which open >/dev/null 2>&1 && open $(DEVPI_URL) || \
+		which xdg-open >/dev/null 2>&1 && xdg-open $(DEVPI_URL) || \
+		echo "🔗  Open $(DEVPI_URL) in your browser"; \
+	else \
+		echo "❌  DevPi server not running. Run 'make devpi-start' first."; \
+	fi
+
+devpi-restart: devpi-stop devpi-start
+	@echo "🔄  DevPi server restarted"
+
+# Advanced targets for devpi management
+devpi-reset: devpi-stop
+	@echo "⚠️   Resetting devpi server (this will delete all data)..."
+	@read -p "Are you sure? This will delete all packages and users [y/N]: " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		rm -rf $(DEVPI_DATA_DIR); \
+		echo "✅  DevPi data reset. Run 'make devpi-init' to reinitialize."; \
+	else \
+		echo "❌  Reset cancelled."; \
+	fi
+
+devpi-backup:
+	@echo "💾  Backing up devpi data..."
+	@timestamp=$$(date +%Y%m%d-%H%M%S); \
+	backup_file="$(HOME)/devpi-backup-$$timestamp.tar.gz"; \
+	tar -czf "$$backup_file" -C $(HOME) .devpi 2>/dev/null && \
+	echo "✅  Backup created: $$backup_file" || \
+	echo "❌  Backup failed"
+
+devpi-logs:
+	@echo "📋  DevPi server logs:"
+	@if [ -f "$(DEVPI_DATA_DIR)/server/devpi.log" ]; then \
+		tail -f "$(DEVPI_DATA_DIR)/server/devpi.log"; \
+	elif [ -f "$(DEVPI_DATA_DIR)/server/.xproc/devpi-server/xprocess.log" ]; then \
+		tail -f "$(DEVPI_DATA_DIR)/server/.xproc/devpi-server/xprocess.log"; \
+	elif [ -f "$(DEVPI_DATA_DIR)/server/devpi-server.log" ]; then \
+		tail -f "$(DEVPI_DATA_DIR)/server/devpi-server.log"; \
+	else \
+		echo "❌  No log file found. Checking if server is running..."; \
+		ps aux | grep "[d]evpi-server" || echo "Server not running"; \
+		echo "📂  Expected log location: $(DEVPI_DATA_DIR)/server/devpi.log"; \
+	fi
+
+# Configuration helper - creates pip.conf for easy devpi usage
+devpi-configure-pip:
+	@echo "⚙️   Configuring pip to use devpi by default..."
+	@mkdir -p $(HOME)/.pip
+	@echo "[global]" > $(HOME)/.pip/pip.conf
+	@echo "index-url = $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/" >> $(HOME)/.pip/pip.conf
+	@echo "extra-index-url = https://pypi.org/simple/" >> $(HOME)/.pip/pip.conf
+	@echo "trusted-host = $(DEVPI_HOST)" >> $(HOME)/.pip/pip.conf
+	@echo "" >> $(HOME)/.pip/pip.conf
+	@echo "[search]" >> $(HOME)/.pip/pip.conf
+	@echo "index = $(DEVPI_URL)/$(DEVPI_INDEX)/" >> $(HOME)/.pip/pip.conf
+	@echo "✅  Pip configured to use devpi at $(DEVPI_URL)/$(DEVPI_INDEX)"
+	@echo "📝  Config file: $(HOME)/.pip/pip.conf"
+
+# Remove pip devpi configuration
+devpi-unconfigure-pip:
+	@echo "🔧  Removing devpi from pip configuration..."
+	@if [ -f "$(HOME)/.pip/pip.conf" ]; then \
+		rm "$(HOME)/.pip/pip.conf"; \
+		echo "✅  Pip configuration reset to defaults"; \
+	else \
+		echo "ℹ️   No pip configuration found"; \
+	fi
