@@ -16,7 +16,7 @@ services:
       - sonarqube_bundled-plugins:/opt/sonarqube/lib/bundled-plugins
 
   db:
-    image: docker.io/library/postgres
+    image: docker.io/library/postgres:17
     networks:
       - sonarnet
     environment:
