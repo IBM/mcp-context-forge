@@ -142,6 +142,12 @@ Repository = "https://github.com/IBM/mcp-context-forge"
 Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 
 # --------------------------------------------------------------------
+#  💻 Project scripts (cli entrypoint)
+# --------------------------------------------------------------------
+[project.scripts]
+mcpgateway = "mcpgateway.cli:main"
+
+# --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration
 # --------------------------------------------------------------------
 [tool.setuptools]
