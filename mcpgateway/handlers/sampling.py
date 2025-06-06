@@ -150,9 +150,9 @@ class SamplingHandler:
         """Add context to messages.
 
         Args:
-            db: Database session
+            _db: Database session
             messages: Message list
-            context_type: Context inclusion type
+            _context_type: Context inclusion type
 
         Returns:
             Messages with added context
