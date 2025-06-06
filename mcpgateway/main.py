@@ -214,6 +214,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 logger.error(f"Error shutting down {service.__class__.__name__}: {str(e)}")
         logger.info("Shutdown complete")
 
+
 # Initialize FastAPI app
 app = FastAPI(
     title=settings.app_name,

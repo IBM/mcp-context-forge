@@ -28,8 +28,8 @@ from sqlalchemy.orm import Session
 
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import SessionLocal
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.services_auth import decode_auth
@@ -582,7 +582,7 @@ class GatewayService:
         """Sync function for database operations (runs in thread)."""
         with SessionLocal() as db:
             return db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
-    
+
     async def _run_health_checks(self) -> None:
         """Run health checks with sync Session in async code."""
         while True:
@@ -595,7 +595,7 @@ class GatewayService:
 
             except Exception as e:
                 logger.error(f"Health check run failed: {str(e)}")
-            
+
             await asyncio.sleep(self._health_check_interval)
 
     def _get_auth_headers(self) -> Dict[str, str]:
