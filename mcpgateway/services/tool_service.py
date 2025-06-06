@@ -521,6 +521,9 @@ class ToolService:
                 async def connect_to_sse_server(server_url: str):
                     """
                     Connect to an MCP server running with SSE transport
+
+                    Args:
+                        server_url (str): MCP Server SSE URL
                     """
                     # Use async with directly to manage the context
                     async with sse_client(url=server_url, headers=headers) as streams:

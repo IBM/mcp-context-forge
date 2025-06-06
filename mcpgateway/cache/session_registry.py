@@ -129,9 +129,6 @@ class SessionRegistry(SessionBackend):
             database_url: Database connection URL (required for database backend)
             session_ttl: Session time-to-live in seconds
             message_ttl: Message time-to-live in seconds
-
-        Raises:
-            ValueError: If backend is invalid or required URL is missing
         """
         super().__init__(backend=backend, redis_url=redis_url, database_url=database_url, session_ttl=session_ttl, message_ttl=message_ttl)
         self._sessions: Dict[str, Any] = {}  # Local transport cache
@@ -415,6 +412,7 @@ class SessionRegistry(SessionBackend):
             server_id: Server ID
             session_id: Session ID
             user: User information
+            base_url: Base URL for the FastAPI request
 
         """
 
@@ -681,6 +679,7 @@ class SessionRegistry(SessionBackend):
             transport: Transport where message should be responded in
             server_id: Server ID
             user: User information
+            base_url: Base URL for the FastAPI request
 
         """
         result = {}
