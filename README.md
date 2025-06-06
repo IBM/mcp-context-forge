@@ -4,7 +4,7 @@
 
 A flexible feature-rich FastAPI-based gateway for the Model Context Protocol (MCP) that unifies and federates tools, resources, prompts, servers and peer gateways, wraps any REST API as MCP-compliant tools or virtual servers, and exposes everything over HTTP/JSON-RPC, WebSocket, Server-Sent Events (SSE) and stdio transports—all manageable via a rich, interactive Admin UI and packaged as a container with support for any SQLAlchemy supported database.
 
-![MCP Gateway](docs/docs/images/mcpgateway.gif)
+![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
 
 ## Overview & Goals
@@ -17,51 +17,7 @@ MCP Gateway builds on the MCP spec by sitting **in front of** MCP Server or REST
 * **Adapt** arbitrary REST/HTTP APIs into MCP tools with JSON-Schema input validation, retry/rate-limit policies and transparent JSON-RPC invocation
 * **Simplify** deployments with a full admin UI, rich transports, pre-built DX pipelines and production-grade observability
 
-```mermaid
-graph TD
-    subgraph UI_and_Auth
-        UI[🖥️ Admin UI]
-        Auth[🔐 Auth - JWT and Basic]
-        UI --> Core
-        Auth --> Core
-    end
-
-    subgraph Gateway_Core
-        Core[🚪 MCP Gateway Core]
-        Protocol[📡 Protocol - Init Ping Completion]
-        Federation[🌐 Federation Manager]
-        Transports[🔀 Transports - HTTP WS SSE Stdio]
-
-        Core --> Protocol
-        Core --> Federation
-        Core --> Transports
-    end
-
-    subgraph Services
-        Tools[🧰 Tool Service]
-        Resources[📁 Resource Service]
-        Prompts[📝 Prompt Service]
-        Servers[🧩 Server Service]
-
-        Core --> Tools
-        Core --> Resources
-        Core --> Prompts
-        Core --> Servers
-    end
-
-    subgraph Persistence
-        DB[💾 Database - SQLAlchemy]
-        Tools --> DB
-        Resources --> DB
-        Prompts --> DB
-        Servers --> DB
-    end
-
-    subgraph Caching
-        Cache[⚡ Cache - Redis or Memory]
-        Core --> Cache
-    end
-```
+![mcpgateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
 
 ---
 
@@ -999,6 +955,7 @@ venv                 - Create a fresh virtual environment with uv & friends
 activate             - Activate the virtual environment in the current shell
 install              - Install project into the venv
 install-dev          - Install project (incl. dev deps) into the venv
+install-db           - Install project (incl. postgres and redis) into venv
 update               - Update all installed deps inside the venv
 check-env            - Verify all required env vars in .env are present
 ▶️ SERVE & TESTING
@@ -1026,6 +983,7 @@ autoflake            - Remove unused imports / variables with autoflake
 isort                - Organise & sort imports with isort
 flake8               - PEP-8 style & logical errors
 pylint               - Pylint static analysis
+markdownlint         - Lint Markdown files with markdownlint (requires markdownlint-cli)
 mypy                 - Static type-checking with mypy
 bandit               - Security scan with bandit
 pydocstyle           - Docstring style checker
@@ -1049,10 +1007,17 @@ tox                  - Run tox across multi-Python versions
 sbom                 - Produce a CycloneDX SBOM and vulnerability scan
 pytype               - Flow-sensitive type checker
 check-manifest       - Verify sdist/wheel completeness
+yamllint            - Lint YAML files (uses .yamllint)
+jsonlint            - Validate every *.json file with jq (‐‐exit-status)
+tomllint            - Validate *.toml files with tomlcheck
 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
 install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js & Prettier via npm
 lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js and npm audit
 format-web           - Format HTML, CSS & JS files with Prettier
+osv-install          - Install/upgrade osv-scanner (Go)
+osv-scan-source      - Scan source & lockfiles for CVEs
+osv-scan-image       - Scan the built container image for CVEs
+osv-scan             - Run all osv-scanner checks (source, image, licence)
 📡 SONARQUBE ANALYSIS
 sonar-deps-podman    - Install podman-compose + supporting tools
 sonar-deps-docker    - Install docker-compose + supporting tools
@@ -1070,12 +1035,20 @@ pip-audit            - Audit Python dependencies for published CVEs
 📦 DEPENDENCY MANAGEMENT
 deps-update          - Run update-deps.py to update all dependencies in pyproject.toml and docs/requirements.txt
 containerfile-update - Update base image in Containerfile to latest tag
+📦 PACKAGING & PUBLISHING
+dist                 - Clean-build wheel *and* sdist into ./dist
+wheel                - Build wheel only
+sdist                - Build source distribution only
+verify               - Build + twine + check-manifest + pyroma (no upload)
+publish              - Verify, then upload to PyPI (needs TWINE_* creds)
 🦭 PODMAN CONTAINER BUILD & RUN
 podman-dev           - Build development container image
-podman               - Build production container image
+podman               - Build container image
+podman-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
 podman-run           - Run the container on HTTP  (port 4444)
 podman-run-shell     - Run the container on HTTP  (port 4444) and start a shell
 podman-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
+podman-run-ssl-host  - Run the container on HTTPS with --network-host (port 4444, self-signed)
 podman-stop          - Stop & remove the container
 podman-test          - Quick curl smoke-test against the container
 podman-logs          - Follow container logs (⌃C to quit)
@@ -1085,6 +1058,7 @@ podman-shell         - Open an interactive shell inside the Podman container
 🐋 DOCKER BUILD & RUN
 docker-dev           - Build development Docker image
 docker               - Build production Docker image
+docker-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
 docker-run           - Run the container on HTTP  (port 4444)
 docker-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
 docker-stop          - Stop & remove the container
@@ -1093,6 +1067,18 @@ docker-logs          - Follow container logs (⌃C to quit)
 docker-stats         - Show container resource usage stats (non-streaming)
 docker-top           - Show top-level process info in Docker container
 docker-shell         - Open an interactive shell inside the Docker container
+🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
+compose-up           - Bring the whole stack up (detached)
+compose-restart      - Recreate changed containers, pulling / building as needed
+compose-build        - Build (or rebuild) images defined in the compose file
+compose-pull         - Pull the latest images only
+compose-logs         - Tail logs from all services (Ctrl-C to exit)
+compose-ps           - Show container status table
+compose-shell        - Open an interactive shell in the "gateway" container
+compose-stop         - Gracefully stop the stack (keep containers)
+compose-down         - Stop & remove containers (keep named volumes)
+compose-rm           - Remove *stopped* containers
+compose-clean        - ✨ Down **and** delete named volumes (data-loss ⚠)
 ☁️ IBM CLOUD CODE ENGINE
 ibmcloud-check-env          - Verify all required IBM Cloud env vars are set
 ibmcloud-cli-install        - Auto-install IBM Cloud CLI + required plugins (OS auto-detected)
@@ -1105,6 +1091,40 @@ ibmcloud-deploy             - Deploy (or update) container image in Code Engine
 ibmcloud-ce-logs            - Stream logs for the deployed application
 ibmcloud-ce-status          - Get deployment status
 ibmcloud-ce-rm              - Delete the Code Engine application
+🧪 MINIKUBE LOCAL CLUSTER
+minikube-install      - Install Minikube (macOS, Linux, or Windows via choco)
+helm-install          - Install Helm CLI (macOS, Linux, or Windows)
+minikube-start        - Start local Minikube cluster with Ingress + DNS + metrics-server
+minikube-stop         - Stop the Minikube cluster
+minikube-delete       - Delete the Minikube cluster
+minikube-image-load   - Build and load ghcr.io/ibm/mcp-context-forge:latest into Minikube
+minikube-k8s-apply    - Apply Kubernetes manifests from k8s/
+minikube-status       - Show status of Minikube and ingress pods
+🛠️ HELM CHART TASKS
+helm-lint            - Lint the Helm chart (static analysis)
+helm-package         - Package the chart into dist/ as mcp-stack-<ver>.tgz
+helm-deploy          - Upgrade/Install chart into Minikube (profile mcpgw)
+helm-delete          - Uninstall the chart release from Minikube
+🏠 LOCAL PYPI SERVER
+local-pypi-install   - Install pypiserver for local testing
+local-pypi-start     - Start local PyPI server on :8084 (no auth)
+local-pypi-start-auth - Start local PyPI server with basic auth (admin/admin)
+local-pypi-stop      - Stop local PyPI server
+local-pypi-upload    - Upload existing package to local PyPI (no auth)
+local-pypi-upload-auth - Upload existing package to local PyPI (with auth)
+local-pypi-test      - Install package from local PyPI
+local-pypi-clean     - Full cycle: build → upload → install locally
+🏠 LOCAL DEVPI SERVER
+devpi-install        - Install devpi server and client
+devpi-init           - Initialize devpi server (first time only)
+devpi-start          - Start devpi server
+devpi-stop           - Stop devpi server
+devpi-setup-user     - Create user and dev index
+devpi-upload         - Upload existing package to devpi
+devpi-test           - Install package from devpi
+devpi-clean          - Full cycle: build → upload → install locally
+devpi-status         - Show devpi server status
+devpi-web            - Open devpi web interface
 ```
 
 ## Contributing
