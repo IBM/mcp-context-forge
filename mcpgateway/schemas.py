@@ -402,7 +402,7 @@ class ToolRead(BaseModelWithConfig):
 
     id: int
     name: str
-    url: str
+    url: Optional[str]
     description: Optional[str]
     request_type: str
     integration_type: str
