@@ -308,7 +308,7 @@ Use the UI method only if reviewers are done—every push re‑triggers CI.
 
 **Verify GitHub CI status checks**
 
-Before requesting review, confirm that **all** required status checks on the PR page are green ("All checks have passed"). You should now see something like:
+Before requesting review, confirm that **all** required status checks on the PR page are green ✅ ("All checks have passed"). You should now see something like:
 
 ```text
 Bandit / bandit (pull_request)                  ✅  Successful in 21s
@@ -335,13 +335,17 @@ If **any** of the above steps fail after the PR is merged or cannot deploy, leav
 ---
 
 ## 9. Cleaning Up Locally
-
+After the PR is merged:
+* Switch back to the main branch
+* Delete the local feature branch
+* Prune deleted remote branches
 ```bash
 git switch main
-git branch -D pr-29                # or the feature branch name
+git branch -D pr-29                # or the feature branch name (replace pr-29 with your branch name)
 git fetch -p                       # prune remotes that GitHub deleted
 ```
-
+This removes references to remote branches that GitHub deleted after the merge.
+This keeps your local environment clean and up to date.
 ---
 
 ## 10. Handy Git Aliases (Optional)
@@ -353,8 +357,8 @@ git config --global alias.ca 'commit --amend -s'
 git config --global alias.rb "rebase -i --autosquash"
 git config --global alias.pr '!f() { git fetch upstream pull/$1/head:pr-$1 && git switch pr-$1; }; f'
 ```
-
-Now `git pr 42` does the whole fetch‑and‑switch in one go.
+Now you can run `git pr 42` to fetch-and-switch to PR #42 in one go.
+These aliases are optional, but they save time and make Git commands easier to type.
 
 ---
 
