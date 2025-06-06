@@ -43,7 +43,7 @@ mcpContextForge:
 postgres:
   enabled: true
   image:
-    repository: postgres
+    repository: postgres:17
     tag: "10.1"
     pullPolicy: IfNotPresent
   service:
