@@ -75,6 +75,16 @@ postgres = [
     "psycopg2-binary>=2.9.10",
 ]
 
+# Async SQLite Driver (optional)
+aiosqlite = [
+    "aiosqlite>=0.21.0",
+]
+
+# Async PostgreSQL driver (optional)
+asyncpg = [
+    "asyncpg>=0.30.0",
+]
+
 # Optional dependency groups (development)
 dev = [
     "argparse-manpage>=4.6",

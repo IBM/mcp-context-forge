@@ -218,7 +218,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (mode === "ui") {
         window.schemaEditor.setValue(generateSchema());
       }
-      // Save CodeMirror editors' contents into the underlying textareas
+      // Save CodeMirror editors’ contents into the underlying textareas
       if (window.headersEditor) {
         window.headersEditor.save();
       }
@@ -1579,7 +1579,15 @@ async function runToolTest() {
   const formData = new FormData(form);
   const params = {};
   for (const [key, value] of formData.entries()) {
-    params[key] = value;
+    if(isNaN(value)) {
+      if(value.toLowerCase() ===  "true" || value.toLowerCase() === "false") {
+        params[key] = Boolean(value.toLowerCase() ===  "true");
+      } else {
+        params[key] = value;
+      }
+    } else {
+      params[key] = Number(value);
+    }
   }
 
   // Build the JSON-RPC payload using the tool's name as the method
@@ -1591,7 +1599,7 @@ async function runToolTest() {
   };
 
   // Send the request to your /rpc endpoint
-  fetch("/rpc", {
+  fetch(`${window.ROOT_PATH}/rpc`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json", // ← make sure we include this
