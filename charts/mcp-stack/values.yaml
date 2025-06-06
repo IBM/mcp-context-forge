@@ -44,7 +44,7 @@ postgres:
   enabled: true
   image:
     repository: postgres
-    tag: "10.1"
+    tag: "17"
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
