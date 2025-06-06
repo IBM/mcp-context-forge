@@ -407,6 +407,7 @@ class SessionRegistry(SessionBackend):
         server_id: Optional[str],
         user: json,
         session_id: str,
+        base_url: str,
     ) -> None:
         """Respond to broadcast message is transport relevant to session_id is found locally
 
@@ -425,7 +426,7 @@ class SessionRegistry(SessionBackend):
             transport = self.get_session_sync(session_id)
             if transport:
                 message = json.loads(self._session_message.get("message"))
-                await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
+                await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
         elif self._backend == "redis":
             await self._pubsub.subscribe(session_id)
@@ -440,7 +441,7 @@ class SessionRegistry(SessionBackend):
                         message = json.loads(message)
                     transport = self.get_session_sync(session_id)
                     if transport:
-                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
+                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
             finally:
@@ -494,7 +495,7 @@ class SessionRegistry(SessionBackend):
                         transport = self.get_session_sync(session_id)
                         if transport:
                             logger.info("Ready to respond")
-                            await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
+                            await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
                             await asyncio.to_thread(_db_remove, session_id, record.message)
 
@@ -671,7 +672,7 @@ class SessionRegistry(SessionBackend):
             instructions=("MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."),
         )
 
-    async def generate_response(self, message: json, transport: SSETransport, server_id: Optional[str], user: dict):
+    async def generate_response(self, message: json, transport: SSETransport, server_id: Optional[str], user: dict, base_url: str):
         """
         Generates response according to SSE specifications
 
@@ -745,9 +746,10 @@ class SessionRegistry(SessionBackend):
                     "id": 1,
                 }
                 headers = {"Authorization": f"Bearer {user['token']}", "Content-Type": "application/json"}
+                rpc_url = base_url + "/rpc"
                 async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
                     rpc_response = await client.post(
-                        f"http://localhost:{settings.port}/rpc",
+                        url=rpc_url,
                         json=rpc_input,
                         headers=headers,
                     )

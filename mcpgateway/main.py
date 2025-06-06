@@ -620,7 +620,7 @@ async def sse_endpoint(request: Request, server_id: int, user: str = Depends(req
         await session_registry.add_session(transport.session_id, transport)
         response = await transport.create_sse_response(request)
 
-        asyncio.create_task(session_registry.respond(server_id, user, session_id=transport.session_id))
+        asyncio.create_task(session_registry.respond(server_id, user, session_id=transport.session_id, base_url=base_url))
 
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
@@ -1744,7 +1744,7 @@ async def utility_sse_endpoint(request: Request, user: str = Depends(require_aut
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
 
-        asyncio.create_task(session_registry.respond(None, user, session_id=transport.session_id))
+        asyncio.create_task(session_registry.respond(None, user, session_id=transport.session_id, base_url=base_url))
 
         response = await transport.create_sse_response(request)
         tasks = BackgroundTasks()
