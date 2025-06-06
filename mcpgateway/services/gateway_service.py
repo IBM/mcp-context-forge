@@ -455,28 +455,29 @@ class GatewayService:
         except Exception as e:
             raise GatewayConnectionError(f"Failed to forward request to {gateway.name}: {str(e)}")
 
-    async def check_gateway_health(self, gateway: DbGateway) -> bool:
-        """Check if a gateway is healthy.
+    async def check_health_of_gateways(self, gateways: List[DbGateway]) -> bool:
+        """Health check for gateways
 
         Args:
-            gateway: Gateway to check
+            gateways: Gateways to check
 
         Returns:
             True if gateway is healthy
         """
-        if not gateway.is_active:
-            return False
+        for gateway in gateways:
+            if not gateway.is_active:
+                return False
 
-        try:
-            # Try to initialize connection
-            await self._initialize_gateway(gateway.url, gateway.auth_value)
+            try:
+                # Try to initialize connection
+                await self._initialize_gateway(gateway.url, gateway.auth_value)
 
-            # Update last seen
-            gateway.last_seen = datetime.utcnow()
-            return True
+                # Update last seen
+                gateway.last_seen = datetime.utcnow()
+                return True
 
-        except Exception:
-            return False
+            except Exception:
+                return False
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
         """Aggregate capabilities from all gateways.
@@ -576,29 +577,24 @@ class GatewayService:
         except Exception as e:
             raise GatewayConnectionError(f"Failed to initialize gateway at {url}: {str(e)}")
 
+    def _get_active_gateways(self) -> list[DbGateway]:
+        """Sync function for database operations (runs in thread)."""
+        with Session() as db:
+            return db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
+    
     async def _run_health_checks(self) -> None:
-        """Run periodic health checks on all gateways."""
+        """Run health checks with sync Session in async code."""
         while True:
             try:
-                async with Session() as db:
-                    # Get active gateways
-                    gateways = db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
+                # Run sync database code in a thread
+                gateways = await asyncio.to_thread(self._get_active_gateways)
 
-                    # Check each gateway
-                    for gateway in gateways:
-                        try:
-                            is_healthy = await self.check_gateway_health(gateway)
-                            if not is_healthy:
-                                logger.warning(f"Gateway {gateway.name} is unhealthy")
-                        except Exception as e:
-                            logger.error(f"Health check failed for {gateway.name}: {str(e)}")
-
-                    db.commit()
+                # Async health checks (non-blocking)
+                await self.check_health_of_gateways(gateways)
 
             except Exception as e:
                 logger.error(f"Health check run failed: {str(e)}")
-
-            # Wait for next check
+            
             await asyncio.sleep(self._health_check_interval)
 
     def _get_auth_headers(self) -> Dict[str, str]:
