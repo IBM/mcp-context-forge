@@ -16,7 +16,7 @@ It handles:
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 import httpx
@@ -140,10 +140,33 @@ class GatewayService:
 
             # Initialize connection and get capabilities
             capabilities, tools = await self._initialize_gateway(str(gateway.url), auth_value)
+            
+            tools = [
+                DbTool(
+                    name=tool.name,
+                    url=tool.url,
+                    description=tool.description,
+                    integration_type=tool.integration_type,
+                    request_type=tool.request_type,
+                    headers=tool.headers,
+                    input_schema=tool.input_schema,
+                    jsonpath_filter=tool.jsonpath_filter,
+                    auth_type=auth_type,
+                    auth_value=auth_value,
+                )
+                for tool in tools
+            ]
 
             # Create DB model
             db_gateway = DbGateway(
-                name=gateway.name, url=str(gateway.url), description=gateway.description, capabilities=capabilities, last_seen=datetime.utcnow(), auth_type=auth_type, auth_value=auth_value
+                name=gateway.name,
+                url=str(gateway.url),
+                description=gateway.description,
+                capabilities=capabilities,
+                last_seen=datetime.now(timezone.utc),
+                auth_type=auth_type,
+                auth_value=auth_value,
+                tools=tools,
             )
 
             # Add to DB
@@ -157,17 +180,7 @@ class GatewayService:
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
-            inserted_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway.name)).scalar_one_or_none()
-            inserted_gateway_id = inserted_gateway.id
-
-            logger.info(f"Registered gateway: {gateway.name}")
-
-            for tool in tools:
-                tool.gateway_id = inserted_gateway_id
-                await self.tool_service.register_tool(db=db, tool=tool)
-
             return GatewayRead.model_validate(gateway)
-
         except IntegrityError:
             db.rollback()
             raise GatewayError(f"Gateway already exists: {gateway.name}")
@@ -393,14 +406,6 @@ class GatewayService:
             # Store gateway info for notification before deletion
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
 
-            # Remove associated tools
-            try:
-                db.query(DbTool).filter(DbTool.gateway_id == gateway_id).delete()
-                db.commit()
-                logger.info(f"Deleted tools associated with gateway: {gateway.name}")
-            except Exception as ex:
-                logger.warning(f"No tools found: {ex}")
-
             # Hard delete gateway
             db.delete(gateway)
             db.commit()
@@ -590,8 +595,9 @@ class GatewayService:
                 # Run sync database code in a thread
                 gateways = await asyncio.to_thread(self._get_active_gateways)
 
-                # Async health checks (non-blocking)
-                await self.check_health_of_gateways(gateways)
+                if len(gateways) > 0:
+                    # Async health checks (non-blocking)
+                    await self.check_health_of_gateways(gateways)
 
             except Exception as e:
                 logger.error(f"Health check run failed: {str(e)}")

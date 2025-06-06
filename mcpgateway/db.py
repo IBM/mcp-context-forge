@@ -16,7 +16,7 @@ and to record tool execution metrics.
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import jsonschema
@@ -105,29 +105,29 @@ class Base(DeclarativeBase):
     """Base class for all models."""
 
 
-# Association table for tools and gateways (federation)
-tool_gateway_table = Table(
-    "tool_gateway_association",
-    Base.metadata,
-    Column("tool_id", Integer, ForeignKey("tools.id"), primary_key=True),
-    Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
-)
+# # Association table for tools and gateways (federation)
+# tool_gateway_table = Table(
+#     "tool_gateway_association",
+#     Base.metadata,
+#     Column("tool_id", Integer, ForeignKey("tools.id"), primary_key=True),
+#     Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
+# )
 
-# Association table for resources and gateways (federation)
-resource_gateway_table = Table(
-    "resource_gateway_association",
-    Base.metadata,
-    Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
-    Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
-)
+# # Association table for resources and gateways (federation)
+# resource_gateway_table = Table(
+#     "resource_gateway_association",
+#     Base.metadata,
+#     Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
+#     Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
+# )
 
-# Association table for prompts and gateways (federation)
-prompt_gateway_table = Table(
-    "prompt_gateway_association",
-    Base.metadata,
-    Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
-    Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
-)
+# # Association table for prompts and gateways (federation)
+# prompt_gateway_table = Table(
+#     "prompt_gateway_association",
+#     Base.metadata,
+#     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
+#     Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
+# )
 
 # Association table for servers and tools
 server_tool_association = Table(
@@ -173,7 +173,7 @@ class ToolMetric(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tool_id: Mapped[int] = mapped_column(Integer, ForeignKey("tools.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -199,7 +199,7 @@ class ResourceMetric(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     resource_id: Mapped[int] = mapped_column(Integer, ForeignKey("resources.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -225,7 +225,7 @@ class ServerMetric(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     server_id: Mapped[int] = mapped_column(Integer, ForeignKey("servers.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -251,7 +251,7 @@ class PromptMetric(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     prompt_id: Mapped[int] = mapped_column(Integer, ForeignKey("prompts.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -267,7 +267,7 @@ class Tool(Base):
     Supports both local tools and federated tools from other gateways.
     The integration_type field indicates the tool format:
     - "MCP" for MCP-compliant tools (default)
-    - "ICA" for non-MCP ICA Integrations
+    - "REST" for REST tools
 
     Additionally, this model provides computed properties for aggregated metrics based
     on the associated ToolMetric records. These include:
@@ -296,28 +296,28 @@ class Tool(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(unique=True)
-    url: Mapped[str]
+    url: Mapped[str] = mapped_column(String, nullable=True)
     description: Mapped[Optional[str]]
     integration_type: Mapped[str] = mapped_column(default="MCP")
+    request_type: Mapped[str] = mapped_column(default="SSE")
     headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active: Mapped[bool] = mapped_column(default=True)
     jsonpath_filter: Mapped[str] = mapped_column(default="")
 
     # Request type and authentication fields
-    request_type: Mapped[str] = mapped_column(default="SSE")
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", or None
     auth_value: Mapped[Optional[str]] = mapped_column(default=None)
 
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gateways.id"))
-    gateway = relationship("Gateway", back_populates="tools")
-    federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
+    gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="tools")
+    # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
 
     # Many-to-many relationship with Servers
-    servers = relationship("Server", secondary=server_tool_association, back_populates="tools")
+    servers: Mapped[List["Server"]] = relationship("Server", secondary=server_tool_association, back_populates="tools")
 
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
@@ -479,8 +479,8 @@ class Resource(Base):
     mime_type: Mapped[Optional[str]]
     size: Mapped[Optional[int]]
     template: Mapped[Optional[str]]  # URI template for parameterized resources
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active: Mapped[bool] = mapped_column(default=True)
     metrics: Mapped[List["ResourceMetric"]] = relationship("ResourceMetric", back_populates="resource", cascade="all, delete-orphan")
 
@@ -492,11 +492,11 @@ class Resource(Base):
     subscriptions: Mapped[List["ResourceSubscription"]] = relationship("ResourceSubscription", back_populates="resource", cascade="all, delete-orphan")
 
     gateway_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gateways.id"))
-    gateway = relationship("Gateway", back_populates="resources")
-    federated_with = relationship("Gateway", secondary=resource_gateway_table, back_populates="federated_resources")
+    gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="resources")
+    # federated_with = relationship("Gateway", secondary=resource_gateway_table, back_populates="federated_resources")
 
     # Many-to-many relationship with Servers
-    servers = relationship("Server", secondary=server_resource_association, back_populates="resources")
+    servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
 
     @property
     def content(self) -> ResourceContent:
@@ -636,7 +636,7 @@ class ResourceSubscription(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id"))
     subscriber_id: Mapped[str]  # Client identifier
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_notification: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     resource: Mapped["Resource"] = relationship(back_populates="subscriptions")
@@ -667,17 +667,17 @@ class Prompt(Base):
     description: Mapped[Optional[str]]
     template: Mapped[str] = mapped_column(Text)
     argument_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active: Mapped[bool] = mapped_column(default=True)
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
 
     gateway_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gateways.id"))
-    gateway = relationship("Gateway", back_populates="prompts")
-    federated_with = relationship("Gateway", secondary=prompt_gateway_table, back_populates="federated_prompts")
+    gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="prompts")
+    # federated_with = relationship("Gateway", secondary=prompt_gateway_table, back_populates="federated_prompts")
 
     # Many-to-many relationship with Servers
-    servers = relationship("Server", secondary=server_prompt_association, back_populates="prompts")
+    servers: Mapped[List["Server"]] = relationship("Server", secondary=server_prompt_association, back_populates="prompts")
 
     def validate_arguments(self, args: Dict[str, str]) -> None:
         """
@@ -816,15 +816,15 @@ class Server(Base):
     name: Mapped[str] = mapped_column(unique=True)
     description: Mapped[Optional[str]]
     icon: Mapped[Optional[str]]
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active: Mapped[bool] = mapped_column(default=True)
     metrics: Mapped[List["ServerMetric"]] = relationship("ServerMetric", back_populates="server", cascade="all, delete-orphan")
 
     # Many-to-many relationships for associated items
-    tools = relationship("Tool", secondary=server_tool_association, back_populates="servers")
-    resources = relationship("Resource", secondary=server_resource_association, back_populates="servers")
-    prompts = relationship("Prompt", secondary=server_prompt_association, back_populates="servers")
+    tools: Mapped[List["Tool"]] = relationship("Tool", secondary=server_tool_association, back_populates="servers")
+    resources: Mapped[List["Resource"]] = relationship("Resource", secondary=server_resource_association, back_populates="servers")
+    prompts: Mapped[List["Prompt"]] = relationship("Prompt", secondary=server_prompt_association, back_populates="servers")
 
     @property
     def execution_count(self) -> int:
@@ -934,8 +934,8 @@ class Gateway(Base):
     url: Mapped[str]
     description: Mapped[Optional[str]]
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]]
 
@@ -948,14 +948,14 @@ class Gateway(Base):
     # Relationship with local resources this gateway provides
     resources: Mapped[List["Resource"]] = relationship(back_populates="gateway", cascade="all, delete-orphan")
 
-    # Tools federated from this gateway
-    federated_tools: Mapped[List["Tool"]] = relationship(secondary=tool_gateway_table, back_populates="federated_with")
+    # # Tools federated from this gateway
+    # federated_tools: Mapped[List["Tool"]] = relationship(secondary=tool_gateway_table, back_populates="federated_with")
 
-    # Prompts federated from this resource
-    federated_resources: Mapped[List["Resource"]] = relationship(secondary=resource_gateway_table, back_populates="federated_with")
+    # # Prompts federated from this resource
+    # federated_resources: Mapped[List["Resource"]] = relationship(secondary=resource_gateway_table, back_populates="federated_with")
 
-    # Prompts federated from this gateway
-    federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
+    # # Prompts federated from this gateway
+    # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", "headers" or None
@@ -968,9 +968,11 @@ class SessionRecord(Base):
     __tablename__ = "mcp_sessions"
 
     session_id: Mapped[str] = mapped_column(primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(default=func.now())  # pylint: disable=not-callable
-    last_accessed: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())  # pylint: disable=not-callable
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # pylint: disable=not-callable
+    last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))  # pylint: disable=not-callable
     data: Mapped[str] = mapped_column(String, nullable=True)
+
+    messages: Mapped[List["SessionMessageRecord"]] = relationship("SessionMessageRecord", back_populates="session", cascade="all, delete-orphan")
 
 
 class SessionMessageRecord(Base):
@@ -979,10 +981,12 @@ class SessionMessageRecord(Base):
     __tablename__ = "mcp_messages"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    session_id: Mapped[str] = mapped_column(String)
+    session_id: Mapped[str] = mapped_column(ForeignKey("mcp_sessions.session_id"))
     message: Mapped[str] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=func.now())  # pylint: disable=not-callable
-    last_accessed: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())  # pylint: disable=not-callable
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # pylint: disable=not-callable
+    last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))  # pylint: disable=not-callable
+
+    session: Mapped["SessionRecord"] = relationship("SessionRecord", back_populates="messages")
 
 
 # Event listeners for validation
@@ -1083,6 +1087,7 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
+        # Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
     except SQLAlchemyError as e:
         raise Exception(f"Failed to initialize database: {str(e)}")
