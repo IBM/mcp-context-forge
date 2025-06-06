@@ -2,6 +2,24 @@
 # Author: Mihai Criveti
 # Description: Run Gunicorn production server (optionally with TLS)
 
+# Determine script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Attempt to activate a venv if not already active
+if [[ -z "$VIRTUAL_ENV" ]]; then
+  # If a known venv path exists (like your custom .venv location), activate it
+  if [[ -f "${HOME}/.venv/mcpgateway/bin/activate" ]]; then
+    echo "🔧  Activating virtual environment: ${HOME}/.venv/mcpgateway"
+    source "${HOME}/.venv/mcpgateway/bin/activate"
+  elif [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
+    echo "🔧  Activating virtual environment in script directory"
+    source "${SCRIPT_DIR}/.venv/bin/activate"
+  else
+    echo "⚠️  No virtual environment found! Please activate manually."
+    exit 1
+  fi
+fi
+
 cat << "EOF"
 ███╗   ███╗ ██████╗██████╗      ██████╗  █████╗ ████████╗███████╗██╗    ██╗ █████╗ ██╗   ██╗
 ████╗ ████║██╔════╝██╔══██╗    ██╔════╝ ██╔══██╗╚══██╔══╝██╔════╝██║    ██║██╔══██╗╚██╗ ██╔╝
