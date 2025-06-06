@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import SessionLocal
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.services_auth import decode_auth
@@ -579,7 +580,7 @@ class GatewayService:
 
     def _get_active_gateways(self) -> list[DbGateway]:
         """Sync function for database operations (runs in thread)."""
-        with Session() as db:
+        with SessionLocal() as db:
             return db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
     
     async def _run_health_checks(self) -> None:
