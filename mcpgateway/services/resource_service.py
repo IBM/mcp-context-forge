@@ -222,7 +222,7 @@ class ResourceService:
             db (Session): The SQLAlchemy database session.
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
-            
+
         Returns:
             List[ResourceRead]: A list of resources represented as ResourceRead objects.
         """
