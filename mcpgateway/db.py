@@ -1087,5 +1087,6 @@ def init_db():
     except SQLAlchemyError as e:
         raise Exception(f"Failed to initialize database: {str(e)}")
 
+
 if __name__ == "__main__":
     init_db()
