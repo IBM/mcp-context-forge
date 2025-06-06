@@ -61,24 +61,25 @@ On Windows:
 Add a new server block:
 
 ```json
-"mcpServers": {
-  "mcpgateway-wrapper": {
-    "command": "uv",
-    "args": [
-      "--directory",
-      "path-to-mcpgateway-wrapper",
-      "run",
-      "mcpgateway-wrapper"
-    ],
-    "env": {
-      "MCP_GATEWAY_BASE_URL": "http://localhost:4444",
-      "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/2",
-      "MCP_AUTH_USER": "admin",
-      "MCP_AUTH_PASS": "changeme"
+ {
+  "mcpServers": {
+    "mcpgateway-wrapper": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "path-to-folder/mcpgateway-wrapper",
+        "run",
+        "mcpgateway-wrapper"
+      ],
+      "env": {
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_AUTH_TOKEN": "your_bearer_token"
+      }
     }
   }
 }
 ```
+
 
 > Replace `path-to-mcpgateway-wrapper` with the actual folder path.
 
@@ -86,10 +87,9 @@ Add a new server block:
 
 | Variable                  | Purpose                                            |
 | ------------------------- | -------------------------------------------------- |
-| `MCP_GATEWAY_BASE_URL`    | Base URL to your MCP Gateway (e.g. localhost:4444) |
 | `MCP_SERVER_CATALOG_URLS` | One or more `/servers/{id}` catalog URLs           |
-| `MCP_AUTH_USER`           | Username for HTTP Basic authentication             |
-| `MCP_AUTH_PASS`           | Password for HTTP Basic authentication             |
+| `MCP_AUTH_TOKEN`          | Bearer Token Authentication                        |
+
 
 ---
 
