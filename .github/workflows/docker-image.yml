@@ -147,7 +147,7 @@ jobs:
       - name: 🛡️  Trivy vulnerability scan
         id: trivy
         continue-on-error: true
-        uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
+        uses: aquasecurity/trivy-action@0.31.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:latest
           format: sarif
