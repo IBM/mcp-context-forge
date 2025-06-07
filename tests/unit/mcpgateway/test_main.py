@@ -47,6 +47,13 @@ class TestAPIEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
 
+    def test_ready_check(self, test_client):
+        """Test the readiness check endpoint."""
+        response = test_client.get("/ready")
+        # The readiness check returns 200 if DB is reachable
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"
+
     def test_root_redirect(self, test_client):
         """Test root path redirects to admin."""
         response = test_client.get("/", allow_redirects=False)
