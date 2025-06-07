@@ -228,7 +228,7 @@ make serve                 # gunicorn on :4444
 
 ```bash
 uv venv && source .venv/bin/activate
-uv pip install -e .[dev]
+uv pip install -e '.[dev]' # IMPORTANT: in zsh, quote to disable glob expansion!
 ```
 
 ### pip (alternative)
