@@ -1584,6 +1584,7 @@ local-pypi-debug:
 
 # =============================================================================
 # 🏠 LOCAL DEVPI SERVER
+# TODO: log in background, better cleanup/delete logic
 # =============================================================================
 # help: 🏠 LOCAL DEVPI SERVER
 # help: devpi-install        - Install devpi server and client
@@ -1596,9 +1597,11 @@ local-pypi-debug:
 # help: devpi-clean          - Full cycle: build → upload → install locally
 # help: devpi-status         - Show devpi server status
 # help: devpi-web            - Open devpi web interface
+# help: devpi-delete         - Delete mcpgateway==<ver> from devpi index
+
 
 .PHONY: devpi-install devpi-init devpi-start devpi-stop devpi-setup-user devpi-upload \
-        devpi-test devpi-clean devpi-status devpi-web devpi-restart
+        devpi-delete devpi-test devpi-clean devpi-status devpi-web devpi-restart
 
 DEVPI_HOST := localhost
 DEVPI_PORT := 3141
@@ -1688,14 +1691,14 @@ devpi-setup-user: devpi-start
 	(devpi user -c $(DEVPI_USER) password=$(DEVPI_PASS) email=$(DEVPI_USER)@localhost.local 2>/dev/null || \
 	 echo 'User $(DEVPI_USER) already exists') && \
 	devpi login $(DEVPI_USER) --password=$(DEVPI_PASS) && \
-	(devpi index -c dev bases=root/pypi volatile=False 2>/dev/null || \
+	(devpi index -c dev bases=root/pypi volatile=True 2>/dev/null || \
 	 echo 'Index dev already exists') && \
 	devpi use $(DEVPI_INDEX)"
 	@echo "✅  User '$(DEVPI_USER)' and index 'dev' configured"
 	@echo "📝  Login: $(DEVPI_USER) / $(DEVPI_PASS)"
 	@echo "📍  Using index: $(DEVPI_INDEX)"
 
-devpi-upload: devpi-setup-user
+devpi-upload: dist devpi-setup-user		## Build wheel/sdist, then upload
 	@echo "📤  Uploading existing package to devpi..."
 	@if [ ! -d "dist" ] || [ -z "$$(ls -A dist/ 2>/dev/null)" ]; then \
 		echo "❌  No dist/ directory or files found. Run 'make dist' first."; \
@@ -1813,3 +1816,18 @@ devpi-unconfigure-pip:
 	else \
 		echo "ℹ️   No pip configuration found"; \
 	fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 📦  Version helper (defaults to the version in pyproject.toml)
+#      override on the CLI:  make VER=0.2.1 devpi-delete
+# ─────────────────────────────────────────────────────────────────────────────
+VER ?= $(shell python -c "import tomllib, pathlib; \
+print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
+2>/dev/null || echo 0.0.0)
+
+devpi-delete: devpi-setup-user                 ## Delete mcpgateway==$(VER) from index
+	@echo "🗑️   Removing mcpgateway==$(VER) from $(DEVPI_INDEX)…"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		devpi use $(DEVPI_INDEX) && \
+		devpi remove -y mcpgateway==$(VER) || true"
+	@echo "✅  Delete complete (if it existed)"

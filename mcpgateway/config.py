@@ -31,6 +31,7 @@ Environment variables:
 
 import json
 from functools import lru_cache
+from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, Dict, List, Optional, Set, Union
 
@@ -51,7 +52,15 @@ class Settings(BaseSettings):
     port: int = Field(4444, env="PORT")
     database_url: str = "sqlite:///./mcp.db"
     templates_dir: Path = Path("mcpgateway/templates")
-    static_dir: Path = Path("mcpgateway/static")
+    # Absolute paths resolved at import-time (still override-able via env vars)
+    templates_dir: Path = Field(
+        default=files("mcpgateway") / "templates",
+        env="TEMPLATES_DIR",
+    )
+    static_dir: Path = Field(
+        default=files("mcpgateway") / "static",
+        env="STATIC_DIR",
+    )
     app_root_path: str = ""
 
     # Protocol
