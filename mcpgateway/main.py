@@ -1968,6 +1968,27 @@ async def healthcheck(db: Session = Depends(get_db)):
     return {"status": "healthy"}
 
 
+@app.get("/ready")
+async def readiness_check(db: Session = Depends(get_db)):
+    """
+    Perform a readiness check to verify if the application is ready to receive traffic.
+
+    Args:
+        db: SQLAlchemy session dependency.
+
+    Returns:
+        JSONResponse with status 200 if ready, 503 if not.
+    """
+    try:
+        # Run the blocking DB check in a thread to avoid blocking the event loop
+        await asyncio.to_thread(db.execute, text("SELECT 1"))
+        return JSONResponse(content={"status": "ready"}, status_code=200)
+    except Exception as e:
+        error_message = f"Readiness check failed: {str(e)}"
+        logger.error(error_message)
+        return JSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
+
+
 # Mount static files
 # app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 
