@@ -1969,7 +1969,7 @@ async def healthcheck(db: Session = Depends(get_db)):
 
 
 # Mount static files
-app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
+# app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 
 # Include routers
 app.include_router(version_router)
@@ -2001,7 +2001,19 @@ else:
 if UI_ENABLED:
     # Mount static files for UI
     logger.info("Mounting static files - UI enabled")
-    app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
+    try:
+        app.mount(
+            "/static",
+            StaticFiles(directory=str(settings.static_dir)),
+            name="static",
+        )
+        logger.info("Static assets served from %s", settings.static_dir)
+    except RuntimeError as exc:
+        logger.warning(
+            "Static dir %s not found – Admin UI disabled (%s)",
+            settings.static_dir,
+            exc,
+        )
 
     # Redirect root path to admin UI
     @app.get("/")
