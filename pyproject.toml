@@ -11,10 +11,13 @@ build-backend = "setuptools.build_meta"
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
 [project]
-name = "mcpgateway"
+name = "mcp-contextforge-gateway"
 version = "0.1.0"
-description = "A production-ready MCP Gateway built with FastAPI and support for virtual servers"
-keywords = ["MCP", "Gateway", "API", "Agents", "Tools"]
+description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
+keywords = ["MCP","API","gateway","proxy","tools",
+  "agents","agentic ai","model context protocol","multi-agent","fastapi",
+  "json-rpc","sse","websocket","federation","security","authentication"
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -23,6 +26,9 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Framework :: FastAPI",
+    "Framework :: AsyncIO",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+    "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
