@@ -139,7 +139,7 @@ serve-ssl: certs
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
 
 dev:
-	uvicorn mcpgateway.main:app --reload --reload-exclude='public/'
+	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --reload --reload-exclude='public/'
 
 run:
 	./run.sh
@@ -342,65 +342,65 @@ lint:
 ##  Individual targets (alphabetical)
 ## --------------------------------------------------------------------------- ##
 autoflake:                          ## 🧹  Strip unused imports / vars
-	autoflake --in-place --remove-all-unused-imports \
+	@$(VENV_DIR)/bin/autoflake --in-place --remove-all-unused-imports \
 	          --remove-unused-variables -r mcpgateway mcpgateway-wrapper tests
 
 black:                              ## 🎨  Reformat code with black
-	@echo "🎨  black …" && black -l 200 mcpgateway mcpgateway-wrapper tests
+	@echo "🎨  black …" && $(VENV_DIR)/bin/black -l 200 mcpgateway mcpgateway-wrapper tests
 
 isort:                              ## 🔀  Sort imports
-	@echo "🔀  isort …" && isort .
+	@echo "🔀  isort …" && $(VENV_DIR)/bin/isort .
 
 flake8:                             ## 🐍  flake8 checks
-	flake8 mcpgateway
+	@$(VENV_DIR)/bin/flake8 mcpgateway
 
 pylint:                             ## 🐛  pylint checks
-	pylint mcpgateway
+	@$(VENV_DIR)/bin/pylint mcpgateway
 
 markdownlint:					    ## 📖  Markdown linting
-	markdownlint -c .markdownlint.json .
+	@$(VENV_DIR)/bin/markdownlint -c .markdownlint.json .
 
 mypy:                               ## 🏷️  mypy type-checking
-	mypy mcpgateway
+	@$(VENV_DIR)/bin/mypy mcpgateway
 
 bandit:                             ## 🛡️  bandit security scan
-	bandit -r mcpgateway
+	@$(VENV_DIR)/bin/bandit -r mcpgateway
 
 pydocstyle:                         ## 📚  Docstring style
-	pydocstyle mcpgateway
+	@$(VENV_DIR)/bin/pydocstyle mcpgateway
 
 pycodestyle:                        ## 📝  Simple PEP-8 checker
-	pycodestyle mcpgateway --max-line-length=200
+	@$(VENV_DIR)/bin/pycodestyle mcpgateway --max-line-length=200
 
 pre-commit:                         ## 🪄  Run pre-commit hooks
-	pre-commit run --all-files --show-diff-on-failure
+	@$(VENV_DIR)/bin/pre-commit run --all-files --show-diff-on-failure
 
 ruff:                               ## ⚡  Ruff lint + format
-	ruff check mcpgateway && ruff format mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/ruff check mcpgateway && $(VENV_DIR)/bin/ruff format mcpgateway mcpgateway-wrapper tests
 
 ty:                                 ## ⚡  Ty type checker
-	ty check mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/ty check mcpgateway mcpgateway-wrapper tests
 
 pyright:                            ## 🏷️  Pyright type-checking
-	pyright mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/pyright mcpgateway mcpgateway-wrapper tests
 
 radon:                              ## 📈  Complexity / MI metrics
-	radon mi -s mcpgateway mcpgateway-wrapper tests && \
-	radon cc -s mcpgateway mcpgateway-wrapper tests && \
-	radon hal mcpgateway mcpgateway-wrapper tests && \
-	radon raw -s mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/radon mi -s mcpgateway mcpgateway-wrapper tests && \
+	$(VENV_DIR)/bin/radon cc -s mcpgateway mcpgateway-wrapper tests && \
+	$(VENV_DIR)/bin/radon hal mcpgateway mcpgateway-wrapper tests && \
+	$(VENV_DIR)/bin/radon raw -s mcpgateway mcpgateway-wrapper tests
 
 pyroma:                             ## 📦  Packaging metadata check
-	pyroma -d .
+	@$(VENV_DIR)/bin/pyroma -d .
 
 importchecker:                      ## 🧐  Orphaned import detector
-	importchecker .
+	@$(VENV_DIR)/bin/importchecker .
 
 spellcheck:                         ## 🔤  Spell-check
-	pyspelling || true
+	@$(VENV_DIR)/bin/pyspelling || true
 
 fawltydeps:                         ## 🏗️  Dependency sanity
-	fawltydeps --detailed --exclude 'docs/**' . || true
+	@$(VENV_DIR)/bin/fawltydeps --detailed --exclude 'docs/**' . || true
 
 wily:                               ## 📈  Maintainability report
 	@git stash --quiet
@@ -409,7 +409,7 @@ wily:                               ## 📈  Maintainability report
 	@git stash pop --quiet
 
 pyre:                               ## 🧠  Facebook Pyre analysis
-	pyre
+	@$(VENV_DIR)/bin/pyre
 
 depend:                             ## 📦  List dependencies
 	pdm list --freeze
@@ -445,11 +445,11 @@ sbom:								## 🛡️  Generate SBOM & security report
 
 pytype:								## 🧠  Pytype static type analysis
 	@echo "🧠  Pytype analysis…"
-	pytype -V 3.12 -j auto mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto mcpgateway mcpgateway-wrapper tests
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness…"
-	check-manifest
+	@$(VENV_DIR)/bin/check-manifest
 
 # -----------------------------------------------------------------------------
 # 📑 YAML / JSON / TOML LINTERS
@@ -467,7 +467,7 @@ LINTERS += yamllint jsonlint tomllint
 yamllint:                         ## 📑 YAML linting
 	@command -v yamllint >/dev/null 2>&1 || { \
 	  echo '❌  yamllint not installed  ➜  pip install yamllint'; exit 1; }
-	@echo '📑  yamllint …' && yamllint -c .yamllint .
+	@echo '📑  yamllint …' && $(VENV_DIR)/bin/yamllint -c .yamllint .
 
 jsonlint:                         ## 📑 JSON validation (jq)
 	@command -v jq >/dev/null 2>&1 || { \
@@ -482,7 +482,7 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 	  echo '❌  tomlcheck not installed  ➜  pip install tomlcheck'; exit 1; }
 	@echo '📑  tomllint (tomlcheck) …'
 	@find . -type f -name '*.toml' -print0 \
-	  | xargs -0 -I{} tomlcheck "{}"
+	  | xargs -0 -I{} $(VENV_DIR)/bin/tomlcheck "{}"
 
 # =============================================================================
 # 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS
