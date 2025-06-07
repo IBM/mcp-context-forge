@@ -47,17 +47,17 @@ dependencies = [
     "jinja2>=3.1.6",
     "jq>=1.8.0",
     "jsonpath-ng>=1.7.0",
-    "jsonschema>=4.23.0",
-    "mcp>=1.9.1",
+    "jsonschema>=4.24.0",
+    "mcp>=1.9.3",
     "parse>=1.20.2",
+    "psutil>=7.0.0",
     "pydantic>=2.11.5",
     "pydantic-settings>=2.9.1",
     "pyjwt>=2.10.1",
     "sqlalchemy>=2.0.41",
-    "psutil>=7.0.0",
-    "sse-starlette>=2.3.5",
+    "sse-starlette>=2.3.6",
     "starlette>=0.46.2",
-    "uvicorn>=0.34.2",
+    "uvicorn>=0.34.3",
     "zeroconf>=0.147.0",
 ]
 
@@ -68,7 +68,7 @@ dependencies = [
 
 # Optional dependency groups (runtime)
 redis = [
-    "redis>=6.1.0",
+    "redis>=6.2.0",
 ]
 
 postgres = [
@@ -98,12 +98,12 @@ dev = [
     "coverage>=7.8.2",
     "coverage-badge>=1.1.2",
     "darglint>=1.8.1",
-    "fawltydeps>=0.19.0",
+    "fawltydeps>=0.20.0",
     "flake8>=7.2.0",
     "gprof2dot>=2025.4.14",
     "importchecker>=3.0",
     "isort>=6.0.1",
-    "mypy>=1.15.0",
+    "mypy>=1.16.0",
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",
     "pip_audit>=2.9.0",
@@ -115,27 +115,31 @@ dev = [
     "pyright>=1.1.401",
     "pyroma>=4.2",
     "pyspelling>=2.10",
-    "pytest>=8.3.5",
+    "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.1.1",
     "pytest-examples>=0.0.18",
     "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=15.1",
-    "pytest-xdist>=3.6.1",
+    "pytest-xdist>=3.7.0",
     "pytype>=2024.10.11",
     "radon>=6.0.1",
-    "ruff>=0.11.11",
+    "ruff>=0.11.13",
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
-    "ty>=0.0.1a6",
     "tomlcheck>=0.2.3",
     "twine>=6.1.0",
+    "ty>=0.0.1a8",
     "types-tabulate>=0.9.0.20241207",
 ]
 
 # Convenience meta-extras
-all = ["mcpgateway[redis]"]
-dev-all = ["mcpgateway[redis,dev]"]
+all = [
+    "mcpgateway[redis]",
+]
+dev-all = [
+    "mcpgateway[redis,dev]",
+]
 
 # --------------------------------------------------------------------
 #  Authors and URLs
