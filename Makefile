@@ -799,6 +799,10 @@ publish: verify            ## Verify, then upload to PyPI
 	twine upload dist/*               # creds via env vars or ~/.pypirc
 	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
 
+publish-testpypi: verify            ## Verify, then upload to TestPyPI
+	twine upload --repository testpypi dist/*  # creds via env vars or ~/.pypirc
+	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
+
 # =============================================================================
 # 🦭 PODMAN CONTAINER BUILD & RUN
 # =============================================================================
