@@ -50,6 +50,28 @@ MCP Gateway builds on the MCP spec by sitting **in front of** MCP Server or REST
 
 ---
 
+## Quick Start: PyPi
+
+MCP Gateway is [published on PyPi](https://pypi.org/project/mcp-contextforge-gateway) as `mcp-contextforge-gateway`. You can install and start a server with:
+
+```bash
+# Create a virtual environment and activate it
+python3 -m venv .venv
+. ./.venv/bin/activate
+
+# Install mcp-contextforge-gateway
+pip install mcp-contextforge-gateway
+
+# Run mcpgateway with default options, listening on port 4444
+mcpgateway
+
+# Optional: configure env, and login with admin:password at http://127.0.0.1:9999/admin
+BASIC_AUTH_PASSWORD=password mcpgateway --host 127.0.0.1 --port 9999
+
+# List all options
+mcpgateway --help
+```
+
 ## Quick Start (Pre-built Image)
 
 If you just want to run the gateway using the official image from GitHub Container Registry:
