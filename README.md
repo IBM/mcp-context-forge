@@ -63,11 +63,11 @@ python3 -m venv .venv
 # Install mcp-contextforge-gateway
 pip install mcp-contextforge-gateway
 
-# Run mcpgateway with default options, listening on port 4444 with admin:changeme
-mcpgateway
+# Run mcpgateway with default options (binds to 127.0.0.1:4444) with admin:changeme
+mcpgateway  # login to http://127.0.0.1:4444
 
-# Optional: run in background with configured password/key - login at http://127.0.0.1:4444/admin
-BASIC_AUTH_PASSWORD=password JWT_SECRET_KEY=my-test-key mcpgateway --host 127.0.0.1 --port 4444 & bg
+# Optional: run in background with configured password/key and listen to all IPs
+BASIC_AUTH_PASSWORD=password JWT_SECRET_KEY=my-test-key mcpgateway --host 0.0.0.0 --port 4444 & bg
 
 # List all options
 mcpgateway --help
@@ -116,6 +116,10 @@ curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/s
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers/1
 
 # You can now use http://localhost:4444/servers/1 as an SSE server with the configured JWT token in any MCP client
+
+# To stop the running process, you can either:
+fg # Return the process to foreground, you can not Ctrl + C, or:
+pkill mcpgateway
 ```
 
 See [.env.example](.env.example) for full list of ENV variables you can use to override the configuration.
@@ -658,6 +662,7 @@ echo ${MCPGATEWAY_BEARER_TOKEN}
 
 # Quickly confirm that authentication works and the gateway is healthy
 curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/health
+# {"status":"healthy"}
 
 # Quickly confirm the gateway version & DB connectivity
 curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/version | jq
