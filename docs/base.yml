@@ -135,7 +135,7 @@ markdown_extensions:
 
 plugins:
   search: {}
-  inline-svg: {}
+  # inline-svg: {}
   table-reader: {}
   git-revision-date-localized:
     fallback_to_build_date: true
