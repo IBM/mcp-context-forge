@@ -17,7 +17,7 @@ Features
 ─────────
 * Injects the default FastAPI application path (``mcpgateway.main:app``)
   when the user doesn't supply one explicitly.
-* Adds sensible default host/port (0.0.0.0:4444) unless the user passes
+* Adds sensible default host/port (127.0.0.1:4444) unless the user passes
   ``--host``/``--port`` or overrides them via the environment variables
   ``MCG_HOST`` and ``MCG_PORT``.
 * Forwards *all* remaining arguments verbatim to Uvicorn's own CLI, so
@@ -26,7 +26,7 @@ Features
 Typical usage
 ─────────────
 ```console
-$ mcpgateway --reload                 # dev server on 0.0.0.0:4444
+$ mcpgateway --reload                 # dev server on 127.0.0.1:4444
 $ mcpgateway --workers 4              # production-style multiprocess
 $ mcpgateway 127.0.0.1:8000 --reload  # explicit host/port keeps defaults out
 $ mcpgateway mypkg.other:app          # run a different ASGI callable
@@ -45,7 +45,7 @@ import uvicorn
 # Configuration defaults (overridable via environment variables)
 # ---------------------------------------------------------------------------
 DEFAULT_APP = "mcpgateway.main:app"  # dotted path to FastAPI instance
-DEFAULT_HOST = os.getenv("MCG_HOST", "0.0.0.0")
+DEFAULT_HOST = os.getenv("MCG_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.getenv("MCG_PORT", "4444"))
 
 # ---------------------------------------------------------------------------

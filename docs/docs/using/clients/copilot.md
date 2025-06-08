@@ -99,8 +99,7 @@ Point Copilot to the local wrapper process:
       "env": {
         "MCP_GATEWAY_BASE_URL": "http://localhost:4444",
         "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
-        "MCP_AUTH_USER": "admin",
-        "MCP_AUTH_PASS": "changeme"
+        "MCP_AUTH_TOKEN": "your_bearer_token"
       }
     }
   }
