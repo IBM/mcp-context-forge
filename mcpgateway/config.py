@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     token_expiry: int = 10080  # minutes
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: str = "my-test-key"
+    auth_encryption_secret: str = "my-test-salt"
 
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = True

@@ -36,8 +36,7 @@ To use MCP tools in the Bee Agent Framework, follow these steps:
 
    ```bash
    export MCP_GATEWAY_BASE_URL=http://localhost:4444
-   export MCP_AUTH_USER=admin
-   export MCP_AUTH_PASS=changeme
+   export MCP_AUTH_TOKEN="your_bearer_token"
    ```
 
 ---
