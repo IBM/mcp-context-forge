@@ -187,11 +187,66 @@ docker run -i --name mcpgateway-wrapper \
 # You'll see a message similar to: Installed 21 packages in 6ms - it's now expecting input from an MCP client
 ```
 
+Testing `mcpgateway-wrapper` by hand:
+
+Because the wrapper speaks JSON-RPC over stdin/stdout, you can interact with it using nothing more than a terminal or pipes.
+
+```bash
+# Run a time server, then register it in your gateway..
+pip install mcp-server-time
+npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin"
+
+# Start the MCP Gateway Wrapper
+export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
+python -m mcpgateway.wrapper
+```
+
+**Initialize the protocol:**
+
+```json
+# Initialize the protocol
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0.0.1"}}}
+
+# Then after the reply:
+{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+
+# Get prompts
+{"jsonrpc":"2.0","id":4,"method":"prompts/list"}
+{"jsonrpc":"2.0","id":5,"method":"prompts/get","params":{"name":"greeting","arguments":{"user":"Bob"}}}
+
+# Get resources
+{"jsonrpc":"2.0","id":6,"method":"resources/list"}
+{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"https://example.com/some.txt"}}
+
+# Get / call tools
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_current_time","arguments":{"timezone":"Europe/Dublin"}}}
+```
+
+Expected:
+
+```json
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.1.0"}}}
+
+# When there's no tools
+{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
+
+# After you add some tools and create a virtual server
+{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"get_current_time","description":"Get current time in a specific timezones","inputSchema":{"type":"object","properties":{"timezone":{"type":"string","description":"IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Use 'America/New_York' as local timezone if no timezone provided by the user."}},"required":["timezone"]}}]}}
+
+# Running the time tool:
+{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{'content': [{'type': 'text', 'text': '{\\n  \"timezone\": \"Europe/Dublin\",\\n  \"datetime\": \"2025-06-08T21:47:07+01:00\",\\n  \"is_dst\": true\\n}'}], 'is_error': False}"}],"isError":false}}
+
+```
+
 ### Running from a MCP Client
 
 The `mcpgateway-wrapper` should be used with an MCP Client that does not support SSE. You can configure it as such.
 
 Remember to replace the `MCP_SERVER_CATALOG_URL` with the actual URL of your MCP Gateway. Consider container networking - when running this via a container engine, this should represent a network accessible from Docker/Podman, ex: `http://host.docker.internal:4444/servers/1`
+
+You have a number of options for running the wrapper. Docker/Podman, to run it from the container. `uvx`, `uvenv` or `pipx` to run it straight from pip. Or just running it with Python from a local directory. Adjust your command accordingly.
 
 ```json
 {
