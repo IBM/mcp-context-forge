@@ -56,25 +56,73 @@ MCP Gateway is [published on PyPi](https://pypi.org/project/mcp-contextforge-gat
 
 ```bash
 # Create a virtual environment and activate it
+mkdir mcpgateway && cd mcpgateway # directory to store Python venv and mcp.db
 python3 -m venv .venv
 . ./.venv/bin/activate
 
 # Install mcp-contextforge-gateway
 pip install mcp-contextforge-gateway
 
-# Run mcpgateway with default options, listening on port 4444
+# Run mcpgateway with default options, listening on port 4444 with admin:changeme
 mcpgateway
 
-# Optional: configure env, and login with admin:password at http://127.0.0.1:9999/admin
-BASIC_AUTH_PASSWORD=password mcpgateway --host 127.0.0.1 --port 9999
+# Optional: run in background with configured password/key - login at http://127.0.0.1:4444/admin
+BASIC_AUTH_PASSWORD=password JWT_SECRET_KEY=my-test-key mcpgateway --host 127.0.0.1 --port 4444 & bg
 
 # List all options
 mcpgateway --help
+
+# Generate your JWT token from the key
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
+
+# Run a local MCP Server (github) listening on SSE http://localhost:8000/sse
+pip install uvenv
+npx -y supergateway --stdio "uvenv run mcp-server-git"
+
+#--------------------------------------------
+# Register the MCP Server with the gateway and test it
+# The curl steps can also from the admin ui: http://localhost:4444/admin
+# For more info on the API see /docs and /redoc *after* login to /admin
+#---------------------------------------------
+# Test the API (assume you have curl and jq installed)
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/version | jq
+
+# Register the MCP server as a new gateway provider
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"github_mcp_server","url":"http://localhost:8000/sse"}' \
+     http://localhost:4444/gateways
+
+# List gateways - you should see [{"id":1,"name":"github_mcp_server","url":"http://localhost:8000/sse" ...
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways | jq
+
+# Get gateway by ID
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways/1
+
+# List the global tools
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools | jq
+
+# Create a virtual server with tool 1,2,3 form global tools catalog
+# You can configure virtual servers with multiple tools/resources/prompts from registered MCP server (gateways)
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"devtools_mcp_server","description":"My developer tools","associatedTools": ["1","2","3"]}' \
+     http://localhost:4444/servers
+
+# List servers
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers
+
+# Get an individual server
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers/1
+
+# You can now use http://localhost:4444/servers/1 as an SSE server with the configured JWT token in any MCP client
 ```
 
-## Quick Start (Pre-built Image)
+See [.env.example](.env.example) for full list of ENV variables you can use to override the configuration.
 
-If you just want to run the gateway using the official image from GitHub Container Registry:
+## Quick Start (Pre-built Container Image)
+
+If you just want to run the gateway using the official OCI container image from GitHub Container Registry:
 
 ```bash
 docker run -d --name mcpgateway \
@@ -93,6 +141,8 @@ docker logs mcpgateway
 You can now access the UI at [http://localhost:4444/admin](http://localhost:4444/admin)
 
 > 💡 You can also use `--env-file .env` if you have a config file already. See the provided [.env.example](.env.example)
+> 💡 To access local tools, consider using `--network=host`
+> 💡 Consider using a stable / release version of the image, ex: `ghcr.io/ibm/mcp-context-forge:v0.1.0`
 
 ### Optional: Mount a local volume for persistent SQLite storage
 
@@ -120,7 +170,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 ### Running the mcpgateway-wrapper
 
-The mcpgateway-wrapper lets you connect to the gateway over stdio.
+The mcpgateway-wrapper lets you connect to the gateway over stdio, while retaining authentication using the JWT token when the wrapper connect to a remote gateway. You should run this from a MCP client. You can test this from a shell with:
 
 ```bash
 docker run -i --name mcpgateway-wrapper \
@@ -130,9 +180,14 @@ docker run -i --name mcpgateway-wrapper \
   -e MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN \
   ghcr.io/ibm/mcp-context-forge:latest \
   run --directory mcpgateway-wrapper mcpgateway-wrapper
+# You'll see a message similar to: Installed 21 packages in 6ms - it's now expecting input from an MCP client
 ```
 
 ### Running from a MCP Client
+
+The `mcpgateway-wrapper` should be used with an MCP Client that does not support SSE. You can configure it as such.
+
+Remember to replace the `MCP_SERVER_CATALOG_URL` with the actual URL of your MCP Gateway. Consider container networking - when running this via a container engine, this should represent a network accessible from Docker/Podman, ex: `http://host.docker.internal:4444/servers/1`
 
 ```json
 {
@@ -142,9 +197,10 @@ docker run -i --name mcpgateway-wrapper \
       "args": [
         "run",
         "--rm",
+        "--network=host",
         "-i",
         "-e",
-        "MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/1",
+        "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1",
         "-e",
         "MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}",
         "--entrypoint",
@@ -162,6 +218,45 @@ docker run -i --name mcpgateway-wrapper \
   }
 }
 ```
+
+## Quick Start (Claude Desktop)
+
+To add the mcpgateway to Claude Desktop (or similar MCP Clients) go to `File > Settings > Developer > Edit Config` and add:
+
+```json
+{
+  "mcpServers": {
+    "mcpgateway-wrapper": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "--network=host",
+        "-i",
+        "-e",
+        "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1",
+        "-e",
+        "MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}",
+        "--entrypoint",
+        "uv",
+        "ghcr.io/ibm/mcp-context-forge:latest",
+        "run",
+        "--directory",
+        "mcpgateway-wrapper",
+        "mcpgateway-wrapper"
+      ],
+      "env": {
+        "MCPGATEWAY_BEARER_TOKEN": "<place your token here>"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop (exiting from system tray). Go back to `File > Settings > Developer > Edit Config` to check on your configuration and view the logs.
+
+For more details, see the [Claude MCP quickstart](https://modelcontextprotocol.io/quickstart/server). For issues, see [MCP Debugging](https://modelcontextprotocol.io/docs/tools/debugging).
+
 ---
 
 ## Quick Start (manual install)
@@ -169,7 +264,7 @@ docker run -i --name mcpgateway-wrapper \
 ### Prerequisites
 
 * **Python ≥ 3.10**
-* **GNU Make** (all common workflows are Make targets)
+* **GNU Make** (optional, but all common workflows are available as Make targets)
 * Optional: **Docker / Podman** for containerised runs
 
 ### One-liner (dev)
@@ -812,7 +907,7 @@ curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/s
 # Create server
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"db","description":"Database"}' \
+     -d '{"name":"db","description":"Database","associatedTools": ["1","2","3"]}' \
      http://localhost:4444/servers
 
 # Update server

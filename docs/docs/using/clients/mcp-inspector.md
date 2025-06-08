@@ -38,13 +38,12 @@ npx @modelcontextprotocol/inspector \
 
 ## 🔐 Auth & Config
 
-Ensure you provide the necessary `MCP_AUTH_USER` and `MCP_AUTH_PASS` as environment variables if your gateway requires authentication:
+Ensure you provide the necessary `MCP_AUTH_TOKEN` as environment variable if your gateway requires authentication:
 
 ```bash
 export MCP_GATEWAY_BASE_URL=http://localhost:4444
 export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/2
-export MCP_AUTH_USER=admin
-export MCP_AUTH_PASS=changeme
+export MCP_AUTH_TOKEN="your_bearer_token"
 ```
 
 Then run the Inspector again.
