@@ -1835,3 +1835,66 @@ devpi-delete: devpi-setup-user                 ## Delete mcpgateway==$(VER) from
 		devpi use $(DEVPI_INDEX) && \
 		devpi remove -y mcpgateway==$(VER) || true"
 	@echo "✅  Delete complete (if it existed)"
+
+
+# =============================================================================
+# 🐚 LINT SHELL FILES
+# =============================================================================
+# help: 🐚 LINT SHELL FILES
+# help: shell-linters-install - Install ShellCheck, shfmt & bashate (best-effort per OS)
+# help: shell-lint            - Run shfmt (check-only) + ShellCheck + bashate on every *.sh
+# help: shfmt-fix             - AUTO-FORMAT all *.sh in-place with shfmt -w
+# -----------------------------------------------------------------------------
+
+# ──────────────────────────
+# Which shell files to scan
+# ──────────────────────────
+SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' -not -path './node_modules/*')
+
+.PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
+
+shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
+	@echo "🔧  Installing/ensuring shell linters are present…"
+	@set -e ; \
+	# -------- ShellCheck -------- \
+	if ! command -v shellcheck >/dev/null 2>&1 ; then \
+	  echo "🛠  Installing ShellCheck…" ; \
+	  case "$$(uname -s)" in \
+	    Darwin)  brew install shellcheck ;; \
+	    Linux)   { command -v apt-get && sudo apt-get update -qq && sudo apt-get install -y shellcheck ; } || \
+	             { command -v dnf && sudo dnf install -y ShellCheck ; } || \
+	             { command -v pacman && sudo pacman -Sy --noconfirm shellcheck ; } || true ;; \
+	    *) echo "⚠️  Please install ShellCheck manually" ;; \
+	  esac ; \
+	fi ; \
+	# -------- shfmt (Go) -------- \
+	if ! command -v shfmt >/dev/null 2>&1 ; then \
+	  echo "🛠  Installing shfmt…" ; \
+	  GO111MODULE=on go install mvdan.cc/sh/v3/cmd/shfmt@latest || \
+	  { echo "⚠️  go not found – install Go or brew/apt shfmt package manually"; } ; \
+	  export PATH=$$PATH:$$HOME/go/bin ; \
+	fi ; \
+	# -------- bashate (pip) ----- \
+	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
+	  echo "🛠  Installing bashate (into venv)…" ; \
+	  test -d "$(VENV_DIR)" || $(MAKE) venv ; \
+	  /bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install --quiet bashate" ; \
+	fi
+	@echo "✅  Shell linters ready."
+
+# -----------------------------------------------------------------------------
+
+shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
+	@echo "🔍  Running shfmt (diff-only)…"
+	@shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true
+	@echo "🔍  Running ShellCheck…"
+	@shellcheck $(SHELL_SCRIPTS) || true
+	@echo "🔍  Running bashate…"
+	@$(VENV_DIR)/bin/bashate -C $(SHELL_SCRIPTS) || true
+	@echo "✅  Shell lint complete."
+
+
+shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
+	@echo "🎨  Formatting shell scripts with shfmt -w…"
+	@shfmt -w -i 4 -ci $(SHELL_SCRIPTS)
+	@echo "✅  shfmt formatting done."
