@@ -180,7 +180,7 @@ make venv install serve
 
 What it does:
 
-1. Creates / activates a `.venv` in the project root
+1. Creates / activates a `.venv` in your home folder `~/.venv/mcpgateway`
 2. Installs the gateway and necessary dependencies
 3. Launches **Gunicorn** (Uvicorn workers) on [http://localhost:4444](http://localhost:4444)
 
@@ -885,73 +885,175 @@ make lint            # Run lint tools
 ## Project Structure
 
 ```bash
-.
-├── Containerfile               # OCI image build for Docker and Podman
-├── DEVELOPING.md               # Contributor guidelines, workflows, and style guide
-├── dictionary.dic              # Custom dictionary for spell-checker and linters
-├── gunicorn.config.py          # Production Gunicorn settings (workers, logging, timeouts)
-├── LICENSE                     # Apache License 2.0
-├── Makefile                    # Development & deployment targets: venv, install, tests, serve, podman, etc.
-├── mcp.db                      # Default SQLite database file (auto-created on first run)
-├── mcpgateway                  # ← main application package
-│   ├── __init__.py             # Package metadata and version constant
-│   ├── admin.py                # FastAPI routers and controllers for the Admin UI
+# ────────── CI / Quality & Meta-files ──────────
+├── .bumpversion.cfg                # Automated semantic-version bumps
+├── .coveragerc                     # Coverage.py settings
+├── .darglint                       # Doc-string linter rules
+├── .dockerignore                   # Context exclusions for image builds
+├── .editorconfig                   # Consistent IDE / editor behaviour
+├── .env                            # Local runtime variables (git-ignored)
+├── .env.ce                         # IBM Code Engine runtime env (ignored)
+├── .env.ce.example                 # Sample env for IBM Code Engine
+├── .env.example                    # Generic sample env file
+├── .env.gcr                        # Google Cloud Run runtime env (ignored)
+├── .eslintrc.json                  # ESLint rules for JS / TS assets
+├── .flake8                         # Flake-8 configuration
+├── .gitattributes                  # Git attributes (e.g. EOL normalisation)
+├── .github                         # GitHub settings, CI/CD workflows & templates
+│   ├── CODEOWNERS                  # Default reviewers
+│   └── workflows/                  # Bandit, Docker, CodeQL, Python Package, Container Deployment, etc.
+├── .gitignore                      # Git exclusion rules
+├── .hadolint.yaml                  # Hadolint rules for Dockerfiles
+├── .htmlhintrc                     # HTMLHint rules
+├── .markdownlint.json              # Markdown-lint rules
+├── .pre-commit-config.yaml         # Pre-commit hooks (ruff, black, mypy, …)
+├── .pycodestyle                    # PEP-8 checker settings
+├── .pylintrc                       # Pylint configuration
+├── .pyspelling.yml                 # Spell-checker dictionary & filters
+├── .ruff.toml                      # Ruff linter / formatter settings
+├── .spellcheck-en.txt              # Extra dictionary entries
+├── .stylelintrc.json               # Stylelint rules for CSS
+├── .travis.yml                     # Legacy Travis CI config (reference)
+├── .whitesource                    # WhiteSource security-scanning config
+├── .yamllint                       # yamllint ruleset
+
+# ────────── Documentation & Guidance ──────────
+├── CHANGELOG.md                    # Version-by-version change log
+├── CODE_OF_CONDUCT.md              # Community behaviour guidelines
+├── CONTRIBUTING.md                 # How to file issues & send PRs
+├── DEVELOPING.md                   # Contributor workflows & style guide
+├── LICENSE                         # Apache License 2.0
+├── README.md                       # Project overview & quick-start
+├── SECURITY.md                     # Security policy & CVE disclosure process
+├── TESTING.md                      # Testing strategy, fixtures & guidelines
+
+# ────────── Containerisation & Runtime ──────────
+├── Containerfile                   # OCI image build (Docker / Podman)
+├── Containerfile.lite              # FROM scratch UBI-Micro production build
+├── docker-compose.yml              # Local multi-service stack
+├── podman-compose-sonarqube.yaml   # One-liner SonarQube stack
+├── run-gunicorn.sh                 # Opinionated Gunicorn startup script
+├── run.sh                          # Uvicorn shortcut with arg parsing
+
+# ────────── Build / Packaging / Tooling ──────────
+├── MANIFEST.in                     # sdist inclusion rules
+├── Makefile                        # Dev & deployment targets
+├── package-lock.json               # Deterministic npm lock-file
+├── package.json                    # Front-end / docs tooling deps
+├── pyproject.toml                  # Poetry / PDM config & lint rules
+├── sonar-code.properties           # SonarQube analysis settings
+├── uv.lock                         # UV resolver lock-file
+
+# ────────── Kubernetes & Helm Assets ──────────
+├── charts                          # Helm chart(s) for K8s / OpenShift
+│   ├── mcp-stack                   # Umbrella chart
+│   │   ├── Chart.yaml              # Chart metadata
+│   │   ├── templates/…             # Manifest templates
+│   │   └── values.yaml             # Default values
+│   └── README.md                   # Install / upgrade guide
+├── k8s                             # Raw (non-Helm) K8s manifests
+│   └── *.yaml                      # Deployment, Service, PVC resources
+
+# ────────── Documentation Source ──────────
+├── docs                            # MkDocs site source
+│   ├── base.yml                    # MkDocs "base" configuration snippet (do not modify)
+│   ├── mkdocs.yml                  # Site configuration (requires base.yml)
+│   ├── requirements.txt            # Python dependencies for the MkDocs site
+│   ├── Makefile                    # Make targets for building/serving the docs
+│   └── theme                       # Custom MkDocs theme assets
+│       └── logo.png                # Logo for the documentation theme
+│   └── docs                        # Markdown documentation
+│       ├── architecture/           # ADRs for the project
+│       ├── articles/               # Long-form writeups
+│       ├── blog/                   # Blog posts
+│       ├── deployment/             # Deployment guides (AWS, Azure, etc.)
+│       ├── development/            # Development workflows & CI docs
+│       ├── images/                 # Diagrams & screenshots
+│       ├── index.md                # Top-level docs landing page
+│       ├── manage/                 # Management topics (backup, logging, tuning, upgrade)
+│       ├── overview/               # Feature overviews & UI documentation
+│       ├── security/               # Security guidance & policies
+│       ├── testing/                # Testing strategy & fixtures
+│       └── using/                  # User-facing usage guides (agents, clients, etc.)
+│       ├── media/                  # Social media, press coverage, videos & testimonials
+│       │   ├── press/              # Press articles and blog posts
+│       │   ├── social/             # Tweets, LinkedIn posts, YouTube embeds
+│       │   ├── testimonials/       # Customer quotes & community feedback
+│       │   └── kit/                # Media kit & logos for bloggers & press
+├── dictionary.dic                  # Custom dictionary for spell-checker (make spellcheck)
+
+# ────────── Application & Libraries ──────────
+├── agent_runtimes                  # Configurable agentic frameworks converted to MCP Servers
+├── mcpgateway                      # ← main application package
+│   ├── __init__.py                 # Package metadata & version constant
+│   ├── admin.py                    # FastAPI routers for Admin UI
 │   ├── cache
-│   │   ├── __init__.py         # Cache package initializer
-│   │   └── resource_cache.py   # In-memory LRU+TTL cache implementation for resources
-│   ├── config.py               # Pydantic Settings loader (env, .env parsing)
-│   ├── db.py                   # SQLAlchemy ORM models, engine setup, and migrations
+│   │   ├── __init__.py
+│   │   ├── resource_cache.py       # LRU+TTL cache implementation
+│   │   └── session_registry.py     # Session ↔ cache mapping
+│   ├── config.py                   # Pydantic settings loader
+│   ├── db.py                       # SQLAlchemy models & engine setup
 │   ├── federation
-│   │   ├── __init__.py         # Federation package initializer
-│   │   ├── discovery.py        # Peer gateway discovery (mDNS, explicit lists)
-│   │   ├── forward.py          # RPC forwarding logic to peer gateways
-│   │   └── manager.py          # Federation orchestration, health checks, capability aggregation
+│   │   ├── __init__.py
+│   │   ├── discovery.py            # Peer-gateway discovery
+│   │   ├── forward.py              # RPC forwarding
+│   │   └── manager.py              # Orchestration & health checks
 │   ├── handlers
-│   │   ├── __init__.py         # Handlers package initializer
-│   │   └── sampling.py         # MCP streaming sampling request handler
-│   ├── main.py                 # FastAPI app factory, startup/shutdown events
-│   ├── schemas.py              # Shared Pydantic DTOs for requests and responses
+│   │   ├── __init__.py
+│   │   └── sampling.py             # Streaming sampling handler
+│   ├── main.py                     # FastAPI app factory & startup events
+│   ├── mcp.db                      # SQLite fixture for tests
+│   ├── py.typed                    # PEP 561 marker (ships type hints)
+│   ├── schemas.py                  # Shared Pydantic DTOs
 │   ├── services
-│   │   ├── __init__.py         # Services package initializer
-│   │   ├── completion_service.py  # Prompt and resource argument completion logic
-│   │   ├── gateway_service.py     # Peer gateway registration and management
-│   │   ├── logging_service.py     # Central logging helpers and middleware
-│   │   ├── prompt_service.py      # Prompt template CRUD, validation, rendering
-│   │   ├── resource_service.py    # Resource registration, retrieval, templates, subscriptions
-│   │   ├── root_service.py        # File-system root registry and subscriptions
-│   │   ├── server_service.py      # Server registry, health monitoring
-│   │   └── tool_service.py        # Tool registration, invocation, metrics
-│   ├── static                  # Tailwind CSS, JavaScript and other static assets for Admin UI
-│   ├── templates
-│   │   └── admin.html          # HTMX/Alpine.js Admin UI HTML template
+│   │   ├── __init__.py
+│   │   ├── completion_service.py   # Prompt / argument completion
+│   │   ├── gateway_service.py      # Peer-gateway registry
+│   │   ├── logging_service.py      # Central logging helpers
+│   │   ├── prompt_service.py       # Prompt CRUD & rendering
+│   │   ├── resource_service.py     # Resource registration & retrieval
+│   │   ├── root_service.py         # File-system root registry
+│   │   ├── server_service.py       # Server registry & monitoring
+│   │   └── tool_service.py         # Tool registry & invocation
 │   ├── static
-│   │   ├── admin.js            # JS functions for Admin UI
-│   │   ├── admin.css           # Styles for Admin UI
+│   │   ├── admin.css               # Styles for Admin UI
+│   │   └── admin.js                # Behaviour for Admin UI
+│   ├── templates
+│   │   └── admin.html              # HTMX/Alpine Admin UI template
 │   ├── transports
-│   │   ├── __init__.py         # Transports package initializer
-│   │   ├── base.py             # Abstract Transport interface (connect, send, receive)
-│   │   ├── sse_transport.py    # Server-Sent Events transport implementation
-│   │   ├── stdio_transport.py  # stdio transport for subprocess embedding
-│   │   └── websocket_transport.py  # WebSocket transport with ping/pong support
-│   ├── types.py                # Core enums, type aliases, shared data classes
+│   │   ├── __init__.py
+│   │   ├── base.py                 # Abstract transport interface
+│   │   ├── sse_transport.py        # Server-Sent Events transport
+│   │   ├── stdio_transport.py      # stdio transport for embedding
+│   │   └── websocket_transport.py  # WS transport with ping/pong
+│   ├── types.py                    # Core enums / type aliases
 │   ├── utils
-│   │   ├── create_jwt_token.py    # CLI & library for JWT generation and inspection
-│   │   └── verify_credentials.py  # FastAPI deps for Basic and JWT authentication
-│   └── validation
-│       ├── __init__.py            # Validation package initializer
-│       └── jsonrpc.py             # JSON-RPC 2.0 request and response validation
-├── os_deps.sh                   # Script to install system-level dependencies
-├── pdm.lock                     # PDM dependency lockfile
-├── pyproject.toml               # Poetry/PDM configuration, dependencies, lint rules
-├── run-gunicorn.sh              # Opinionated Gunicorn startup script
-├── run.sh                       # Uvicorn shortcut script with argument parsing
-├── TESTING.md                   # Testing strategy, fixtures and guidelines
-├── test_readme.py               # CI check to ensure README stays in sync
-└── tests
-    ├── conftest.py              # Shared fixtures and pytest setup
-    ├── e2e                      # End-to-end test scenarios
-    ├── integration              # API-level integration tests
-    └── unit                     # Pure unit tests for business logic
+│   │   ├── create_jwt_token.py     # CLI & library for JWT generation
+│   │   ├── services_auth.py        # Service-to-service auth dependency
+│   │   └── verify_credentials.py   # Basic / JWT auth helpers
+│   ├── validation
+│   │   ├── __init__.py
+│   │   └── jsonrpc.py              # JSON-RPC 2.0 validation
+│   └── version.py                  # Library version helper
+├── mcpgateway-wrapper              # Stdio client wrapper (PyPI)
+│   ├── pyproject.toml
+│   ├── README.md
+│   └── src/mcpgateway_wrapper/
+│       ├── __init__.py
+│       └── server.py               # Wrapper entry-point
+├── mcp-servers                     # Sample downstream MCP servers
+├── mcp.db                          # Default SQLite DB (auto-created)
+├── mcpgrid                         # Experimental grid client / PoC
+├── os_deps.sh                      # Installs system-level deps for CI
+
+# ────────── Tests & QA Assets ──────────
+├── test_readme.py                  # Guard: README stays in sync
+├── tests
+│   ├── conftest.py                 # Shared fixtures
+│   ├── e2e/…                       # End-to-end scenarios
+│   ├── hey/…                       # Load-test logs & helper script
+│   ├── integration/…               # API-level integration tests
+│   └── unit/…                      # Pure unit tests for business logic
 ```
 
 ---
