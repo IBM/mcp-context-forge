@@ -55,7 +55,7 @@ if [[ "${SSL}" == "true" ]]; then
 fi
 
 # Initialize databases
-python -m mcpgateway.db
+"$PYTHON" -m mcpgateway.db
 
 exec gunicorn -c gunicorn.config.py \
     --worker-class uvicorn.workers.UvicornWorker \
