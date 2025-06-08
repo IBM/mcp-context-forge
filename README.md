@@ -1,6 +1,6 @@
 # MCP Gateway
 
-[![CodeQL Advanced](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml) [![Bandit](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml) [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml) [![Secure Docker Build](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml) [![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml) [![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml)
+[![CodeQL Advanced](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml) [![Bandit](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml) [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml) [![Secure Docker Build](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml) [![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml) [![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml) [![License](https://img.shields.io/github/license/ibm/mcp-context-forge)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/)
 
 A flexible feature-rich FastAPI-based gateway for the Model Context Protocol (MCP) that unifies and federates tools, resources, prompts, servers and peer gateways, wraps any REST API as MCP-compliant tools or virtual servers, and exposes everything over HTTP/JSON-RPC, WebSocket, Server-Sent Events (SSE) and stdio transports—all manageable via a rich, interactive Admin UI and packaged as a container with support for any SQLAlchemy supported database.
 
@@ -1261,11 +1261,33 @@ devpi-web            - Open devpi web interface
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 ---
 
+## Changelog
+
+A complete changelog can be found here: [CHANGELOG.md](./CHANGELOG.md)
+
 ## License
 
-Licensed under the **Apache License 2.0** – see `LICENSE`.
+Licensed under the **Apache License 2.0** – see [LICENSE](./LICENSE)
 
 
-## Authors
+## Core Authors and Maintainers
 
-- Mihai Criveti - Distinguished Engineer, Agentic AI
+- [Mihai Criveti](https://www.linkedin.com/in/crivetimihai) - Distinguished Engineer, Agentic AI
+
+Special thanks to our contributors for helping us improve ContextForge MCP Gateway:
+
+<a href="https://github.com/ibm/mcp-context-forge/graphs/contributors">
+  <img alt="Contributors list" src="https://contrib.rocks/image?repo=ibm/mcp-context-forge" />
+</a>
+
+## Star History and Project Activity
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ibm/mcp-context-forge&type=Date)](https://www.star-history.com/#ibm/mcp-context-forge&Date)
+
+[![Forks](https://img.shields.io/github/forks/ibm/mcp-context-forge?style=social)](https://github.com/ibm/mcp-context-forge/network/members)
+
+<!-- [![Issues Open](https://img.shields.io/github/issues/ibm/mcp-context-forge)](https://github.com/ibm/mcp-context-forge/issues) -->
+
+**PyPi Downloads:**
+
+[![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/) [![PyPI Downloads](https://img.shields.io/pypi/dm/mcp-contextforge-gateway)](https://pepy.tech/project/mcp-contextforge-gateway)
