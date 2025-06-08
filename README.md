@@ -359,6 +359,8 @@ docker run --name mcp-postgres \
   -p 5432:5432 -d postgres
 ```
 
+A `make compose-up` target is provided along with a [docker-compose.yml](docker-compose.yml) file to make this process simpler.
+
 ---
 
 ## Configuration (`.env` or env vars)
