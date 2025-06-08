@@ -2,10 +2,14 @@
 # Author: Mihai Criveti
 # Description: Run Gunicorn production server (optionally with TLS)
 
-# Determine script directory
+# ──────────────────────────────
+# Locate script directory
+# ──────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Attempt to activate a venv if not already active
+# ──────────────────────────────
+# Activate virtual-env (if any)
+# ──────────────────────────────
 if [[ -z "$VIRTUAL_ENV" ]]; then
   # If a known venv path exists (like your custom .venv location), activate it
   if [[ -f "${HOME}/.venv/mcpgateway/bin/activate" ]]; then
@@ -19,6 +23,22 @@ if [[ -z "$VIRTUAL_ENV" ]]; then
     exit 1
   fi
 fi
+
+# ──────────────────────────────
+# Identify Python interpreter
+# ──────────────────────────────
+if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+  PYTHON="${VIRTUAL_ENV}/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON="$(command -v python)"
+else
+  echo "✘  No suitable Python interpreter found (tried python3, python)."
+  exit 1
+fi
+
+echo "🐍  Using Python interpreter: ${PYTHON}"
 
 cat << "EOF"
 ███╗   ███╗ ██████╗██████╗      ██████╗  █████╗ ████████╗███████╗██╗    ██╗ █████╗ ██╗   ██╗
@@ -54,8 +74,14 @@ if [[ "${SSL}" == "true" ]]; then
     echo "✓  TLS enabled – using ${CERT_FILE} / ${KEY_FILE}"
 fi
 
-# Initialize databases
-python -m mcpgateway.db
+# ──────────────────────────────
+# Database migrations / checks
+# ──────────────────────────────
+"${PYTHON}" -m mcpgateway.db
+if [[ $? -ne 0 ]]; then
+    echo "✘  Database migration/check failed. Please resolve issues before starting the server."
+    exit 1
+fi
 
 exec gunicorn -c gunicorn.config.py \
     --worker-class uvicorn.workers.UvicornWorker \
