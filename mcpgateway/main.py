@@ -28,6 +28,7 @@ Structure:
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
@@ -170,7 +171,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     shuts them down in reverse order on exit.
 
     Args:
-        app (FastAPI): FastAPI app
+        _app (FastAPI): FastAPI app
 
     Yields:
         None
@@ -184,7 +185,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await tool_service.initialize()
         await resource_service.initialize()
         await prompt_service.initialize()
-        await gateway_service.initialize()
+        try:
+            # Try to create the file exclusively
+            fd = os.open(settings.lock_file_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            logger.info("Gateway already initialized by another worker")
+        else:
+            with os.fdopen(fd, "w") as lock_file:
+                lock_file.write("initialized")
+            await gateway_service.initialize()
         await root_service.initialize()
         await completion_service.initialize()
         await logging_service.initialize()
@@ -2019,7 +2028,9 @@ if UI_ENABLED:
             RedirectResponse: Redirects to /admin.
         """
         logger.debug("Redirecting root path to /admin")
-        return RedirectResponse(request.url_for("admin_home"))
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin", status_code=303)
+        # return RedirectResponse(request.url_for("admin_home"))
 
 else:
     # If UI is disabled, provide API info at root

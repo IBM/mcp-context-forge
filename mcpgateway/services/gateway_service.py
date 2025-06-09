@@ -23,7 +23,6 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from mcpgateway.config import settings
@@ -122,7 +121,6 @@ class GatewayService:
 
         Raises:
             GatewayNameConflictError: If gateway name already exists
-            GatewayError: If registration fails
         """
         try:
             # Check for name conflicts (both active and inactive)
@@ -138,13 +136,17 @@ class GatewayService:
             auth_type = getattr(gateway, "auth_type", None)
             auth_value = getattr(gateway, "auth_value", {})
 
-            # Initialize connection and get capabilities
             capabilities, tools = await self._initialize_gateway(str(gateway.url), auth_value)
-            
+
+            all_names = [td.name for td in tools]
+
+            existing_tools = db.execute(select(DbTool).where(DbTool.name.in_(all_names))).scalars().all()
+            existing_tool_names = [tool.name for tool in existing_tools]
+
             tools = [
                 DbTool(
                     name=tool.name,
-                    url=tool.url,
+                    url=str(gateway.url),
                     description=tool.description,
                     integration_type=tool.integration_type,
                     request_type=tool.request_type,
@@ -157,6 +159,9 @@ class GatewayService:
                 for tool in tools
             ]
 
+            existing_tools = [tool for tool in tools if tool.name in existing_tool_names]
+            new_tools = [tool for tool in tools if tool.name not in existing_tool_names]
+
             # Create DB model
             db_gateway = DbGateway(
                 name=gateway.name,
@@ -166,7 +171,8 @@ class GatewayService:
                 last_seen=datetime.now(timezone.utc),
                 auth_type=auth_type,
                 auth_value=auth_value,
-                tools=tools,
+                tools=new_tools,
+                # federated_tools=existing_tools + new_tools
             )
 
             # Add to DB
@@ -181,12 +187,19 @@ class GatewayService:
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(gateway)
-        except IntegrityError:
-            db.rollback()
-            raise GatewayError(f"Gateway already exists: {gateway.name}")
-        except Exception as e:
-            db.rollback()
-            raise GatewayError(f"Failed to register gateway: {str(e)}")
+        except* ValueError as ve:
+            logger.error("ValueErrors in group: %s", ve.exceptions)
+        except* RuntimeError as re:
+            logger.error("RuntimeErrors in group: %s", re.exceptions)
+        except* BaseException as other:  # catches every other sub-exception
+            logger.error("Other grouped errors: %s", other.exceptions)
+        # except IntegrityError as ex:
+        #     logger.error(f"Error adding gateway: {ex}")
+        #     db.rollback()
+        #     raise GatewayError(f"Gateway already exists: {gateway.name}")
+        # except Exception as e:
+        #     db.rollback()
+        #     raise GatewayError(f"Failed to register gateway: {str(e)}")
 
     async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
         """List all registered gateways.
@@ -462,28 +475,42 @@ class GatewayService:
             raise GatewayConnectionError(f"Failed to forward request to {gateway.name}: {str(e)}")
 
     async def check_health_of_gateways(self, gateways: List[DbGateway]) -> bool:
-        """Health check for gateways
+        """Health check for a list of gateways.
+
+        Deactivates gateway if gateway is not healthy.
 
         Args:
-            gateways: Gateways to check
+            gateways (List[DbGateway]): List of gateways to check if healthy
 
         Returns:
-            True if gateway is healthy
+            bool: True if all  active gateways are healthy
         """
-        for gateway in gateways:
-            if not gateway.is_active:
-                return False
+        # Reuse a single HTTP client for all requests
+        async with httpx.AsyncClient() as client:
+            for gateway in gateways:
+                # Inactive gateways are unhealthy
+                if not gateway.is_active:
+                    continue
 
-            try:
-                # Try to initialize connection
-                await self._initialize_gateway(gateway.url, gateway.auth_value)
+                try:
+                    # Ensure auth_value is a dict
+                    auth_data = gateway.auth_value or {}
+                    headers = decode_auth(auth_data)
 
-                # Update last seen
-                gateway.last_seen = datetime.utcnow()
-                return True
+                    # Perform the GET and raise on 4xx/5xx
+                    async with client.stream("GET", gateway.url, headers=headers) as response:
+                        # This will raise immediately if status is 4xx/5xx
+                        response.raise_for_status()
 
-            except Exception:
-                return False
+                    # Mark successful check
+                    gateway.last_seen = datetime.utcnow()
+
+                except Exception:
+                    with SessionLocal() as db:
+                        await self.toggle_gateway_status(db=db, gateway_id=gateway.id, activate=False)
+
+        # All gateways passed
+        return True
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
         """Aggregate capabilities from all gateways.
@@ -584,7 +611,11 @@ class GatewayService:
             raise GatewayConnectionError(f"Failed to initialize gateway at {url}: {str(e)}")
 
     def _get_active_gateways(self) -> list[DbGateway]:
-        """Sync function for database operations (runs in thread)."""
+        """Sync function for database operations (runs in thread).
+
+        Returns:
+            List[DbGateway]: List of active gateways
+        """
         with SessionLocal() as db:
             return db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
 
@@ -598,7 +629,6 @@ class GatewayService:
                 if len(gateways) > 0:
                     # Async health checks (non-blocking)
                     await self.check_health_of_gateways(gateways)
-
             except Exception as e:
                 logger.error(f"Health check run failed: {str(e)}")
 
