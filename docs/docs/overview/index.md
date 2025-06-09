@@ -25,3 +25,4 @@ Whether you're integrating REST APIs, local functions, or full LLM agents, MCP G
 |------|-------------|
 | [Features](features.md) | Breakdown of supported features including federation, transports, and tool wrapping |
 | [Admin UI](ui.md) | Screenshots and explanation of the interactive web dashboard |
+| [Quick Start](quick_start.md) | Quick Installation and Start up |
