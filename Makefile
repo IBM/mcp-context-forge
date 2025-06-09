@@ -889,7 +889,7 @@ podman-run-ssl: certs
 	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1
 
 podman-run-ssl-host: certs
-	@echo "🚀  Starting podman container (TLS)…"
+	@echo "🚀  Starting podman container (TLS) with host neworking…"
 	-podman stop $(PROJECT_NAME) 2>/dev/null || true
 	-podman rm   $(PROJECT_NAME) 2>/dev/null || true
 	podman run --name $(PROJECT_NAME) \
@@ -952,6 +952,7 @@ podman-shell:
 # help: docker-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
 # help: docker-run           - Run the container on HTTP  (port 4444)
 # help: docker-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
+# help: docker-run-ssl-host  - Run the container on HTTPS with --network-host (port 4444, self-signed)
 # help: docker-stop          - Stop & remove the container
 # help: docker-test          - Quick curl smoke-test against the container
 # help: docker-logs          - Follow container logs (⌃C to quit)
@@ -1000,6 +1001,25 @@ docker-run-ssl: certs
 	-docker rm   $(PROJECT_NAME) 2>/dev/null || true
 	docker run --name $(PROJECT_NAME) \
 		--env-file=.env \
+		-e SSL=true \
+		-e CERT_FILE=certs/cert.pem \
+		-e KEY_FILE=certs/key.pem \
+		-v $(PWD)/certs:/app/certs:ro \
+		-p 4444:4444 \
+		--restart=always --memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(IMG_DOCKER_PROD)
+	@sleep 2 && docker logs $(PROJECT_NAME) | tail -n +1
+
+docker-run-ssl-host: certs
+	@echo "🚀  Starting Docker container (TLS) with host neworking…"
+	-docker stop $(PROJECT_NAME) 2>/dev/null || true
+	-docker rm   $(PROJECT_NAME) 2>/dev/null || true
+	docker run --name $(PROJECT_NAME) \
+		--env-file=.env \
+		--network=host \
 		-e SSL=true \
 		-e CERT_FILE=certs/cert.pem \
 		-e KEY_FILE=certs/key.pem \
