@@ -60,13 +60,26 @@ def _needs_app(arg_list: List[str]) -> bool:
     is taken as the application path. We therefore look at the first
     element of *arg_list* (if any) – if it *starts* with a dash it must be
     an option, hence the app path is missing and we should inject ours.
+
+    Args:
+        arg_list (List[str]): List of arguments
+
+    Returns:
+        bool: Returns *True* when the CLI invocation has *no* positional APP path
     """
 
     return len(arg_list) == 0 or arg_list[0].startswith("-")
 
 
 def _insert_defaults(raw_args: List[str]) -> List[str]:
-    """Return a *new* argv with defaults sprinkled in where needed."""
+    """Return a *new* argv with defaults sprinkled in where needed.
+
+    Args:
+        raw_args (List[str]): List of input arguments to cli
+
+    Returns:
+        List[str]: List of arguments
+    """
 
     args = list(raw_args)  # shallow copy – we'll mutate this
 
