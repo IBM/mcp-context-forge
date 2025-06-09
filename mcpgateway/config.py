@@ -122,6 +122,9 @@ class Settings(BaseSettings):
     # For federation_peers strip out quotes to ensure we're passing valid JSON via env
     federation_peers: Annotated[List[str], NoDecode] = []
 
+    # Lock file path for initializing gateway service initialize
+    lock_file_path: str = "/tmp/gateway_init.done"
+
     @field_validator("federation_peers", mode="before")
     @classmethod
     def _parse_federation_peers(cls, v):
