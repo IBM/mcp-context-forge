@@ -2,4 +2,5 @@ nav:
   - index.md
   - github.md
   - building.md
+  - documentation.md
   - packaging.md
