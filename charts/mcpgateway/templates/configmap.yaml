@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcpgateway.fullname" . }}-config
+  labels:
+    app: {{ include "mcpgateway.name" . }}
+    chart: {{ include "mcpgateway.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+data:
+  # Add any configuration data here as key-value pairs
+  # Example:
+  # config.yaml: |-
+  #   key: value
