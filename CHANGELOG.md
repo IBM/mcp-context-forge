@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [0.2.0] - 2025-06-08 (pending)
+
+### Fixed
+
+* Fixed errors related to deleting gateways when metrics are associated with their tools
+* Fixed gateway addition errors when tools overlap. We add the missing tools when tool names overlap.
+* Improved logging by capturing ExceptionGroups correctly and showing specific errors
+* Fixed headers for basic authorization in tools and gateways
+
 ## [0.1.0] - 2025‑06‑01
 
 ### Added
