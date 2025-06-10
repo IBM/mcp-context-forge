@@ -1636,7 +1636,6 @@ function openModal(modalId) {
 }
 
 function closeModal(modalId, clearId=null) {
-  // document.getElementById(modalId).classList.add('hidden');
   const modal = document.getElementById(modalId);
 
   if (clearId) {
