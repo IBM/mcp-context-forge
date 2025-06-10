@@ -114,15 +114,18 @@
             </a>
             <!-- New Version tab (opens separate /version page) -->
             <a
-              href="{{ root_path }}/version"
-              target="_blank"
-              class="border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              href="#version-info"
+              id="tab-version-info"
+              class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
-              Version
+              Version and Environment Info
             </a>
           </nav>
         </div>
       </div>
+      
+      <!-- Version Info Panel -->
+      <div id="version-info-panel" class="tab-panel hidden"></div>
 
       <!-- Catalog Panel -->
       <div id="catalog-panel" class="tab-panel">

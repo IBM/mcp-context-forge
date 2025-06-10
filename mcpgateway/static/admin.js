@@ -25,6 +25,63 @@ document.addEventListener("DOMContentLoaded", function () {
   document.getElementById("tab-metrics").addEventListener("click", () => {
     showTab("metrics");
   });
+  document.getElementById("tab-version-info").addEventListener("click", () => {
+    showTab("version-info");
+  });
+
+  // Preload version info on page load (optional)
+  document.addEventListener("DOMContentLoaded", () => {
+    const panel = document.getElementById("version-info-panel");
+    if (panel && panel.innerHTML.trim() === "") {
+      const url = `${window.ROOT_PATH}/version?partial=true`;
+      fetch(url)
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error("Network response was not ok");
+          }
+          return response.text();
+        })
+        .then((html) => {
+          panel.innerHTML = html;
+          // Show the version-info panel and activate the tab on page load if hash is #version-info
+          if (window.location.hash === "#version-info") {
+            showTab("version-info");
+          }
+        })
+        .cconsole.error("Failed to preload version info:", error);
+          atch((error) => {;
+        });
+    }
+  })
+
+  // HTMX event listeners for debugging
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    if (event.detail.elt.id === "tab-version-info") {
+      console.log("HTMX: Sending request for version info partial");
+    }
+   );
+
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target.id === "version-info-panel") {
+      console.log("HTMX: Content swapped into version-info-panel" console.error("Failed to preload version info:", error);
+          panel.innerHTML = "<p class='text-red-600'>Failed to load version info.</p>";
+        });
+    }
+  });
+
+  // HTMX event listeners for debugging
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    if (event.detail.elt.id === "tab-version-info") {
+      console.log("HTMX: Sending request for version info partial");
+    }
+  });
+
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target.id === "version-info-panel") {
+      console.log("HTMX: Content swapped into version-info-panel");
+    }
+  });
+
   // Authentication toggle
   document.getElementById("auth-type").addEventListener("change", function () {
     const basicFields = document.getElementById("auth-basic-fields");
@@ -88,7 +145,8 @@ document.addEventListener("DOMContentLoaded", function () {
       } else {
         basicFields.style.display = "none";
         bearerFields.style.display = "none";
-        headersFields.style.display = "none";
+        heconsole.log(response);
+          adersFields.style.display = "none";
       }
     });
 
@@ -96,7 +154,9 @@ document.addEventListener("DOMContentLoaded", function () {
     .getElementById("add-gateway-form")
     .addEventListener("submit", (e) => {
       e.preventDefault();
-      const form = e.target;
+      const formerror = e.t
+          console.error("Error:", error);
+        arget;
       const formData = new FormData(form);
       fetch(`${window.ROOT_PATH}/admin/gateways`, {
         method: "POST",
@@ -110,6 +170,7 @@ document.addEventListener("DOMContentLoaded", function () {
             status.classList.add("error-status");
           } else {
             location.reload();
+          console.log(response);
           }
         })
         .catch((error) => {
@@ -118,7 +179,9 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
   document
-    .getElementById("add-resource-form")
+    .getElementBerroryId("a
+          console.error("Error:", error);
+        dd-resource-form")
     .addEventListener("submit", (e) => {
       e.preventDefault();
       const form = e.target;
@@ -261,7 +324,7 @@ document.addEventListener("DOMContentLoaded", function () {
     "edit-tool-request-type",
   );
 
-  const requestTypeMap = {
+  const requeM= {-ed mtho, if valid
     MCP: ["SSE", "STDIO"],
     REST: ["GET", "POST", "PUT", "DELETE"],
   };
@@ -329,10 +392,32 @@ function showTab(tabName) {
     .classList.add("border-indigo-500", "text-indigo-600");
   document
     .querySelector(`[href="#${tabName}"]`)
-    .classList.remove("border-transparent", "text-gray-500");
+    .classconsole.error("Failed to load version info:", error);
+          List.remove("border-transparent", "text-gray-500");
 
   if (tabName === "metrics") {
     loadAggregatedMetrics();
+  }
+
+  if (tabName === "version-info") {
+    const panel = document.getElementById("version-info-panel");
+    if (panel && panel.innerHTML.trim() === "") {
+      const url = `${window.ROOT_PATH}/version?partial=true`;
+      fetch(url)
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error("Network response was not ok");
+          }
+          return response.text();
+        })
+        .then((html) => {
+          panel.innerHTML = html;
+        })
+        .catch((error) => {
+          console.error("Failed to load version info:", error);
+          panel.innerHTML = "<p class='text-red-600'>Failed to load version info.</p>";
+        });
+    }
   }
 }
 
@@ -407,29 +492,7 @@ function updateSchemaPreview() {
 }
 
 // Refresh CodeMirror every time Direct JSON Input is selected
-Array.from(schemaModeRadios).forEach((radio) => {
-  radio.addEventListener("change", () => {
-    if (radio.value === "ui" && radio.checked) {
-      uiBuilderDiv.style.display = "block";
-      jsonInputContainer.style.display = "none";
-    } else if (radio.value === "json" && radio.checked) {
-      uiBuilderDiv.style.display = "none";
-      jsonInputContainer.style.display = "block";
-      updateSchemaPreview();
-    }
-  });
-});
-
-// Attach event listeners to dynamically added parameter inputs
-function attachListeners(paramDiv) {
-  const inputs = paramDiv.querySelectorAll("input, select, textarea");
-  inputs.forEach((input) => {
-    input.addEventListener("input", () => {
-      const mode = document.querySelector(
-        'input[name="schema_input_mode"]:checked',
-      ).value;
-      if (mode === "json") {
-        updateSchemaPreview();
+Array.from(schemaModeant)      updateSchemaPreview();
       }
     });
   });

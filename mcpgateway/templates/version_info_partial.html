@@ -1,0 +1,37 @@
+<div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6">
+  <div class="md:flex">
+    <div class="md:flex-shrink-0">
+      <svg class="h-12 w-12 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 1.343-3 3 0 1.657 1.343 3 3 3s3-1.343 3-3c0-1.657-1.343-3-3-3z" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v2m0 16v2m8-10h2M2 12H4m15.364 6.364l1.414 1.414M4.222 4.222l1.414 1.414m12.728 0l-1.414 1.414M6.636 17.364l-1.414 1.414" />
+      </svg>
+    </div>
+    <div class="mt-4 md:mt-0 md:ml-6">
+      <div class="uppercase tracking-wide text-sm text-indigo-500 font-semibold">Version and Environment Info</div>
+      <p class="block mt-1 text-lg leading-tight font-medium text-black">App: {{ payload.app.name }}</p>
+      <p class="mt-1 text-gray-500">Version: {{ payload.app.git_revision or "N/A" }}</p>
+      <p class="mt-1 text-gray-500">Protocol Version: {{ payload.app.mcp_protocol_version }}</p>
+      <p class="mt-1 text-gray-500">Runtime: {{ payload.platform.python }} + FastAPI {{ payload.platform.fastapi }}</p>
+      <p class="mt-1 text-gray-500">Container: Docker</p>
+      <button
+        id="copy-json-btn"
+        class="mt-4 px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        onclick="copyJsonToClipboard()"
+      >
+        Copy JSON to Clipboard
+      </button>
+      <pre id="json-data" class="mt-2 p-2 bg-gray-100 rounded text-xs overflow-auto" style="max-height: 200px;">{{ payload | tojson(indent=2) }}</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+  function copyJsonToClipboard() {
+    const jsonText = document.getElementById('json-data').innerText;
+    navigator.clipboard.writeText(jsonText).then(() => {
+      alert('JSON copied to clipboard!');
+    }, (err) => {
+      alert('Failed to copy JSON: ' + err);
+    });
+  }
+</script>
