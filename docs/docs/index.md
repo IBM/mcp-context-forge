@@ -98,7 +98,8 @@ Check out the [Quick Start](overview/index.md) for installation and usage, or go
 - [Deployment Options](deployment/index.md)
 - [Using the `mcpgateway-wrapper`](using/mcpgateway-wrapper.md)
 
-!!! note "The latest version can always be found here: https://pages.github.com/ibm/mcp-context-forge/"
+!!! note "The latest version can always be found here: https://github.com/IBM/mcp-context-forge
+and for documentation: https://ibm.github.io/mcp-context-forge/"
 
 <!-- [Download PDF](pdf/mcpgateway-docs.pdf){ .md-button } [Download DOCX](out/mcpgateway-docs.docx){ .md-button } -->
 
