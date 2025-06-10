@@ -4,6 +4,13 @@
 
 ## LinkedIn Posts:
 
+!!! details "IBM's Armand Ruiz on MCP Gateway & ACP (LinkedIn)"
+    **Author:** Analytics India Magazine | **Date:** June 10, 2025
+    [View on LinkedIn](https://www.linkedin.com/posts/analytics-india-magazine_armand-ruiz-ibms-vp-of-ai-platform-hails-activity-7338162493652946962-AF9J)
+
+    !!! quote
+        "Armand Ruiz, IBM's VP of AI Platform, hails the open-source MCP Gateway as 'a great step forward for those building agentic systems, orchestrating tools, or deploying complex GenAI apps.' ... With MCP Gateway streamlining tool orchestration and ACP redefining agent interactions, IBM is pushing to standardize AI infrastructure. As Ruiz emphasizes, this dual approach reduces deployment friction, empowering developers to scale GenAI applications efficiently."
+
 !!! details "MCP Gateway Overview Post (LinkedIn)"
     **Author:** Armand Ruiz - VP of AI Platform @ IBM | **Date:** June 9, 2025 [View on LinkedIn](https://www.linkedin.com/posts/armand-ruiz_introducing-mcp-gateway-a-powerful-fastapi-based-activity-7337795898988482561-G6S1)
 
