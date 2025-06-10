@@ -14,3 +14,6 @@ make install-dev
 make test
 
 echo "Devcontainer setup complete."
+
+# Activate the virtual environment for the current session
+source ~/.venv/mcpgateway/bin/activate
