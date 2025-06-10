@@ -318,6 +318,63 @@ For more details, see the [Claude MCP quickstart](https://modelcontextprotocol.i
 
 ---
 
+## Quick Start (VS Code Dev Container)
+
+For the fastest development setup, use the provided VS Code Dev Container configuration. This provides a fully configured development environment with Python 3.11, Docker CLI, and all project dependencies pre-installed.
+
+### Prerequisites
+
+* **VS Code** with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+* **Docker** or **Podman** installed and running
+
+### Using the Dev Container
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/ibm/mcp-context-forge.git
+   cd mcp-context-forge
+   ```
+
+2. **Open in VS Code:**
+   ```bash
+   code .
+   ```
+
+3. **Reopen in Container:**
+   - VS Code will detect the `.devcontainer` configuration
+   - Click "Reopen in Container" when prompted, or
+   - Use Command Palette (`Ctrl/Cmd+Shift+P`) → "Dev Containers: Reopen in Container"
+
+4. **Wait for setup:**
+   - The container will build automatically (first time may take a few minutes)
+   - Development dependencies will be installed via `make install-dev`
+   - Tests will run automatically to verify the setup
+
+5. **Start developing:**
+   ```bash
+   make dev  # Start development server
+   make test # Run tests
+   make lint # Run linting
+   ```
+
+### GitHub Codespaces
+
+You can also use this project with GitHub Codespaces for cloud-based development:
+
+1. Click the "Code" button on the GitHub repository page
+2. Select "Codespaces" tab
+3. Click "Create codespace on main"
+4. Wait for the environment to be ready (same setup as local dev container)
+
+The devcontainer includes:
+- Python 3.11 with all project dependencies
+- Docker CLI for container management
+- VS Code extensions for Python and Docker development
+- Pre-configured environment variables for development mode
+- Automatic setup of `.env` file from `.env.example`
+
+---
+
 ## Quick Start (manual install)
 
 ### Prerequisites
