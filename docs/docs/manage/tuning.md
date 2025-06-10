@@ -7,7 +7,7 @@
 > 1. Tune the **runtime environment** via `.env` and configure mcpgateway to use PostgreSQL and Redis.
 > 2. Adjust **Gunicorn** workers & time‑outs in `gunicorn.conf.py`.
 > 3. Right‑size **CPU/RAM** for the container or spin up more instances (with shared Redis state) and change the database settings (ex: connection limits).
-> 4. Benchmark with **hey** (or your favourite load‑generator) before & after.
+> 4. Benchmark with **hey** (or your favourite load‑generator) before & after. See also: [performance testing guide](../testing/performance.md)
 
 ---
 
