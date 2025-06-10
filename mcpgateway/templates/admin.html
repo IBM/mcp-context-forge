@@ -30,7 +30,7 @@
           MCP Context Forge - Gateway Administration
         </h1>
         <p class="text-gray-600">
-          Manage tools, resources, prompts, servers, and federated gateways
+          Manage tools, resources, prompts, servers, and federated gateways (remote MCP servers).
         </p>
       </header>
 
@@ -43,35 +43,35 @@
               id="tab-catalog"
               class="tab-link border-indigo-500 text-indigo-600 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
-              Servers Catalog
+              Virtual Servers Catalog
             </a>
             <a
               href="#tools"
               id="tab-tools"
               class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
-              Tools
+              Global Tools
             </a>
             <a
               href="#resources"
               id="tab-resources"
               class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
-              Resources
+              Global Resources
             </a>
             <a
               href="#prompts"
               id="tab-prompts"
               class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
-              Prompts
+              Global Prompts
             </a>
             <a
               href="#gateways"
               id="tab-gateways"
               class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
-              Gateways
+              Gateways/MCP Servers
             </a>
             <a
               href="#roots"
@@ -87,6 +87,14 @@
             >
               Metrics
             </a>
+            <!-- New Version tab (opens separate /version page) -->
+            <a
+              href="{{ root_path }}/version"
+              target="_blank"
+              class="border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+              Version
+            </a>
           </nav>
         </div>
       </div>
@@ -95,6 +103,8 @@
       <div id="catalog-panel" class="tab-panel">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold">MCP Servers Catalog</h2>
+          <p class="text-sm text-gray-600 mt-1">Virtual Servers let you combine Tools, Resources, and Prompts from the global Tools catalog into a reusable configuration.</p>
+
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -356,6 +366,7 @@
       <div id="tools-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold">Registered Tools</h2>
+          <p class="text-sm text-gray-600 mt-1">This is the global catalog of Tools available. Create a Virtual Server using one of these tools.</p>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -737,6 +748,7 @@
       <div id="resources-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold">Available Resources</h2>
+          <p class="text-sm text-gray-600 mt-1">Resources are reusable data assets—like text, code, or media—that Tools and Prompts can reference by URI.</p>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -967,6 +979,7 @@
       <div id="prompts-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold">Available Prompts</h2>
+          <p class="text-sm text-gray-600 mt-1">Prompts define reusable message templates with parameters, useful for driving LLM interactions or Tool input.</p>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -1173,7 +1186,8 @@
       <!-- Gateways Panel -->
       <div id="gateways-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-2xl font-bold">Federated Gateways</h2>
+          <h2 class="text-2xl font-bold">Federated Gateways (MCP)</h2>
+          <p class="text-sm text-gray-600 mt-1">Gateways are where you register external MCP servers to federate their tools/resources/prompts into your environment.</p>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -1440,30 +1454,48 @@
 
       <!-- Roots Panel -->
       <div id="roots-panel" class="tab-panel hidden">
+        <!-- List of roots ------------------------------------------------------->
         <div class="bg-white shadow rounded-lg p-6 mb-8">
-          <h2 class="text-2xl font-bold mb-4">Root Directories</h2>
+          <!-- Consistent header -->
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-2xl font-bold">Root Directories</h2>
+            <div class="flex items-center">
+              <input
+                type="checkbox"
+                id="show-inactive-roots"
+                class="mr-2"
+                onchange="toggleInactiveItems('roots')"
+              />
+              <label
+                for="show-inactive-roots"
+                class="text-sm font-medium text-gray-700"
+              >
+                Show Inactive
+              </label>
+            </div>
+          </div>
+
+          <!-- Description -->
+          <p class="text-sm text-gray-600 mb-4">
+            Roots define the base folders accessible for file-based Resources.
+            They enable MCP servers to browse local content.
+          </p>
+
+          <!-- Roots table -->
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
               <thead class="bg-gray-50">
                 <tr>
-                  <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     ID
                   </th>
-                  <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     URI
                   </th>
-                  <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Name
                   </th>
-                  <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -1471,14 +1503,10 @@
               <tbody class="bg-white divide-y divide-gray-200">
                 {% for root in roots %}
                 <tr>
-                  <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
-                  >
+                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {{ root.id }}
                   </td>
-                  <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
-                  >
+                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {{ root.uri }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -1491,10 +1519,7 @@
                       class="inline"
                       onsubmit="return confirm('Are you sure you want to delete this root?');"
                     >
-                      <button
-                        type="submit"
-                        class="text-red-600 hover:text-red-900"
-                      >
+                      <button type="submit" class="text-red-600 hover:text-red-900">
                         Delete
                       </button>
                     </form>
@@ -1506,14 +1531,13 @@
           </div>
         </div>
 
+        <!-- Add new root -------------------------------------------------------->
         <div class="bg-white shadow rounded-lg p-6">
           <h3 class="text-lg font-bold mb-4">Add New Root</h3>
           <form method="POST" action="{{ root_path }}/admin/roots" id="add-root-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
-                <label class="block text-sm font-medium text-gray-700"
-                  >URI</label
-                >
+                <label class="block text-sm font-medium text-gray-700">URI</label>
                 <input
                   type="text"
                   name="uri"
@@ -1523,9 +1547,7 @@
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
-                  >Name</label
-                >
+                <label class="block text-sm font-medium text-gray-700">Name</label>
                 <input
                   type="text"
                   name="name"
@@ -1545,12 +1567,14 @@
           </form>
         </div>
       </div>
-    </div>
+
+
 
     <!-- Metrics Panel -->
     <div id="metrics-panel" class="tab-panel hidden">
       <div class="bg-white shadow rounded-lg p-6">
         <h2 class="text-2xl font-bold mb-4">Aggregated Metrics</h2>
+        <p class="text-sm text-gray-600 mt-1">Metrics provide visibility into Tool, Resource, Prompt, and Server usage across your Gateway—helpful for debugging and optimization.</p>
 
         <!-- Refresh button (also auto-refreshes when the tab is selected) -->
         <button
@@ -1598,6 +1622,7 @@
         </details>
       </div>
     </div>
+
 
     <!-- Modals -->
     <!-- Tool Detail Modal -->
