@@ -19,8 +19,8 @@ The schemas ensure proper validation according to the MCP specification while ad
 gateway-specific extensions for federation support.
 """
 
-import json
 import base64
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -718,7 +718,7 @@ class GatewayCreate(BaseModelWithConfig):
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
-            creds = base64.b64encode(f'{username}:{password}'.encode("utf-8")).decode()
+            creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
             return encode_auth({"Authorization": f"Basic {creds}"})
 
         if auth_type == "bearer":

@@ -314,7 +314,7 @@ async def handle_list_tools() -> List[types.Tool]:
         RuntimeError: If an error occurs during fetching or processing.
     """
     try:
-        tool_ids = ["0"] if SERVER_CATALOG_URLS[0]==BASE_URL else await get_tools_from_mcp_server(SERVER_CATALOG_URLS)
+        tool_ids = ["0"] if SERVER_CATALOG_URLS[0] == BASE_URL else await get_tools_from_mcp_server(SERVER_CATALOG_URLS)
         metadata = await tools_metadata(tool_ids)
         tools = []
         for tool in metadata:
@@ -393,7 +393,7 @@ async def handle_list_resources() -> List[types.Resource]:
         RuntimeError: If an error occurs during fetching or processing.
     """
     try:
-        ids = ["0"] if SERVER_CATALOG_URLS[0]==BASE_URL else await get_resources_from_mcp_server(SERVER_CATALOG_URLS)
+        ids = ["0"] if SERVER_CATALOG_URLS[0] == BASE_URL else await get_resources_from_mcp_server(SERVER_CATALOG_URLS)
         meta = await resources_metadata(ids)
         resources = []
         for r in meta:
@@ -456,7 +456,7 @@ async def handle_list_prompts() -> List[types.Prompt]:
         RuntimeError: If an error occurs during fetching or processing.
     """
     try:
-        ids = ["0"] if SERVER_CATALOG_URLS[0]==BASE_URL else await get_prompts_from_mcp_server(SERVER_CATALOG_URLS)
+        ids = ["0"] if SERVER_CATALOG_URLS[0] == BASE_URL else await get_prompts_from_mcp_server(SERVER_CATALOG_URLS)
         meta = await prompts_metadata(ids)
         prompts = []
         for p in meta:
