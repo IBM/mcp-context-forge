@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcpgateway.fullname" . }}
+  labels:
+    app: {{ include "mcpgateway.name" . }}
+    chart: {{ include "mcpgateway.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "mcpgateway.name" . }}
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcpgateway.name" . }}
+        release: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: mcpgateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.env.PORT | default 4444 | int }}
+          env:
+{{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+{{- if and (index $.Values.secrets $key) (not (empty (index $.Values.secrets $key))) }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ index $.Values.secrets $key }}
+                  key: {{ $key }}
+{{- else }}
+              value: {{ $value | quote }}
+{{- end }}
+{{- end }}
