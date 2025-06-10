@@ -1,0 +1,52 @@
+# Default values for mcpgateway Helm chart
+
+image:
+  repository: ghcr.io/ibm/mcp-context-forge
+  tag: local-arm64
+  pullPolicy: IfNotPresent
+
+env:
+  APP_NAME: "MCP_Gateway"
+  HOST: "0.0.0.0"
+  PORT: 4444
+  DATABASE_URL: "sqlite:///./mcp.db"
+  APP_ROOT_PATH: ""
+  CACHE_TYPE: "database"
+  REDIS_URL: "redis://redis:6379/0"
+  CACHE_PREFIX: "mcpgw:"
+  SESSION_TTL: 3600
+  MESSAGE_TTL: 600
+  BASIC_AUTH_USER: "admin"
+  BASIC_AUTH_PASSWORD: "changeme"
+  AUTH_REQUIRED: "true"
+  JWT_SECRET_KEY: "my-test-key"
+  JWT_ALGORITHM: "HS256"
+  TOKEN_EXPIRY: 10080
+  AUTH_ENCRYPTION_SECRET: "my-test-salt"
+  MCPGATEWAY_UI_ENABLED: "true"
+  MCPGATEWAY_ADMIN_API_ENABLED: "true"
+  CORS_ENABLED: "true"
+  ALLOWED_ORIGINS:
+    - "http://localhost:3000"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  TRANSPORT_TYPE: "all"
+  FEDERATION_ENABLED: "true"
+  FEDERATION_DISCOVERY: "false"
+  FEDERATION_PEERS: []
+
+secrets: {}
+
+service:
+  type: ClusterIP
+  port: 4444
+
+ingress:
+  enabled: false
+  annotations: {}
+  hosts:
+    - host: gateway.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
