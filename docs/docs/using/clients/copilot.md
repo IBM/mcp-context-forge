@@ -144,5 +144,3 @@ Expected: Copilot invokes the Gateway's `echo` tool and displays the response.
 * [Copilot Docs](https://github.com/features/copilot)
 
 ---
-
-Would you like this exported as a Markdown file or added to your MkDocs site?
