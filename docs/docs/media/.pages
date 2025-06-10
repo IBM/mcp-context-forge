@@ -1,6 +1,6 @@
 nav:
   - "Overview": index.md
   - "Media Kit": kit
-  # - "Press": press
+  - "Press": press
   - "Social": social
   # - "Testimonials": testimonials
