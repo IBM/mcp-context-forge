@@ -1610,21 +1610,20 @@ async function runToolTest() {
     .then((response) => response.json())
     .then((result) => {
       const resultStr = JSON.stringify(result, null, 2);
-      // If the CodeMirror editor exists, update its value; otherwise, create one.
-      if (toolTestResultEditor) {
-        toolTestResultEditor.setValue(resultStr);
-      } else {
-        toolTestResultEditor = window.CodeMirror(
-          document.getElementById("tool-test-result"),
-          {
-            value: resultStr,
-            mode: "application/json",
-            theme: "monokai",
-            readOnly: true,
-            lineNumbers: true,
-          },
-        );
-      }
+
+      const container = document.getElementById("tool-test-result");
+      container.innerHTML = '';        // clear any old editor
+
+      toolTestResultEditor = window.CodeMirror(
+        document.getElementById("tool-test-result"),
+        {
+          value: resultStr,
+          mode: "application/json",
+          theme: "monokai",
+          readOnly: true,
+          lineNumbers: true,
+        },
+      );
     })
     .catch((error) => {
       document.getElementById("tool-test-result").innerText = "Error: " + error;
@@ -1636,8 +1635,16 @@ function openModal(modalId) {
   document.getElementById(modalId).classList.remove("hidden");
 }
 
-function closeModal(modalId) {
-  document.getElementById(modalId).classList.add("hidden");
+function closeModal(modalId, clearId=null) {
+  const modal = document.getElementById(modalId);
+
+  if (clearId) {
+    // Look up by id string
+    const resultEl = document.getElementById(clearId);
+    if (resultEl) resultEl.innerHTML = '';
+  }
+
+  modal.classList.add('hidden');
 }
 
 const integrationRequestMap = {
