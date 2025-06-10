@@ -15,6 +15,7 @@ It handles:
 """
 
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -125,10 +126,12 @@ class ToolService:
 
         decoded_auth_value = decode_auth(tool.auth_value)
         if tool.auth_type == "basic":
+            decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
+            username, password = decoded_bytes.decode("utf-8").split(":")
             tool_dict["auth"] = {
                 "auth_type": "basic",
-                "username": decoded_auth_value["username"],
-                "password": "********" if decoded_auth_value["password"] else None,
+                "username": username,
+                "password": "********" if password else None,
             }
         elif tool.auth_type == "bearer":
             tool_dict["auth"] = {
