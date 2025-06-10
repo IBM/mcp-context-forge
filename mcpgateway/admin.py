@@ -545,7 +545,7 @@ async def admin_add_tool(
     """
     logger.debug(f"User {user} is adding a new tool")
     form = await request.form()
-    logger.info(f"Received form data: {dict(form)}")
+    logger.debug(f"Received form data: {dict(form)}")
 
     tool_data = {
         "name": form["name"],
@@ -563,10 +563,10 @@ async def admin_add_tool(
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
     }
-    logger.info(f"Tool data built: {tool_data}")
+    logger.debug(f"Tool data built: {tool_data}")
     try:
         tool = ToolCreate(**tool_data)
-        logger.info(f"Validated tool data: {tool.dict()}")
+        logger.debug(f"Validated tool data: {tool.dict()}")
         await tool_service.register_tool(db, tool)
         return JSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
