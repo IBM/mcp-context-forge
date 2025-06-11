@@ -118,6 +118,8 @@ class GatewayService:
             self._redis_client = None
             self._lock_path = settings.filelock_path
             self._file_lock = FileLock(self._lock_path)
+        else:
+            self._redis_client = None
 
     async def initialize(self) -> None:
         """Initialize the service and start health check if this instance is the leader."""
