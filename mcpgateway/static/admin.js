@@ -25,6 +25,61 @@ document.addEventListener("DOMContentLoaded", function () {
   document.getElementById("tab-metrics").addEventListener("click", () => {
     showTab("metrics");
   });
+  document.getElementById("tab-version-info").addEventListener("click", () => {
+    showTab("version-info");
+  });
+
+  /* ------------------------------------------------------------------
+  * Pre-load the "Version & Environment Info" partial once per page
+  * ------------------------------------------------------------------ */
+   /* Pre-load version-info once */
+  document.addEventListener("DOMContentLoaded", () => {
+    const panel = document.getElementById("version-info-panel");
+    if (!panel || panel.innerHTML.trim() !== "") return; // already loaded
+
+    fetch(`${window.ROOT_PATH}/version?partial=true`)
+      .then((response) => {
+        if (!response.ok) throw new Error("Network response was not ok");
+        return response.text();
+      })
+      .then((html) => {
+        panel.innerHTML = html;
+
+        // If the page was opened at #version-info, show that tab now
+        if (window.location.hash === "#version-info") {
+          showTab("version-info");
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to preload version info:", error);
+        panel.innerHTML =
+          "<p class='text-red-600'>Failed to load version info.</p>";
+      });
+  });
+
+  /* ------------------------------------------------------------------
+  * HTMX debug hooks
+  * ------------------------------------------------------------------ */
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target.id === "version-info-panel") {
+      console.log("HTMX: Content swapped into version-info-panel");
+    }
+  });
+
+
+  // HTMX event listeners for debugging
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    if (event.detail.elt.id === "tab-version-info") {
+      console.log("HTMX: Sending request for version info partial");
+    }
+  });
+
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target.id === "version-info-panel") {
+      console.log("HTMX: Content swapped into version-info-panel");
+    }
+  });
+
   // Authentication toggle
   document.getElementById("auth-type").addEventListener("change", function () {
     const basicFields = document.getElementById("auth-basic-fields");
@@ -110,6 +165,7 @@ document.addEventListener("DOMContentLoaded", function () {
             status.classList.add("error-status");
           } else {
             location.reload();
+          console.log(response);
           }
         })
         .catch((error) => {
@@ -266,6 +322,7 @@ document.addEventListener("DOMContentLoaded", function () {
     REST: ["GET", "POST", "PUT", "DELETE"],
   };
 
+
   // Optionally pass in a pre-selected method
   function updateEditToolRequestTypes(selectedMethod = null) {
     const selectedType = editToolTypeSelect.value;
@@ -333,6 +390,27 @@ function showTab(tabName) {
 
   if (tabName === "metrics") {
     loadAggregatedMetrics();
+  }
+
+  if (tabName === "version-info") {
+    const panel = document.getElementById("version-info-panel");
+    if (panel && panel.innerHTML.trim() === "") {
+      const url = `${window.ROOT_PATH}/version?partial=true`;
+      fetch(url)
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error("Network response was not ok");
+          }
+          return response.text();
+        })
+        .then((html) => {
+          panel.innerHTML = html;
+        })
+        .catch((error) => {
+          console.error("Failed to load version info:", error);
+          panel.innerHTML = "<p class='text-red-600'>Failed to load version info.</p>";
+        });
+    }
   }
 }
 
@@ -406,7 +484,9 @@ function updateSchemaPreview() {
   }
 }
 
-// Refresh CodeMirror every time Direct JSON Input is selected
+/* ---------------------------------------------------------------
+ * Switch between "UI-builder" and "JSON input" modes
+ * ------------------------------------------------------------- */
 Array.from(schemaModeRadios).forEach((radio) => {
   radio.addEventListener("change", () => {
     if (radio.value === "ui" && radio.checked) {
@@ -415,25 +495,11 @@ Array.from(schemaModeRadios).forEach((radio) => {
     } else if (radio.value === "json" && radio.checked) {
       uiBuilderDiv.style.display = "none";
       jsonInputContainer.style.display = "block";
-      updateSchemaPreview();
+      updateSchemaPreview();        // keep preview in sync
     }
   });
-});
+});  // closes addEventListener callback, forEach callback, and forEach call
 
-// Attach event listeners to dynamically added parameter inputs
-function attachListeners(paramDiv) {
-  const inputs = paramDiv.querySelectorAll("input, select, textarea");
-  inputs.forEach((input) => {
-    input.addEventListener("input", () => {
-      const mode = document.querySelector(
-        'input[name="schema_input_mode"]:checked',
-      ).value;
-      if (mode === "json") {
-        updateSchemaPreview();
-      }
-    });
-  });
-}
 
 // On form submission, update CodeMirror with UI builder schema if needed
 // document.getElementById('add-tool-form').addEventListener('submit', (e) => {
@@ -1629,6 +1695,45 @@ async function runToolTest() {
       document.getElementById("tool-test-result").innerText = "Error: " + error;
     });
 }
+
+/* ---------------------------------------------------------------
+ * Utility: copy a JSON string (or any text) to the system clipboard
+ * ------------------------------------------------------------- */
+function copyJsonToClipboard(sourceId) {
+  // 1. Get the element that holds the JSON (can be a <pre>, <code>, <textarea>, etc.)
+  const el = document.getElementById(sourceId);
+  if (!el) {
+    console.warn(`[copyJsonToClipboard] Source element "${sourceId}" not found.`);
+    return;
+  }
+
+  // 2. Extract the text; fall back to textContent if value is undefined
+  const text = "value" in el ? el.value : el.textContent;
+
+  // 3. Copy to clipboard
+  navigator.clipboard.writeText(text).then(
+    () => {
+      console.info("JSON copied to clipboard ✔️");
+      // Optional: user feedback
+      if (el.dataset.toast !== "off") {
+        const toast = document.createElement("div");
+        toast.textContent = "Copied!";
+        toast.className =
+          "fixed bottom-4 right-4 bg-green-600 text-white px-3 py-1 rounded shadow";
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 1500);
+      }
+    },
+    (err) => {
+      console.error("Clipboard write failed:", err);
+      alert("Unable to copy to clipboard - see console for details.");
+    }
+  );
+}
+
+// Make it available to inline onclick handlers
+window.copyJsonToClipboard = copyJsonToClipboard;
+
 
 // Utility functions to open and close modals
 function openModal(modalId) {
