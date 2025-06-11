@@ -185,15 +185,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await tool_service.initialize()
         await resource_service.initialize()
         await prompt_service.initialize()
-        try:
-            # Try to create the file exclusively
-            fd = os.open(settings.lock_file_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        except FileExistsError:
-            logger.info("Gateway already initialized by another worker")
-        else:
-            with os.fdopen(fd, "w") as lock_file:
-                lock_file.write("initialized")
-            await gateway_service.initialize()
+        await gateway_service.initialize()
         await root_service.initialize()
         await completion_service.initialize()
         await logging_service.initialize()

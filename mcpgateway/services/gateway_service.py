@@ -16,10 +16,12 @@ It handles:
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 import httpx
+from filelock import FileLock, Timeout
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from sqlalchemy import select
@@ -33,7 +35,19 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCr
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.services_auth import decode_auth
 
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    logging.info("Redis is not utilized in this environment.")
+
+# logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 logger = logging.getLogger(__name__)
+
+
+GW_FAILURE_THRESHOLD = settings.unhealthy_threshold
+GW_HEALTH_CHECK_INTERVAL = settings.health_check_interval
 
 
 class GatewayError(Exception):
@@ -83,17 +97,45 @@ class GatewayService:
         """Initialize the gateway service."""
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify)
-        self._health_check_interval = 60  # seconds
+        self._health_check_interval = GW_HEALTH_CHECK_INTERVAL 
         self._health_check_task: Optional[asyncio.Task] = None
         self._active_gateways: Set[str] = set()  # Track active gateway URLs
         self._stream_response = None
         self._pending_responses = {}
         self.tool_service = ToolService()
+        self._gateway_failure_counts: dict[str, int] = {}
+
+        # For health checks, we determine the leader instance.
+        self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
+
+        if self.redis_url and REDIS_AVAILABLE:
+            self._redis_client = redis.from_url(self.redis_url)
+            self._instance_id = str(uuid.uuid4())             # Unique ID for this process
+            self._leader_key = "gateway_service_leader"
+            self._leader_ttl = 40                             # seconds
+        elif settings.cache_type != "none":
+            # Fallback: File-based lock
+            self._redis_client = None
+            self._lock_path = settings.filelock_path
+            self._file_lock = FileLock(self._lock_path)
 
     async def initialize(self) -> None:
-        """Initialize the service."""
+        """Initialize the service and start health check if this instance is the leader."""
         logger.info("Initializing gateway service")
-        self._health_check_task = asyncio.create_task(self._run_health_checks())
+
+        if self._redis_client:
+            # Check if Redis is available
+            pong = self._redis_client.ping()
+            if not pong:
+                raise ConnectionError("Redis ping failed.")
+
+            is_leader = self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
+            if is_leader:
+                logger.info("Acquired Redis leadership. Starting health check task.")
+                self._health_check_task = asyncio.create_task(self._run_health_checks())
+        else:
+            # Always create the health check task in filelock mode; leader check is handled inside.
+            self._health_check_task = asyncio.create_task(self._run_health_checks())
 
     async def shutdown(self) -> None:
         """Shutdown the service."""
@@ -474,6 +516,30 @@ class GatewayService:
         except Exception as e:
             raise GatewayConnectionError(f"Failed to forward request to {gateway.name}: {str(e)}")
 
+    async def _handle_gateway_failure(self, gateway: str) -> None:
+        """
+        Tracks and handles gateway failures during health checks.
+        If the failure count exceeds the threshold, the gateway is deactivated.
+
+        Args:
+            gateway (str): The gateway object that failed its health check.
+
+        Returns:
+            None
+        """
+        if GW_FAILURE_THRESHOLD == -1:
+            return  # Gateway failure action disabled
+        count = self._gateway_failure_counts.get(gateway.id, 0) + 1
+        self._gateway_failure_counts[gateway.id] = count
+
+        logger.warning(f"Gateway {gateway.name} failed health check {count} time(s).")
+
+        if count >= GW_FAILURE_THRESHOLD:
+            logger.error(f"Gateway {gateway.name} failed {GW_FAILURE_THRESHOLD} times. Deactivating...")
+            with SessionLocal() as db:
+                await self.toggle_gateway_status(db, gateway.id, False)
+                self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
+
     async def check_health_of_gateways(self, gateways: List[DbGateway]) -> bool:
         """Health check for a list of gateways.
 
@@ -506,9 +572,8 @@ class GatewayService:
                     gateway.last_seen = datetime.utcnow()
 
                 except Exception:
-                    with SessionLocal() as db:
-                        await self.toggle_gateway_status(db=db, gateway_id=gateway.id, activate=False)
-
+                    await self._handle_gateway_failure(gateway)
+                    
         # All gateways passed
         return True
 
@@ -620,19 +685,68 @@ class GatewayService:
             return db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
 
     async def _run_health_checks(self) -> None:
-        """Run health checks with sync Session in async code."""
+        """Run health checks periodically,
+        Uses Redis or FileLock - for multiple workers.
+        Uses simple health check for single worker mode."""
+
         while True:
             try:
-                # Run sync database code in a thread
-                gateways = await asyncio.to_thread(self._get_active_gateways)
+                if self._redis_client and settings.cache_type == "redis":
+                    # Redis-based leader check
+                    current_leader = self._redis_client.get(self._leader_key)
+                    if current_leader != self._instance_id.encode():
+                        return
+                    self._redis_client.expire(self._leader_key, self._leader_ttl)
 
-                if len(gateways) > 0:
-                    # Async health checks (non-blocking)
-                    await self.check_health_of_gateways(gateways)
+                    # Run health checks
+                    gateways = await asyncio.to_thread(self._get_active_gateways)
+                    if gateways:
+                        await self.check_health_of_gateways(gateways)
+
+                    await asyncio.sleep(self._health_check_interval)
+
+                elif settings.cache_type == "none":
+                    try:
+                        # For single worker mode, run health checks directly
+                        gateways = await asyncio.to_thread(self._get_active_gateways)
+
+                        if gateways:
+                            await self.check_health_of_gateways(gateways)
+                    except Exception as e:
+                        logger.error(f"Health check run failed: {str(e)}")
+
+                    await asyncio.sleep(self._health_check_interval)
+                
+                else:
+                    # FileLock-based leader fallback
+                    try:
+                        self._file_lock.acquire(timeout=0)
+                        logger.info("File lock acquired. Running health checks.")
+
+                        while True:
+                            gateways = await asyncio.to_thread(self._get_active_gateways)
+                            if gateways:
+                                await self.check_health_of_gateways(gateways)
+                            await asyncio.sleep(self._health_check_interval)
+
+                    except Timeout:
+                        logger.debug("File lock already held. Retrying later.")
+                        await asyncio.sleep(self._health_check_interval)
+
+                    except Exception as e:
+                        logger.error(f"FileLock health check failed: {str(e)}")
+
+                    finally:
+                        if self._file_lock.is_locked:
+                            try:
+                                self._file_lock.release()
+                                logger.info("Released file lock.")
+                            except Exception as e:
+                                logger.warning(f"Failed to release file lock: {str(e)}")
+
             except Exception as e:
-                logger.error(f"Health check run failed: {str(e)}")
-
-            await asyncio.sleep(self._health_check_interval)
+                logger.error(f"Unexpected error in health check loop: {str(e)}")
+                await asyncio.sleep(self._health_check_interval)
 
     def _get_auth_headers(self) -> Dict[str, str]:
         """
