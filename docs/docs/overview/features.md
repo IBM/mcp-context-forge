@@ -42,6 +42,7 @@ MCP Gateway offers a robust feature set for integrating and managing tools, serv
 - Register tools via REST, UI, or JSON-RPC
 - Wrap any REST API, CLI command, or function
 - Supports:
+  
   - JSON Schema validation
   - Concurrency limits
   - Rate limiting
@@ -80,6 +81,7 @@ MCP Gateway offers a robust feature set for integrating and managing tools, serv
 ## 🖥 Admin Interface
 
 - Interactive UI with full CRUD for:
+  
   - Tools
   - Resources
   - Prompts
