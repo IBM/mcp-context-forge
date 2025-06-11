@@ -11,6 +11,7 @@ MCP Gateway offers a robust feature set for integrating and managing tools, serv
 
 - **Multi-Transport Support**
   Accessible via:
+  
   - HTTP/JSON-RPC
   - WebSocket (bi-directional with ping/pong)
   - Server-Sent Events (SSE)
@@ -18,6 +19,7 @@ MCP Gateway offers a robust feature set for integrating and managing tools, serv
 
 - **Unified Registry**
   Maintains a centralized catalog of:
+  
   - Tools (native or REST-adapted)
   - Prompts (Jinja2 templates with schema validation)
   - Resources (MIME-aware, URI-addressable)
