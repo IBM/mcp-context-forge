@@ -364,14 +364,16 @@ button{{margin-top:1rem;padding:.5rem 1rem;}}
 async def version_endpoint(
     request: Request,
     fmt: Optional[str] = None,
+    partial: Optional[bool] = False,
     _user=Depends(require_auth),
 ) -> Response:
     """
-    Serve diagnostics as JSON or HTML (if requested).
+    Serve diagnostics as JSON, full HTML, or partial HTML (if requested).
 
     Parameters:
         request (Request): The incoming HTTP request.
-        fmt (Optional[str]): Query param 'html' for HTML output.
+        fmt (Optional[str]): Query param 'html' for full HTML output.
+        partial (Optional[bool]): Query param to request partial HTML fragment.
 
     Returns:
         Response: JSONResponse or HTMLResponse with diagnostics data.
@@ -390,6 +392,11 @@ async def version_endpoint(
             redis_version = str(exc)
 
     payload = _build_payload(redis_version, redis_ok)
+    if partial:
+        # Return partial HTML fragment for HTMX embedding
+        from fastapi.templating import Jinja2Templates
+        templates = Jinja2Templates(directory="mcpgateway/templates")
+        return templates.TemplateResponse("version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")
     if wants_html:
         return HTMLResponse(_render_html(payload))

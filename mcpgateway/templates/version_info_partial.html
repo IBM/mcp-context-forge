@@ -1,0 +1,104 @@
+<div class="max-w-2xl mx-auto bg-white rounded-xl shadow-md overflow-hidden p-6">
+  <div class="md:flex md:space-x-6">
+    <!-- Icon -->
+    <div class="flex-shrink-0">
+      <svg class="h-12 w-12 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none"
+           viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 8a3 3 0 11-3 3 3 3 0 013-3zm0-6v2m0 16v2m8-10h2M2 12h2m13.364 6.364l1.414 1.414M4.222 4.222l1.414 1.414m12.728 0l-1.414 1.414M6.636 17.364l-1.414 1.414"/>
+      </svg>
+    </div>
+
+    <!-- Details -->
+    <div class="flex-1">
+      <h2 class="uppercase tracking-wide text-sm text-indigo-500 font-semibold">
+        Version & Environment
+      </h2>
+
+      <!-- App section -->
+      <div class="mt-2">
+        <p class="text-lg font-medium text-black">App: {{ payload.app.name }}</p>
+        <p class="text-gray-500">Git rev: {{ payload.app.git_revision or 'N/A' }}</p>
+        <p class="text-gray-500">Protocol: {{ payload.app.mcp_protocol_version }}</p>
+      </div>
+
+      <!-- Host & runtime -->
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-x-4 text-gray-700 text-sm">
+        <div>
+          <p><span class="font-semibold">Host:</span> {{ payload.host }}</p>
+          <p><span class="font-semibold">Uptime:</span> {{ payload.uptime_seconds }} s</p>
+          <p><span class="font-semibold">Boot:</span> {{ payload.system.boot_time }}</p>
+        </div>
+        <div>
+          <p><span class="font-semibold">Python:</span> {{ payload.platform.python }}</p>
+          <p><span class="font-semibold">FastAPI:</span> {{ payload.platform.fastapi }}</p>
+          <p><span class="font-semibold">OS:</span> {{ payload.platform.os }}</p>
+        </div>
+      </div>
+
+      <!-- DB / Redis health -->
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-x-4 text-gray-700 text-sm">
+        <div>
+          <p class="font-semibold">Database</p>
+          <p>Dialect: {{ payload.database.dialect }}</p>
+          <p>Status:
+            {% if payload.database.reachable %}
+              <span class="text-green-600">reachable</span>
+            {% else %}
+              <span class="text-red-600">unreachable</span>
+            {% endif %}
+          </p>
+        </div>
+        <div>
+          <p class="font-semibold">Redis</p>
+          <p>
+            {% if payload.redis.available %}
+              <span class="text-green-600">available</span>
+            {% else %}
+              <span class="text-red-600">not available</span>
+            {% endif %}
+          </p>
+        </div>
+      </div>
+
+      <!-- System snapshot -->
+      <div class="mt-4 text-gray-700 text-sm">
+        <p class="font-semibold">System</p>
+        <p>CPU: {{ payload.system.cpu_count }} × {{ payload.system.cpu_freq_mhz }} MHz</p>
+        <p>Memory: {{ "{:.1f}".format(payload.system.mem_used_mb) }} / {{ payload.system.mem_total_mb }} MB</p>
+        <p>Disk: {{ "{:.1f}".format(payload.system.disk_used_gb) }} / {{ "{:.1f}".format(payload.system.disk_total_gb) }} GB</p>
+      </div>
+
+      <!-- Copy-JSON button -->
+      <button
+        class="mt-4 px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        onclick="copyJsonToClipboard('json-data')">
+        Copy full JSON
+      </button>
+
+      <!-- Collapsible raw JSON (small & scrollable) -->
+      <pre id="json-data"
+           class="mt-2 p-2 bg-gray-100 rounded text-xs overflow-auto"
+           style="max-height: 220px;">{{ payload | tojson(indent=2) }}</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+/**
+ * Copy the innerText of the element with id sourceId (defaults to "json-data")
+ * to the clipboard.  Intended for inline onclick handlers.
+ */
+function copyJsonToClipboard(sourceId = 'json-data') {
+  const el = document.getElementById(sourceId);
+  if (!el) {
+    console.warn('[copyJsonToClipboard] sourceId "%s" not found', sourceId);
+    return;
+  }
+  navigator.clipboard.writeText(el.innerText)
+    .then(() => alert('JSON copied to clipboard!'))
+    .catch(err => alert('Failed to copy JSON: ' + err));
+}
+// expose globally for inline usage
+window.copyJsonToClipboard = copyJsonToClipboard;
+</script>
