@@ -4,6 +4,27 @@ You can run MCP Gateway as a fully self-contained container. This is the recomme
 
 ---
 
+## Quick Start (Pre-built Container Image)
+
+If you just want to run the gateway using the official OCI container image from GitHub Container Registry:
+
+```bash
+docker run -d --name mcpgateway \
+  -p 4444:4444 \
+  -e HOST=0.0.0.0 \
+  -e JWT_SECRET_KEY=my-test-key \
+  -e BASIC_AUTH_USER=admin \
+  -e BASIC_AUTH_PASSWORD=changeme \
+  -e AUTH_REQUIRED=true \
+  -e DATABASE_URL=sqlite:///./mcp.db \
+  --network=host \
+  ghcr.io/ibm/mcp-context-forge:latest
+
+docker logs mcpgateway
+```
+
+You can now access the UI at [http://localhost:4444/admin](http://localhost:4444/admin)
+
 ## 🐳 Build the Container
 
 ### Using Podman (recommended)
