@@ -171,7 +171,9 @@ class Settings(BaseSettings):
     # Health Checks
     health_check_interval: int = 60  # seconds
     health_check_timeout: int = 10  # seconds
-    unhealthy_threshold: int = 3
+    unhealthy_threshold: int = 10
+
+    filelock_path: str = "tmp/gateway_service_leader.lock"
 
     # Default Roots
     default_roots: List[str] = []
