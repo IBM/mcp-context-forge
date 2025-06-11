@@ -3,4 +3,5 @@ nav:
   - github.md
   - building.md
   - documentation.md
+  - review.md
   - packaging.md
