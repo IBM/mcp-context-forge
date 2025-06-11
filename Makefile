@@ -139,8 +139,7 @@ serve-ssl: certs
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
 
 dev:
-	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --reload --reload-exclude='public/'
-
+	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 run:
 	./run.sh
 
