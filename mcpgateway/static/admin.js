@@ -151,9 +151,7 @@ document.addEventListener("DOMContentLoaded", function () {
     .getElementById("add-gateway-form")
     .addEventListener("submit", (e) => {
       e.preventDefault();
-      const formerror = e.t
-          console.error("Error:", error);
-        arget;
+      const form = e.target;
       const formData = new FormData(form);
       fetch(`${window.ROOT_PATH}/admin/gateways`, {
         method: "POST",
