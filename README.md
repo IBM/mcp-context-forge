@@ -546,11 +546,12 @@ You can get started by copying the provided `.env.examples` to `.env` and making
 
 ### Health Checks
 
-| Setting                 | Description                   | Default | Options |
-| ----------------------- | ----------------------------- | ------- | ------- |
-| `HEALTH_CHECK_INTERVAL` | Health poll interval (secs)   | `60`    | int > 0 |
-| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs) | `10`    | int > 0 |
-| `UNHEALTHY_THRESHOLD`   | Fail-count before unhealthy   | `3`     | int > 0 |
+| Setting                 | Description                               | Default | Options |
+| ----------------------- | ----------------------------------------- | ------- | ------- |
+| `HEALTH_CHECK_INTERVAL` | Health poll interval (secs)               | `60`    | int > 0 |
+| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `10`    | int > 0 |
+| `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
+|                         | Set to -1 if deactivation is not needed.  |         |         |
 
 ### Database
 
