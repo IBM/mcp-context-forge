@@ -777,15 +777,15 @@ containerfile-update:
 .PHONY: dist wheel sdist verify publish
 
 dist: clean                ## Build wheel + sdist
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build"
+	python3 -m build
 	@echo "🛠  Wheel & sdist written to ./dist"
 
 wheel:                     ## Build wheel only
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build -w"
+	python3 -m build -w
 	@echo "🛠  Wheel written to ./dist"
 
 sdist:                     ## Build source distribution only
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build -s"
+	python3 -m build -s
 	@echo "🛠  Source distribution written to ./dist"
 
 verify: dist               ## Build, run metadata & manifest checks
