@@ -120,6 +120,12 @@ curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/s
 # To stop the running process, you can either:
 fg # Return the process to foreground, you can not Ctrl + C, or:
 pkill mcpgateway
+
+# Optionally, test the stdio wrapper to mirror tools from the gateway:
+# This lets you connect to the gateway with tools that don't support SSE:
+export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
+python3 -m mcpgateway.wrapper
 ```
 
 See [.env.example](.env.example) for full list of ENV variables you can use to override the configuration.
@@ -172,22 +178,35 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/version | jq
 ```
 
-### Running the mcpgateway-wrapper
+### Running the MCP Gateway stdio wrapper
 
-The mcpgateway-wrapper lets you connect to the gateway over stdio, while retaining authentication using the JWT token when the wrapper connect to a remote gateway. You should run this from a MCP client. You can test this from a shell with:
+The `mcpgateway.wrapper` lets you connect to the gateway over **stdio**, while retaining authentication using the JWT token when the wrapper connect to a remote gateway. You should run this from a MCP client. You can test this from a shell with:
 
 ```bash
-docker run -i --name mcpgateway-wrapper \
-  --entrypoint uv \
-  -e UV_CACHE_DIR=/tmp/uv-cache \
-  -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444 \
-  -e MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN \
-  ghcr.io/ibm/mcp-context-forge:latest \
-  run --directory mcpgateway-wrapper mcpgateway-wrapper
-# You'll see a message similar to: Installed 21 packages in 6ms - it's now expecting input from an MCP client
+# Set environment variables
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
+export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/1'
+export MCP_TOOL_CALL_TIMEOUT=120
+export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
+
+# Run the wrapper from the installed module
+python3 -m mcpgateway.wrapper
 ```
 
-Testing `mcpgateway-wrapper` by hand:
+**Or using the container image:**
+
+```bash
+docker run --rm -i \
+  -e MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN \
+  -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/1 \
+  -e MCP_TOOL_CALL_TIMEOUT=120 \
+  -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
+  ghcr.io/ibm/mcp-context-forge:latest \
+  python3 -m mcpgateway.wrapper
+```
+
+**Testing `mcpgateway.wrapper` by hand:**
 
 Because the wrapper speaks JSON-RPC over stdin/stdout, you can interact with it using nothing more than a terminal or pipes.
 
@@ -199,10 +218,11 @@ npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europ
 # Start the MCP Gateway Wrapper
 export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
 export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
-python -m mcpgateway.wrapper
+python3 -m mcpgateway.wrapper
 ```
 
-**Initialize the protocol:**
+<details>
+<summary><strong>Initialize the protocol</strong></summary>
 
 ```json
 # Initialize the protocol
@@ -224,7 +244,10 @@ python -m mcpgateway.wrapper
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_current_time","arguments":{"timezone":"Europe/Dublin"}}}
 ```
 
-Expected:
+</details>
+
+<details>
+<summary><strong>Expected responses from mcpgateway.wrapper</strong></summary>
 
 ```json
 {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.1.0"}}}
@@ -237,84 +260,138 @@ Expected:
 
 # Running the time tool:
 {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{'content': [{'type': 'text', 'text': '{\\n  \"timezone\": \"Europe/Dublin\",\\n  \"datetime\": \"2025-06-08T21:47:07+01:00\",\\n  \"is_dst\": true\\n}'}], 'is_error': False}"}],"isError":false}}
-
 ```
 
-### Running from a MCP Client
+</details>
 
-The `mcpgateway-wrapper` should be used with an MCP Client that does not support SSE. You can configure it as such.
+### 🧩 Running from an MCP Client (`mcpgateway.wrapper`)
 
-Remember to replace the `MCP_SERVER_CATALOG_URL` with the actual URL of your MCP Gateway. Consider container networking - when running this via a container engine, this should represent a network accessible from Docker/Podman, ex: `http://host.docker.internal:4444/servers/1`
+The `mcpgateway.wrapper` exposes everything your Gateway knows about over **stdio**, so any MCP client that *can't* (or *shouldn't*) open an authenticated SSE stream still gets full tool-calling power.
 
-You have a number of options for running the wrapper. Docker/Podman, to run it from the container. `uvx`, `uvenv` or `pipx` to run it straight from pip. Or just running it with Python from a local directory. Adjust your command accordingly.
+> **Remember** to substitute your real Gateway URL (and server ID) for `http://localhost:4444/servers/1`.
+> When inside Docker/Podman, that often becomes `http://host.docker.internal:4444/servers/1` (macOS/Windows) or the gateway container's hostname (Linux).
 
-```json
-{
-  "servers": {
-    "mcpgateway-wrapper": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "--network=host",
-        "-i",
-        "-e",
-        "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1",
-        "-e",
-        "MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}",
-        "--entrypoint",
-        "uv",
-        "ghcr.io/ibm/mcp-context-forge:latest",
-        "run",
-        "--directory",
-        "mcpgateway-wrapper",
-        "mcpgateway-wrapper"
-      ],
-      "env": {
-        "MCPGATEWAY_BEARER_TOKEN": "${MCPGATEWAY_BEARER_TOKEN}"
-      }
-    }
-  }
-}
+---
+
+<details>
+<summary><strong>🐳 Docker / Podman</strong></summary>
+
+```bash
+docker run -i --rm \
+  --network=host \
+  -e MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1 \
+  -e MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
+  -e MCP_TOOL_CALL_TIMEOUT=120 \
+  ghcr.io/ibm/mcp-context-forge:latest \
+  python3 -m mcpgateway.wrapper
 ```
 
-## Quick Start (Claude Desktop)
+</details>
 
-To add the mcpgateway to Claude Desktop (or similar MCP Clients) go to `File > Settings > Developer > Edit Config` and add:
+---
+
+<details>
+<summary><strong>📦 pipx (one-liner install &amp; run)</strong></summary>
+
+```bash
+# Install gateway package in its own isolated venv
+pipx install --include-deps mcp-contextforge-gateway
+
+# Run the stdio wrapper
+MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
+MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1 \
+python3 -m mcpgateway.wrapper
+```
+
+**Claude Desktop JSON** (uses the host Python that pipx injected):
 
 ```json
 {
   "mcpServers": {
     "mcpgateway-wrapper": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "--network=host",
-        "-i",
-        "-e",
-        "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1",
-        "-e",
-        "MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}",
-        "--entrypoint",
-        "uv",
-        "ghcr.io/ibm/mcp-context-forge:latest",
-        "run",
-        "--directory",
-        "mcpgateway-wrapper",
-        "mcpgateway-wrapper"
-      ],
+      "command": "python3",
+      "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCPGATEWAY_BEARER_TOKEN": "<place your token here>"
+        "MCP_AUTH_TOKEN": "<your-token>",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop (exiting from system tray). Go back to `File > Settings > Developer > Edit Config` to check on your configuration and view the logs.
+</details>
 
-For more details, see the [Claude MCP quickstart](https://modelcontextprotocol.io/quickstart/server). For issues, see [MCP Debugging](https://modelcontextprotocol.io/docs/tools/debugging).
+---
+
+<details>
+<summary><strong>⚡ uv / uvenv (light-speed venvs)</strong></summary>
+
+#### 1 · Install <code>uv</code>  (<code>uvenv</code> is an alias it provides)
+
+```bash
+# (a) official one-liner
+curl -Ls https://astral.sh/uv/install.sh | sh
+
+# (b) or via pipx
+pipx install uv
+```
+
+#### 2 · Create an on-the-spot venv & run the wrapper
+
+```bash
+# Create venv in ~/.venv/mcpgateway (or current dir if you prefer)
+uv venv ~/.venv/mcpgateway
+source ~/.venv/mcpgateway/bin/activate
+
+# Install the gateway package very quicmcpkly
+uv pip install mcp-contextforge-gateway
+
+# Launch wrapper
+MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
+MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1 \
+uv python -m mcpgateway.wrapper # Use this just for testing, as the Client will run the uv command
+```
+
+*(You can swap `uv python` for plain `python` if the venv is active.)*
+
+#### Claude Desktop JSON (runs through **uvenv run**)
+
+```json
+{
+  "mcpServers": {
+    "mcpgateway-wrapper": {
+      "command": "uvenv",
+      "args": [
+        "run",
+        "--",
+        "python",
+        "-m",
+        "mcpgateway.wrapper"
+      ],
+      "env": {
+        "MCP_AUTH_TOKEN": "<your-token>",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1"
+    }
+  }
+}
+```
+
+</details>
+
+---
+
+### 🚀 Using with Claude Desktop (or any GUI MCP client)
+
+1. **Edit Config** → `File ▸ Settings ▸ Developer ▸ Edit Config`
+2. Paste one of the JSON blocks above (Docker / pipx / uvenv).
+3. Restart the app so the new stdio server is spawned.
+4. Open logs in the same menu to verify `mcpgateway-wrapper` started and listed your tools.
+
+Need help? See:
+
+* **MCP Debugging Guide** – [https://modelcontextprotocol.io/docs/tools/debugging](https://modelcontextprotocol.io/docs/tools/debugging)
 
 ---
 
@@ -445,7 +522,7 @@ uv pip install -e '.[dev]' # IMPORTANT: in zsh, quote to disable glob expansion!
 ### pip (alternative)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
@@ -479,7 +556,10 @@ A `make compose-up` target is provided along with a [docker-compose.yml](docker-
 
 > ⚠️ If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
 
-You can get started by copying the provided `.env.examples` to `.env` and making the necessary edits to fit your environment.
+You can get started by copying the provided [.env.examples](.env.example) to `.env` and making the necessary edits to fit your environment.
+
+<details>
+<summary><strong>🔧 Environment Configuration Variables</strong></summary>
 
 ### Basic
 
@@ -518,7 +598,7 @@ You can get started by copying the provided `.env.examples` to `.env` and making
 > * Generate tokens via:
 >
 >   ```bash
->   python -m mcpgateway.utils.create_jwt_token -u admin -e 10080 > token.txt
+>   python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 > token.txt
 >   export MCPGATEWAY_BEARER_TOKEN=$(cat token.txt)
 >   ```
 > * Tokens allow non-interactive API clients to authenticate securely.
@@ -637,6 +717,8 @@ You can get started by copying the provided `.env.examples` to `.env` and making
 | `RELOAD`   | Auto-reload on changes | `false` | bool    |
 | `DEBUG`    | Debug logging          | `false` | bool    |
 
+</details>
+
 ---
 
 ## Running
@@ -682,7 +764,9 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 
 ```bash
 # Generate a JWT token using JWT_SECRET_KEY and export it as MCPGATEWAY_BEARER_TOKEN
-export MCPGATEWAY_BEARER_TOKEN=$(JWT_SECRET_KEY=my-test-key python3 mcpgateway/utils/create_jwt_token.py)
+# Note that the module needs to be installed. If running locally use:
+# python3 mcpgateway/utils/create_jwt_token.py
+export MCPGATEWAY_BEARER_TOKEN=$(JWT_SECRET_KEY=my-test-key python3 -m mcpgateway.utils.create_jwt_token)
 
 # Use the JWT token in an API call
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
@@ -772,7 +856,7 @@ Generate an API Bearer token, and test the various API endpoints:
 
 ```bash
 # Generate a bearer token using the configured secret key (use the same as your .env)
-export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
 echo ${MCPGATEWAY_BEARER_TOKEN}
 
 # Quickly confirm that authentication works and the gateway is healthy
@@ -1099,6 +1183,9 @@ make lint            # Run lint tools
 
 ## Project Structure
 
+<details>
+<summary><strong>📁 Directory and file structure for mcpgateway</strong></summary>
+
 ```bash
 # ────────── CI / Quality & Meta-files ──────────
 ├── .bumpversion.cfg                # Automated semantic-version bumps
@@ -1271,6 +1358,8 @@ make lint            # Run lint tools
 │   └── unit/…                      # Pure unit tests for business logic
 ```
 
+</details>
+
 ---
 
 ## API Documentation
@@ -1283,7 +1372,10 @@ make lint            # Run lint tools
 
 ## Makefile targets
 
-This project offer the following Makefile targets. Type `make` in the project root to show all targets:
+This project offer the following Makefile targets. Type `make` in the project root to show all targets.
+
+<details>
+<summary><strong>🔧 Available Makefile targets</strong></summary>
 
 ```bash
 🐍 MCP CONTEXT FORGE  (An enterprise-ready Model Context Protocol Gateway)
@@ -1465,6 +1557,7 @@ devpi-clean          - Full cycle: build → upload → install locally
 devpi-status         - Show devpi server status
 devpi-web            - Open devpi web interface
 ```
+</details>
 
 ## Contributing
 

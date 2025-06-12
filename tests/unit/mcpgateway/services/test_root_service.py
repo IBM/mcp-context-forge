@@ -39,7 +39,6 @@ async def test_add_root_with_scheme():
     # Add an HTTP URI
     uri = "http://example.com/base/path"
     root = await service.add_root(uri)
-    # Should remain unchanged
     assert root.uri == uri
     # Name should be the basename of the URL path
     assert root.name == os.path.basename(urlparse(uri).path)
