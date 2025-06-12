@@ -46,15 +46,16 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "cryptography>=45.0.3",
+    "cryptography>=45.0.4",
     "fastapi>=0.115.12",
+    "filelock>=3.18.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
     "jq>=1.8.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.24.0",
-    "mcp>=1.9.3",
+    "mcp>=1.9.4",
     "parse>=1.20.2",
     "psutil>=7.0.0",
     "pydantic>=2.11.5",
@@ -65,7 +66,6 @@ dependencies = [
     "starlette>=0.46.2",
     "uvicorn>=0.34.3",
     "zeroconf>=0.147.0",
-    "filelock>=3.18.0",
 ]
 
 # ----------------------------------------------------------------
@@ -102,7 +102,7 @@ dev = [
     "check-manifest>=0.50",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
-    "coverage>=7.8.2",
+    "coverage>=7.9.0",
     "coverage-badge>=1.1.2",
     "darglint>=1.8.1",
     "fawltydeps>=0.20.0",
@@ -119,12 +119,12 @@ dev = [
     "pylint>=3.3.7",
     "pylint-pydantic>=0.3.5",
     "pyre-check>=0.9.23",
-    "pyright>=1.1.401",
+    "pyright>=1.1.402",
     "pyroma>=4.2",
     "pyspelling>=2.10",
     "pytest>=8.4.0",
     "pytest-asyncio>=1.0.0",
-    "pytest-cov>=6.1.1",
+    "pytest-cov>=6.2.1",
     "pytest-examples>=0.0.18",
     "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=15.1",
@@ -136,7 +136,7 @@ dev = [
     "snakeviz>=2.2.2",
     "tomlcheck>=0.2.3",
     "twine>=6.1.0",
-    "ty>=0.0.1a8",
+    "ty>=0.0.1a9",
     "types-tabulate>=0.9.0.20241207",
 ]
 
