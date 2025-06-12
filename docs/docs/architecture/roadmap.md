@@ -2,6 +2,80 @@
 
 ---
 
+## 🌐 Federation & Routing
+
+### 🧭 Epic: Streamable HTTP Transport (Protocol Revision 2025-03-26)
+
+> **Note:** stdio and the legacy HTTP+SSE transports are already supported; this epic adds the new Streamable HTTP transport per the 2025-03-26 spec.
+
+* **HTTP POST Messaging**
+  **As** an MCP client
+  **I want** to send every JSON-RPC request, notification, or batch in a separate HTTP POST to the MCP endpoint, with `Accept: application/json, text/event-stream`
+  **So that** the server can choose between immediate JSON replies or initiating an SSE stream.
+
+* **SSE-Backed Streaming on POST**
+  **As** a developer
+  **I want** the server, upon receiving request-bearing POSTs, to return `Content-Type: text/event-stream` and open an SSE stream—emitting JSON-RPC responses, server-to-client requests, and notifications until complete—before closing the stream
+  **So that** clients can consume large or real-time payloads incrementally without buffering.
+
+* **Unsolicited Server Notifications via GET**
+  **As** a client
+  **I want** to open an SSE stream with a GET (using `Accept: text/event-stream`) to the same MCP endpoint
+  **So that** I can receive unsolicited server-to-client messages independently of POST calls.
+
+* **Session Management & Resumability**
+  **As** an operator
+  **I want** the server to issue a secure `Mcp-Session-Id` on Initialize, require it on subsequent calls (400 if missing), allow DELETE to terminate, and support SSE resumability via `Last-Event-ID` headers
+  **So that** clients can manage, resume, and explicitly end long-running sessions robustly.
+
+* **Security & Compatibility**
+  **As** a platform admin
+  **I want** to validate `Origin` headers, bind to localhost by default, and enforce authentication against DNS rebinding—while optionally preserving the legacy HTTP+SSE endpoints for backward compatibility with 2024-11-05 clients
+  **So that** we uphold security best practices and maintain dual-transport support.
+
+---
+
+## 🌐 Federation & Routing
+
+### 🧭 Epic: A2A Transport Support
+
+Enable full-duplex, application-to-application (A2A) integration so that virtual servers and gateways can speak A2A natively.
+
+* **A2A Gateway Registration**
+  **As** a platform admin
+  **I want** to register A2A-enabled servers as gateways (in addition to HTTP/SSE/WS)
+  **So that** I can federate A2A backends alongside standard MCP peers.
+
+* **A2A Tool Invocation**
+  **As** a developer
+  **I want** to call A2A servers as tools via the A2A protocol
+  **So that** A2A-native services appear in my tool catalog and handle messages over A2A transports.
+
+* **Expose Virtual Servers via A2A**
+  **As** an operator
+  **I want** to expose virtual servers (i.e. REST-wrapped MCP servers) over the A2A transport
+  **So that** clients that only support A2A can invoke those servers transparently.
+
+---
+
+## ⚙️ Lifecycle & Management
+
+### 🧭 Epic: Virtual Server Protocol Version Selection
+
+Allow choosing which MCP protocol version each virtual server uses.
+
+* **Per-Server Protocol Version**
+  **As** a platform admin
+  **I want** to specify the MCP protocol version (e.g. 2025-03-26 or earlier) on each virtual server
+  **So that** clients requiring legacy behavior can continue to work without affecting others.
+
+* **Protocol Compatibility Testing**
+  **As** a developer
+  **I want** to validate a virtual server's behavior against multiple protocol versions in the Admin UI
+  **So that** I can catch breaking changes before rolling out new servers.
+
+---
+
 ## 🔐 Authentication & Identity
 
 ### 🧭 [#87 Epic: JWT Token Catalog with Per-User Expiry and Revocation](https://github.com/IBM/mcp-context-forge/issues/87)
