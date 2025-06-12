@@ -15,7 +15,7 @@ Quick usage
 CLI (default secret, default payload):
     $ python3 jwt_cli.py
 
-Library (unchanged API):
+Library:
 ```python
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 
