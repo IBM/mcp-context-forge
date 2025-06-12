@@ -682,7 +682,9 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 
 ```bash
 # Generate a JWT token using JWT_SECRET_KEY and export it as MCPGATEWAY_BEARER_TOKEN
-export MCPGATEWAY_BEARER_TOKEN=$(JWT_SECRET_KEY=my-test-key python3 mcpgateway/utils/create_jwt_token.py)
+# Note that the module needs to be installed. If running locally use:
+# python3 mcpgateway/utils/create_jwt_token.py
+export MCPGATEWAY_BEARER_TOKEN=$(JWT_SECRET_KEY=my-test-key python3 -m mcpgateway.utils.create_jwt_token)
 
 # Use the JWT token in an API call
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
