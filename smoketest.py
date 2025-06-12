@@ -314,7 +314,6 @@ def step_8_invoke_tool():
     logging.info("✅ Tool invocation returned time")
 
 
-
 def step_9_version_health():
     health = request("GET", "/health").json()["status"].lower()
     assert health in ("ok", "healthy"), f"Unexpected health status: {health}"
@@ -322,8 +321,11 @@ def step_9_version_health():
     logging.info("✅ Health OK – app %s", ver)
 
 
+def step_10_cleanup_gateway(gid: int | None = None):
+    if gid is None:
+        logging.warning("🧹  No gateway ID; nothing to delete")
+        return
 
-def step_10_cleanup_gateway(gid: int):
     request("DELETE", f"/gateways/{gid}")
     assert all(g["id"] != gid for g in request("GET", "/gateways").json())
     logging.info("✅ Gateway deleted")
@@ -388,8 +390,11 @@ def main():
                 fn(args.restart_time_server)  # type: ignore[arg-type]
             elif name == "register_gateway":
                 gid = fn()  # type: ignore[func-returns-value]
-            elif name == "cleanup_gateway" and gid is not None:
-                fn(gid)  # type: ignore[arg-type]
+            elif name == "cleanup_gateway":
+                if gid is None:
+                    logging.warning("🧹  Skipping gateway‐deletion: no gateway was ever registered")
+                else:
+                    fn(gid)  # type: ignore[arg-type]
             else:
                 fn()
         logging.info("\n✅✅  ALL STEPS PASSED")
@@ -399,7 +404,6 @@ def main():
 
     if not failed:
         cleanup()
-
 
 
 if __name__ == "__main__":
