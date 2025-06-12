@@ -25,9 +25,12 @@ Environment variables:
 - MCP_WRAPPER_LOG_LEVEL: Python log level name or OFF/NONE to disable logging (default INFO)
 
 Example:
-    $ export MCP_SERVER_CATALOG_URLS='https://api.example.com/catalog'
-    $ export MCP_AUTH_TOKEN='my-secret-token'
-    $ python3 mcpgateway.wrapper
+    $ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
+    $ export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
+    $ export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/1'
+    $ export MCP_TOOL_CALL_TIMEOUT=120
+    $ export MCP_WRAPPER_LOG_LEVEL=DEBUG # OFF to disable logging
+    $ python3 -m mcpgateway.wrapper
 """
 
 import asyncio
@@ -108,7 +111,7 @@ else:
     )
 
 logger = logging.getLogger("mcpgateway.wrapper")
-logger.info(f"Starting MCP wrapper: base_url={BASE_URL}, timeout={TOOL_CALL_TIMEOUT}")
+logger.info(f"Starting MCP wrapper {__version__}: base_url={BASE_URL}, timeout={TOOL_CALL_TIMEOUT}")
 
 
 # -----------------------------------------------------------------------------
