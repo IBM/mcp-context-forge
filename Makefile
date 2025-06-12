@@ -162,12 +162,12 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || make venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install pytest pytest-asyncio pytest-cov -q && python -m pytest --maxfail=0 --disable-warnings -v"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install pytest pytest-asyncio pytest-cov -q && python3 -m pytest --maxfail=0 --disable-warnings -v"
 
 pytest-examples:
 	@echo "🧪 Testing README examples..."
 	@test -d "$(VENV_DIR)" || make venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install pytest pytest-examples -q && pytest -v test_readme.py"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install pytest pytest-examples -q && pytest -v test_readme.py"
 
 test-curl:
 	./test_endpoints.sh
@@ -414,10 +414,10 @@ depend:                             ## 📦  List dependencies
 	pdm list --freeze
 
 snakeviz:                           ## 🐍  Interactive profile visualiser
-	@python -m cProfile -o mcp.prof app/server.py && snakeviz mcp.prof --server
+	@python3 -m cProfile -o mcp.prof app/server.py && snakeviz mcp.prof --server
 
 pstats:                             ## 📊  Static call-graph image
-	@python -m cProfile -o mcp.pstats app/server.py && \
+	@python3 -m cProfile -o mcp.pstats app/server.py && \
 	 gprof2dot -w -e 3 -n 3 -s -f pstats mcp.pstats | \
 	 dot -Tpng -o $(DOCS_DIR)/pstats.png
 
@@ -429,7 +429,7 @@ tox:                                ## 🧪  Multi-Python tox matrix
 	uv pip install tox-travis tox-pdm
 	pdm add -G dev
 	pdm python install 3.11 3.12
-	python -m tox -p 2
+	python3 -m tox -p 2
 
 sbom:								## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report…"
@@ -437,7 +437,7 @@ sbom:								## 🛡️  Generate SBOM & security report
 	@python3 -m venv "$(VENV_DIR).sbom"
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv && python3 -m uv pip install .[dev]"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install cyclonedx-bom sbom2doc"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m cyclonedx_py environment --validate '$(VENV_DIR).sbom' --pyproject pyproject.toml --gather-license-texts > $(PROJECT_NAME).sbom.json"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m cyclonedx_py environment --validate '$(VENV_DIR).sbom' --pyproject pyproject.toml --gather-license-texts > $(PROJECT_NAME).sbom.json"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && sbom2doc -i $(PROJECT_NAME).sbom.json -f markdown -o $(DOCS_DIR)/docs/test/sbom.md"
 	@trivy sbom $(PROJECT_NAME).sbom.json | tee -a $(DOCS_DIR)/docs/test/sbom.md
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pdm outdated | tee -a $(DOCS_DIR)/docs/test/sbom.md"
@@ -641,7 +641,7 @@ pysonar-scanner:
 	@echo "🐍 Scanning code with pysonar-scanner (PyPI) …"
 	@test -f $(SONAR_PROPS) || { echo "❌ $(SONAR_PROPS) not found."; exit 1; }
 	python3 -m pip install --upgrade --quiet pysonar-scanner
-	python -m pysonar_scanner \
+	python3 -m pysonar_scanner \
 		-Dproject.settings=$(SONAR_PROPS) \
 		-Dsonar.host.url=$(SONAR_HOST_URL) \
 		$(if $(SONAR_TOKEN),-Dsonar.login=$(SONAR_TOKEN),)
@@ -739,7 +739,7 @@ pip-audit:
 	@echo "🔒  pip-audit vulnerability scan…"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python -m pip install --quiet --upgrade pip-audit && \
+		python3 -m pip install --quiet --upgrade pip-audit && \
 		pip-audit --progress-spinner ascii --strict || true"
 
 # =============================================================================
@@ -777,15 +777,15 @@ containerfile-update:
 .PHONY: dist wheel sdist verify publish
 
 dist: clean                ## Build wheel + sdist
-	python -m build
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build"
 	@echo "🛠  Wheel & sdist written to ./dist"
 
 wheel:                     ## Build wheel only
-	python -m build -w
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build -w"
 	@echo "🛠  Wheel written to ./dist"
 
 sdist:                     ## Build source distribution only
-	python -m build -s
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build -s"
 	@echo "🛠  Source distribution written to ./dist"
 
 verify: dist               ## Build, run metadata & manifest checks
@@ -1897,7 +1897,7 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
 	  echo "🛠  Installing bashate (into venv)…" ; \
 	  test -d "$(VENV_DIR)" || $(MAKE) venv ; \
-	  /bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install --quiet bashate" ; \
+	  /bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --quiet bashate" ; \
 	fi
 	@echo "✅  Shell linters ready."
 

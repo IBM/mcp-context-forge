@@ -199,7 +199,7 @@ npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europ
 # Start the MCP Gateway Wrapper
 export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
 export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
-python -m mcpgateway.wrapper
+python3 -m mcpgateway.wrapper
 ```
 
 **Initialize the protocol:**
@@ -445,7 +445,7 @@ uv pip install -e '.[dev]' # IMPORTANT: in zsh, quote to disable glob expansion!
 ### pip (alternative)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
@@ -518,7 +518,7 @@ You can get started by copying the provided `.env.examples` to `.env` and making
 > * Generate tokens via:
 >
 >   ```bash
->   python -m mcpgateway.utils.create_jwt_token -u admin -e 10080 > token.txt
+>   python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 > token.txt
 >   export MCPGATEWAY_BEARER_TOKEN=$(cat token.txt)
 >   ```
 > * Tokens allow non-interactive API clients to authenticate securely.
@@ -772,7 +772,7 @@ Generate an API Bearer token, and test the various API endpoints:
 
 ```bash
 # Generate a bearer token using the configured secret key (use the same as your .env)
-export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
 echo ${MCPGATEWAY_BEARER_TOKEN}
 
 # Quickly confirm that authentication works and the gateway is healthy

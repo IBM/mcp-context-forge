@@ -40,7 +40,7 @@ Create `.vscode/mcp.json` in your project root:
 > 💡 You can generate a JWT with:
 
 ```bash
-python -m mcpgateway.utils.create_jwt_token -u admin -e 10080 > token.txt
+python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 > token.txt
 ```
 
 ---
