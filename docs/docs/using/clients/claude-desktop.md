@@ -1,71 +1,107 @@
-# Claude Desktop
+# Claude Desktop × MCP Gateway
 
-[Claude Desktop](https://www.anthropic.com/index/claude-desktop) is a desktop application that supports MCP integration via stdio. You can configure it to launch `mcpgateway-wrapper`, enabling Claude to access all tools registered in MCP Gateway.
-
----
-
-## 🖥️ Where to Configure
-
-Depending on your OS, edit the Claude configuration file:
-
-- **macOS**:
-  `~/Library/Application Support/Claude/claude_desktop_config.json`
-
-- **Windows**:
-  `%APPDATA%/Claude/claude_desktop_config.json`
+[Claude Desktop](https://www.anthropic.com/index/claude-desktop) can launch a local **stdio**
+process for every chat "backend".
+By pointing it at **`mcpgateway.wrapper`** you give Claude instant access to every tool,
+prompt and resource registered in your Gateway.
 
 ---
 
-## ⚙️ Example Configuration
+## 📂 Where to edit the config
 
-Add this block to the `"mcpServers"` section of your config:
+| OS | Path |
+|----|------|
+| **macOS** | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| **Windows** | `%APPDATA%\Claude\claude_desktop_config.json` |
+| **Linux (Flatpak / AppImage)** | `$HOME/.config/Claude/claude_desktop_config.json` |
 
-```json
-"mcpServers": {
-  "mcpgateway-wrapper": {
-    "command": "uv",
-    "args": [
-      "--directory",
-      "/path/to/mcpgateway-wrapper",
-      "run",
-      "mcpgateway-wrapper"
-    ],
-    "env": {
-      "MCP_GATEWAY_BASE_URL": "http://localhost:4444",
-      "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/2",
-      "MCP_AUTH_TOKEN": "your_bearer_token"
+---
+
+## ⚙️ Minimal JSON block
+
+```jsonc
+{
+  "mcpServers": {
+    "mcpgateway-wrapper": {
+      "command": "python3",
+      "args": ["-m", "mcpgateway.wrapper"],
+      "env": {
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>",
+        "MCP_TOOL_CALL_TIMEOUT": "120"
+      }
     }
   }
 }
 ```
 
-> 🔁 Adjust `path/to/mcpgateway-wrapper` and server ID as needed.
+> *Use the real server ID instead of `1` and paste your bearer token.*
 
 ---
 
-## 🧪 Test it in Claude
+### 🐳 Docker alternative
 
-Once Claude launches:
+```jsonc
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "--network=host", "-i",
+    "-e", "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1",
+    "-e", "MCP_AUTH_TOKEN=<YOUR_JWT_TOKEN>",
+    "ghcr.io/ibm/mcp-context-forge:latest",
+    "python3", "-m", "mcpgateway.wrapper"
+  ]
+}
+```
 
-1. Choose the `mcpgateway-wrapper` backend
-2. Type a tool invocation (e.g., `weather`, `hello`, etc.)
-3. The tool should be fetched from the Gateway and executed dynamically
+*(Mac / Windows users should replace `localhost` with `host.docker.internal`.)*
 
 ---
 
-## 🚀 Advanced: Pre-installed Wrapper Mode
+### ⚡ pipx / uvx one-liner (wrapper already installed)
 
-If you've published the wrapper to PyPI or have it globally installed:
+If you installed the package globally:
 
-```json
-"mcpServers": {
-  "mcpgateway-wrapper": {
-    "command": "uvx",
-    "args": ["mcpgateway-wrapper"]
+```jsonc
+{
+  "command": "pipx",
+  "args": ["run", "python3", "-m", "mcpgateway.wrapper"],
+  "env": {
+    "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+    "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>"
   }
 }
 ```
 
-This assumes your environment variables are managed globally or set in the terminal session launching Claude.
+---
+
+## 🧪 Smoke-test inside Claude
+
+1. **Restart** Claude Desktop (quit from system-tray).
+2. Select **"mcpgateway-wrapper"** in the chat dropdown.
+3. Type:
+
+   ```
+   #get_current_time { "timezone": "Europe/Dublin" }
+   ```
+4. The wrapper should proxy the call → Gateway → tool → chat reply.
+
+If tools don't appear, open *File ▸ Settings ▸ Developer ▸ View Logs* to see wrapper output.
+
+---
+
+## 🔑 Environment variables recap
+
+| Var                       | Purpose                                           |
+| ------------------------- | ------------------------------------------------- |
+| `MCP_SERVER_CATALOG_URLS` | One or more `/servers/{id}` endpoints (comma-sep) |
+| `MCP_AUTH_TOKEN`          | JWT bearer for Gateway auth                       |
+| `MCP_TOOL_CALL_TIMEOUT`   | Per-tool timeout (seconds, optional)              |
+| `MCP_WRAPPER_LOG_LEVEL`   | `DEBUG`, `INFO`, `OFF` (optional)                 |
+
+You can place them:
+
+* under `"env"` in the **mcpServers** block (preferred)
+* in your user/environment shell before launching Claude.
 
 ---
