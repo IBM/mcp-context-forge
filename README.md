@@ -206,7 +206,7 @@ docker run --rm -i \
   python3 -m mcpgateway.wrapper
 ```
 
-**Testing `mcpgateway-wrapper` by hand:**
+**Testing `mcpgateway.wrapper` by hand:**
 
 Because the wrapper speaks JSON-RPC over stdin/stdout, you can interact with it using nothing more than a terminal or pipes.
 
@@ -221,7 +221,8 @@ export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
 python3 -m mcpgateway.wrapper
 ```
 
-**Initialize the protocol:**
+<details>
+<summary><strong>Initialize the protocol</strong></summary>
 
 ```json
 # Initialize the protocol
@@ -243,7 +244,10 @@ python3 -m mcpgateway.wrapper
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_current_time","arguments":{"timezone":"Europe/Dublin"}}}
 ```
 
-Expected:
+</details>
+
+<details>
+<summary><strong>Expected responses from mcpgateway.wrapper</strong></summary>
 
 ```json
 {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.1.0"}}}
@@ -256,9 +260,9 @@ Expected:
 
 # Running the time tool:
 {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{'content': [{'type': 'text', 'text': '{\\n  \"timezone\": \"Europe/Dublin\",\\n  \"datetime\": \"2025-06-08T21:47:07+01:00\",\\n  \"is_dst\": true\\n}'}], 'is_error': False}"}],"isError":false}}
-
 ```
 
+</details>
 
 ### 🧩 Running from an MCP Client (`mcpgateway.wrapper`)
 
@@ -341,7 +345,7 @@ pipx install uv
 uv venv ~/.venv/mcpgateway
 source ~/.venv/mcpgateway/bin/activate
 
-# Install the gateway package very quickly
+# Install the gateway package very quicmcpkly
 uv pip install mcp-contextforge-gateway
 
 # Launch wrapper
@@ -552,7 +556,10 @@ A `make compose-up` target is provided along with a [docker-compose.yml](docker-
 
 > ⚠️ If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
 
-You can get started by copying the provided `.env.examples` to `.env` and making the necessary edits to fit your environment.
+You can get started by copying the provided [.env.examples](.env.example) to `.env` and making the necessary edits to fit your environment.
+
+<details>
+<summary><strong>🔧 Environment Configuration Variables</strong></summary>
 
 ### Basic
 
@@ -709,6 +716,8 @@ You can get started by copying the provided `.env.examples` to `.env` and making
 | `DEV_MODE` | Enable dev mode        | `false` | bool    |
 | `RELOAD`   | Auto-reload on changes | `false` | bool    |
 | `DEBUG`    | Debug logging          | `false` | bool    |
+
+</details>
 
 ---
 
@@ -1174,6 +1183,9 @@ make lint            # Run lint tools
 
 ## Project Structure
 
+<details>
+<summary><strong>📁 Directory and file structure for mcpgateway</strong></summary>
+
 ```bash
 # ────────── CI / Quality & Meta-files ──────────
 ├── .bumpversion.cfg                # Automated semantic-version bumps
@@ -1346,6 +1358,8 @@ make lint            # Run lint tools
 │   └── unit/…                      # Pure unit tests for business logic
 ```
 
+</details>
+
 ---
 
 ## API Documentation
@@ -1358,7 +1372,10 @@ make lint            # Run lint tools
 
 ## Makefile targets
 
-This project offer the following Makefile targets. Type `make` in the project root to show all targets:
+This project offer the following Makefile targets. Type `make` in the project root to show all targets.
+
+<details>
+<summary><strong>🔧 Available Makefile targets</strong></summary>
 
 ```bash
 🐍 MCP CONTEXT FORGE  (An enterprise-ready Model Context Protocol Gateway)
@@ -1540,6 +1557,7 @@ devpi-clean          - Full cycle: build → upload → install locally
 devpi-status         - Show devpi server status
 devpi-web            - Open devpi web interface
 ```
+</details>
 
 ## Contributing
 
