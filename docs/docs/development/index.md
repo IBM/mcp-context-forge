@@ -95,7 +95,7 @@ Admin UI and API are protected by Basic Auth or JWT.
 To generate a JWT:
 
 ```bash
-python -m mcpgateway.utils.create_jwt_token \
+python3 -m mcpgateway.utils.create_jwt_token \
   -u admin \
   -e 10080 | tee token.txt
 

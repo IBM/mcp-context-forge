@@ -62,6 +62,6 @@ Visit [http://localhost:4444/admin](http://localhost:4444/admin) and login using
 ## 🔁 Quick JWT Setup
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token -u admin)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin)
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
 ```
