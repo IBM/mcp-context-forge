@@ -1,3 +1,4 @@
+.devcontainer
 .github
 docker-compose.yml
 podman-compose-sonarqube.yaml
