@@ -37,6 +37,7 @@ from mcpgateway.utils.services_auth import decode_auth
 
 try:
     import redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -110,9 +111,9 @@ class GatewayService:
 
         if self.redis_url and REDIS_AVAILABLE:
             self._redis_client = redis.from_url(self.redis_url)
-            self._instance_id = str(uuid.uuid4())             # Unique ID for this process
+            self._instance_id = str(uuid.uuid4())  # Unique ID for this process
             self._leader_key = "gateway_service_leader"
-            self._leader_ttl = 40                             # seconds
+            self._leader_ttl = 40  # seconds
         elif settings.cache_type != "none":
             # Fallback: File-based lock
             self._redis_client = None

@@ -78,6 +78,7 @@ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --
 # Run a local MCP Server (github) listening on SSE http://localhost:8000/sse
 pip install uvenv
 npx -y supergateway --stdio "uvenv run mcp-server-git"
+# or time: npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002
 
 #--------------------------------------------
 # Register the MCP Server with the gateway and test it
