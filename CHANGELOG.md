@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
-## [0.2.0] - 2025-06-08 (pending)
+## [0.2.0] - 2025-06-15 (pending)
+
+### Added
+
+* Moved mcpgateway-wrapper to mcpgateway/wrapper.py so it can run as a Python module (python3 -m mcpgateway.wrapper)
+* Integrated version into UI. API and separate /version endpoint also available.
+* Added /ready endpoint
 
 ### Fixed
 
