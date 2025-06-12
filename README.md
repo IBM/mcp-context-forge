@@ -782,7 +782,8 @@ Deployment details can be found in the GitHub Pages.
 
 This project supports deployment to [IBM Cloud Code Engine](https://cloud.ibm.com/codeengine) using the **ibmcloud** CLI and the IBM Container Registry.
 
----
+<details>
+<summary><strong>☁️ IBM Cloud Code Engine Deployment</strong></summary>
 
 ### 🔧 Prerequisites
 
@@ -848,11 +849,21 @@ make ibmcloud-ce-status
 make ibmcloud-ce-logs
 ```
 
+</details>
+
 ---
 
 ## API Endpoints
 
-Generate an API Bearer token, and test the various API endpoints:
+You can test the API endpoints through curl, or Swagger UI, and check detailed documentation on ReDoc:
+
+* **Swagger UI** → [http://localhost:4444/docs](http://localhost:4444/docs)
+* **ReDoc**    → [http://localhost:4444/redoc](http://localhost:4444/redoc)
+
+Generate an API Bearer token, and test the various API endpoints.
+
+<details>
+<summary><strong>🔐 Authentication & Health Checks</strong></summary>
 
 ```bash
 # Generate a bearer token using the configured secret key (use the same as your .env)
@@ -867,12 +878,12 @@ curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost
 curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/version | jq
 ```
 
-You can test the API endpoints through curl, or Swagger UI, and check detailed documentation on ReDoc:
+</details>
 
-* **Swagger UI** → [http://localhost:4444/docs](http://localhost:4444/docs)
-* **ReDoc**    → [http://localhost:4444/redoc](http://localhost:4444/redoc)
+---
 
-### Protocol APIs (MCP)
+<details>
+<summary><strong>🧱 Protocol APIs (MCP) /protocol</strong></summary>
 
 ```bash
 # Initialize MCP session
@@ -910,9 +921,12 @@ curl -N -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/protocol/sampling/createMessage
 ```
 
+</details>
+
 ---
 
-### JSON-RPC Utility Endpoint
+<details>
+<summary><strong>🧠 JSON-RPC Utility /rpc</strong></summary>
 
 ```bash
 # Generic JSON-RPC calls (tools, gateways, roots, etc.)
@@ -924,9 +938,13 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 Handles any method name: `list_tools`, `list_gateways`, `prompts/get`, or invokes a tool if method matches a registered tool name .
 
+</details>
+
 ---
 
-### Tool Management (`/tools`)
+<details>
+<summary><strong>🔧 Tool Management /tools</strong></summary>
+
 
 ```bash
 # Register a new tool
@@ -966,9 +984,12 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1
 ```
 
+</details>
+
 ---
 
-### Gateway Management (`/gateways`)
+<details>
+<summary><strong>🌐 Gateway Management /gateways</strong></summary>
 
 ```bash
 # Register an MCP server as a new gateway provider
@@ -997,9 +1018,13 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways/1
 ```
 
+</details>
+
 ---
 
-### Resource Management (`/resources`)
+<details>
+<summary><strong>📁 Resource Management /resources</strong></summary>
+
 
 ```bash
 # Register resource
@@ -1031,9 +1056,12 @@ curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localh
 curl -N -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/resources/subscribe/config://app/settings
 ```
 
+</details>
+
 ---
 
-### Prompt Management (`/prompts`)
+<details>
+<summary><strong>📝 Prompt Management /prompts</strong></summary>
 
 ```bash
 # Create prompt template
@@ -1076,9 +1104,12 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/prompts/greet
 ```
 
+</details>
+
 ---
 
-### Root Management (`/roots`)
+<details>
+<summary><strong>🌲 Root Management /roots</strong></summary>
 
 ```bash
 # List roots
@@ -1097,9 +1128,12 @@ curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localh
 curl -N -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/roots/changes
 ```
 
+</details>
+
 ---
 
-### Server Management (`/servers`)
+<details>
+<summary><strong>🖥️ Server Management /servers</strong></summary>
 
 ```bash
 # List servers
@@ -1125,9 +1159,12 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/servers/1/toggle?activate=false
 ```
 
+</details>
+
 ---
 
-### Metrics (`/metrics`)
+<details>
+<summary><strong>📊 Metrics /metrics</strong></summary>
 
 ```bash
 # Get aggregated metrics
@@ -1138,9 +1175,12 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhos
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/metrics/reset?entity=tool&id=1
 ```
 
+</details>
+
 ---
 
-### Event Streaming & Health
+<details>
+<summary><strong>📡 Events & Health</strong></summary>
 
 ```bash
 # SSE: all events
@@ -1156,9 +1196,12 @@ curl http://localhost:4444/health
 
 Full Swagger UI at `/docs`.
 
+</details>
+
 ---
 
-## Sample Tool
+<details>
+<summary><strong>🛠️ Sample Tool</strong></summary>
 
 ```bash
 uvicorn sample_tool.clock_tool:app --host 0.0.0.0 --port 9000
@@ -1169,6 +1212,8 @@ curl -X POST -H "Content-Type: application/json" \
      -d '{"jsonrpc":"2.0","id":1,"method":"get_time","params":{"timezone":"UTC"}}' \
      http://localhost:9000/rpc
 ```
+
+</details>
 
 ---
 

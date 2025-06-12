@@ -4,6 +4,15 @@
 
 ## Articles
 
+!!! details "IBM MCP Gateway: Revolutionizing GenAI Integration for Startups and Enterprises (Pitangent)"
+    **Author:** Miltan Chaudhury | **Publication:** Pitangent | **Date:** June 11, 2025
+    [Read the article](https://pitangent.com/ai-ml-development-services/ibm-mcp-gateway-revolutionizing-genai-integration-for-startups-and-enterprises/)
+
+    !!! quote
+        "IBM's MCP Gateway is more than a bridge—it's a platform for accelerating GenAI transformation with agility and confidence. For startups and enterprises navigating the complex AI tool landscape, this innovation brings a modular, future-proof path to build smarter, scalable, and context-aware applications."
+
+        The article breaks down the technical benefits of the MCP Gateway and positions it as a game-changer for reducing integration overhead, improving developer productivity, and democratizing AI access for early-stage companies.
+
 !!! details "IBM Introduces MCP Gateway to Simplify GenAI Tool Integration (Analytics India Magazine)"
     **Author:** Ankush Das | **Publication:** Analytics India Magazine | **Date:** June 10, 2025
     [Read the article](https://analyticsindiamag.com/ai-news-updates/ibm-introduces-mcp-gateway-to-simplify-genai-tool-integration/)
