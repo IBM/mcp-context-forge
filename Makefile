@@ -342,10 +342,10 @@ lint:
 ## --------------------------------------------------------------------------- ##
 autoflake:                          ## 🧹  Strip unused imports / vars
 	@$(VENV_DIR)/bin/autoflake --in-place --remove-all-unused-imports \
-	          --remove-unused-variables -r mcpgateway mcpgateway-wrapper tests
+	          --remove-unused-variables -r mcpgateway tests
 
 black:                              ## 🎨  Reformat code with black
-	@echo "🎨  black …" && $(VENV_DIR)/bin/black -l 200 mcpgateway mcpgateway-wrapper tests
+	@echo "🎨  black …" && $(VENV_DIR)/bin/black -l 200 mcpgateway tests
 
 isort:                              ## 🔀  Sort imports
 	@echo "🔀  isort …" && $(VENV_DIR)/bin/isort .
@@ -375,19 +375,19 @@ pre-commit:                         ## 🪄  Run pre-commit hooks
 	@$(VENV_DIR)/bin/pre-commit run --all-files --show-diff-on-failure
 
 ruff:                               ## ⚡  Ruff lint + format
-	@$(VENV_DIR)/bin/ruff check mcpgateway && $(VENV_DIR)/bin/ruff format mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/ruff check mcpgateway && $(VENV_DIR)/bin/ruff format mcpgateway tests
 
 ty:                                 ## ⚡  Ty type checker
-	@$(VENV_DIR)/bin/ty check mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/ty check mcpgateway tests
 
 pyright:                            ## 🏷️  Pyright type-checking
-	@$(VENV_DIR)/bin/pyright mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/pyright mcpgateway tests
 
 radon:                              ## 📈  Complexity / MI metrics
-	@$(VENV_DIR)/bin/radon mi -s mcpgateway mcpgateway-wrapper tests && \
-	$(VENV_DIR)/bin/radon cc -s mcpgateway mcpgateway-wrapper tests && \
-	$(VENV_DIR)/bin/radon hal mcpgateway mcpgateway-wrapper tests && \
-	$(VENV_DIR)/bin/radon raw -s mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/radon mi -s mcpgateway tests && \
+	$(VENV_DIR)/bin/radon cc -s mcpgateway tests && \
+	$(VENV_DIR)/bin/radon hal mcpgateway tests && \
+	$(VENV_DIR)/bin/radon raw -s mcpgateway tests
 
 pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
@@ -444,7 +444,7 @@ sbom:								## 🛡️  Generate SBOM & security report
 
 pytype:								## 🧠  Pytype static type analysis
 	@echo "🧠  Pytype analysis…"
-	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto mcpgateway tests
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness…"
