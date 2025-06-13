@@ -236,3 +236,96 @@ Allow choosing which MCP protocol version each virtual server uses.
     **Team-Level Scopes:** As a platform admin, I want to define teams and grant scopes to teams so that I can manage permissions for groups of users.
 
     **Global Scopes:** As a platform admin, I want to set global default scopes so that baseline permissions apply to all users.
+
+
+Here are the new markdown blocks for the two requested features:
+
+---
+
+## 🛠️ Developer Experience
+
+Absolutely! Here are the two new features in your exact `mkdocs-material` + `admonition` format:
+
+---
+
+### 🧭 Epic: Chrome MCP Plugin Integration
+
+???+ "Browser-Based MCP Management"
+    **Plugin Accessibility:**
+    As a developer, I want a Chrome extension to manage MCP configurations, servers, and connections directly from the browser
+    **So that** I can reduce dependency on local CLI tools and improve accessibility.
+
+    ```
+    **Key Features:**
+    - **Real-Time Session Control:** Monitor and interact with MCP sessions via a browser UI.
+    - **Cross-Platform Compatibility:** Ensure the plugin works seamlessly across devices and operating systems.
+    - **Secure API Proxy:** Route requests securely via `mcpgateway.translate` or `mcpgateway.wrapper` for token-based access.
+
+    **Implementation Notes:**
+    - Distributed via the Chrome Web Store.
+    - Uses JWT tokens stored in extension config or injected from Admin UI.
+    - Interfaces with public `/servers`, `/tools`, `/resources`, and `/message` endpoints.
+    ```
+
+---
+
+### 🧭 Epic: Transport-Translation Bridge (`mcpgateway.translate`)
+
+???+ "CLI Bridge for Any-to-Any Transport"
+    **Goal:** As a CLI user or integrator, I want to bridge stdio-only MCP servers to modern transports like SSE, WS, or Streamable HTTP
+
+    **So that** I can use legacy binaries in web clients or tunnel remote services locally.
+
+    **Scenarios:**
+    - **Stdio ➜ SSE:**
+      Expose a local binary (e.g., `uvx mcp-server-git`) at `http://localhost:9000/sse`.
+
+    - **SSE ➜ Stdio:**
+      Tunnel a remote SSE server to `stdin/stdout` so CLI tools can talk to it natively.
+
+    - **Health & CORS:**
+      Add `/healthz` and CORS allowlist for reverse proxies and browser integrations.
+
+    - **Dockerized:**
+      Run the bridge as a standalone container from GHCR with no Python installed.
+
+    **Example CLI Usage:**
+
+    ```bash
+    mcpgateway.translate \
+      --stdio "uvx mcp-server-git" \
+      --port 9000 \
+      --ssePath /sse \
+      --messagePath /message \
+      --healthEndpoint /healthz \
+      --cors "https://app.example.com"
+    ```
+
+    **Design:**
+
+    - Uses async pumps between transport pairs (e.g., `Stdio ↔ SSE`, `SSE ↔ WS`).
+    - Maintains JSON-RPC fidelity and session state.
+    - Adapts message framing (e.g., Base64 for binary over SSE).
+    - Secure headers injected via `--header` or `--oauth2Bearer`.
+
+    **Docker:**
+
+    ```bash
+    docker run --rm -p 9000:9000 \
+      ghcr.io/ibm/mcp-context-forge:translate
+    ```
+
+    **Acceptance Criteria:**
+
+    - CLI and Docker bridge exposes `/sse` and `/message` for bidirectional MCP.
+    - Session ID and keep-alives handled automatically.
+    - Fully observable (`--logLevel`, Prometheus metrics, JWT headers, etc).
+    - Invalid flag combinations yield clean error output.
+
+    **Security:**
+
+    - Honors `MCP_AUTH_TOKEN` and CORS allowlist.
+    - Redacts tokens in logs.
+    - Supports TLS verification toggle (`--skipSSLVerify`).
+
+    ---

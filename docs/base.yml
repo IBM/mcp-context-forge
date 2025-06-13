@@ -1,7 +1,7 @@
 # DO NOT EDIT, see mkdocs.yml
 
 # Repository Information
-edit_uri: "edit/main/docs"
+edit_uri: "edit/main/docs/docs"
 docs_dir: "docs"
 site_dir: "site"
 remote_branch: "gh-pages"
