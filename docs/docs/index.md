@@ -30,6 +30,8 @@ A flexible FastAPI-based gateway and router for **Model Context Protocol (MCP)**
 - **Security**: JWT and Basic Auth, rate limits, SSL validation
 - **Caching & Observability**: In-memory or Redis/database-backed LRU+TTL caching, structured logs
 
+For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap](architecture/roadmap.md)
+
 ```mermaid
 graph TD
     subgraph UI_and_Auth
