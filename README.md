@@ -1,8 +1,4 @@
 # MCP Gateway
-
-> Model Context Protocol gateway & proxy - unify REST, MCP and A2A with federation, virtual servers, retries, security and an optional admin UI.
-# MCP Gateway
-
 > Model Context Protocol gateway & proxy — unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
 
 <!-- === CI / Security / Build Badges === -->
