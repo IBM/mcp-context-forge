@@ -159,6 +159,14 @@ Open **File → Settings → Developer → Edit Config** and add:
 }
 ```
 
+> **Tip:** If you're using a virtual environment (venv), make sure to run the MCP client using the Python interpreter from that venv. This ensures that the `mcpgateway` module can be found and used correctly. For example:
+>
+> ```bash
+> /path/to/.venv/mcpgateway/bin/python
+> ```
+>
+> Replace `/path/to/.venv/mcpgateway/` with the actual path to your virtual environment.
+
 Restart the app; the wrapper will appear in the tool list.
 
 ---
