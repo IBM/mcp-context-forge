@@ -1,52 +1,103 @@
 # MCP Gateway
 
-[![CodeQL Advanced](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml) [![Bandit](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml) [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml) [![Secure Docker Build](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml) [![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml) [![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml) [![License](https://img.shields.io/github/license/ibm/mcp-context-forge)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/)
+> Model Context Protocol gateway & proxy - unify REST, MCP and A2A with federation, virtual servers, retries, security and an optional admin UI.
+# MCP Gateway
 
-A flexible feature-rich FastAPI-based gateway for the Model Context Protocol (MCP) that unifies and federates tools, resources, prompts, servers and peer gateways, wraps any REST API as MCP-compliant tools or virtual servers, and exposes everything over HTTP/JSON-RPC, WebSocket, Server-Sent Events (SSE) and stdio transports—all manageable via a rich, interactive Admin UI and packaged as a container with support for any SQLAlchemy supported database.
+> Model Context Protocol gateway & proxy — unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
+
+<!-- === CI / Security / Build Badges === -->
+[![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
+[![CodeQL](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml)&nbsp;
+[![Bandit Security](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml)&nbsp;
+[![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
+
+<!-- === Container Build & Deploy === -->
+[![Secure Docker Build](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml)&nbsp;
+[![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml)
+
+<!-- === Package / Container === -->
+[![License](https://img.shields.io/github/license/ibm/mcp-context-forge)](LICENSE)&nbsp;
+[![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/)&nbsp;
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
+
+
+ContextForge MCP Gateway is a feature-rich gateway & proxy that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional live Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
 
 ![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
 
-## Overview & Goals
+## 🚀 Overview & Goals
 
-MCP Gateway builds on the MCP spec by sitting **in front of** MCP Server or REST API to:
+**ContextForge MCP Gateway** is a production-grade gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API—exposing a unified endpoint for all your AI clients.
 
-* **Act as a true gateway**, centralizing tool, resource and prompt registries while preserving the official MCP 2025-03-26 protocol
-* **Federate** multiple MCP servers into one unified endpoint—auto-discover peers (mDNS or explicit), health-check them, and merge their capabilities
-* **Virtualize** non-MCP services as "virtual servers" so you can register any REST API or function endpoint and expose it under MCP semantics
-* **Adapt** arbitrary REST/HTTP APIs into MCP tools with JSON-Schema input validation, retry/rate-limit policies and transparent JSON-RPC invocation
-* **Simplify** deployments with a full admin UI, rich transports, pre-built DX pipelines and production-grade observability
+It supports:
 
-![mcpgateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
+* Federation across multiple MCP and REST services
+* Virtualization of legacy APIs as MCP-compliant tools and servers
+* Transport over HTTP, JSON-RPC, WebSocket, SSE, and stdio
+* A live Admin UI for real-time management and configuration
+* Built-in auth, observability, retries, and rate-limiting
+* Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
+
+![MCP Gateway Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
 
 ---
 
-## Features
+<details>
+<summary><strong>🔌 Gateway Layer with Protocol Flexibility</strong></summary>
 
-### Core
+* Sits in front of any MCP server or REST API
+* Lets you choose your MCP protocol version (e.g., `2025-03-26`)
+* Exposes a single, unified interface for diverse backends
 
-* **Full MCP 2025-03-26**: initialize, ping, notify, completion, sampling (SSE), plus JSON-RPC fallback
-* **Gateway Layer**: sits alongside or in front of MCP servers, enforcing MCP rules and consolidating multiple backends
-* **Multi-Transport**: HTTP/JSON-RPC, WebSocket (ping/pong), SSE (one-way + backchannel), stdio
-* **Federation**:
+</details>
 
-  * Auto-discover or configure peer gateways
-  * Periodic health checks with fail-over
-  * Transparent merging of remote registries into one catalog
-* **Virtual Servers**: wrap any non-MCP endpoint (REST, gRPC, function) as a managed MCP server with minimal config
-* **REST-to-MCP Adapter**: register any REST API as an MCP tool—automatic schema extraction, auth headers, retry/rate limits
-* **Resources**: templated URIs, LRU+TTL caching, MIME detection, real-time SSE subscriptions
-* **Prompts**: Jinja2 templates, JSON-Schema enforcement, multimodal blocks, versioning & rollback
-* **Tools**: MCP-native or REST-based; input validation, retry logic, rate-limit/concurrency controls
+<details>
+<summary><strong>🌐 Federation of Peer Gateways</strong></summary>
 
-### Extras
+* Auto-discovers or configures peer gateways (via mDNS or manual)
+* Performs health checks and merges remote registries transparently
+* Supports Redis-backed syncing and fail-over
 
-* **Admin UI** (HTMX + Alpine.js + Tailwind): full CRUD for servers, tools, resources, prompts, gateways, roots & metrics
-* **Authentication & Authorization**: Basic, JWT Bearer, custom header schemes, per-endpoint DI
-* **Persistence & Migrations**: async SQLAlchemy ORM (SQLite, Postgres, MySQL, etc.), Alembic auto-migrations
-* **Event System**: uniform event envelopes on WS/SSE fan-out, server-side filters, backchannel hooks
-* **Observability & Health**: structured JSON logs, `/health` latency metrics decorator on every handler
-* **Developer Experience**: Makefile targets, pre-commit (`ruff`, `black`, `mypy`, `isort`), live-reload, 400+ tests, CI badges
+</details>
+
+<details>
+<summary><strong>🧩 Virtualization of REST/gRPC Services</strong></summary>
+
+* Wraps non-MCP services as virtual MCP servers
+* Registers tools, prompts, and resources with minimal configuration
+
+</details>
+
+<details>
+<summary><strong>🔁 REST-to-MCP Tool Adapter</strong></summary>
+
+* Adapts REST APIs into tools with:
+
+  * Automatic JSON Schema extraction
+  * Support for headers, tokens, and custom auth
+  * Retry, timeout, and rate-limit policies
+
+</details>
+
+<details>
+<summary><strong>🧠 Unified Registries</strong></summary>
+
+* **Prompts**: Jinja2 templates, multimodal support, rollback/versioning
+* **Resources**: URI-based access, MIME detection, caching, SSE updates
+* **Tools**: Native or adapted, with input validation and concurrency controls
+
+</details>
+
+<details>
+<summary><strong>📈 Admin UI, Observability & Dev Experience</strong></summary>
+
+* Live Admin UI built with HTMX + Alpine.js
+* Auth: Basic, JWT, or custom schemes
+* Structured logs, health endpoints, metrics
+* 400+ tests, Makefile targets, live reload, pre-commit hooks
+
+</details>
 
 ---
 
@@ -61,7 +112,8 @@ python3 -m venv .venv
 . ./.venv/bin/activate
 
 # Install mcp-contextforge-gateway
-pip install mcp-contextforge-gateway
+pip install mcp-contextforge-gateway # from pypi
+#pip install .                        # or install from latest github code after cloning repo
 
 # Run mcpgateway with default options (binds to 127.0.0.1:4444) with admin:changeme
 mcpgateway  # login to http://127.0.0.1:4444
@@ -77,7 +129,7 @@ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --
 
 # Run a local MCP Server (github) listening on SSE http://localhost:8000/sse
 pip install uvenv
-npx -y supergateway --stdio "uvenv run mcp-server-git"
+npx -y supergateway --stdio "uvenv run mcp-server-git" # requires node.js and npx
 # or time: npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002
 
 #--------------------------------------------
@@ -346,7 +398,7 @@ pipx install uv
 uv venv ~/.venv/mcpgateway
 source ~/.venv/mcpgateway/bin/activate
 
-# Install the gateway package very quicmcpkly
+# Install the gateway package using uv
 uv pip install mcp-contextforge-gateway
 
 # Launch wrapper
@@ -557,7 +609,7 @@ A `make compose-up` target is provided along with a [docker-compose.yml](docker-
 
 > ⚠️ If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
 
-You can get started by copying the provided [.env.examples](.env.example) to `.env` and making the necessary edits to fit your environment.
+You can get started by copying the provided [.env.example](.env.example) to `.env` and making the necessary edits to fit your environment.
 
 <details>
 <summary><strong>🔧 Environment Configuration Variables</strong></summary>
@@ -1605,6 +1657,64 @@ devpi-web            - Open devpi web interface
 ```
 </details>
 
+## 🔍 Troubleshooting
+
+<details>
+<summary><strong>Port publishing on WSL2 (rootless Podman & Docker Desktop)</strong></summary>
+
+### Diagnose the listener
+
+```bash
+# Inside your WSL distro
+ss -tlnp | grep 4444        # Use ss
+netstat -anp | grep 4444    # or netstat
+```
+
+*Seeing `:::4444 LISTEN rootlessport` is normal* – the IPv6 wildcard
+socket (`::`) also accepts IPv4 traffic **when**
+`net.ipv6.bindv6only = 0` (default on Linux).
+
+### Why localhost fails on Windows
+
+WSL 2's NAT layer rewrites only the *IPv6* side of the dual-stack listener. From Windows, `http://127.0.0.1:4444` (or Docker Desktop's "localhost") therefore times-out.
+
+#### Fix (Podman rootless)
+
+```bash
+# Inside the WSL distro
+echo "wsl" | sudo tee /etc/containers/podman-machine
+systemctl --user restart podman.socket
+```
+
+`ss` should now show `0.0.0.0:4444` instead of `:::4444`, and the
+service becomes reachable from Windows *and* the LAN.
+
+#### Fix (Docker Desktop > 4.19)
+
+Docker Desktop adds a "WSL integration" switch per-distro.
+Turn it **on** for your distro, restart Docker Desktop, then restart the
+container:
+
+```bash
+docker restart mcpgateway
+```
+
+</details>
+
+<details>
+<summary><strong>Gateway starts but immediately exits ("Failed to read DATABASE_URL")</strong></summary>
+
+Copy `.env.example` to `.env` first:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `DATABASE_URL`, `JWT_SECRET_KEY`, `BASIC_AUTH_PASSWORD`, etc.
+Missing or empty required vars cause a fast-fail at startup.
+
+</details>
+
 ## Contributing
 
 1. Fork the repo, create a feature branch.
@@ -1631,17 +1741,17 @@ Licensed under the **Apache License 2.0** – see [LICENSE](./LICENSE)
 Special thanks to our contributors for helping us improve ContextForge MCP Gateway:
 
 <a href="https://github.com/ibm/mcp-context-forge/graphs/contributors">
-  <img alt="Contributors list" src="https://contrib.rocks/image?repo=ibm/mcp-context-forge" />
+  <img src="https://contrib.rocks/image?repo=ibm/mcp-context-forge&max=100&anon=0&columns=10" />
 </a>
 
 ## Star History and Project Activity
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ibm/mcp-context-forge&type=Date)](https://www.star-history.com/#ibm/mcp-context-forge&Date)
 
-[![Forks](https://img.shields.io/github/forks/ibm/mcp-context-forge?style=social)](https://github.com/ibm/mcp-context-forge/network/members)
-
-<!-- [![Issues Open](https://img.shields.io/github/issues/ibm/mcp-context-forge)](https://github.com/ibm/mcp-context-forge/issues) -->
-
-**PyPi Downloads:**
-
-[![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/) [![PyPI Downloads](https://img.shields.io/pypi/dm/mcp-contextforge-gateway)](https://pepy.tech/project/mcp-contextforge-gateway)
+<!-- === Usage Stats === -->
+[![PyPi Downloads](https://static.pepy.tech/badge/mcp-contextforge-gateway/month)](https://pepy.tech/project/mcp-contextforge-gateway)&nbsp;
+[![Stars](https://img.shields.io/github/stars/ibm/mcp-context-forge?style=social)](https://github.com/ibm/mcp-context-forge/stargazers)&nbsp;
+[![Forks](https://img.shields.io/github/forks/ibm/mcp-context-forge?style=social)](https://github.com/ibm/mcp-context-forge/network/members)&nbsp;
+[![Contributors](https://img.shields.io/github/contributors/ibm/mcp-context-forge)](https://github.com/ibm/mcp-context-forge/graphs/contributors)&nbsp;
+[![Last Commit](https://img.shields.io/github/last-commit/ibm/mcp-context-forge)](https://github.com/ibm/mcp-context-forge/commits)&nbsp;
+[![Open Issues](https://img.shields.io/github/issues/ibm/mcp-context-forge)](https://github.com/ibm/mcp-context-forge/issues)&nbsp;
