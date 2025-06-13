@@ -142,10 +142,10 @@ dev = [
 
 # Convenience meta-extras
 all = [
-    "mcpgateway[redis]",
+    "mcp-contextforge-gateway[redis]",
 ]
 dev-all = [
-    "mcpgateway[redis,dev]",
+    "mcp-contextforge-gateway[redis,dev]",
 ]
 
 # --------------------------------------------------------------------
