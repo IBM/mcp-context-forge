@@ -61,7 +61,8 @@ python3 -m venv .venv
 . ./.venv/bin/activate
 
 # Install mcp-contextforge-gateway
-pip install mcp-contextforge-gateway
+pip install mcp-contextforge-gateway # from pypi
+#pip install .                        # or install from latest github code after cloning repo
 
 # Run mcpgateway with default options (binds to 127.0.0.1:4444) with admin:changeme
 mcpgateway  # login to http://127.0.0.1:4444
@@ -77,7 +78,7 @@ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --
 
 # Run a local MCP Server (github) listening on SSE http://localhost:8000/sse
 pip install uvenv
-npx -y supergateway --stdio "uvenv run mcp-server-git"
+npx -y supergateway --stdio "uvenv run mcp-server-git" # requires node.js and npx
 # or time: npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002
 
 #--------------------------------------------
@@ -346,7 +347,7 @@ pipx install uv
 uv venv ~/.venv/mcpgateway
 source ~/.venv/mcpgateway/bin/activate
 
-# Install the gateway package very quicmcpkly
+# Install the gateway package using uv
 uv pip install mcp-contextforge-gateway
 
 # Launch wrapper
@@ -557,7 +558,7 @@ A `make compose-up` target is provided along with a [docker-compose.yml](docker-
 
 > ⚠️ If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
 
-You can get started by copying the provided [.env.examples](.env.example) to `.env` and making the necessary edits to fit your environment.
+You can get started by copying the provided [.env.example](.env.example) to `.env` and making the necessary edits to fit your environment.
 
 <details>
 <summary><strong>🔧 Environment Configuration Variables</strong></summary>
@@ -1605,6 +1606,64 @@ devpi-web            - Open devpi web interface
 ```
 </details>
 
+## 🔍 Troubleshooting
+
+<details>
+<summary><strong>Port publishing on WSL2 (rootless Podman & Docker Desktop)</strong></summary>
+
+### Diagnose the listener
+
+```bash
+# Inside your WSL distro
+ss -tlnp | grep 4444        # Use ss
+netstat -anp | grep 4444    # or netstat
+```
+
+*Seeing `:::4444 LISTEN rootlessport` is normal* – the IPv6 wildcard
+socket (`::`) also accepts IPv4 traffic **when**
+`net.ipv6.bindv6only = 0` (default on Linux).
+
+### Why localhost fails on Windows
+
+WSL 2's NAT layer rewrites only the *IPv6* side of the dual-stack listener. From Windows, `http://127.0.0.1:4444` (or Docker Desktop's "localhost") therefore times-out.
+
+#### Fix (Podman rootless)
+
+```bash
+# Inside the WSL distro
+echo "wsl" | sudo tee /etc/containers/podman-machine
+systemctl --user restart podman.socket
+```
+
+`ss` should now show `0.0.0.0:4444` instead of `:::4444`, and the
+service becomes reachable from Windows *and* the LAN.
+
+#### Fix (Docker Desktop > 4.19)
+
+Docker Desktop adds a "WSL integration" switch per-distro.
+Turn it **on** for your distro, restart Docker Desktop, then restart the
+container:
+
+```bash
+docker restart mcpgateway
+```
+
+</details>
+
+<details>
+<summary><strong>Gateway starts but immediately exits ("Failed to read DATABASE_URL")</strong></summary>
+
+Copy `.env.example` to `.env` first:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `DATABASE_URL`, `JWT_SECRET_KEY`, `BASIC_AUTH_PASSWORD`, etc.
+Missing or empty required vars cause a fast-fail at startup.
+
+</details>
+
 ## Contributing
 
 1. Fork the repo, create a feature branch.
@@ -1631,7 +1690,7 @@ Licensed under the **Apache License 2.0** – see [LICENSE](./LICENSE)
 Special thanks to our contributors for helping us improve ContextForge MCP Gateway:
 
 <a href="https://github.com/ibm/mcp-context-forge/graphs/contributors">
-  <img alt="Contributors list" src="https://contrib.rocks/image?repo=ibm/mcp-context-forge" />
+  <img src="https://contrib.rocks/image?repo=ibm/mcp-context-forge&max=100&anon=0&columns=10" />
 </a>
 
 ## Star History and Project Activity
