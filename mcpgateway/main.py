@@ -105,6 +105,7 @@ from mcpgateway.services.tool_service import (
     ToolService,
 )
 from mcpgateway.transports.sse_transport import SSETransport
+from mcpgateway.transports.streamablehttp_transport import handle_streamable_http, session_manager
 from mcpgateway.types import (
     InitializeRequest,
     InitializeResult,
@@ -191,6 +192,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await logging_service.initialize()
         await sampling_handler.initialize()
         await resource_cache.initialize()
+
+        from contextlib import AsyncExitStack
+        stack = AsyncExitStack()
+        await stack.enter_async_context(session_manager.run())
+        # await start_streamablehttp()
         logger.info("All services initialized successfully")
         yield
     except Exception as e:
@@ -198,6 +204,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise
     finally:
         logger.info("Shutting down MCP Gateway services")
+        # await stop_streamablehttp()
         for service in [
             resource_cache,
             sampling_handler,
@@ -2018,6 +2025,9 @@ if ADMIN_API_ENABLED:
     app.include_router(admin_router)  # Admin routes imported from admin.py
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
+
+# Streamable http Mount
+app.mount("/mcp", app=handle_streamable_http)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:
