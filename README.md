@@ -203,7 +203,7 @@ You can now access the UI at [http://localhost:4444/admin](http://localhost:4444
 
 > 💡 You can also use `--env-file .env` if you have a config file already. See the provided [.env.example](.env.example)
 > 💡 To access local tools, consider using `--network=host`
-> 💡 Consider using a stable / release version of the image, ex: `ghcr.io/ibm/mcp-context-forge:v0.1.0`
+> 💡 Consider using a stable / release version of the image, ex: `ghcr.io/ibm/mcp-context-forge:v0.1.1`
 
 ### Optional: Mount a local volume for persistent SQLite storage
 
@@ -301,7 +301,7 @@ python3 -m mcpgateway.wrapper
 <summary><strong>Expected responses from mcpgateway.wrapper</strong></summary>
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.1.1"}}}
 
 # When there's no tools
 {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
