@@ -11,7 +11,7 @@ fi
 make install-dev
 
 # Run tests to verify setup
-make test
+# make test
 
 echo "Devcontainer setup complete."
 

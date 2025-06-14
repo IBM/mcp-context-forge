@@ -125,6 +125,7 @@ check-env:
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: run                  - Execute helper script ./run.sh
+# help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
 # help: test                 - Run unit tests with pytest
 # help: test-curl            - Smoke-test API endpoints with curl script
 # help: pytest-examples      - Run README / examples through pytest-examples
@@ -159,6 +160,11 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 	chmod 640 certs/key.pem
 
 ## --- Testing -----------------------------------------------------------------
+smoketest:
+	@echo "🚀 Running smoketest…"
+	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
+	@echo "✅ Smoketest passed!"
+
 test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || make venv
@@ -774,33 +780,46 @@ containerfile-update:
 # help: verify               - Build + twine + check-manifest + pyroma (no upload)
 # help: publish              - Verify, then upload to PyPI (needs TWINE_* creds)
 # =============================================================================
-.PHONY: dist wheel sdist verify publish
+.PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean                ## Build wheel + sdist
-	python3 -m build
-	@echo "🛠  Wheel & sdist written to ./dist"
+dist: clean                  ## Build wheel + sdist into ./dist
+	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@/bin/bash -eu -c "\
+	    source $(VENV_DIR)/bin/activate && \
+	    python3 -m pip install --quiet --upgrade pip build && \
+	    python3 -m build"
+	@echo '🛠  Wheel & sdist written to ./dist'
 
-wheel:                     ## Build wheel only
-	python3 -m build -w
-	@echo "🛠  Wheel written to ./dist"
+wheel:                       ## Build wheel only
+	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@/bin/bash -eu -c "\
+	    source $(VENV_DIR)/bin/activate && \
+	    python3 -m pip install --quiet --upgrade pip build && \
+	    python3 -m build -w"
+	@echo '🛠  Wheel written to ./dist'
 
-sdist:                     ## Build source distribution only
-	python3 -m build -s
-	@echo "🛠  Source distribution written to ./dist"
+sdist:                       ## Build source distribution only
+	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@/bin/bash -eu -c "\
+	    source $(VENV_DIR)/bin/activate && \
+	    python3 -m pip install --quiet --upgrade pip build && \
+	    python3 -m build -s"
+	@echo '🛠  Source distribution written to ./dist'
 
 verify: dist               ## Build, run metadata & manifest checks
-	twine check dist/*                 # metadata sanity
-	check-manifest                     # sdist completeness
-	pyroma -d .                        # metadata quality score
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	twine check dist/* && \
+	check-manifest && \
+	pyroma -d ."
 	@echo "✅  Package verified – ready to publish."
 
 publish: verify            ## Verify, then upload to PyPI
-	twine upload dist/*               # creds via env vars or ~/.pypirc
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload dist/*"
 	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
 
-publish-testpypi: verify            ## Verify, then upload to TestPyPI
-	twine upload --repository testpypi dist/*  # creds via env vars or ~/.pypirc
-	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
+publish-testpypi: verify   ## Verify, then upload to TestPyPI
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload --repository testpypi dist/*"
+	@echo "🚀  Upload finished – check https://test.pypi.org/project/$(PROJECT_NAME)/"
 
 # =============================================================================
 # 🦭 PODMAN CONTAINER BUILD & RUN
@@ -1620,7 +1639,7 @@ local-pypi-debug:
 # help: devpi-clean          - Full cycle: build → upload → install locally
 # help: devpi-status         - Show devpi server status
 # help: devpi-web            - Open devpi web interface
-# help: devpi-delete         - Delete mcpgateway==<ver> from devpi index
+# help: devpi-delete         - Delete mcp-contextforge-gateway==<ver> from devpi index
 
 
 .PHONY: devpi-install devpi-init devpi-start devpi-stop devpi-setup-user devpi-upload \
@@ -1738,7 +1757,7 @@ devpi-upload: dist devpi-setup-user		## Build wheel/sdist, then upload
 	@echo "🌐  Browse packages: $(DEVPI_URL)/$(DEVPI_INDEX)"
 
 devpi-test:
-	@echo "📥  Installing package from devpi..."
+	@echo "📥  Installing package mcp-contextforge-gateway from devpi..."
 	@if ! curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
 		echo "❌  DevPi server not running. Run 'make devpi-start' first."; \
 		exit 1; \
@@ -1746,13 +1765,13 @@ devpi-test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 	pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
 	            --extra-index-url https://pypi.org/simple/ \
-	            --force-reinstall $(PROJECT_NAME)"
-	@echo "✅  Installed $(PROJECT_NAME) from devpi"
+	            --force-reinstall mcp-contextforge-gateway"
+	@echo "✅  Installed mcp-contextforge-gateway from devpi"
 
 devpi-clean: clean dist devpi-upload devpi-test
 	@echo "🎉  Full devpi cycle complete!"
 	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show $(PROJECT_NAME)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show mcp-contextforge-gateway"
 
 devpi-status:
 	@echo "🔍  DevPi server status:"
@@ -1848,11 +1867,11 @@ VER ?= $(shell python -c "import tomllib, pathlib; \
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
 2>/dev/null || echo 0.0.0)
 
-devpi-delete: devpi-setup-user                 ## Delete mcpgateway==$(VER) from index
-	@echo "🗑️   Removing mcpgateway==$(VER) from $(DEVPI_INDEX)…"
+devpi-delete: devpi-setup-user                 ## Delete mcp-contextforge-gateway==$(VER) from index
+	@echo "🗑️   Removing mcp-contextforge-gateway==$(VER) from $(DEVPI_INDEX)…"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		devpi use $(DEVPI_INDEX) && \
-		devpi remove -y mcpgateway==$(VER) || true"
+		devpi remove -y mcp-contextforge-gateway==$(VER) || true"
 	@echo "✅  Delete complete (if it existed)"
 
 
