@@ -782,17 +782,29 @@ containerfile-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean                ## Build wheel + sdist
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build"
-	@echo "🛠  Wheel & sdist written to ./dist"
+dist: clean                  ## Build wheel + sdist into ./dist
+	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@/bin/bash -eu -c "\
+	    source $(VENV_DIR)/bin/activate && \
+	    python3 -m pip install --quiet --upgrade pip build && \
+	    python3 -m build"
+	@echo '🛠  Wheel & sdist written to ./dist'
 
-wheel:                     ## Build wheel only
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build -w"
-	@echo "🛠  Wheel written to ./dist"
+wheel:                       ## Build wheel only
+	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@/bin/bash -eu -c "\
+	    source $(VENV_DIR)/bin/activate && \
+	    python3 -m pip install --quiet --upgrade pip build && \
+	    python3 -m build -w"
+	@echo '🛠  Wheel written to ./dist'
 
-sdist:                     ## Build source distribution only
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build -s"
-	@echo "🛠  Source distribution written to ./dist"
+sdist:                       ## Build source distribution only
+	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@/bin/bash -eu -c "\
+	    source $(VENV_DIR)/bin/activate && \
+	    python3 -m pip install --quiet --upgrade pip build && \
+	    python3 -m build -s"
+	@echo '🛠  Source distribution written to ./dist'
 
 verify: dist               ## Build, run metadata & manifest checks
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
