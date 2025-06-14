@@ -94,7 +94,7 @@ def _extract_base_url(url: str) -> str:
         raise ValueError(f"Invalid URL provided: {url}")
 
     if "/servers/" in url:
-        before_servers = parsed.path.split('/servers')[0]
+        before_servers = parsed.path.split("/servers")[0]
         return f"{parsed.scheme}://{parsed.netloc}{before_servers}"
 
     return f"{url}"
