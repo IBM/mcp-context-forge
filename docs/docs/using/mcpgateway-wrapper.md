@@ -214,7 +214,7 @@ Open two shells or use a tool like `jq -c | nc -U` to pipe messages in and view 
         "resources":{"subscribe":false,"listChanged":false},
         "tools":{"listChanged":false}
       },
-      "serverInfo":{"name":"mcpgateway-wrapper","version":"0.1.0"}
+      "serverInfo":{"name":"mcpgateway-wrapper","version":"0.1.1"}
     }}
 
     # Empty tool list
