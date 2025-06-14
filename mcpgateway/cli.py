@@ -41,6 +41,8 @@ from typing import List
 
 import uvicorn
 
+from mcpgateway import __version__
+
 # ---------------------------------------------------------------------------
 # Configuration defaults (overridable via environment variables)
 # ---------------------------------------------------------------------------
@@ -104,6 +106,11 @@ def _insert_defaults(raw_args: List[str]) -> List[str]:
 
 def main() -> None:  # noqa: D401 – imperative mood is fine here
     """Entry point for the *mcpgateway* console script (delegates to Uvicorn)."""
+
+    # Check for version flag
+    if "--version" in sys.argv or "-V" in sys.argv:
+        print(f"mcpgateway {__version__}")
+        return
 
     # Discard the program name and inspect the rest.
     user_args = sys.argv[1:]

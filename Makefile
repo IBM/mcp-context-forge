@@ -1627,7 +1627,7 @@ local-pypi-debug:
 # help: devpi-clean          - Full cycle: build → upload → install locally
 # help: devpi-status         - Show devpi server status
 # help: devpi-web            - Open devpi web interface
-# help: devpi-delete         - Delete mcpgateway==<ver> from devpi index
+# help: devpi-delete         - Delete mcp-contextforge-gateway==<ver> from devpi index
 
 
 .PHONY: devpi-install devpi-init devpi-start devpi-stop devpi-setup-user devpi-upload \
@@ -1745,7 +1745,7 @@ devpi-upload: dist devpi-setup-user		## Build wheel/sdist, then upload
 	@echo "🌐  Browse packages: $(DEVPI_URL)/$(DEVPI_INDEX)"
 
 devpi-test:
-	@echo "📥  Installing package from devpi..."
+	@echo "📥  Installing package mcp-contextforge-gateway from devpi..."
 	@if ! curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
 		echo "❌  DevPi server not running. Run 'make devpi-start' first."; \
 		exit 1; \
@@ -1753,13 +1753,13 @@ devpi-test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 	pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
 	            --extra-index-url https://pypi.org/simple/ \
-	            --force-reinstall $(PROJECT_NAME)"
-	@echo "✅  Installed $(PROJECT_NAME) from devpi"
+	            --force-reinstall mcp-contextforge-gateway"
+	@echo "✅  Installed mcp-contextforge-gateway from devpi"
 
 devpi-clean: clean dist devpi-upload devpi-test
 	@echo "🎉  Full devpi cycle complete!"
 	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show $(PROJECT_NAME)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show mcp-contextforge-gateway"
 
 devpi-status:
 	@echo "🔍  DevPi server status:"
@@ -1855,11 +1855,11 @@ VER ?= $(shell python -c "import tomllib, pathlib; \
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
 2>/dev/null || echo 0.0.0)
 
-devpi-delete: devpi-setup-user                 ## Delete mcpgateway==$(VER) from index
-	@echo "🗑️   Removing mcpgateway==$(VER) from $(DEVPI_INDEX)…"
+devpi-delete: devpi-setup-user                 ## Delete mcp-contextforge-gateway==$(VER) from index
+	@echo "🗑️   Removing mcp-contextforge-gateway==$(VER) from $(DEVPI_INDEX)…"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		devpi use $(DEVPI_INDEX) && \
-		devpi remove -y mcpgateway==$(VER) || true"
+		devpi remove -y mcp-contextforge-gateway==$(VER) || true"
 	@echo "✅  Delete complete (if it existed)"
 
 
