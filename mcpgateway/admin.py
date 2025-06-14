@@ -48,7 +48,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.services.gateway_service import GatewayService, GatewayConnectionError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.root_service import RootService
@@ -769,6 +769,12 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return RedirectResponse(f"{root_path}/admin#gateways", status_code=502)
+        elif isinstance(ex, ValueError):
+            return RedirectResponse(f"{root_path}/admin#gateways", status_code=400)
+        elif isinstance(ex, RuntimeError):
+            return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
+        else:
+            return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/edit")
