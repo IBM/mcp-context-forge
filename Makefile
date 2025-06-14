@@ -780,33 +780,34 @@ containerfile-update:
 # help: verify               - Build + twine + check-manifest + pyroma (no upload)
 # help: publish              - Verify, then upload to PyPI (needs TWINE_* creds)
 # =============================================================================
-.PHONY: dist wheel sdist verify publish
+.PHONY: dist wheel sdist verify publish publish-testpypi
 
 dist: clean                ## Build wheel + sdist
-	python3 -m build
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build"
 	@echo "🛠  Wheel & sdist written to ./dist"
 
 wheel:                     ## Build wheel only
-	python3 -m build -w
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build -w"
 	@echo "🛠  Wheel written to ./dist"
 
 sdist:                     ## Build source distribution only
-	python3 -m build -s
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m build -s"
 	@echo "🛠  Source distribution written to ./dist"
 
 verify: dist               ## Build, run metadata & manifest checks
-	twine check dist/*                 # metadata sanity
-	check-manifest                     # sdist completeness
-	pyroma -d .                        # metadata quality score
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	twine check dist/* && \
+	check-manifest && \
+	pyroma -d ."
 	@echo "✅  Package verified – ready to publish."
 
 publish: verify            ## Verify, then upload to PyPI
-	twine upload dist/*               # creds via env vars or ~/.pypirc
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload dist/*"
 	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
 
-publish-testpypi: verify            ## Verify, then upload to TestPyPI
-	twine upload --repository testpypi dist/*  # creds via env vars or ~/.pypirc
-	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
+publish-testpypi: verify   ## Verify, then upload to TestPyPI
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload --repository testpypi dist/*"
+	@echo "🚀  Upload finished – check https://test.pypi.org/project/$(PROJECT_NAME)/"
 
 # =============================================================================
 # 🦭 PODMAN CONTAINER BUILD & RUN
