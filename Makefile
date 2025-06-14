@@ -125,6 +125,7 @@ check-env:
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: run                  - Execute helper script ./run.sh
+# help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
 # help: test                 - Run unit tests with pytest
 # help: test-curl            - Smoke-test API endpoints with curl script
 # help: pytest-examples      - Run README / examples through pytest-examples
@@ -159,6 +160,11 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 	chmod 640 certs/key.pem
 
 ## --- Testing -----------------------------------------------------------------
+smoketest:
+	@echo "🚀 Running smoketest…"
+	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
+	@echo "✅ Smoketest passed!"
+
 test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || make venv
