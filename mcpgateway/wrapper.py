@@ -93,7 +93,7 @@ def _extract_base_url(url: str) -> str:
     if not parsed.scheme or not parsed.netloc:
         raise ValueError(f"Invalid URL provided: {url}")
 
-    before_servers = parsed.path.split('/servers')[0]
+    before_servers = parsed.path.split("/servers")[0]
     return f"{parsed.scheme}://{parsed.netloc}{before_servers}"
 
 
@@ -159,10 +159,6 @@ async def get_tools_from_mcp_server(catalog_urls: List[str]) -> List[str]:
 
     Returns:
         List[str]: A list of tool ID strings extracted from the server catalog.
-
-    Raises:
-        httpx.RequestError: If a network problem occurs.
-        httpx.HTTPStatusError: If the server returns a 4xx or 5xx response.
     """
     server_ids = [url.split("/")[-1] for url in catalog_urls]
     url = f"{BASE_URL}/servers/"
@@ -184,10 +180,6 @@ async def tools_metadata(tool_ids: List[str]) -> List[Dict[str, Any]]:
 
     Returns:
         List[Dict[str, Any]]: A list of metadata dictionaries for each tool.
-
-    Raises:
-        httpx.RequestError: If a network problem occurs.
-        httpx.HTTPStatusError: If the server returns a 4xx or 5xx response.
     """
     if not tool_ids:
         return []
@@ -209,10 +201,6 @@ async def get_prompts_from_mcp_server(catalog_urls: List[str]) -> List[str]:
 
     Returns:
         List[str]: A list of prompt ID strings.
-
-    Raises:
-        httpx.RequestError: If a network problem occurs.
-        httpx.HTTPStatusError: If the server returns a 4xx or 5xx response.
     """
     server_ids = [url.split("/")[-1] for url in catalog_urls]
     url = f"{BASE_URL}/servers/"
@@ -234,10 +222,6 @@ async def prompts_metadata(prompt_ids: List[str]) -> List[Dict[str, Any]]:
 
     Returns:
         List[Dict[str, Any]]: A list of metadata dictionaries for each prompt.
-
-    Raises:
-        httpx.RequestError: If a network problem occurs.
-        httpx.HTTPStatusError: If the server returns a 4xx or 5xx response.
     """
     if not prompt_ids:
         return []
@@ -258,10 +242,6 @@ async def get_resources_from_mcp_server(catalog_urls: List[str]) -> List[str]:
 
     Returns:
         List[str]: A list of resource ID strings.
-
-    Raises:
-        httpx.RequestError: If a network problem occurs.
-        httpx.HTTPStatusError: If the server returns a 4xx or 5xx response.
     """
     server_ids = [url.split("/")[-1] for url in catalog_urls]
     url = f"{BASE_URL}/servers/"
@@ -283,10 +263,6 @@ async def resources_metadata(resource_ids: List[str]) -> List[Dict[str, Any]]:
 
     Returns:
         List[Dict[str, Any]]: A list of metadata dictionaries for each resource.
-
-    Raises:
-        httpx.RequestError: If a network problem occurs.
-        httpx.HTTPStatusError: If the server returns a 4xx or 5xx response.
     """
     if not resource_ids:
         return []
