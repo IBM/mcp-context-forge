@@ -78,7 +78,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.gateway_service import GatewayService, GatewayConnectionError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import (
     PromptError,
@@ -1506,7 +1506,15 @@ async def register_gateway(
         Created gateway.
     """
     logger.debug(f"User '{user}' requested to register gateway: {gateway}")
-    return await gateway_service.register_gateway(db, gateway)
+    try:
+        return await gateway_service.register_gateway(db, gateway)
+    except Exception as ex:
+        if isinstance(ex, GatewayConnectionError):
+            return JSONResponse(
+                content={"message": "Unable to connect to gateway"},
+                status_code=502
+            )
+
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)

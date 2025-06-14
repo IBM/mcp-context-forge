@@ -92,7 +92,9 @@ def _extract_base_url(url: str) -> str:
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         raise ValueError(f"Invalid URL provided: {url}")
-    return f"{parsed.scheme}://{parsed.netloc}"
+
+    before_servers = parsed.path.split('/servers')[0]
+    return f"{parsed.scheme}://{parsed.netloc}{before_servers}"
 
 
 BASE_URL: str = _extract_base_url(SERVER_CATALOG_URLS[0]) if SERVER_CATALOG_URLS else ""
