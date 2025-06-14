@@ -232,19 +232,16 @@ class GatewayService:
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(gateway)
+        except* GatewayConnectionError as ve:
+            logger.error("GatewayConnectionError in group: %s", ve.exceptions)
+            raise ve.exceptions[0]
         except* ValueError as ve:
             logger.error("ValueErrors in group: %s", ve.exceptions)
         except* RuntimeError as re:
             logger.error("RuntimeErrors in group: %s", re.exceptions)
         except* BaseException as other:  # catches every other sub-exception
             logger.error("Other grouped errors: %s", other.exceptions)
-        # except IntegrityError as ex:
-        #     logger.error(f"Error adding gateway: {ex}")
-        #     db.rollback()
-        #     raise GatewayError(f"Gateway already exists: {gateway.name}")
-        # except Exception as e:
-        #     db.rollback()
-        #     raise GatewayError(f"Failed to register gateway: {str(e)}")
+            raise Exception(other.exceptions)
 
     async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
         """List all registered gateways.
