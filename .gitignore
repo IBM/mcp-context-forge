@@ -1,3 +1,4 @@
+minikube-*
 .htpasswd
 .env.gcr
 packages-lock.json
