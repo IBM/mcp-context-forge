@@ -105,7 +105,7 @@ def _extract_base_url(url: str) -> str:
     Note:
         If the target server was started with `APP_ROOT_PATH=/gateway`, the
         resulting catalog URLs include that prefix.  This helper preserves the
-        prefix so the wrapper’s follow-up calls remain correctly scoped.
+        prefix so the wrapper's follow-up calls remain correctly scoped.
     """
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
