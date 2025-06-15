@@ -119,16 +119,17 @@ mcpgateway  # login to http://127.0.0.1:4444
 # Optional: run in background with configured password/key and listen to all IPs
 BASIC_AUTH_PASSWORD=password JWT_SECRET_KEY=my-test-key mcpgateway --host 0.0.0.0 --port 4444 & bg
 
-# List all options
-mcpgateway --help
+# List version / help
+mcpgateway --help; mcpgateway --version
 
-# Generate your JWT token from the key
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
+# Generate your JWT token from the key and list it
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key); echo $MCPGATEWAY_BEARER_TOKEN
 
 # Run a local MCP Server (github) listening on SSE http://localhost:8000/sse
 pip install uvenv
 npx -y supergateway --stdio "uvenv run mcp-server-git" # requires node.js and npx
 # or time: npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002
+# or: python3 -m mcpgateway.translate --stdio "uvenv run mcp-server-git" --port 8000
 
 #--------------------------------------------
 # Register the MCP Server with the gateway and test it
@@ -170,7 +171,7 @@ curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/s
 
 # To stop the running process, you can either:
 fg # Return the process to foreground, you can not Ctrl + C, or:
-pkill mcpgateway
+pkill mcpgateway; # ps -ef | grep mcpgateway | awk '{print $2}' | xargs
 
 # Optionally, test the stdio wrapper to mirror tools from the gateway:
 # This lets you connect to the gateway with tools that don't support SSE:
@@ -196,7 +197,7 @@ docker run -d --name mcpgateway \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:latest
+  ghcr.io/ibm/mcp-context-forge:0.1.1
 
 docker logs mcpgateway
 ```
@@ -205,7 +206,7 @@ You can now access the UI at [http://localhost:4444/admin](http://localhost:4444
 
 > 💡 You can also use `--env-file .env` if you have a config file already. See the provided [.env.example](.env.example)
 > 💡 To access local tools, consider using `--network=host`
-> 💡 Consider using a stable / release version of the image, ex: `ghcr.io/ibm/mcp-context-forge:v0.1.1`
+> 💡 Consider using a stable / release version of the image, ex: `ghcr.io/ibm/mcp-context-forge:v0.1.1` rather than `latest`
 
 ### Optional: Mount a local volume for persistent SQLite storage
 
@@ -214,6 +215,8 @@ You can now access the UI at [http://localhost:4444/admin](http://localhost:4444
 ```
 
 ### Generate a token for API access
+
+A JWT token is required to access all API endpoints. This can be generated with the provided CLI, specifying a username, secret (that matches the one defined in `.env` for the gateway) and expiration time (in seconds).
 
 ```bash
 export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 100800 --secret my-test-key)
@@ -233,7 +236,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 ### Running the MCP Gateway stdio wrapper
 
-The `mcpgateway.wrapper` lets you connect to the gateway over **stdio**, while retaining authentication using the JWT token when the wrapper connect to a remote gateway. You should run this from a MCP client. You can test this from a shell with:
+The `mcpgateway.wrapper` lets you connect to the gateway over **stdio**, while retaining authentication using the JWT token when the wrapper connect to a remote gateway. You should run this from a MCP client (ex: defined in the `json` configuration of Claude/Copilot, etc). You can test this from a shell with:
 
 ```bash
 # Set environment variables
@@ -257,7 +260,7 @@ docker run --rm -i \
   -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/1 \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:latest \
+  ghcr.io/ibm/mcp-context-forge:0.1.1 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -339,7 +342,7 @@ docker run -i --rm \
   -e MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1 \
   -e MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
-  ghcr.io/ibm/mcp-context-forge:latest \
+  ghcr.io/ibm/mcp-context-forge:0.1.1 \
   python3 -m mcpgateway.wrapper
 ```
 
