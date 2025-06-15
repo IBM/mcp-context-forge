@@ -1549,19 +1549,88 @@ helm-delete:
 	@echo "🗑  Deleting $(RELEASE_NAME) release..."
 	helm uninstall $(RELEASE_NAME) -n $(NAMESPACE) || true
 
+
+# =============================================================================
+# 🚢 ARGO CD – GITOPS
+# TODO: change default to custom namespace (e.g. mcp-gitops)
+# =============================================================================
+# help: 🚢 ARGO CD – GITOPS
+# help: argocd-cli-install   - Install Argo CD CLI locally
+# help: argocd-install       - Install Argo CD into Minikube (ns=$(ARGOCD_NS))
+# help: argocd-password      - Echo initial admin password
+# help: argocd-forward       - Port-forward API/UI to http://localhost:$(ARGOCD_PORT)
+# help: argocd-login         - Log in to Argo CD CLI (requires argocd-forward)
+# help: argocd-app-bootstrap - Create & auto-sync $(ARGOCD_APP) from $(GIT_REPO)/$(GIT_PATH)
+# help: argocd-app-sync      - Manual re-sync of the application
+# -----------------------------------------------------------------------------
+
+ARGOCD_NS   ?= argocd
+ARGOCD_PORT ?= 8083
+ARGOCD_APP  ?= mcp-gateway
+GIT_REPO    ?= https://github.com/ibm/mcp-context-forge.git
+GIT_PATH    ?= k8s
+
+.PHONY: argocd-cli-install argocd-install argocd-password argocd-forward \
+        argocd-login argocd-app-bootstrap argocd-app-sync
+
+argocd-cli-install:
+	@echo "🔧 Installing Argo CD CLI…"
+	@if command -v argocd >/dev/null 2>&1; then echo "✅ argocd already present"; \
+	elif [ "$$(uname)" = "Darwin" ];  then brew install argocd; \
+	elif [ "$$(uname)" = "Linux" ];   then curl -sSL -o /tmp/argocd \
+	     https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64 && \
+	     sudo install -m 555 /tmp/argocd /usr/local/bin/argocd; \
+	else echo "❌ Unsupported OS – install argocd manually"; exit 1; fi
+
+argocd-install:
+	@echo "🚀 Installing Argo CD into Minikube…"
+	kubectl create namespace $(ARGOCD_NS) --dry-run=client -o yaml | kubectl apply -f -
+	kubectl apply -n $(ARGOCD_NS) \
+	  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+	@echo "⏳ Waiting for Argo CD server pod…"
+	kubectl -n $(ARGOCD_NS) rollout status deploy/argocd-server
+
+argocd-password:
+	@kubectl -n $(ARGOCD_NS) get secret argocd-initial-admin-secret \
+	  -o jsonpath='{.data.password}' | base64 -d ; echo
+
+argocd-forward:
+	@echo "🌐 Port-forward http://localhost:$(ARGOCD_PORT) → svc/argocd-server:443 (Ctrl-C to stop)…"
+	kubectl -n $(ARGOCD_NS) port-forward svc/argocd-server $(ARGOCD_PORT):443
+
+argocd-login: argocd-cli-install
+	@echo "🔐 Logging into Argo CD CLI…"
+	@PASS=$$(kubectl -n $(ARGOCD_NS) get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d); \
+	argocd login localhost:$(ARGOCD_PORT) --username admin --password $$PASS --insecure
+
+argocd-app-bootstrap:
+	@echo "🚀 Creating Argo CD application $(ARGOCD_APP)…"
+	-argocd app create $(ARGOCD_APP) \
+	    --repo $(GIT_REPO) \
+	    --path $(GIT_PATH) \
+	    --dest-server https://kubernetes.default.svc \
+	    --dest-namespace default \
+	    --sync-policy automated \
+	    --revision HEAD || true
+	argocd app sync $(ARGOCD_APP)
+
+argocd-app-sync:
+	@echo "🔄  Syncing Argo CD application $(ARGOCD_APP)…"
+	argocd app sync $(ARGOCD_APP)
+
 # =============================================================================
 # 🏠 LOCAL PYPI SERVER
 # Currently blocked by: https://github.com/pypiserver/pypiserver/issues/630
 # =============================================================================
 # help: 🏠 LOCAL PYPI SERVER
-# help: local-pypi-install   - Install pypiserver for local testing
-# help: local-pypi-start     - Start local PyPI server on :8084 (no auth)
-# help: local-pypi-start-auth - Start local PyPI server with basic auth (admin/admin)
-# help: local-pypi-stop      - Stop local PyPI server
-# help: local-pypi-upload    - Upload existing package to local PyPI (no auth)
+# help: local-pypi-install     - Install pypiserver for local testing
+# help: local-pypi-start       - Start local PyPI server on :8084 (no auth)
+# help: local-pypi-start-auth  - Start local PyPI server with basic auth (admin/admin)
+# help: local-pypi-stop        - Stop local PyPI server
+# help: local-pypi-upload      - Upload existing package to local PyPI (no auth)
 # help: local-pypi-upload-auth - Upload existing package to local PyPI (with auth)
-# help: local-pypi-test      - Install package from local PyPI
-# help: local-pypi-clean     - Full cycle: build → upload → install locally
+# help: local-pypi-test        - Install package from local PyPI
+# help: local-pypi-clean       - Full cycle: build → upload → install locally
 
 .PHONY: local-pypi-install local-pypi-start local-pypi-start-auth local-pypi-stop local-pypi-upload \
         local-pypi-upload-auth local-pypi-test local-pypi-clean
