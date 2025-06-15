@@ -329,3 +329,92 @@ Absolutely! Here are the two new features in your exact `mkdocs-material` + `adm
     - Supports TLS verification toggle (`--skipSSLVerify`).
 
     ---
+
+
+---
+
+### 🧭 Epic: One-Click Download of Ready-to-Use Client Config
+
+???+ "Copy Config for Claude or CLI"
+    **Goal:**
+    As a user viewing a virtual server in the Admin UI, I want a button to **download a pre-filled Claude JSON config**
+
+    **So that** I can immediately use the selected server in `Claude Desktop`, `mcpgateway.wrapper`, or any stdio/SSE-based client.
+
+    **Use Cases:**
+
+    - **Claude Desktop (stdio wrapper):**
+      Download a `.json` config that launches the wrapper with correct `MCP_SERVER_CATALOG_URLS` and token pre-set.
+    - **Browser / SSE Client:**
+      Download a `.json` or `.env` snippet with `Authorization` header, SSE URL, and ready-to-paste curl/Javascript.
+
+    **Implementation Details:**
+
+    - Button appears in the Admin UI under each virtual server's **View** panel.
+    - Config supports:
+        - `mcpgateway.wrapper` (for stdio clients)
+        - `/sse` endpoint with token (for browser / curl)
+    - JWT token is generated or reused on demand.
+    - Filled-in config includes:
+        - Virtual server ID
+        - Base gateway URL
+        - Short-lived token (`MCP_AUTH_TOKEN`)
+        - Optional Docker or pipx run command
+    - Claude Desktop format includes `command`, `args`, and `env` block.
+
+    **API Support:**
+
+    - Add endpoint:
+      ```http
+      GET /servers/{id}/client-config
+      ```
+    - Optional query params:
+        - `type=claude` (default)
+        - `type=sse`
+    - Returns JSON config with headers:
+      ```
+      Content-Disposition: attachment; filename="claude-config.json"
+      Content-Type: application/json
+      ```
+
+    **Example (Claude-style JSON):**
+
+    ```json
+    {
+      "mcpServers": {
+        "server-alias": {
+          "command": "python3",
+          "args": ["-m", "mcpgateway.wrapper"],
+          "env": {
+            "MCP_AUTH_TOKEN": "example-token",
+            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/3",
+            "MCP_TOOL_CALL_TIMEOUT": "120"
+          }
+        }
+      }
+    }
+    ```
+
+    **Example (curl-ready SSE config):**
+
+    ```bash
+    curl -H "Authorization: ..." \
+        http://localhost:4444/servers/3/sse
+    ```
+
+    **Acceptance Criteria:**
+    - UI exposes a single **Download Config** button per server.
+    - Endpoint `/servers/{id}/client-config` returns fully populated config.
+    - Tokens are scoped, short-lived, or optionally ephemeral.
+    - Claude Desktop accepts the file without user edits.
+
+    **Security:**
+    - JWT token is only included if the requester is authenticated.
+    - Download links are protected behind user auth and audit-logged.
+    - Expiry and scope settings match user profile or server defaults.
+
+    **Bonus Ideas:**
+    - Toggle to choose between Claude, curl, or Docker styles.
+    - QR code output or "Copy to Clipboard" button. QR might work with the phone app, etc.
+
+    ---

@@ -73,29 +73,52 @@ if not SERVER_CATALOG_URLS:
 # Base URL Extraction
 # -----------------------------------------------------------------------------
 def _extract_base_url(url: str) -> str:
-    """
-    Extract the base URL (scheme and network location) from a full URL.
+    """Return the gateway-level base URL.
+
+    The function keeps any application root path (`APP_ROOT_PATH`) that the
+    remote gateway is mounted under (for example `/gateway`) while removing
+    the `/servers/<id>` suffix that appears in catalog endpoints. It also
+    discards any query string or fragment.
 
     Args:
-        url (str): The full URL to parse, e.g., "https://example.com/path?query=1".
+        url (str): Full catalog URL, e.g.
+            `https://host.com/gateway/servers/1`.
 
     Returns:
-        str: The base URL, including scheme and netloc, e.g., "https://example.com".
+        str: Clean base URL suitable for building `/tools/`, `/prompts/`,
+        or `/resources/` endpoints—for example
+        `https://host.com/gateway`.
 
     Raises:
-        ValueError: If the URL does not contain a scheme or netloc.
+        ValueError: If *url* lacks a scheme or network location.
 
-    Example:
-        >>> _extract_base_url("https://www.example.com/path/to/resource")
-        'https://www.example.com'
+    Examples:
+        >>> _extract_base_url("https://host.com/servers/2")
+        'https://host.com'
+        >>> _extract_base_url("https://host.com/gateway/servers/2")
+        'https://host.com/gateway'
+        >>> _extract_base_url("https://host.com/gateway/servers")
+        'https://host.com/gateway'
+        >>> _extract_base_url("https://host.com/gateway")
+        'https://host.com/gateway'
+
+    Note:
+        If the target server was started with `APP_ROOT_PATH=/gateway`, the
+        resulting catalog URLs include that prefix.  This helper preserves the
+        prefix so the wrapper’s follow-up calls remain correctly scoped.
     """
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         raise ValueError(f"Invalid URL provided: {url}")
 
-    before_servers = parsed.path.split("/servers")[0]
-    return f"{parsed.scheme}://{parsed.netloc}{before_servers}"
+    path = parsed.path or ""
+    if "/servers/" in path:
+        path = path.split("/servers")[0]           # ".../servers/123" -> "..."
+    elif path.endswith("/servers"):
+        path = path[:-len("/servers")]             # ".../servers"     -> "..."
+    # otherwise keep the existing path (supports APP_ROOT_PATH)
 
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 BASE_URL: str = _extract_base_url(SERVER_CATALOG_URLS[0]) if SERVER_CATALOG_URLS else ""
 

@@ -2,7 +2,7 @@ apiVersion: v2
 name: mcpgateway
 description: A Helm chart for deploying MCP Gateway to Kubernetes
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "latest"
 keywords:
   - mcp
@@ -10,7 +10,7 @@ keywords:
   - kubernetes
   - helm
 maintainers:
-  - name: MCP Team
-    email: mcp-team@example.com
+  - name: Mihai Criveti
+    email: redacted@ibm.com
 sources:
   - https://github.com/IBM/mcp-context-forge
