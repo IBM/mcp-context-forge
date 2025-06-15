@@ -568,60 +568,81 @@ Need help? See:
 
 ---
 
-## Quick Start (VS Code Dev Container)
+## 🚀 Quick Start: VS Code Dev Container
 
-For the fastest development setup, use the provided VS Code Dev Container configuration. This provides a fully configured development environment with Python 3.11, Docker CLI, and all project dependencies pre-installed.
+Spin up a fully-loaded dev environment (Python 3.11, Docker/Podman CLI, all project dependencies) in just two clicks.
 
-### Prerequisites
+---
 
-* **VS Code** with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
-* **Docker** or **Podman** installed and running
+<details>
+<summary><strong>📋 Prerequisites</strong></summary>
 
-### Using the Dev Container
+* **VS Code** with the [Dev Containers extension](https://code.visualstudio.com/docs/devcontainers/containers)
+* **Docker** or **Podman** installed and running locally
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/ibm/mcp-context-forge.git
-   cd mcp-context-forge
-   ```
+</details>
 
-2. **Open in VS Code:**
-   ```bash
-   code .
-   ```
+<details>
+<summary><strong>🧰 Setup Instructions</strong></summary>
 
-3. **Reopen in Container:**
-   - VS Code will detect the `.devcontainer` configuration
-   - Click "Reopen in Container" when prompted, or
-   - Use Command Palette (`Ctrl/Cmd+Shift+P`) → "Dev Containers: Reopen in Container"
+### 1 · Clone & Open
 
-4. **Wait for setup:**
-   - The container will build automatically (first time may take a few minutes)
-   - Development dependencies will be installed via `make install-dev`
-   - Tests will run automatically to verify the setup
+```bash
+git clone https://github.com/ibm/mcp-context-forge.git
+cd mcp-context-forge
+code .
+```
 
-5. **Start developing:**
-   ```bash
-   make dev  # Start development server
-   make test # Run tests
-   make lint # Run linting
-   ```
+VS Code will detect the `.devcontainer` and prompt:
+**"Reopen in Container"**
+*or* manually run: <kbd>Ctrl/Cmd ⇧ P</kbd> → **Dev Containers: Reopen in Container**
 
-### GitHub Codespaces
+---
 
-You can also use this project with GitHub Codespaces for cloud-based development:
+### 2 · First-Time Build (Automatic)
 
-1. Click the "Code" button on the GitHub repository page
-2. Select "Codespaces" tab
-3. Click "Create codespace on main"
-4. Wait for the environment to be ready (same setup as local dev container)
+The container build will:
 
-The devcontainer includes:
-- Python 3.11 with all project dependencies
-- Docker CLI for container management
-- VS Code extensions for Python and Docker development
-- Pre-configured environment variables for development mode
-- Automatic setup of `.env` file from `.env.example`
+* Install system packages & Python 3.11
+* Run `make install-dev` to pull all dependencies
+* Execute tests to verify the toolchain
+
+You'll land in `/workspace` ready to develop.
+
+</details>
+
+<details>
+<summary><strong>🛠️ Daily Developer Workflow</strong></summary>
+
+Common tasks inside the container:
+
+```bash
+# Start dev server (hot reload)
+make dev            # http://localhost:4444
+
+# Run tests & linters
+make test
+make lint
+```
+
+Optional:
+
+* `make bash` — drop into an interactive shell
+* `make clean` — clear build artefacts & caches
+* Port forwarding is automatic (customize via `.devcontainer/devcontainer.json`)
+
+</details>
+
+<details>
+<summary><strong>☁️ GitHub Codespaces: 1-Click Cloud IDE</strong></summary>
+
+No local Docker? Use Codespaces:
+
+1. Go to the repo → **Code ▸ Codespaces ▸ Create codespace on main**
+2. Wait for the container image to build in the cloud
+3. Develop using the same workflow above
+
+</details>
 
 ---
 
