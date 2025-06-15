@@ -123,7 +123,11 @@ class GatewayService:
             self._redis_client = None
 
     async def initialize(self) -> None:
-        """Initialize the service and start health check if this instance is the leader."""
+        """Initialize the service and start health check if this instance is the leader.
+
+        Raises:
+            ConnectionError: When redis ping fails
+        """
         logger.info("Initializing gateway service")
 
         if self._redis_client:
@@ -166,6 +170,7 @@ class GatewayService:
 
         Raises:
             GatewayNameConflictError: If gateway name already exists
+            []: When ExceptionGroup found
         """
         try:
             # Check for name conflicts (both active and inactive)
@@ -232,19 +237,18 @@ class GatewayService:
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(gateway)
+        except* GatewayConnectionError as ge:
+            logger.error("GatewayConnectionError in group: %s", ge.exceptions)
+            raise ge.exceptions[0]
         except* ValueError as ve:
             logger.error("ValueErrors in group: %s", ve.exceptions)
+            raise ve.exceptions[0]
         except* RuntimeError as re:
             logger.error("RuntimeErrors in group: %s", re.exceptions)
+            raise re.exceptions[0]
         except* BaseException as other:  # catches every other sub-exception
             logger.error("Other grouped errors: %s", other.exceptions)
-        # except IntegrityError as ex:
-        #     logger.error(f"Error adding gateway: {ex}")
-        #     db.rollback()
-        #     raise GatewayError(f"Gateway already exists: {gateway.name}")
-        # except Exception as e:
-        #     db.rollback()
-        #     raise GatewayError(f"Failed to register gateway: {str(e)}")
+            raise other.exceptions[0]
 
     async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
         """List all registered gateways.
