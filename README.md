@@ -177,6 +177,8 @@ pkill mcpgateway
 export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
 export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
 python3 -m mcpgateway.wrapper
+# Alternatively with uv
+uv run --directory . -m mcpgateway.wrapper
 ```
 
 See [.env.example](.env.example) for full list of ENV variables you can use to override the configuration.
@@ -243,6 +245,8 @@ export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
 
 # Run the wrapper from the installed module
 python3 -m mcpgateway.wrapper
+# Alternatively with uv
+uv run --directory . -m mcpgateway.wrapper
 ```
 
 **Or using the container image:**
@@ -270,6 +274,8 @@ npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europ
 export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
 export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
 python3 -m mcpgateway.wrapper
+# Alternatively with uv
+uv run --directory . -m mcpgateway.wrapper
 ```
 
 <details>
@@ -352,6 +358,8 @@ pipx install --include-deps mcp-contextforge-gateway
 MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
 MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1 \
 python3 -m mcpgateway.wrapper
+# Alternatively with uv
+uv run --directory . -m mcpgateway.wrapper
 ```
 
 **Claude Desktop JSON** (uses the host Python that pipx injected):
@@ -402,10 +410,8 @@ uv pip install mcp-contextforge-gateway
 # Launch wrapper
 MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
 MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1 \
-uv python -m mcpgateway.wrapper # Use this just for testing, as the Client will run the uv command
+uv run --directory . -m mcpgateway.wrapper # Use this just for testing, as the Client will run the uv command
 ```
-
-*(You can swap `uv python` for plain `python` if the venv is active.)*
 
 #### Claude Desktop JSON (runs through **uvenv run**)
 
