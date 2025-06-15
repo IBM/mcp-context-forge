@@ -17,7 +17,7 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
 
 
-ContextForge MCP Gateway is a feature-rich gateway & proxy that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional live Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
+ContextForge MCP Gateway is a feature-rich gateway & proxy that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
 
 ![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
@@ -31,7 +31,7 @@ It supports:
 * Federation across multiple MCP and REST services
 * Virtualization of legacy APIs as MCP-compliant tools and servers
 * Transport over HTTP, JSON-RPC, WebSocket, SSE, and stdio
-* A live Admin UI for real-time management and configuration
+* An Admin UI for real-time management and configuration
 * Built-in auth, observability, retries, and rate-limiting
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
 
@@ -90,7 +90,7 @@ For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap
 <details>
 <summary><strong>📈 Admin UI, Observability & Dev Experience</strong></summary>
 
-* Live Admin UI built with HTMX + Alpine.js
+* Admin UI built with HTMX + Alpine.js
 * Auth: Basic, JWT, or custom schemes
 * Structured logs, health endpoints, metrics
 * 400+ tests, Makefile targets, live reload, pre-commit hooks
@@ -175,7 +175,7 @@ npx -y @modelcontextprotocol/inspector
 </details>
 
 <details>
-<summary><strong>🖧 Using the stdio wrapper (optional)</strong></summary>
+<summary><strong>🖧 Using the stdio wrapper (mcpgateway-wrapper)</strong></summary>
 
 ```bash
 export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
@@ -959,7 +959,6 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 ```bash
 # Generate a JWT token using JWT_SECRET_KEY and export it as MCPGATEWAY_BEARER_TOKEN
 # Note that the module needs to be installed. If running locally use:
-# python3 mcpgateway/utils/create_jwt_token.py
 export MCPGATEWAY_BEARER_TOKEN=$(JWT_SECRET_KEY=my-test-key python3 -m mcpgateway.utils.create_jwt_token)
 
 # Use the JWT token in an API call
