@@ -1330,6 +1330,7 @@ ibmcloud-ce-rm:
 # 🧪 MINIKUBE LOCAL CLUSTER
 # =============================================================================
 # A self‑contained block with sensible defaults, overridable via the CLI.
+# App is accessible after: kubectl port-forward svc/mcp-context-forge 8080:80
 # Examples:
 #   make minikube-start MINIKUBE_DRIVER=podman
 #   make minikube-image-load TAG=v0.1.2
@@ -1382,7 +1383,7 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # help: minikube-tunnel         - Run "minikube tunnel" (LoadBalancer) in foreground
 # help: minikube-dashboard      - Print & (best‑effort) open the Kubernetes dashboard URL
 # help: minikube-image-load     - Load $(IMAGE) into Minikube container runtime
-# help: minikube-k8s-apply      - Apply manifests from k8s/
+# help: minikube-k8s-apply      - Apply manifests from k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
 # help: minikube-status         - Cluster + addon health overview
 # help: minikube-context        - Switch kubectl context to Minikube
 # help: minikube-ssh            - SSH into the Minikube VM
