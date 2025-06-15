@@ -99,92 +99,120 @@ For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap
 
 ---
 
-## Quick Start: PyPi
+## Quick Start — PyPI
 
-MCP Gateway is [published on PyPi](https://pypi.org/project/mcp-contextforge-gateway) as `mcp-contextforge-gateway`. You can install and start a server with:
+MCP Gateway is published on [PyPI](https://pypi.org/project/mcp-contextforge-gateway/) as `mcp-contextforge-gateway`.
+
+---
+
+<details>
+<summary><strong>📋 Prerequisites</strong></summary>
+
+* **Python ≥ 3.10** (3.11 recommended)
+* **curl + jq** – only for the last smoke‑test step
+
+</details>
+
+### 1 · Install & run (copy‑paste friendly)
 
 ```bash
-# Create a virtual environment and activate it
-mkdir mcpgateway && cd mcpgateway # directory to store Python venv and mcp.db
-python3 -m venv .venv
-. ./.venv/bin/activate
+# 1️⃣  Isolated env + install from pypi
+mkdir mcpgateway && cd mcpgateway
+python3 -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip
+pip install mcp-contextforge-gateway
 
-# Install mcp-contextforge-gateway
-pip install mcp-contextforge-gateway # from pypi
-#pip install .                        # or install from latest github code after cloning repo
+# 2️⃣  Launch on all interfaces with custom creds & secret key
+BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
+  mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
 
-# Run mcpgateway with default options (binds to 127.0.0.1:4444) with admin:changeme
-mcpgateway  # login to http://127.0.0.1:4444
+# 3️⃣  Generate a bearer token & smoke‑test the API
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin --exp 10080 --secret my-test-key)
 
-# Optional: run in background with configured password/key and listen to all IPs
-BASIC_AUTH_PASSWORD=password JWT_SECRET_KEY=my-test-key mcpgateway --host 0.0.0.0 --port 4444 & bg
-
-# List version / help
-mcpgateway --help; mcpgateway --version
-
-# Generate your JWT token from the key and list it
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
-echo $MCPGATEWAY_BEARER_TOKEN
-
-# Run a local MCP Server (github) listening on SSE http://localhost:8000/sse in another terminal:
-pip install uvenv
-npx -y supergateway --stdio "uvenv run mcp-server-git" # requires node.js and npx
-# or time: npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002
-# or: python3 -m mcpgateway.translate --stdio "uvenv run mcp-server-git" --port 8000
-
-#--------------------------------------------
-# Register the MCP Server with the gateway and test it
-# The curl steps can also from the admin ui: http://localhost:4444/admin
-# For more info on the API see /docs and /redoc *after* login to /admin
-#---------------------------------------------
-# Test the API (assume you have curl and jq installed)
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/version | jq
-
-# Register the MCP server as a new gateway provider
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"github_mcp_server","url":"http://localhost:8000/sse"}' \
-     http://localhost:4444/gateways
-
-# List gateways - you should see [{"id":1,"name":"github_mcp_server","url":"http://localhost:8000/sse" ...
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways | jq
-
-# Get gateway by ID
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways/1 | jq
-
-# List the global tools
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools | jq
-
-# Create a virtual server with tool 1,2,3 form global tools catalog
-# You can configure virtual servers with multiple tools/resources/prompts from registered MCP server (gateways)
-curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"devtools_mcp_server","description":"My developer tools","associatedTools": ["1","2","3"]}' \
-     http://localhost:4444/servers | jq
-
-# List servers
-curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
-
-# Get an individual server
-curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers/1 | jq
-
-# You can now use http://localhost:4444/servers/1 as an SSE server with the configured JWT token in any MCP client
-
-# To stop the running process, you can either:
-fg # Return the process to foreground, you can not Ctrl + C, or:
-pkill mcpgateway
-
-# Optionally, test the stdio wrapper to mirror tools from the gateway:
-# This lets you connect to the gateway with tools that don't support SSE:
-export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
-python3 -m mcpgateway.wrapper # ^C to exit
-# Expected:  INFO mcpgateway.wrapper: Starting MCP wrapper 0.1.1: base_url=http://localhost:4444, timeout=90
-# Alternatively with uv
-uv run --directory . -m mcpgateway.wrapper
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://127.0.0.1:4444/version | jq
 ```
 
-See [.env.example](.env.example) for full list of ENV variables you can use to override the configuration.
+<details>
+<summary><strong>More configuration</strong></summary>
+
+Copy [.env.example](.env.example) to `.env` and tweak any of the settings (or use them as env variables).
+
+</details>
+
+<details>
+<summary><strong>🚀 End‑to‑end demo (register a local MCP server)</strong></summary>
+
+```bash
+# 1️⃣  Spin up a sample MCP server (Node supergateway)
+pip install uvenv
+npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002 &
+
+# 2️⃣  Register it with the gateway
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"local_time","url":"http://localhost:8002/sse"}' \
+     http://localhost:4444/gateways
+
+# 3️⃣  Verify tool catalog
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools | jq
+
+# 4️⃣  Create a *virtual server* bundling those tools
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"demo_server","description":"Time tools","associatedTools":["1","2"]}' \
+     http://localhost:4444/servers | jq
+
+# 5️⃣  List servers (should now include ID 1)
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
+
+# 6️⃣  Client SSE endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
+npx -y @modelcontextprotocol/inspector
+# Transport Type: SSE, URL: http://localhost:4444/servers/1/sse,  Header Name: "Authorization", Bearer Token
+```
+
+</details>
+
+<details>
+<summary><strong>🖧 Using the stdio wrapper (optional)</strong></summary>
+
+```bash
+export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
+export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
+python3 -m mcpgateway.wrapper  # Ctrl‑C to exit
+```
+
+You can also run it with `uv` or inside Docker/Podman – see the *Containers* section above.
+
+In MCP Inspector, define `MCP_AUTH_TOKEN` and `MCP_SERVER_CATALOG_URLS` env variables, and select `python3` as the Command, and `-m mcpgateway.wrapper` as Arguments.
+
+```bash
+echo $PWD/.venv/bin/python3 # Using the Python3 full path ensures you have a working venv
+export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/1'
+export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
+npx -y @modelcontextprotocol/inspector
+```
+
+When using a MCP Client such as Claude with stdio:
+
+```json
+{
+  "mcpServers": {
+    "mcpgateway-wrapper": {
+      "command": "python",
+      "args": ["-m", "mcpgateway.wrapper"],
+      "env": {
+        "MCP_AUTH_TOKEN": "your-token-here",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_TOOL_CALL_TIMEOUT": "120"
+      }
+    }
+  }
+}
+```
+
+</details>
 
 ---
 
