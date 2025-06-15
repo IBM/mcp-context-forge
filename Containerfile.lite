@@ -24,12 +24,12 @@ ARG PYTHON_VERSION=3.11            # Python major.minor series to track
 ###########################
 # Base image for copying into scratch
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1747318857 AS base
+FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1749632992 AS base
 
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi:9.6-1747219013 AS builder
+FROM registry.access.redhat.com/ubi9/ubi:9.6-1749542372 AS builder
 SHELL ["/bin/bash", "-c"]
 
 ARG PYTHON_VERSION
@@ -106,7 +106,7 @@ LABEL maintainer="Mihai Criveti" \
       org.opencontainers.image.title="mcp/mcpgateway" \
       org.opencontainers.image.description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.version="0.1.0"
+      org.opencontainers.image.version="0.1.1"
 
 # ----------------------------------------------------------------------------
 # Copy the entire prepared root filesystem from the builder stage
