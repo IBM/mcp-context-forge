@@ -215,7 +215,7 @@ Use this in GUI clients (Claude Desktop, Continue, etc.) that prefer stdio. Exam
 }
 ```
 
-For more information see [MCP Clients](../../using/)
+For more information see [MCP Clients](../using/index.md)
 
 ---
 
@@ -236,7 +236,7 @@ For more information see [MCP Clients](../../using/)
 * [Features Overview](features.md) – deep dive on transports, federation, caching
 * [Admin UI Guide](ui.md)
 * [Deployment to K8s / AWS / GCP / Azure](../deployment/index.md)
-* [Wrap any client via `mcpgateway-wrapper`](using/mcpgateway-wrapper.md)
+* [Wrap any client via `mcpgateway-wrapper`](../using/mcpgateway-wrapper.md)
 * Tweak **`.env`** – see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
 
 !!! success "Gateway is ready!"
