@@ -17,7 +17,7 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
 
 
-ContextForge MCP Gateway is a feature-rich gateway & proxy that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
+ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
 
 ![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
@@ -51,7 +51,7 @@ For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap
 </details>
 
 <details>
-<summary><strong>🌐 Federation of Peer Gateways</strong></summary>
+<summary><strong>🌐 Federation of Peer Gateways (MCP Registry)</strong></summary>
 
 * Auto-discovers or configures peer gateways (via mDNS or manual)
 * Performs health checks and merges remote registries transparently
