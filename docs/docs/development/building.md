@@ -49,7 +49,7 @@ You can run the gateway with:
 ```bash
 make serve         # production-mode Gunicorn (http://localhost:4444)
 make run           # dev-mode Uvicorn (reloads on change)
-./run.sh --reload  # same as above, with CLI flags
+./run.sh --reload  # same as 'make run', with CLI flags
 ```
 
 Use `make run` or `./run.sh` during development for auto-reload.
