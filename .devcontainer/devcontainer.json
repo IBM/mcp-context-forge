@@ -25,6 +25,6 @@
   },
   "remoteEnv": {
     "MCPGATEWAY_DEV_MODE": "true",
-    "VENV_DIR": "/Users/mg/.venv/mcpgateway"
+    "VENV_DIR": "$HOME/.venv/mcpgateway"
   }
 }

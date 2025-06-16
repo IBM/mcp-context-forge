@@ -28,7 +28,6 @@ Structure:
 import asyncio
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
@@ -78,7 +77,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import (
     PromptError,
@@ -1517,7 +1516,17 @@ async def register_gateway(
         Created gateway.
     """
     logger.debug(f"User '{user}' requested to register gateway: {gateway}")
-    return await gateway_service.register_gateway(db, gateway)
+    try:
+        return await gateway_service.register_gateway(db, gateway)
+    except Exception as ex:
+        if isinstance(ex, GatewayConnectionError):
+            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=502)
+        elif isinstance(ex, ValueError):
+            return JSONResponse(content={"message": "Unable to process input"}, status_code=400)
+        elif isinstance(ex, RuntimeError):
+            return JSONResponse(content={"message": "Error during execution"}, status_code=500)
+        else:
+            return JSONResponse(content={"message": "Unexpected error"}, status_code=500)
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)

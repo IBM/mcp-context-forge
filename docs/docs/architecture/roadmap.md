@@ -76,28 +76,6 @@ Allow choosing which MCP protocol version each virtual server uses.
 
 ---
 
-## 🔐 Authentication & Identity
-
-### 🧭 [#87 Epic: JWT Token Catalog with Per-User Expiry and Revocation](https://github.com/IBM/mcp-context-forge/issues/87)
-
-???+ "Token Lifecycle Management"
-    **Generate Tokens:** As a platform admin, I want to generate one-time API tokens so I can issue short-lived credentials.
-
-    **Revoke Tokens:** As a platform admin, I want to revoke tokens so I can disable exposed or obsolete tokens.
-
-    **API Token Management:** As a user or automation client, I want to list, create, and revoke tokens via API so I can automate credential workflows.
-
-🧭 Epic: Per-Virtual-Server API Keys
-
-???+ "Scoped Server Access"
-    **Server-Scoped Keys:** As a platform admin, I want to create API keys tied to a specific virtual server so that credentials are limited in scope.
-
-    **Key Rotation & Revocation:** As a platform admin, I want to rotate or revoke a virtual server's API keys so I can maintain security without affecting other servers.
-
-    **API Management UI & API:** As a developer, I want to list, create, rotate, and revoke server API keys via the Admin UI and REST API so I can automate credential lifecycle for each virtual server.
-
----
-
 ## 📈 Observability & Telemetry
 
 ### 🧭 Epic: OpenTelemetry Tracing & Metrics Export
@@ -217,34 +195,8 @@ Allow choosing which MCP protocol version each virtual server uses.
 
 ---
 
-### 🧭 Epic: LDAP & External Identity Integration
-
-???+ "Corporate Directory Auth"
-    **LDAP Authentication:** As a platform admin, I want to configure LDAP/Active Directory so that users authenticate with corporate credentials.
-
-    **Group Sync:** As a platform admin, I want to sync LDAP/AD groups into gateway roles so I can manage permissions via directory groups.
-
-    **SSO Integration:** As a platform admin, I want to support SAML/OIDC so that teams can use existing single sign-on.
-
----
-
-### 🧭 Epic: Role-Based Access Control (User/Team/Global Scopes)
-
-???+ "RBAC & Scoping"
-    **User-Level Scopes:** As a platform admin, I want to assign permissions at the individual user level so that I can grant fine-grained access.
-
-    **Team-Level Scopes:** As a platform admin, I want to define teams and grant scopes to teams so that I can manage permissions for groups of users.
-
-    **Global Scopes:** As a platform admin, I want to set global default scopes so that baseline permissions apply to all users.
-
-
-Here are the new markdown blocks for the two requested features:
-
----
 
 ## 🛠️ Developer Experience
-
-Absolutely! Here are the two new features in your exact `mkdocs-material` + `admonition` format:
 
 ---
 
@@ -255,7 +207,6 @@ Absolutely! Here are the two new features in your exact `mkdocs-material` + `adm
     As a developer, I want a Chrome extension to manage MCP configurations, servers, and connections directly from the browser
     **So that** I can reduce dependency on local CLI tools and improve accessibility.
 
-    ```
     **Key Features:**
     - **Real-Time Session Control:** Monitor and interact with MCP sessions via a browser UI.
     - **Cross-Platform Compatibility:** Ensure the plugin works seamlessly across devices and operating systems.
@@ -265,7 +216,6 @@ Absolutely! Here are the two new features in your exact `mkdocs-material` + `adm
     - Distributed via the Chrome Web Store.
     - Uses JWT tokens stored in extension config or injected from Admin UI.
     - Interfaces with public `/servers`, `/tools`, `/resources`, and `/message` endpoints.
-    ```
 
 ---
 
@@ -329,3 +279,219 @@ Absolutely! Here are the two new features in your exact `mkdocs-material` + `adm
     - Supports TLS verification toggle (`--skipSSLVerify`).
 
     ---
+
+
+---
+
+### 🧭 Epic: One-Click Download of Ready-to-Use Client Config
+
+???+ "Copy Config for Claude or CLI"
+    **Goal:**
+    As a user viewing a virtual server in the Admin UI, I want a button to **download a pre-filled Claude JSON config**
+
+    **So that** I can immediately use the selected server in `Claude Desktop`, `mcpgateway.wrapper`, or any stdio/SSE-based client.
+
+    **Use Cases:**
+
+    - **Claude Desktop (stdio wrapper):**
+      Download a `.json` config that launches the wrapper with correct `MCP_SERVER_CATALOG_URLS` and token pre-set.
+    - **Browser / SSE Client:**
+      Download a `.json` or `.env` snippet with `Authorization` header, SSE URL, and ready-to-paste curl/Javascript.
+
+    **Implementation Details:**
+
+    - Button appears in the Admin UI under each virtual server's **View** panel.
+    - Config supports:
+        - `mcpgateway.wrapper` (for stdio clients)
+        - `/sse` endpoint with token (for browser / curl)
+    - JWT token is generated or reused on demand.
+    - Filled-in config includes:
+        - Virtual server ID
+        - Base gateway URL
+        - Short-lived token (`MCP_AUTH_TOKEN`)
+        - Optional Docker or pipx run command
+    - Claude Desktop format includes `command`, `args`, and `env` block.
+
+    **API Support:**
+
+    - Add endpoint:
+      ```http
+      GET /servers/{id}/client-config
+      ```
+    - Optional query params:
+        - `type=claude` (default)
+        - `type=sse`
+    - Returns JSON config with headers:
+      ```
+      Content-Disposition: attachment; filename="claude-config.json"
+      Content-Type: application/json
+      ```
+
+    **Example (Claude-style JSON):**
+
+    ```json
+    {
+      "mcpServers": {
+        "server-alias": {
+          "command": "python3",
+          "args": ["-m", "mcpgateway.wrapper"],
+          "env": {
+            "MCP_AUTH_TOKEN": "example-token",
+            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/3",
+            "MCP_TOOL_CALL_TIMEOUT": "120"
+          }
+        }
+      }
+    }
+    ```
+
+    **Example (curl-ready SSE config):**
+
+    ```bash
+    curl -H "Authorization: ..." \
+        http://localhost:4444/servers/3/sse
+    ```
+
+    **Acceptance Criteria:**
+
+    - UI exposes a single **Download Config** button per server.
+    - Endpoint `/servers/{id}/client-config` returns fully populated config.
+    - Tokens are scoped, short-lived, or optionally ephemeral.
+    - Claude Desktop accepts the file without user edits.
+
+    **Security:**
+
+    - JWT token is only included if the requester is authenticated.
+    - Download links are protected behind user auth and audit-logged.
+    - Expiry and scope settings match user profile or server defaults.
+
+    **Stretch goal:**
+
+    - Toggle to choose between Claude, curl, or Docker styles.
+    - QR code output or "Copy to Clipboard" button. QR might work with the phone app, etc.
+
+    ---
+
+
+
+
+
+
+
+### 🧭 Epic: LDAP & External Identity Integration
+
+???+ "Corporate Directory Auth"
+    **LDAP Authentication:** As a platform admin, I want to configure LDAP/Active Directory so that users authenticate with corporate credentials.
+
+    **Group Sync:** As a platform admin, I want to sync LDAP/AD groups into gateway roles so I can manage permissions via directory groups.
+
+    **SSO Integration:** As a platform admin, I want to support SAML/OIDC so that teams can use existing single sign-on.
+
+---
+
+## 🔐 Authentication, Authorization, Security & Identity
+
+### 🧭 [#87 Epic: JWT Token Catalog with Per-User Expiry and Revocation](https://github.com/IBM/mcp-context-forge/issues/87)
+
+???+ "Token Lifecycle Management"
+    - **Generate Tokens:**
+        As a platform admin, I want to generate one-time API tokens so I can issue short-lived credentials.
+    - **Revoke Tokens:**
+        As a platform admin, I want to revoke tokens so I can disable exposed or obsolete tokens.
+    - **API Token Management:**
+        As a user or automation client, I want to list, create, and revoke tokens via API so I can automate credential workflows.
+
+---
+
+### 🧭 Epic: Per-Virtual-Server API Keys
+
+???+ "Scoped Server Access"
+    - **Server-Scoped Keys:**
+        As a platform admin, I want to create API keys tied to a specific virtual server so that credentials are limited in scope.
+    - **Key Rotation & Revocation:**
+        As a platform admin, I want to rotate or revoke a virtual server's API keys so I can maintain security without affecting other servers.
+    - **API Management UI & API:**
+        As a developer, I want to list, create, rotate, and revoke server API keys via the Admin UI and REST API so I can automate credential lifecycle for each virtual server.
+
+---
+
+### 🧭 Epic: Role-Based Access Control (User/Team/Global Scopes)
+
+???+ "RBAC & Scoping — Overview"
+    - **User-Level Scopes:**
+        As a platform admin, I want to assign permissions at the individual-user level so that I can grant fine-grained access.
+    - **Team-Level Scopes:**
+        As a platform admin, I want to define teams and grant scopes to teams so that I can manage permissions for groups of users.
+    - **Global Scopes:**
+        As a platform admin, I want to set global default scopes so that baseline permissions apply to all users.
+
+???+ "1️⃣ Core Role / Permission Model"
+    - **Define Canonical Roles:**
+        Built-in `Owner`, `Admin`, `Developer`, `Read-Only`, and `Service` roles.
+        *Acceptance Criteria:*
+        - Roles stored in `roles` table, seeded by migration
+        - Each role maps to a JSON list of named permissions (e.g. `tools:list`)
+        - Unit tests prove `Read-Only` cannot mutate anything
+    - **Fine-Grained Permission Catalog:**
+        - Full CRUD coverage for `tools`, `servers`, `resources`, `prompts`, `gateways`
+        - Meta-permissions like `metrics:view`, `admin:impersonate`
+        - All FastAPI routes must declare a permission via decorator
+
+???+ "2️⃣ Scope Hierarchy & Resolution"
+    - **Precedence:**
+        Global → Team → User; resolution returns union of allow rules minus any denies.
+    - **Wildcards:**
+        Support `tools:*`, `admin:*` and expand dynamically into specific scopes.
+
+???+ "3️⃣ Teams & Membership"
+    - **Team CRUD APIs & UI:**
+        Admin panel and REST API for team management (`GET/POST/PATCH/DELETE`), plus CSV/JSON import with dry-run mode.
+    - **Nested Teams (Optional v2):**
+        Support hierarchical teams with depth-first inheritance and first-match-wins precedence.
+
+???+ "4️⃣ OAuth 2.1 / OIDC Integration"
+    - **External IdP Mapping:**
+        SSO/OIDC `groups` and `roles` claims map to gateway teams via a `team_mappings` table.
+    - **PKCE Auth Code Flow:**
+        Public clients get redirected to IdP; receive gateway-signed JWT with scopes in `scp` claim.
+    - **Refresh-Token Rotation & Revocation List:**
+        Short-lived access tokens (≤15 min), refresh token rotation, revocation checked per request.
+
+???+ "5️⃣ Service / Machine Credentials"
+    - **Client-Credentials Grant:**
+        CI systems and automation can obtain scoped access tokens using client ID and secret.
+    - **Signed JWT Actor Tokens:**
+        Internal components can impersonate users or declare service identities via signed JWTs with `act` and `sub`.
+
+???+ "6️⃣ Enforcement Middleware"
+    - **FastAPI Dependency:**
+        `require_scope("...")` uses JWT and Redis permission cache; 403 on scope mismatch.
+    - **Transport-Level Guards:**
+        HTTP/SSE/A2A transports reject missing or invalid scopes early (401/403).
+
+???+ "7️⃣ Delegated (On-Behalf-Of) Flow"
+    - **User-Delegated Tokens:**
+        Users can mint scoped, short-lived tokens for agents to act on their behalf (e.g. tool calls); modal in Admin UI allows setting scopes and expiry.
+
+???+ "8️⃣ Audit & Observability"
+    - **RBAC Audit Log:**
+        Logs every grant/revoke/login with full metadata (who, what, when, IP, UA); exports to JSON Lines and Prometheus metrics (`authz_denied_total`).
+    - **Correlation IDs:**
+        403s include `correlation_id` header for traceability in logs and dashboards.
+
+???+ "9️⃣ Self-Service Permission Inspector"
+    - **Why-Denied Endpoint:**
+        `POST /authz/explain` returns an evaluation trace (role → scope → result); Admin UI visualizes graph with colored indicators.
+
+???+ "🔟 Migration & Back-Compat"
+    - **Mixed-Mode Auth Toggle:**
+        Support `AUTH_MODE=legacy|rbac`; legacy JWTs fallback to a `compat` role.
+    - **Data Migration Scripts:**
+        Alembic sets up `roles`, `permissions`, `teams`; CLI `mcpgateway migrate-rbac` assigns global admins from legacy data.
+
+???+ "✅ Definition of Done"
+    - All HTTP/SSE/WS/A2A routes enforce scopes; fuzz tests confirm no bypass
+    - Full Admin UI coverage for role, team, and permission management
+    - End-to-end: IdP login → group-to-team mapping → scope-enforced tool access
+    - Regression tests for scope resolution, wildcard expansion, token lifecycles, delegated access, and audit logging
+    - Upgrade guide and SDK usage examples available in documentation
