@@ -104,6 +104,7 @@ from mcpgateway.services.tool_service import (
     ToolService,
 )
 from mcpgateway.transports.sse_transport import SSETransport
+from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, JWTAuthMiddlewareStreamableHttp
 from mcpgateway.types import (
     InitializeRequest,
     InitializeResult,
@@ -143,6 +144,9 @@ root_service = RootService()
 completion_service = CompletionService()
 sampling_handler = SamplingHandler()
 server_service = ServerService()
+
+# Initialize session manager for Streamable HTTP transport
+streamable_http_session = SessionManagerWrapper()
 
 
 # Initialize session registry
@@ -190,6 +194,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await logging_service.initialize()
         await sampling_handler.initialize()
         await resource_cache.initialize()
+        await streamable_http_session.start()
+
         logger.info("All services initialized successfully")
         yield
     except Exception as e:
@@ -197,6 +203,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise
     finally:
         logger.info("Shutting down MCP Gateway services")
+        # await stop_streamablehttp()
         for service in [
             resource_cache,
             sampling_handler,
@@ -207,6 +214,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             prompt_service,
             resource_service,
             tool_service,
+            streamable_http_session
         ]:
             try:
                 await service.shutdown()
@@ -275,6 +283,9 @@ app.add_middleware(
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
+
+# Add streamable HTTP middleware for JWT auth
+app.add_middleware(JWTAuthMiddlewareStreamableHttp)
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -2027,6 +2038,9 @@ if ADMIN_API_ENABLED:
     app.include_router(admin_router)  # Admin routes imported from admin.py
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
+
+# Streamable http Mount
+app.mount("/mcp", app=streamable_http_session.handle_streamable_http)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:
