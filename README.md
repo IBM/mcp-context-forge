@@ -275,6 +275,8 @@ docker run -d --name mcpgateway \
   ghcr.io/ibm/mcp-context-forge:0.1.1
 ```
 
+Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
+
 </details>
 
 ---
@@ -1719,7 +1721,7 @@ podman-prod          - Build production container image (using ubi-micro → scr
 podman-run           - Run the container on HTTP  (port 4444)
 podman-run-shell     - Run the container on HTTP  (port 4444) and start a shell
 podman-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
-podman-run-ssl-host  - Run the container on HTTPS with --network-host (port 4444, self-signed)
+podman-run-ssl-host  - Run the container on HTTPS with --network=host (port 4444, self-signed)
 podman-stop          - Stop & remove the container
 podman-test          - Quick curl smoke-test against the container
 podman-logs          - Follow container logs (⌃C to quit)
