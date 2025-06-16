@@ -113,12 +113,13 @@ def _extract_base_url(url: str) -> str:
 
     path = parsed.path or ""
     if "/servers/" in path:
-        path = path.split("/servers")[0]           # ".../servers/123" -> "..."
+        path = path.split("/servers")[0]  # ".../servers/123" -> "..."
     elif path.endswith("/servers"):
-        path = path[:-len("/servers")]             # ".../servers"     -> "..."
+        path = path[: -len("/servers")]  # ".../servers"     -> "..."
     # otherwise keep the existing path (supports APP_ROOT_PATH)
 
     return f"{parsed.scheme}://{parsed.netloc}{path}"
+
 
 BASE_URL: str = _extract_base_url(SERVER_CATALOG_URLS[0]) if SERVER_CATALOG_URLS else ""
 

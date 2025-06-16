@@ -11,39 +11,22 @@ Key components include:
 - SessionManagerWrapper: Manages the lifecycle of streamable HTTP sessions
 - JWTAuthMiddlewareStreamableHttp: Middleware for JWT authentication
 - Configuration options for:
-        1. stateful/stateless operation 
+        1. stateful/stateless operation
         2. JSON response mode or SSE streams
 - InMemoryEventStore: A simple in-memory event storage system for maintaining session state
 
 """
 
 import logging
-from contextlib import AsyncExitStack, asynccontextmanager
-from typing import List, Union
-
-from starlette.types import Receive, Scope, Send
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.datastructures import Headers
-from fastapi.security.utils import get_authorization_scheme_param
-from starlette.status import HTTP_401_UNAUTHORIZED
-from starlette.types import ASGIApp
-
-import mcp.types as types
-from mcp.server.lowlevel import Server
-from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-
-from mcpgateway.services.tool_service import ToolService
-from mcpgateway.db import SessionLocal
-from mcpgateway.config import settings  
-from mcpgateway.utils.verify_credentials import verify_credentials
-
-
 from collections import deque
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from typing import List, Union
 from uuid import uuid4
 
+import mcp.types as types
+from fastapi.security.utils import get_authorization_scheme_param
+from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import (
     EventCallback,
     EventId,
@@ -51,8 +34,19 @@ from mcp.server.streamable_http import (
     EventStore,
     StreamId,
 )
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage
+from starlette.datastructures import Headers
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.status import HTTP_401_UNAUTHORIZED
+from starlette.types import ASGIApp, Receive, Scope, Send
 
+from mcpgateway.config import settings
+from mcpgateway.db import SessionLocal
+from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.verify_credentials import verify_credentials
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -62,6 +56,7 @@ tool_service = ToolService()
 mcp_app = Server("mcp-streamable-http-stateless")
 
 ## ------------------------------ Event store ------------------------------
+
 
 @dataclass
 class EventEntry:
@@ -95,14 +90,10 @@ class InMemoryEventStore(EventStore):
         # event_id -> EventEntry for quick lookup
         self.event_index: dict[EventId, EventEntry] = {}
 
-    async def store_event(
-        self, stream_id: StreamId, message: JSONRPCMessage
-    ) -> EventId:
+    async def store_event(self, stream_id: StreamId, message: JSONRPCMessage) -> EventId:
         """Stores an event with a generated event ID."""
         event_id = str(uuid4())
-        event_entry = EventEntry(
-            event_id=event_id, stream_id=stream_id, message=message
-        )
+        event_entry = EventEntry(event_id=event_id, stream_id=stream_id, message=message)
 
         # Get or create deque for this stream
         if stream_id not in self.streams:
@@ -148,6 +139,7 @@ class InMemoryEventStore(EventStore):
 
 ## ------------------------------ Streamable HTTP Transport ------------------------------
 
+
 @asynccontextmanager
 async def get_db():
     """
@@ -184,12 +176,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 logger.warning(f"No content returned by tool: {name}")
                 return []
 
-            return [
-                types.TextContent(
-                    type=result.content[0].type,
-                    text=result.content[0].text
-                )
-            ]
+            return [types.TextContent(type=result.content[0].type, text=result.content[0].text)]
     except Exception as e:
         logger.exception(f"Error calling tool '{name}': {e}")
         return []
@@ -207,17 +194,10 @@ async def list_tools() -> List[types.Tool]:
     try:
         async with get_db() as db:
             tools = await tool_service.list_tools(db)
-            return [
-                types.Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    inputSchema=tool.input_schema
-                ) for tool in tools
-            ]
+            return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema) for tool in tools]
     except Exception as e:
         logger.exception("Error listing tools")
         return []
-
 
 
 class SessionManagerWrapper:
@@ -230,13 +210,13 @@ class SessionManagerWrapper:
         """
         Initializes the session manager and the exit stack used for managing its lifecycle.
         """
-        
+
         if settings.use_stateful_sessions:
             event_store = InMemoryEventStore()
-            stateless=False
+            stateless = False
         else:
-            event_store=None
-            stateless=True
+            event_store = None
+            stateless = True
 
         self.session_manager = StreamableHTTPSessionManager(
             app=mcp_app,
@@ -252,7 +232,7 @@ class SessionManagerWrapper:
         """
         logger.info("Initializing Streamable HTTP service")
         await self.stack.enter_async_context(self.session_manager.run())
-        
+
     async def shutdown(self) -> None:
         """
         Gracefully shuts down the Streamable HTTP session manager.
@@ -276,7 +256,9 @@ class SessionManagerWrapper:
             logger.exception("Error handling streamable HTTP request")
             raise
 
+
 ## ------------------------- FastAPI Middleware for Authentication ------------------------------
+
 
 class JWTAuthMiddlewareStreamableHttp(BaseHTTPMiddleware):
     """
@@ -284,6 +266,7 @@ class JWTAuthMiddlewareStreamableHttp(BaseHTTPMiddleware):
     This middleware checks for JWT tokens in the authorization header or cookies
     and verifies the credentials before allowing access to protected routes.
     """
+
     def __init__(self, app: ASGIApp):
         """
         Initialize the middleware with the given ASGI application.
@@ -344,5 +327,3 @@ class JWTAuthMiddlewareStreamableHttp(BaseHTTPMiddleware):
                 status_code=HTTP_401_UNAUTHORIZED,
                 headers={"WWW-Authenticate": "Bearer"},
             )
-
-
