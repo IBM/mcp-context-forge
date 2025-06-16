@@ -104,7 +104,10 @@ from mcpgateway.services.tool_service import (
     ToolService,
 )
 from mcpgateway.transports.sse_transport import SSETransport
-from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, JWTAuthMiddlewareStreamableHttp
+from mcpgateway.transports.streamablehttp_transport import (
+    JWTAuthMiddlewareStreamableHttp,
+    SessionManagerWrapper,
+)
 from mcpgateway.types import (
     InitializeRequest,
     InitializeResult,
@@ -204,18 +207,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finally:
         logger.info("Shutting down MCP Gateway services")
         # await stop_streamablehttp()
-        for service in [
-            resource_cache,
-            sampling_handler,
-            logging_service,
-            completion_service,
-            root_service,
-            gateway_service,
-            prompt_service,
-            resource_service,
-            tool_service,
-            streamable_http_session
-        ]:
+        for service in [resource_cache, sampling_handler, logging_service, completion_service, root_service, gateway_service, prompt_service, resource_service, tool_service, streamable_http_session]:
             try:
                 await service.shutdown()
             except Exception as e:
