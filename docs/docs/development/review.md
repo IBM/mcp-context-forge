@@ -130,11 +130,16 @@ GitHub will delete the `pr-<number>` branch automatically.
 ---
 
 ## 7. Cleaning Up Locally
-
+After the PR is merged:
+* Switch back to the main branch
+* Delete the local feature branch
+* Prune deleted remote branches
 ```bash
 git switch main
-git fetch -p                # prune deleted remotes
-git branch -D pr-<PR-number>
+git branch -D pr-<PR-number>             # replace <PR-number> with your branch name
+git fetch -p                             # prune deleted remotes
 ```
+This removes references to remote branches that GitHub deleted after the merge.
+This keeps your local environment clean and up to date.
 
 ---
