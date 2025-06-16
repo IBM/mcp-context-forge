@@ -30,7 +30,7 @@ It supports:
 
 * Federation across multiple MCP and REST services
 * Virtualization of legacy APIs as MCP-compliant tools and servers
-* Transport over HTTP, JSON-RPC, WebSocket, SSE, and stdio
+* Transport over HTTP, JSON-RPC, WebSocket, SSE, stdio and streamable-HTTP
 * A live Admin UI for real-time management and configuration
 * Built-in auth, observability, retries, and rate-limiting
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
@@ -688,11 +688,13 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 ### Transport
 
-| Setting                   | Description            | Default | Options                         |
-| ------------------------- | ---------------------- | ------- | ------------------------------- |
-| `TRANSPORT_TYPE`          | Enabled transports     | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
-| `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)  | `30`    | int > 0                         |
-| `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms) | `5000`  | int > 0                         |
+| Setting                   | Description                        | Default | Options                         |
+| ------------------------- | ---------------------------------- | ------- | ------------------------------- |
+| `TRANSPORT_TYPE`          | Enabled transports                 | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
+| `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)              | `30`    | int > 0                         |
+| `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
+| `USE_STATEFUL_SESSIONS`   | streamable http config             | `false` | bool                            |
+| `JSON_RESPONSE_ENABLED`   | json/sse streams (streamable http) | `true`  | bool                            |
 
 ### Federation
 

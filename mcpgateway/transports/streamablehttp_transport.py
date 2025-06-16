@@ -250,7 +250,7 @@ class SessionManagerWrapper:
         """
         Starts the Streamable HTTP session manager context.
         """
-        logger.info("Starting Streamable HTTP Session Manager...")
+        logger.info("Initializing Streamable HTTP service")
         await self.stack.enter_async_context(self.session_manager.run())
         
     async def shutdown(self) -> None:
