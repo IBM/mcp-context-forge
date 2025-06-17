@@ -269,7 +269,7 @@ class MCPPathRewriteMiddleware:
     - Only rewrites paths ending with '/mcp' but not exactly '/mcp'.
     - Performs authentication before rewriting.
     - Passes rewritten requests to `streamable_http_session`.
-    - All other requests are passed through unchanged.
+    - All other requests are passed through without change.
     """
 
     def __init__(self, app):
