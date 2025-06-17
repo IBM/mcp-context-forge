@@ -212,7 +212,7 @@ fly postgres create --name $DB_NAME --region $REGION
 
 # Set secrets
 fly secrets set JWT_SECRET_KEY=$(openssl rand -hex 32)
-fly secrets set BASIC_AUTH_USER=admin 
+fly secrets set BASIC_AUTH_USER=admin
 fly secrets set BASIC_AUTH_PASSWORD=$PASSWORD
 
 # Get postgres password and set DATABASE_URL
