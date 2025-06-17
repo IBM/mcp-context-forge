@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import List, Union
 from uuid import uuid4
 
-import mcp.types as types
+from mcp import types
 from fastapi.security.utils import get_authorization_scheme_param
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import (
@@ -38,7 +38,6 @@ from mcp.server.streamable_http import (
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage
 from starlette.datastructures import Headers
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.types import Receive, Scope, Send
@@ -201,7 +200,7 @@ async def list_tools() -> List[types.Tool]:
                 tools = await tool_service.list_server_tools(db, server_id)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema) for tool in tools]
         except Exception as e:
-            logger.exception("Error listing tools")
+            logger.exception(f"Error listing tools:{e}")
             return []
     else:
         try:
@@ -209,7 +208,7 @@ async def list_tools() -> List[types.Tool]:
                 tools = await tool_service.list_tools(db)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema) for tool in tools]
         except Exception as e:
-            logger.exception("Error listing tools")
+            logger.exception(f"Error listing tools:{e}")
             return []
 
 
@@ -274,67 +273,11 @@ class SessionManagerWrapper:
         try:
             await self.session_manager.handle_request(scope, receive, send)
         except Exception as e:
-            logger.exception("Error handling streamable HTTP request")
+            logger.exception(f"Error handling streamable HTTP request: {e}")
             raise
 
 
 ## ------------------------- Authentication for /mcp routes ------------------------------
-
-# async def streamable_http_auth(scope, receive, send):
-#     """
-#     Perform authentication check in middleware context (ASGI scope).
-
-#     If path does not end with "/mcp", just continue (return True).
-
-#     If auth fails, sends 401 JSONResponse and returns False.
-
-#     If auth succeeds or not required, returns True.
-#     """
-
-#     path = scope.get("path", "")
-#     if not path.endswith("/mcp"):
-#         # No auth needed for other paths in this middleware usage
-#         return True
-
-#     headers = Headers(scope=scope)
-#     authorization = headers.get("authorization")
-#     cookie_header = headers.get("cookie", "")
-
-#     token = None
-#     if authorization:
-#         scheme, credentials = get_authorization_scheme_param(authorization)
-#         if scheme.lower() == "bearer" and credentials:
-#             token = credentials
-
-#     if not token:
-#         # parse cookie header manually
-#         for cookie in cookie_header.split(";"):
-#             if cookie.strip().startswith("jwt_token="):
-#                 token = cookie.strip().split("=", 1)[1]
-#                 break
-
-#     if settings.auth_required and not token:
-#         response = JSONResponse(
-#             {"detail": "Not authenticated"},
-#             status_code=HTTP_401_UNAUTHORIZED,
-#             headers={"WWW-Authenticate": "Bearer"},
-#         )
-#         await response(scope, receive, send)
-#         return False
-
-#     if token:
-#         try:
-#             await verify_credentials(token)
-#         except Exception:
-#             response = JSONResponse(
-#                 {"detail": "Authentication failed"},
-#                 status_code=HTTP_401_UNAUTHORIZED,
-#                 headers={"WWW-Authenticate": "Bearer"},
-#             )
-#             await response(scope, receive, send)
-#             return False
-
-#     return True
 
 
 async def streamable_http_auth(scope, receive, send):

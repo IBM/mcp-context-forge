@@ -319,7 +319,7 @@ class ToolCreate(BaseModelWithConfig):
         auth_type = values.get("auth_type")
         if auth_type:
             if auth_type.lower() == "basic":
-                creds = base64.b64encode(f'{values.get("auth_username", "")}:{values.get("auth_password", "")}'.encode("utf-8")).decode()
+                creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
                 values["auth"] = {"auth_type": "basic", "auth_value": encoded_auth}
             elif auth_type.lower() == "bearer":
@@ -378,7 +378,7 @@ class ToolUpdate(BaseModelWithConfig):
         auth_type = values.get("auth_type")
         if auth_type:
             if auth_type.lower() == "basic":
-                creds = base64.b64encode(f'{values.get("auth_username", "")}:{values.get("auth_password", "")}'.encode("utf-8")).decode()
+                creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
                 values["auth"] = {"auth_type": "basic", "auth_value": encoded_auth}
             elif auth_type.lower() == "bearer":
