@@ -9,7 +9,6 @@ This module implements Streamable Http transport for MCP
 
 Key components include:
 - SessionManagerWrapper: Manages the lifecycle of streamable HTTP sessions
-- JWTAuthMiddlewareStreamableHttp: Middleware for JWT authentication
 - Configuration options for:
         1. stateful/stateless operation
         2. JSON response mode or SSE streams
@@ -17,7 +16,9 @@ Key components include:
 
 """
 
+import contextvars
 import logging
+import re
 from collections import deque
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
@@ -38,10 +39,9 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage
 from starlette.datastructures import Headers
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import Receive, Scope, Send
 
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
@@ -54,6 +54,8 @@ logging.basicConfig(level=logging.INFO)
 # Initialize ToolService and MCP Server
 tool_service = ToolService()
 mcp_app = Server("mcp-streamable-http-stateless")
+
+server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default=None)
 
 ## ------------------------------ Event store ------------------------------
 
@@ -191,13 +193,24 @@ async def list_tools() -> List[types.Tool]:
         A list of Tool objects containing metadata such as name, description, and input schema.
     Logs and returns an empty list on failure.
     """
-    try:
-        async with get_db() as db:
-            tools = await tool_service.list_tools(db)
-            return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema) for tool in tools]
-    except Exception as e:
-        logger.exception("Error listing tools")
-        return []
+    server_id = server_id_var.get()
+
+    if server_id:
+        try:
+            async with get_db() as db:
+                tools = await tool_service.list_server_tools(db, server_id)
+                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema) for tool in tools]
+        except Exception as e:
+            logger.exception("Error listing tools")
+            return []
+    else:
+        try:
+            async with get_db() as db:
+                tools = await tool_service.list_tools(db)
+                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema) for tool in tools]
+        except Exception as e:
+            logger.exception("Error listing tools")
+            return []
 
 
 class SessionManagerWrapper:
@@ -226,7 +239,7 @@ class SessionManagerWrapper:
         )
         self.stack = AsyncExitStack()
 
-    async def start(self) -> None:
+    async def initialize(self) -> None:
         """
         Starts the Streamable HTTP session manager context.
         """
@@ -250,6 +263,14 @@ class SessionManagerWrapper:
             send (Send): ASGI send callable.
         Logs any exceptions that occur during request handling.
         """
+
+        path = scope["modified_path"]
+        match = re.search(r"/servers/(?P<server_id>\d+)/mcp", path)
+
+        if match:
+            server_id = match.group("server_id")
+            server_id_var.set(server_id)
+
         try:
             await self.session_manager.handle_request(scope, receive, send)
         except Exception as e:
@@ -257,73 +278,107 @@ class SessionManagerWrapper:
             raise
 
 
-## ------------------------- FastAPI Middleware for Authentication ------------------------------
+## ------------------------- Authentication for /mcp routes ------------------------------
+
+# async def streamable_http_auth(scope, receive, send):
+#     """
+#     Perform authentication check in middleware context (ASGI scope).
+
+#     If path does not end with "/mcp", just continue (return True).
+
+#     If auth fails, sends 401 JSONResponse and returns False.
+
+#     If auth succeeds or not required, returns True.
+#     """
+
+#     path = scope.get("path", "")
+#     if not path.endswith("/mcp"):
+#         # No auth needed for other paths in this middleware usage
+#         return True
+
+#     headers = Headers(scope=scope)
+#     authorization = headers.get("authorization")
+#     cookie_header = headers.get("cookie", "")
+
+#     token = None
+#     if authorization:
+#         scheme, credentials = get_authorization_scheme_param(authorization)
+#         if scheme.lower() == "bearer" and credentials:
+#             token = credentials
+
+#     if not token:
+#         # parse cookie header manually
+#         for cookie in cookie_header.split(";"):
+#             if cookie.strip().startswith("jwt_token="):
+#                 token = cookie.strip().split("=", 1)[1]
+#                 break
+
+#     if settings.auth_required and not token:
+#         response = JSONResponse(
+#             {"detail": "Not authenticated"},
+#             status_code=HTTP_401_UNAUTHORIZED,
+#             headers={"WWW-Authenticate": "Bearer"},
+#         )
+#         await response(scope, receive, send)
+#         return False
+
+#     if token:
+#         try:
+#             await verify_credentials(token)
+#         except Exception:
+#             response = JSONResponse(
+#                 {"detail": "Authentication failed"},
+#                 status_code=HTTP_401_UNAUTHORIZED,
+#                 headers={"WWW-Authenticate": "Bearer"},
+#             )
+#             await response(scope, receive, send)
+#             return False
+
+#     return True
 
 
-class JWTAuthMiddlewareStreamableHttp(BaseHTTPMiddleware):
+async def streamable_http_auth(scope, receive, send):
     """
-    Middleware for handling JWT authentication in an ASGI application.
-    This middleware checks for JWT tokens in the authorization header or cookies
-    and verifies the credentials before allowing access to protected routes.
+    Perform authentication check in middleware context (ASGI scope).
+
+    If path does not end with "/mcp", just continue (return True).
+
+    Only check Authorization header for Bearer token.
+    If no Bearer token provided, allow (return True).
+
+    If auth_required is True and Bearer token provided, verify it.
+    If verification fails, send 401 JSONResponse and return False.
     """
 
-    def __init__(self, app: ASGIApp):
-        """
-        Initialize the middleware with the given ASGI application.
+    path = scope.get("path", "")
+    if not path.endswith("/mcp") and not path.endswith("/mcp/"):
+        # No auth needed for other paths in this middleware usage
+        return True
 
-        Args:
-            app (ASGIApp): The ASGI application to wrap.
-        """
-        super().__init__(app)
+    headers = Headers(scope=scope)
+    authorization = headers.get("authorization")
 
-    async def dispatch(self, request: Request, call_next):
-        """
-        Dispatch the request to the appropriate handler after performing JWT authentication.
+    token = None
+    if authorization:
+        scheme, credentials = get_authorization_scheme_param(authorization)
+        if scheme.lower() == "bearer" and credentials:
+            token = credentials
 
-        Args:
-            request (Request): The incoming request.
-            call_next: The next middleware or route handler in the chain.
+    # # If no Bearer token in Authorization header, just allow (no auth)
+    # if not token:
+    #     return True
 
-        Returns:
-            JSONResponse: A response indicating authentication failure if the token is invalid or missing.
-            Response: The response from the next middleware or route handler if authentication is successful.
-        """
-        # Only apply auth to /mcp path
-        if not request.url.path.startswith("/mcp"):
-            return await call_next(request)
+    # If token is present, verify it
+    print("TOKEN::::", token)
+    try:
+        await verify_credentials(token)
+    except Exception:
+        response = JSONResponse(
+            {"detail": "Authentication failed"},
+            status_code=HTTP_401_UNAUTHORIZED,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        await response(scope, receive, send)
+        return False
 
-        headers = Headers(scope=request.scope)
-        authorization = headers.get("authorization")
-        cookie_header = headers.get("cookie", "")
-
-        token = None
-        if authorization:
-            scheme, credentials = get_authorization_scheme_param(authorization)
-            if scheme.lower() == "bearer" and credentials:
-                token = credentials
-
-        if not token:
-            for cookie in cookie_header.split(";"):
-                if cookie.strip().startswith("jwt_token="):
-                    token = cookie.strip().split("=", 1)[1]
-                    break
-
-        try:
-            if settings.auth_required and not token:
-                return JSONResponse(
-                    {"detail": "Not authenticated"},
-                    status_code=HTTP_401_UNAUTHORIZED,
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-
-            if token:
-                await verify_credentials(token)
-
-            return await call_next(request)
-
-        except Exception as e:
-            return JSONResponse(
-                {"detail": "Authentication failed"},
-                status_code=HTTP_401_UNAUTHORIZED,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    return True
