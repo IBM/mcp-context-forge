@@ -17,7 +17,7 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
 
 
-ContextForge MCP Gateway is a feature-rich gateway & proxy that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
+ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
 
 ![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
@@ -30,7 +30,7 @@ It supports:
 
 * Federation across multiple MCP and REST services
 * Virtualization of legacy APIs as MCP-compliant tools and servers
-* Transport over HTTP, JSON-RPC, WebSocket, SSE, and stdio
+* Transport over HTTP, JSON-RPC, WebSocket, SSE, stdio and streamable-HTTP
 * An Admin UI for real-time management and configuration
 * Built-in auth, observability, retries, and rate-limiting
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
@@ -51,7 +51,7 @@ For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap
 </details>
 
 <details>
-<summary><strong>🌐 Federation of Peer Gateways</strong></summary>
+<summary><strong>🌐 Federation of Peer Gateways (MCP Registry)</strong></summary>
 
 * Auto-discovers or configures peer gateways (via mDNS or manual)
 * Performs health checks and merges remote registries transparently
@@ -274,6 +274,8 @@ docker run -d --name mcpgateway \
   -v $(pwd)/data:/data \
   ghcr.io/ibm/mcp-context-forge:0.1.1
 ```
+
+Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
 
 </details>
 
@@ -833,11 +835,13 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 ### Transport
 
-| Setting                   | Description            | Default | Options                         |
-| ------------------------- | ---------------------- | ------- | ------------------------------- |
-| `TRANSPORT_TYPE`          | Enabled transports     | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
-| `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)  | `30`    | int > 0                         |
-| `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms) | `5000`  | int > 0                         |
+| Setting                   | Description                        | Default | Options                         |
+| ------------------------- | ---------------------------------- | ------- | ------------------------------- |
+| `TRANSPORT_TYPE`          | Enabled transports                 | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
+| `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)              | `30`    | int > 0                         |
+| `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
+| `USE_STATEFUL_SESSIONS`   | streamable http config             | `false` | bool                            |
+| `JSON_RESPONSE_ENABLED`   | json/sse streams (streamable http) | `true`  | bool                            |
 
 ### Federation
 
@@ -1717,7 +1721,7 @@ podman-prod          - Build production container image (using ubi-micro → scr
 podman-run           - Run the container on HTTP  (port 4444)
 podman-run-shell     - Run the container on HTTP  (port 4444) and start a shell
 podman-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
-podman-run-ssl-host  - Run the container on HTTPS with --network-host (port 4444, self-signed)
+podman-run-ssl-host  - Run the container on HTTPS with --network=host (port 4444, self-signed)
 podman-stop          - Stop & remove the container
 podman-test          - Quick curl smoke-test against the container
 podman-logs          - Follow container logs (⌃C to quit)

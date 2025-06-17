@@ -191,6 +191,10 @@ class Settings(BaseSettings):
     session_ttl: int = 3600
     message_ttl: int = 600
 
+    # streamable http transport
+    use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
+    json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
+
     # Development
     dev_mode: bool = False
     reload: bool = False
