@@ -155,4 +155,4 @@ CI configs live in `.github/workflows/`.
 
 ---
 
-Let me know if you'd like a shorter version or want to customize for internal team handoff.
+
