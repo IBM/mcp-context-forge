@@ -22,6 +22,82 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 ![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
 
+## Table of Contents
+- [Overview & Goals](#-overview--goals)
+- [Quick Start — PyPI](#quick-start--pypi)
+  - [1 · Install & run (copy‑paste friendly)](#1--install--run-copypaste-friendly)
+- [Quick Start — Containers](#quick-start--containers)
+  - [Docker](#-docker)
+    - [1 · Minimum viable run](#1--minimum-viable-run)
+    - [2 · Persist the SQLite database](#2--persist-the-sqlite-database)
+    - [3 · Local tool discovery (host network)](#3--local-tool-discovery-host-network)
+  - [Podman (rootless-friendly)](#-podman-rootless-friendly)  
+    - [1 · Basic run](#1--basic-run)
+    - [2 · Persist SQLite](#2--persist-sqlite)
+    - [3 · Host networking (rootless)](#3--host-networking-rootless)
+- [Testing `mcpgateway.wrapper` by hand:](#testing-mcpgatewaywrapper-by-hand)
+  - [Running from an MCP Client (`mcpgateway.wrapper`)](#-running-from-an-mcp-client-mcpgatewaywrapper)
+    - [1 · Install <code>uv</code>  (<code>uvenv</code> is an alias it provides)](#1--install-uv--uvenv-is-an-alias-it-provides)
+    - [2 · Create an on-the-spot venv & run the wrapper](#2--create-an-on-the-spot-venv--run-the-wrapper)
+    - [Claude Desktop JSON (runs through **uvenv run**)](#claude-desktop-json-runs-through-uvenv-run)
+  - [Using with Claude Desktop (or any GUI MCP client)](#-using-with-claude-desktop-or-any-gui-mcp-client)
+- [Quick Start: VS Code Dev Container](#-quick-start-vs-code-dev-container)
+  - [1 · Clone & Open](#1--clone--open)
+  - [2 · First-Time Build (Automatic)](#2--first-time-build-automatic)
+- [Quick Start (manual install)](#quick-start-manual-install)
+  - [Prerequisites](#prerequisites)
+  - [One-liner (dev)](#one-liner-dev)
+  - [Containerised (self-signed TLS)](#containerised-self-signed-tls)
+  - [Smoke-test the API](#smoke-test-the-api)
+- [Installation](#installation)
+  - [Via Make](#via-make)
+  - [UV (alternative)](#uv-alternative)
+  - [pip (alternative)](#pip-alternative)
+  - [Optional (PostgreSQL adapter)](#optional-postgresql-adapter)
+    - [Quick Postgres container](#quick-postgres-container)
+- [Configuration (`.env` or env vars)](#configuration-env-or-env-vars)
+  - [Basic](#basic)
+  - [Authentication](#authentication)
+  - [UI Features](#ui-features)
+  - [Security](#security)
+  - [Logging](#logging)
+  - [Transport](#transport)
+  - [Federation](#federation)
+  - [Resources](#resources)
+  - [Tools](#tools)
+  - [Prompts](#prompts)
+  - [Health Checks](#health-checks)
+  - [Database](#database)
+  - [Cache Backend](#cache-backend)
+  - [Development](#development)
+- [Running](#running)
+- [Makefile](#makefile)
+  - [Script helper](#script-helper)
+  - [Manual (Uvicorn)](#manual-uvicorn)
+- [Authentication examples](#authentication-examples)
+- [AWS / Azure / OpenShift](#️-aws--azure--openshift)
+- [IBM Cloud Code Engine Deployment](#️-ibm-cloud-code-engine-deployment)
+  - [Prerequisites](#-prerequisites)
+  - [Environment Variables](#-environment-variables)
+  - [Make Targets](#-make-targets)
+  - [Example Workflow](#-example-workflow)
+- [API Endpoints](#api-endpoints)
+- [Testing](#testing)
+- [Project Structure](#project-structure)
+- [API Documentation](#api-documentation)
+- [Makefile targets](#makefile-targets)
+- [Troubleshooting](#-troubleshooting)
+  - [Diagnose the listener](#diagnose-the-listener)
+  - [Why localhost fails on Windows](#why-localhost-fails-on-windows)
+    - [Fix (Podman rootless)](#fix-podman-rootless)
+    - [Fix (Docker Desktop > 4.19)](#fix-docker-desktop--419)
+- [Contributing](#contributing)
+- [Changelog](#changelog)
+- [License](#license)
+- [Core Authors and Maintainers](#core-authors-and-maintainers)
+- [Star History and Project Activity](#star-history-and-project-activity)
+
+
 ## 🚀 Overview & Goals
 
 **ContextForge MCP Gateway** is a production-grade gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API—exposing a unified endpoint for all your AI clients.
@@ -222,8 +298,7 @@ Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 
 ---
 
-<details>
-<summary><strong>🐳 Docker</strong></summary>
+### 🐳 Docker
 
 #### 1 · Minimum viable run
 
@@ -277,12 +352,9 @@ docker run -d --name mcpgateway \
 
 Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
 
-</details>
-
 ---
 
-<details>
-<summary><strong>🦭 Podman (rootless-friendly)</strong></summary>
+### 🦭 Podman (rootless-friendly)
 
 #### 1 · Basic run
 
@@ -316,8 +388,6 @@ podman run -d --name mcpgateway \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   ghcr.io/ibm/mcp-context-forge:0.1.1
 ```
-
-</details>
 
 ---
 
