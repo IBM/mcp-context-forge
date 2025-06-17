@@ -105,8 +105,8 @@ from mcpgateway.services.tool_service import (
 )
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
-    JWTAuthMiddlewareStreamableHttp,
     SessionManagerWrapper,
+    streamable_http_auth,
 )
 from mcpgateway.types import (
     InitializeRequest,
@@ -197,7 +197,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await logging_service.initialize()
         await sampling_handler.initialize()
         await resource_cache.initialize()
-        await streamable_http_session.start()
+        await streamable_http_session.initialize()
 
         logger.info("All services initialized successfully")
         yield
@@ -262,6 +262,54 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class MCPPathRewriteMiddleware:
+    """
+    Supports requests like '/servers/<server_id>/mcp' by rewriting the path to '/mcp'.
+
+    - Only rewrites paths ending with '/mcp' but not exactly '/mcp'.
+    - Performs authentication before rewriting.
+    - Passes rewritten requests to `streamable_http_session`.
+    - All other requests are passed through unchanged.
+    """
+
+    def __init__(self, app):
+        """
+        Initialize the middleware with the ASGI application.
+
+        Args:
+            app (Callable): The next ASGI application in the middleware stack.
+        """
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        """
+        Intercept and potentially rewrite the incoming HTTP request path.
+
+        Args:
+            scope (dict): The ASGI connection scope.
+            receive (Callable): Awaitable that yields events from the client.
+            send (Callable): Awaitable used to send events to the client.
+        """
+        # Only handle HTTP requests, HTTPS uses scope["type"] == "http" in ASGI
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Call auth check first
+        auth_ok = await streamable_http_auth(scope, receive, send)
+        if not auth_ok:
+            return
+
+        original_path = scope.get("path", "")
+        scope["modified_path"] = original_path
+        if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+            # Rewrite path so mounted app at /mcp handles it
+            scope["path"] = "/mcp"
+            await streamable_http_session.handle_streamable_http(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -276,8 +324,9 @@ app.add_middleware(
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
 
-# Add streamable HTTP middleware for JWT auth
-app.add_middleware(JWTAuthMiddlewareStreamableHttp)
+# Add streamable HTTP middleware for /mcp routes
+app.add_middleware(MCPPathRewriteMiddleware)
+
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
