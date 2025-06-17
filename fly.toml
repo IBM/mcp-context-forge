@@ -1,0 +1,28 @@
+# fly.toml app configuration file generated for mcpgateway on 2025-06-17T14:12:40-04:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'mcpgateway'
+primary_region = 'yyz'
+
+[build]
+  dockerfile = 'Containerfile'
+
+[env]
+  HOST = '0.0.0.0'
+  PORT = '4444'
+  REDIS_URL = 'redis://redis:6379/0'
+
+[http_service]
+  internal_port = 4444
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
