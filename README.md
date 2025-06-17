@@ -31,7 +31,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
     - [1 · Minimum viable run](#1--minimum-viable-run)
     - [2 · Persist the SQLite database](#2--persist-the-sqlite-database)
     - [3 · Local tool discovery (host network)](#3--local-tool-discovery-host-network)
-  - [Podman (rootless-friendly)](#-podman-rootless-friendly)  
+  - [Podman (rootless-friendly)](#-podman-rootless-friendly)
     - [1 · Basic run](#1--basic-run)
     - [2 · Persist SQLite](#2--persist-sqlite)
     - [3 · Host networking (rootless)](#3--host-networking-rootless)
