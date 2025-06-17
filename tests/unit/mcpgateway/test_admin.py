@@ -109,16 +109,13 @@ def mock_request():
     )
 
     # Basic template rendering stub
-    request.app = MagicMock()           # ensure .app exists
-    request.app.state = MagicMock()     # ensure .app.state exists
+    request.app = MagicMock()  # ensure .app exists
+    request.app.state = MagicMock()  # ensure .app.state exists
     request.app.state.templates = MagicMock()
-    request.app.state.templates.TemplateResponse.return_value = HTMLResponse(
-        content="<html></html>"
-    )
+    request.app.state.templates.TemplateResponse.return_value = HTMLResponse(content="<html></html>")
 
     request.query_params = {"include_inactive": "false"}
     return request
-
 
 
 class TestAdminServerRoutes:
@@ -216,6 +213,7 @@ class TestAdminServerRoutes:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "/admin#catalog" in result.headers["location"]
+
 
 class TestAdminToolRoutes:
     """Test admin routes for tool management."""
@@ -602,6 +600,7 @@ class TestAdminGatewayRoutes:
         assert result.status_code == 303
         assert "/admin#gateways" in result.headers["location"]
 
+
 class TestAdminRootRoutes:
     """Test admin routes for root management."""
 
@@ -625,6 +624,7 @@ class TestAdminRootRoutes:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "/admin#roots" in result.headers["location"]
+
 
 class TestAdminMetricsRoutes:
     """Test admin routes for metrics management."""
