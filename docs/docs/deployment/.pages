@@ -11,3 +11,4 @@ nav:
   - ibm-code-engine.md
   - aws.md
   - azure.md
+  - fly-io.md
