@@ -306,13 +306,6 @@ async def streamable_http_auth(scope, receive, send):
         scheme, credentials = get_authorization_scheme_param(authorization)
         if scheme.lower() == "bearer" and credentials:
             token = credentials
-
-    # # If no Bearer token in Authorization header, just allow (no auth)
-    # if not token:
-    #     return True
-
-    # If token is present, verify it
-    print("TOKEN::::", token)
     try:
         await verify_credentials(token)
     except Exception:
