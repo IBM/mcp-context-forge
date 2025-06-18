@@ -148,30 +148,43 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
   document
-    .getElementById("add-gateway-form")
-    .addEventListener("submit", (e) => {
-      e.preventDefault();
-      const form = e.target;
-      const formData = new FormData(form);
-      fetch(`${window.ROOT_PATH}/admin/gateways`, {
-        method: "POST",
-        body: formData,
+  .getElementById("add-gateway-form")
+  .addEventListener("submit", (e) => {
+    e.preventDefault();
+
+    const form = e.target;
+    const formData = new FormData(form);
+
+    const status = document.getElementById("status-gateways");
+    const loading = document.getElementById("add-gateway-loading");
+
+    // Show loading and clear previous status
+    loading.style.display = "block";
+    status.textContent = "";
+    status.classList.remove("error-status");
+
+    fetch(`${window.ROOT_PATH}/admin/gateways`, {
+      method: "POST",
+      body: formData,
+    })
+      .then((response) => {
+        if (!response.ok) {
+          status.textContent = "Connection failed!";
+          status.classList.add("error-status");
+        } else {
+          location.reload(); // Will exit before hiding spinner
+        }
       })
-        .then((response) => {
-          console.log(response);
-          if (!response.ok) {
-            const status = document.getElementById("status-gateways");
-            status.textContent = "Connection failed!";
-            status.classList.add("error-status");
-          } else {
-            location.reload();
-          console.log(response);
-          }
-        })
-        .catch((error) => {
-          console.error("Error:", error);
-        });
-    });
+      .catch((error) => {
+        console.error("Error:", error);
+        status.textContent = "An error occurred!";
+        status.classList.add("error-status");
+      })
+      .finally(() => {
+        loading.style.display = "none"; // Hide loading
+      });
+  });
+
 
   document
     .getElementById("add-resource-form")
@@ -319,7 +332,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const requestTypeMap = {
     MCP: ["SSE", "STREAMABLE", "STDIO"],
-    REST: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    REST: ["GET", "POST", "PUT", "DELETE"],
   };
 
 
@@ -1650,9 +1663,9 @@ async function runToolTest() {
   const formData = new FormData(form);
   const params = {};
   for (const [key, value] of formData.entries()) {
-    if(isNaN(value)) {
-      if(value.toLowerCase() ===  "true" || value.toLowerCase() === "false") {
-        params[key] = Boolean(value.toLowerCase() ===  "true");
+    if (isNaN(value)) {
+      if (value.toLowerCase() === "true" || value.toLowerCase() === "false") {
+        params[key] = value.toLowerCase() === "true";
       } else {
         params[key] = value;
       }
@@ -1661,7 +1674,6 @@ async function runToolTest() {
     }
   }
 
-  // Build the JSON-RPC payload using the tool's name as the method
   const payload = {
     jsonrpc: "2.0",
     id: Date.now(),
@@ -1669,37 +1681,39 @@ async function runToolTest() {
     params: params,
   };
 
-  // Send the request to your /rpc endpoint
-  fetch(`${window.ROOT_PATH}/rpc`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json", // ← make sure we include this
-    },
-    body: JSON.stringify(payload),
-    credentials: "include",
-  })
-    .then((response) => response.json())
-    .then((result) => {
-      const resultStr = JSON.stringify(result, null, 2);
+  // Show loading
+  const loadingElement = document.getElementById("tool-test-loading");
+  loadingElement.style.display = "block";
+  const resultContainer = document.getElementById("tool-test-result");
+  resultContainer.innerHTML = "";
 
-      const container = document.getElementById("tool-test-result");
-      container.innerHTML = '';        // clear any old editor
-
-      toolTestResultEditor = window.CodeMirror(
-        document.getElementById("tool-test-result"),
-        {
-          value: resultStr,
-          mode: "application/json",
-          theme: "monokai",
-          readOnly: true,
-          lineNumbers: true,
-        },
-      );
-    })
-    .catch((error) => {
-      document.getElementById("tool-test-result").innerText = "Error: " + error;
+  try {
+    const response = await fetch(`${window.ROOT_PATH}/rpc`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      credentials: "include",
     });
+
+    const result = await response.json();
+    const resultStr = JSON.stringify(result, null, 2);
+
+    toolTestResultEditor = window.CodeMirror(resultContainer, {
+      value: resultStr,
+      mode: "application/json",
+      theme: "monokai",
+      readOnly: true,
+      lineNumbers: true,
+    });
+  } catch (error) {
+    resultContainer.innerText = "Error: " + error;
+  } finally {
+    loadingElement.style.display = "none"; // Hide loading after fetch or error
+  }
 }
+
 
 /* ---------------------------------------------------------------
  * Utility: copy a JSON string (or any text) to the system clipboard
@@ -1759,7 +1773,7 @@ function closeModal(modalId, clearId=null) {
 
 const integrationRequestMap = {
   MCP: ["SSE", "STREAMABLE", "STDIO"],
-  REST: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  REST: ["GET", "POST", "PUT", "DELETE"],
 };
 
 function updateRequestTypeOptions(preselectedValue = null) {
