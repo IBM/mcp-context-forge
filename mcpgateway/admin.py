@@ -755,7 +755,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         name=form["name"],
         url=form["url"],
         description=form.get("description"),
-        transport=form.get("transport","SSE"),
+        transport=form.get("transport", "SSE"),
         auth_type=form.get("auth_type", ""),
         auth_username=form.get("auth_username", ""),
         auth_password=form.get("auth_password", ""),
@@ -770,12 +770,12 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return RedirectResponse(f"{root_path}/admin#gateways", status_code=502)
-        elif isinstance(ex, ValueError):
+        if isinstance(ex, ValueError):
             return RedirectResponse(f"{root_path}/admin#gateways", status_code=400)
-        elif isinstance(ex, RuntimeError):
+        if isinstance(ex, RuntimeError):
             return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
-        else:
-            return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
+        
+        return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/edit")
@@ -807,7 +807,7 @@ async def admin_edit_gateway(
         name=form["name"],
         url=form["url"],
         description=form.get("description"),
-        transport=form.get("transport","SSE"),
+        transport=form.get("transport", "SSE"),
         auth_type=form.get("auth_type", None),
         auth_username=form.get("auth_username", None),
         auth_password=form.get("auth_password", None),
