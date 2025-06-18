@@ -576,8 +576,8 @@ class GatewayService:
 
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway.transport).lower() == "sse":
-                        timeout = httpx.Timeout(settings.health_check_timeout) 
-                        async with client.stream("GET", gateway.url, headers=headers,timeout=timeout) as response:
+                        timeout = httpx.Timeout(settings.health_check_timeout)
+                        async with client.stream("GET", gateway.url, headers=headers, timeout=timeout) as response:
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                     elif (gateway.transport).lower() == "streamablehttp":
@@ -640,7 +640,7 @@ class GatewayService:
         finally:
             self._event_subscribers.remove(queue)
 
-    async def _initialize_gateway(self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str= "sse") -> Any:
+    async def _initialize_gateway(self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE") -> Any:
         """Initialize connection to a gateway and retrieve its capabilities.
 
         Args:
