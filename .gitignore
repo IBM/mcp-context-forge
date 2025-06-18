@@ -1,3 +1,8 @@
+*.tgz
+*.gz
+*.bz
+*.bz2
+*.tar
 TODO.md
 minikube-*
 .htpasswd
