@@ -576,11 +576,12 @@ class GatewayService:
 
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway.transport).lower() == "sse":
-                        async with client.stream("GET", gateway.url, headers=headers) as response:
+                        timeout = httpx.Timeout(settings.health_check_timeout) 
+                        async with client.stream("GET", gateway.url, headers=headers,timeout=timeout) as response:
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                     elif (gateway.transport).lower() == "streamablehttp":
-                        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=5) as (read_stream, write_stream, get_session_id):
+                        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, get_session_id):
                             async with ClientSession(read_stream, write_stream) as session:
                                 # Initialize the session
                                 response = await session.initialize()
