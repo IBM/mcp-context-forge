@@ -909,8 +909,8 @@ async function viewGateway(gatewayId) {
           <p><strong>Name:</strong> ${gateway.name}</p>
           <p><strong>URL:</strong> ${gateway.url}</p>
           <p><strong>Description:</strong> ${gateway.description || "N/A"}</p>
-          <p><strong>Transport:</strong> 
-            ${gateway.transport === "STREAMABLEHTTP" ? "Streamable HTTP" : 
+          <p><strong>Transport:</strong>
+            ${gateway.transport === "STREAMABLEHTTP" ? "Streamable HTTP" :
               gateway.transport === "SSE" ? "SSE" : "N/A"}
           </p>
           <p><strong>Status:</strong>
