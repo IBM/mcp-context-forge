@@ -495,19 +495,20 @@ class ToolService:
 
                 # Build the payload based on integration type.
                 payload = arguments.copy()
-                
+
                 # Handle URL path parameter substitution
                 final_url = tool.url
-                if '{' in tool.url and '}' in tool.url:
+                if "{" in tool.url and "}" in tool.url:
                     # Extract path parameters from URL template and arguments
                     import re
-                    url_params = re.findall(r'\{(\w+)\}', tool.url)
+
+                    url_params = re.findall(r"\{(\w+)\}", tool.url)
                     url_substitutions = {}
-                    
+
                     for param in url_params:
                         if param in payload:
                             url_substitutions[param] = payload.pop(param)  # Remove from payload
-                            final_url = final_url.replace(f'{{{param}}}', str(url_substitutions[param]))
+                            final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
                         else:
                             raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
@@ -518,7 +519,7 @@ class ToolService:
                 else:
                     response = await self._http_client.request(method, final_url, json=payload, headers=headers)
                 response.raise_for_status()
-                
+
                 # Handle 204 No Content responses that have no body
                 if response.status_code == 204:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
