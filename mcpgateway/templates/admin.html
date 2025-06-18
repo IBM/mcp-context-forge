@@ -1402,6 +1402,18 @@
                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Transport Type</label
+                >
+                <select
+                  name="transport"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                >
+                  <option value="SSE" selected>SSE</option>
+                  <option value="STREAMABLEHTTP">Streamable HTTP</option>
+                </select>
+              </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Authentication Type</label
@@ -2266,6 +2278,19 @@
                       id="edit-gateway-description"
                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700"
+                      >Transport Type</label
+                    >
+                    <select
+                      name="transport"
+                      id="edit-gateway-transport"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    >
+                      <option value="SSE" selected>SSE</option>
+                      <option value="STREAMABLEHTTP">Streamable HTTP</option>
+                    </select>
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-gray-700"
