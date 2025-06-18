@@ -25,8 +25,8 @@ from dataclasses import dataclass
 from typing import List, Union
 from uuid import uuid4
 
-from mcp import types
 from fastapi.security.utils import get_authorization_scheme_param
+from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import (
     EventCallback,
