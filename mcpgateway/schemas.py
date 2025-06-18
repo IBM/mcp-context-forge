@@ -271,15 +271,15 @@ class ToolCreate(BaseModelWithConfig):
       - Unique tool name
       - Valid endpoint URL
       - Valid JSON Schema for input validation
-      - Request type (HTTP method)
       - Integration type: 'MCP' for MCP-compliant tools or 'REST' for REST integrations
+      - Request type (For REST-GET,POST,PUT,DELETE and for MCP-SSE,STDIO,STREAMABLEHTTP)
       - Optional authentication credentials: BasicAuth or BearerTokenAuth or HeadersAuth.
     """
 
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    request_type: Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO"] = Field("SSE", description="HTTP method to be used for invoking the tool")
+    request_type: Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(
@@ -340,7 +340,7 @@ class ToolUpdate(BaseModelWithConfig):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO"]] = Field(None, description="HTTP method to be used for invoking the tool")
+    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     integration_type: Optional[Literal["MCP", "REST"]] = Field(None, description="Tool integration type")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
@@ -641,6 +641,7 @@ class GatewayCreate(BaseModelWithConfig):
     name: str = Field(..., description="Unique name for the gateway")
     url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
     # Authorizations
     auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, or none")
@@ -752,6 +753,7 @@ class GatewayUpdate(BaseModelWithConfig):
     name: Optional[str] = Field(None, description="Unique name for the gateway")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
     name: Optional[str] = Field(None, description="Unique name for the prompt")
     # Authorizations
@@ -877,6 +879,7 @@ class GatewayRead(BaseModelWithConfig):
     name: str = Field(..., description="Unique name for the gateway")
     url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Gateway capabilities")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")
