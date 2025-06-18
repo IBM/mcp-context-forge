@@ -774,7 +774,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             return RedirectResponse(f"{root_path}/admin#gateways", status_code=400)
         if isinstance(ex, RuntimeError):
             return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
-        
+
         return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
 
 
