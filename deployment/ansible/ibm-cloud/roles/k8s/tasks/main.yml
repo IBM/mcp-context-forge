@@ -1,0 +1,36 @@
+- name: Make namespace
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata: { name: "{{ prefix }}" }
+    state: present
+
+# Generate a strong JWT secret for the app
+- name: Build JWT secret
+  set_fact:
+    jwt_secret: "{{ lookup('community.general.password', '/dev/null length=48 chars=ascii_letters,digits') }}"
+
+# Secrets & config-map from templates
+- name: DB / JWT secret
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path }}"
+    namespace: "{{ prefix }}"
+    state: present
+    definition: "{{ lookup('template', 'secret.yaml.j2') | from_yaml }}"
+
+- name: Generic config-map
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path }}"
+    namespace: "{{ prefix }}"
+    state: present
+    definition: "{{ lookup('template', 'configmap.yaml.j2') | from_yaml }}"
+
+# Application (Deployment + Service + Ingress) via one multi-doc template
+- name: Deploy MCP Context-Forge
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path }}"
+    namespace: "{{ prefix }}"
+    state: present
+    definition: "{{ lookup('template', 'deployment.yaml.j2') | from_yaml_all }}"
