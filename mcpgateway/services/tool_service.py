@@ -25,6 +25,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import delete, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -515,6 +516,7 @@ class ToolService:
 
                 success = True
             elif tool.integration_type == "MCP":
+                transport = tool.request_type.lower()
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
                 if gateway.auth_type == "bearer":
                     headers = decode_auth(gateway.auth_value)
@@ -539,10 +541,31 @@ class ToolService:
                             tool_call_result = await session.call_tool(name, arguments)
                     return tool_call_result
 
+                async def connect_to_streamablehttp_server(server_url: str) -> str:
+                    """
+                    Connect to an MCP server running with Streamable HTTP transport
+
+                    Args:
+                        server_url (str): MCP Server URL
+
+                    Returns:
+                        str: Result of tool call
+                    """
+                    # Use async with directly to manage the context
+                    async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, get_session_id):
+                        async with ClientSession(read_stream, write_stream) as session:
+                            # Initialize the session
+                            await session.initialize()
+                            tool_call_result = await session.call_tool(name, arguments)
+                    return tool_call_result
+
                 tool_gateway_id = tool.gateway_id
                 tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
 
-                tool_call_result = await connect_to_sse_server(tool_gateway.url)
+                if transport == "sse":
+                    tool_call_result = await connect_to_sse_server(tool_gateway.url)
+                elif transport == "streamablehttp":
+                    tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url)
                 content = tool_call_result.model_dump(by_alias=True).get("content", [])
 
                 success = True
