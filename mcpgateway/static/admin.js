@@ -318,7 +318,7 @@ document.addEventListener("DOMContentLoaded", function () {
   );
 
   const requestTypeMap = {
-    MCP: ["SSE", "STDIO"],
+    MCP: ["SSE", "STREAMABLE", "STDIO"],
     REST: ["GET", "POST", "PUT", "DELETE"],
   };
 
@@ -896,6 +896,10 @@ async function viewGateway(gatewayId) {
           <p><strong>Name:</strong> ${gateway.name}</p>
           <p><strong>URL:</strong> ${gateway.url}</p>
           <p><strong>Description:</strong> ${gateway.description || "N/A"}</p>
+          <p><strong>Transport:</strong> 
+            ${gateway.transport === "STREAMABLEHTTP" ? "Streamable HTTP" : 
+              gateway.transport === "SSE" ? "SSE" : "N/A"}
+          </p>
           <p><strong>Status:</strong>
             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${gateway.isActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}">
               ${gateway.isActive ? "Active" : "Inactive"}
@@ -927,6 +931,7 @@ async function editGateway(gatewayId) {
     document.getElementById("edit-gateway-url").value = gateway.url;
     document.getElementById("edit-gateway-description").value =
       gateway.description || "";
+    document.getElementById("edit-gateway-transport").value = gateway.transport;
     openModal("gateway-edit-modal");
   } catch (error) {
     console.error("Error fetching gateway details:", error);
@@ -1753,7 +1758,7 @@ function closeModal(modalId, clearId=null) {
 }
 
 const integrationRequestMap = {
-  MCP: ["SSE", "STDIO"],
+  MCP: ["SSE", "STREAMABLE", "STDIO"],
   REST: ["GET", "POST", "PUT", "DELETE"],
 };
 
