@@ -147,32 +147,6 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
 
-  // document
-  //   .getElementById("add-gateway-form")
-  //   .addEventListener("submit", (e) => {
-  //     e.preventDefault();
-  //     const form = e.target;
-  //     const formData = new FormData(form);
-  //     fetch(`${window.ROOT_PATH}/admin/gateways`, {
-  //       method: "POST",
-  //       body: formData,
-  //     })
-  //       .then((response) => {
-  //         console.log(response);
-  //         if (!response.ok) {
-  //           const status = document.getElementById("status-gateways");
-  //           status.textContent = "Connection failed!";
-  //           status.classList.add("error-status");
-  //         } else {
-  //           location.reload();
-  //         console.log(response);
-  //         }
-  //       })
-  //       .catch((error) => {
-  //         console.error("Error:", error);
-  //       });
-  //   });
-
   document
   .getElementById("add-gateway-form")
   .addEventListener("submit", (e) => {
