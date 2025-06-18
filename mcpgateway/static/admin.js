@@ -319,7 +319,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const requestTypeMap = {
     MCP: ["SSE", "STREAMABLE", "STDIO"],
-    REST: ["GET", "POST", "PUT", "DELETE"],
+    REST: ["GET", "POST", "PUT", "PATCH", "DELETE"],
   };
 
 
@@ -1759,7 +1759,7 @@ function closeModal(modalId, clearId=null) {
 
 const integrationRequestMap = {
   MCP: ["SSE", "STREAMABLE", "STDIO"],
-  REST: ["GET", "POST", "PUT", "DELETE"],
+  REST: ["GET", "POST", "PUT", "PATCH", "DELETE"],
 };
 
 function updateRequestTypeOptions(preselectedValue = null) {

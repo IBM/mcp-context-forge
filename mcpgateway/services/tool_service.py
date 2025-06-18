@@ -494,23 +494,42 @@ class ToolService:
                 headers.update(credentials)
 
                 # Build the payload based on integration type.
-                payload = arguments
+                payload = arguments.copy()
+                
+                # Handle URL path parameter substitution
+                final_url = tool.url
+                if '{' in tool.url and '}' in tool.url:
+                    # Extract path parameters from URL template and arguments
+                    import re
+                    url_params = re.findall(r'\{(\w+)\}', tool.url)
+                    url_substitutions = {}
+                    
+                    for param in url_params:
+                        if param in payload:
+                            url_substitutions[param] = payload.pop(param)  # Remove from payload
+                            final_url = final_url.replace(f'{{{param}}}', str(url_substitutions[param]))
+                        else:
+                            raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
                 # Use the tool's request_type rather than defaulting to POST.
                 method = tool.request_type.upper()
                 if method == "GET":
-                    response = await self._http_client.get(tool.url, params=payload, headers=headers)
+                    response = await self._http_client.get(final_url, params=payload, headers=headers)
                 else:
-                    response = await self._http_client.request(method, tool.url, json=payload, headers=headers)
+                    response = await self._http_client.request(method, final_url, json=payload, headers=headers)
                 response.raise_for_status()
-                result = response.json()
-
-                if response.status_code not in [200, 201, 202, 204, 206]:
+                
+                # Handle 204 No Content responses that have no body
+                if response.status_code == 204:
+                    tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                elif response.status_code not in [200, 201, 202, 206]:
+                    result = response.json()
                     tool_result = ToolResult(
                         content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
                         is_error=True,
                     )
                 else:
+                    result = response.json()
                     filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                     tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
 

@@ -4,7 +4,9 @@
 
 ## 🌐 Federation & Routing
 
-### 🧭 Epic: Streamable HTTP Transport (Protocol Revision 2025-03-26)
+### ✅ 🧭 Epic: Streamable HTTP Transport (Protocol Revision 2025-03-26)
+
+> ✅ This feture is now implemented, and streamable HTTP is fully supported in Tools and Virtual Servers.
 
 > **Note:** stdio and the legacy HTTP+SSE transports are already supported; this epic adds the new Streamable HTTP transport per the 2025-03-26 spec.
 
@@ -39,6 +41,8 @@
 
 ### 🧭 Epic: A2A Transport Support
 
+> Partial support.
+
 Enable full-duplex, application-to-application (A2A) integration so that virtual servers and gateways can speak A2A natively.
 
 * **A2A Gateway Registration**
@@ -61,6 +65,8 @@ Enable full-duplex, application-to-application (A2A) integration so that virtual
 ## ⚙️ Lifecycle & Management
 
 ### 🧭 Epic: Virtual Server Protocol Version Selection
+
+> While this is possible through ENV variables, this should be DYNAMIC.
 
 Allow choosing which MCP protocol version each virtual server uses.
 
@@ -220,6 +226,8 @@ Allow choosing which MCP protocol version each virtual server uses.
 ---
 
 ### 🧭 Epic: Transport-Translation Bridge (`mcpgateway.translate`)
+
+> Partial supprot - stdio -> SSE currently supported as per: https://github.com/IBM/mcp-context-forge/issues/94
 
 ???+ "CLI Bridge for Any-to-Any Transport"
     **Goal:** As a CLI user or integrator, I want to bridge stdio-only MCP servers to modern transports like SSE, WS, or Streamable HTTP
