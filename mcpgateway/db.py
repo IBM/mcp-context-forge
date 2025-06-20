@@ -336,7 +336,7 @@ class Tool(Base):
 
     @property
     def qualified_name(self) -> str:
-        return f"{self.gateway_slug}{settings.gateway_tool_name_separator}{self.name}"
+        return f"{self.gateway.name}{settings.gateway_tool_name_separator}{self.name}"
     
     @hybrid_property
     def execution_count(self) -> int:
@@ -947,7 +947,7 @@ class Gateway(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String)
-    url: Mapped[str] = mapped_column(String)
+    url: Mapped[str] = mapped_column(String, unique=True)
     description: Mapped[Optional[str]]
     transport: Mapped[str] = mapped_column(default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)

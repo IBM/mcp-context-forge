@@ -120,7 +120,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: 
     try:
         logger.debug(f"User {user} requested details for server ID {server_id}")
         server = await server_service.get_server(db, server_id)
-        return server.dict(by_alias=True)
+        return server.model_dump(by_alias=True)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -210,7 +210,7 @@ async def admin_edit_server(
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
-            associated_tools=form.get("associatedTools"),
+            associated_tools=",".join(form.getlist("associatedTools")),
             associated_resources=form.get("associatedResources"),
             associated_prompts=form.get("associatedPrompts"),
         )
