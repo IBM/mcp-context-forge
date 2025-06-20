@@ -35,7 +35,10 @@ from sqlalchemy import (
     func,
     make_url,
     select,
-    UniqueConstraint
+    UniqueConstraint,
+    literal,
+    cast,
+    event,
 )
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
@@ -316,8 +319,9 @@ class Tool(Base):
     auth_value: Mapped[Optional[str]] = mapped_column(default=None)
 
     # Federation relationship with a local gateway
-    gateway_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gateways.id"))
-    gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="tools")
+    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
+    gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
+    gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_id == Gateway.id", foreign_keys=[gateway_id], back_populates="tools")
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
 
     # Many-to-many relationship with Servers
@@ -326,18 +330,18 @@ class Tool(Base):
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
 
+    # @property
+    # def gateway_slug(self) -> str:
+    #     return self.gateway.slug
+
     @property
-    def gateway_slug(self) -> str:
-        return self.gateway.slug
-    
+    def qualified_name(self) -> str:
+        return f"{self.gateway.slug}{settings.gateway_tool_name_separator}{self.name}"
+
     __table_args__ = (
         UniqueConstraint("gateway_id", "name", name="uq_gateway_name"),
     )
 
-    @property
-    def qualified_name(self) -> str:
-        return f"{self.gateway.name}{settings.gateway_tool_name_separator}{self.name}"
-    
     @hybrid_property
     def execution_count(self) -> int:
         """
@@ -957,7 +961,7 @@ class Gateway(Base):
     last_seen: Mapped[Optional[datetime]]
 
     # Relationship with local tools this gateway provides
-    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", cascade="all, delete-orphan")
+    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan")
 
     # Relationship with local prompts this gateway provides
     prompts: Mapped[List["Prompt"]] = relationship(back_populates="gateway", cascade="all, delete-orphan")
@@ -978,9 +982,24 @@ class Gateway(Base):
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", "headers" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
 
-    @property
-    def slug(self) -> str:
-        return slugify("/".join(self.url.split("://")[1].split("/")[:-1]))
+    # @property
+    # def slug(self) -> str:
+    #     # return slugify("/".join(self.url.split("://")[1].split("/")[:-1]))
+    #     return slugify(self.name)
+
+    slug = Column(String, nullable=False, unique=True)
+
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_gateway_slug"),
+    )
+
+
+# ── automatically fill/refresh slug ────────────────────────
+@event.listens_for(Gateway.name, "set", retval=False)
+def _set_slug(target, value, oldvalue, initiator):    # ← add 4th arg
+    if value and (not target.slug or value != oldvalue):
+        target.slug = slugify(value)
+
 
 class SessionRecord(Base):
     """ORM model for sessions from SSE client."""

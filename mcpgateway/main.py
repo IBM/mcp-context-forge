@@ -707,7 +707,7 @@ async def delete_server(server_id: int, db: Session = Depends(get_db), user: str
 
 
 @server_router.get("/{server_id}/sse")
-async def sse_endpoint(request: Request, server_id: int, user: str = Depends(require_auth)):
+async def sse_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
     """
     Establishes a Server-Sent Events (SSE) connection for real-time updates about a server.
 
@@ -744,7 +744,7 @@ async def sse_endpoint(request: Request, server_id: int, user: str = Depends(req
 
 
 @server_router.post("/{server_id}/message")
-async def message_endpoint(request: Request, server_id: int, user: str = Depends(require_auth)):
+async def message_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
     """
     Handles incoming messages for a specific server.
 
@@ -1771,7 +1771,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
             result = {}
         else:
             try:
-                result = await tool_service.invoke_tool(db, method, params)
+                result = await tool_service.invoke_tool(db=db, name=method, arguments=params)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
