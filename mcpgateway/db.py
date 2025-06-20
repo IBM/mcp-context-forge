@@ -321,7 +321,7 @@ class Tool(Base):
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
     gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
-    gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_id == Gateway.id", foreign_keys=[gateway_id], back_populates="tools")
+    gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_slug == Gateway.slug", foreign_keys=[gateway_slug], back_populates="tools")
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
 
     # Many-to-many relationship with Servers
@@ -339,7 +339,7 @@ class Tool(Base):
         return f"{self.gateway.slug}{settings.gateway_tool_name_separator}{self.name}"
 
     __table_args__ = (
-        UniqueConstraint("gateway_id", "name", name="uq_gateway_name"),
+        UniqueConstraint("gateway_slug", "name", name="uq_gateway_slug__name"),
     )
 
     @hybrid_property
@@ -961,7 +961,7 @@ class Gateway(Base):
     last_seen: Mapped[Optional[datetime]]
 
     # Relationship with local tools this gateway provides
-    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan")
+    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_slug", cascade="all, delete-orphan")
 
     # Relationship with local prompts this gateway provides
     prompts: Mapped[List["Prompt"]] = relationship(back_populates="gateway", cascade="all, delete-orphan")
@@ -993,8 +993,13 @@ class Gateway(Base):
         UniqueConstraint("slug", name="uq_gateway_slug"),
     )
 
+    # @validates("name")
+    # def _create_slug(self, key, value):
+    #     self.slug = slugify(value)          # ← uses the *real* value
+    #     return value
 
-# ── automatically fill/refresh slug ────────────────────────
+
+# # ── automatically fill/refresh slug ────────────────────────
 @event.listens_for(Gateway.name, "set", retval=False)
 def _set_slug(target, value, oldvalue, initiator):    # ← add 4th arg
     if value and (not target.slug or value != oldvalue):
