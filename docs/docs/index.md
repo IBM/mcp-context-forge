@@ -25,7 +25,7 @@ A flexible FastAPI-based gateway and router for **Model Context Protocol (MCP)**
 
 ## Key Features
 
-- **Multi-Transport**: HTTP, WebSocket, SSE, and stdio with auto-negotiation
+- **Multi-Transport**: HTTP, WebSocket, SSE, Streamable HTTP and stdio with auto-negotiation
 - **Federation & Health Checks**: Auto-discovery (mDNS or static), syncing, monitoring
 - **Admin UI**: Real-time management (HTMX + Tailwind)
 - **Tool Wrapping**: REST / CLI / local functions with JSON-Schema validation
