@@ -147,6 +147,9 @@ class ToolService:
             }
         else:
             tool_dict["auth"] = None
+
+        tool_dict["qualified_name"] = tool.qualified_name
+
         return ToolRead.model_validate(tool_dict)
 
     async def _record_tool_metric(self, db: Session, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:

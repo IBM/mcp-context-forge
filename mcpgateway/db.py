@@ -948,7 +948,6 @@ class Gateway(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String)
     url: Mapped[str] = mapped_column(String)
-    slug: Mapped[str] = mapped_column(String, unique=True)
     description: Mapped[Optional[str]]
     transport: Mapped[str] = mapped_column(default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
@@ -979,11 +978,9 @@ class Gateway(Base):
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", "headers" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
 
-    @validates("url")
-    def _create_slug(self, _key, value):
-        self.slug = slugify(value)          # ← uses the *real* value
-        return value
-
+    @property
+    def slug(self) -> str:
+        return slugify("/".join(self.url.split("://")[1].split("/")[:-1]))
 
 class SessionRecord(Base):
     """ORM model for sessions from SSE client."""
