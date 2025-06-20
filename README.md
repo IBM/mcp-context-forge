@@ -15,6 +15,7 @@
 [![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml)
 
 <!-- === Package / Container === -->
+[![Async](https://img.shields.io/badge/async-await-green.svg)](https://docs.python.org/3/library/asyncio.html)
 [![License](https://img.shields.io/github/license/ibm/mcp-context-forge)](LICENSE)&nbsp;
 [![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/)&nbsp;
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
@@ -318,6 +319,10 @@ docker run -d --name mcpgateway \
 
 # Tail logs (Ctrl+C to quit)
 docker logs -f mcpgateway
+
+# Generating an API key
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.1.1 \
+  python -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `admin` / pass `changeme`).
