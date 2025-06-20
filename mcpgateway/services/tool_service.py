@@ -386,7 +386,7 @@ class ToolService:
         # logger.info(f'{tool=}')
         tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.name == name).where(DbTool.is_active)).scalar_one_or_none()
         if not tool:
-            inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.is_active))).scalar_one_or_none()
+            inactive_tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.name == name).where(not_(DbTool.is_active))).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")
@@ -445,7 +445,7 @@ class ToolService:
                 success = True
             elif tool.integration_type == "MCP":
                 transport = tool.request_type.lower()
-                gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
+                gateway = db.execute(select(DbGateway).where(DbGateway.slug == tool.gateway_slug).where(DbGateway.is_active)).scalar_one_or_none()
                 if gateway.auth_type == "bearer":
                     headers = decode_auth(gateway.auth_value)
                 else:
@@ -487,8 +487,8 @@ class ToolService:
                             tool_call_result = await session.call_tool(name, arguments)
                     return tool_call_result
 
-                tool_gateway_id = tool.gateway_id
-                tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
+                tool_gateway_slug = tool.gateway_slug
+                tool_gateway = db.execute(select(DbGateway).where(DbGateway.slug == tool_gateway_slug).where(DbGateway.is_active)).scalar_one_or_none()
 
                 if transport == "sse":
                     tool_call_result = await connect_to_sse_server(tool_gateway.url)
