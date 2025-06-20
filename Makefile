@@ -274,10 +274,10 @@ images:
 	@mkdir -p $(DOCS_DIR)/docs/design/images
 	@code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
-	@python3 -m pip install snakefood3
-	@python3 -m snakefood3 app > snakefood.dot
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install snakefood3"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m snakefood3 . mcpgateway > snakefood.dot"
 	@dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
-	@pyreverse --colorized app || true
+	@pyreverse --colorized mcpgateway || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black classes.dot -o $(DOCS_DIR)/docs/design/images/classes.svg || true
 	@rm -f packages.dot classes.dot snakefood.dot || true
