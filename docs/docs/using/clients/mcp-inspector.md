@@ -20,10 +20,11 @@ Point it at any MCP-compliant endpoint &mdash; a live Gateway **SSE** stream or 
 
 | Use-case | One-liner | What happens |
 |----------|-----------|--------------|
-| **Connect to Gateway (SSE)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --url http://localhost:4444/servers/1/sse \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
-| **2 · Spin up the stdio wrapper in-process** |<br/>```bash<br/>export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN<br/>export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1<br/><br/>npx @modelcontextprotocol/inspector \\<br/>  python -m mcpgateway.wrapper<br/>``` | Inspector forks `python -m mcpgateway.wrapper`, then connects to its stdio port automatically. |
-| **3 · Same, but via uv / uvenv** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  uvenv run python -m mcpgateway.wrapper<br/>``` | Uses the super-fast **uv** virtual-env if you prefer. |
-| **4 · Wrapper already running** | Launch the wrapper in another shell, then:<br/>```bash<br/>npx @modelcontextprotocol/inspector --stdio<br/>``` | Inspector only opens the GUI and binds to the running stdio server on stdin/stdout. |
+| **1. Connect to Gateway (SSE)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --url http://localhost:4444/servers/1/sse \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
+| **2. Connect to Gateway (Streamable HTTP)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --url http://localhost:4444/servers/1/mcp/ \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
+| **3 · Spin up the stdio wrapper in-process** |<br/>```bash<br/>export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN<br/>export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1<br/><br/>npx @modelcontextprotocol/inspector \\<br/>  python -m mcpgateway.wrapper<br/>``` | Inspector forks `python -m mcpgateway.wrapper`, then connects to its stdio port automatically. |
+| **4 · Same, but via uv / uvenv** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  uvenv run python -m mcpgateway.wrapper<br/>``` | Uses the super-fast **uv** virtual-env if you prefer. |
+| **5 · Wrapper already running** | Launch the wrapper in another shell, then:<br/>```bash<br/>npx @modelcontextprotocol/inspector --stdio<br/>``` | Inspector only opens the GUI and binds to the running stdio server on stdin/stdout. |
 
 ---
 
