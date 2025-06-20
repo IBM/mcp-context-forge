@@ -41,6 +41,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.types import TextContent, ToolResult
 from mcpgateway.utils.services_auth import decode_auth
+from slugify import slugify
 
 from ..config import extract_using_jq
 
@@ -193,10 +194,10 @@ class ToolService:
             ToolError: For other tool registration errors.
         """
         try:
-            existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name)).scalar_one_or_none()
+            existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name).where(DbTool.gateway_id == tool.gateway_id)).scalar_one_or_none()
             if existing_tool:
                 raise ToolNameConflictError(
-                    tool.name,
+                    existing_tool.qualified_name,
                     is_active=existing_tool.is_active,
                     tool_id=existing_tool.id,
                 )
@@ -225,7 +226,7 @@ class ToolService:
             db.commit()
             db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
-            logger.info(f"Registered tool: {tool.name}")
+            logger.info(f"Registered tool: {db_tool.qualified_name}")
             return self._convert_tool_to_read(db_tool)
         except IntegrityError:
             db.rollback()
@@ -256,7 +257,7 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 
-    async def list_server_tools(self, db: Session, server_id: int, include_inactive: bool = False, cursor: Optional[str] = None) -> List[ToolRead]:
+    async def list_server_tools(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
 
@@ -279,7 +280,7 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 
-    async def get_tool(self, db: Session, tool_id: int) -> ToolRead:
+    async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
         """Get a specific tool by ID.
 
         Args:
@@ -297,7 +298,7 @@ class ToolService:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
         return self._convert_tool_to_read(tool)
 
-    async def delete_tool(self, db: Session, tool_id: int) -> None:
+    async def delete_tool(self, db: Session, tool_id: str) -> None:
         """Permanently delete a tool from the database.
 
         Args:
@@ -312,7 +313,7 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-            tool_info = {"id": tool.id, "name": tool.name}
+            tool_info = {"id": tool.id, "name": tool.qualified_name}
             db.delete(tool)
             db.commit()
             await self._notify_tool_deleted(tool_info)
@@ -321,7 +322,7 @@ class ToolService:
             db.rollback()
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: int, activate: bool) -> ToolRead:
+    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool) -> ToolRead:
         """Toggle tool active status.
 
         Args:
@@ -349,119 +350,11 @@ class ToolService:
                     await self._notify_tool_activated(tool)
                 else:
                     await self._notify_tool_deactivated(tool)
-                logger.info(f"Tool {tool.name} {'activated' if activate else 'deactivated'}")
+                logger.info(f"Tool {tool.qualified_name} {'activated' if activate else 'deactivated'}")
             return self._convert_tool_to_read(tool)
         except Exception as e:
             db.rollback()
             raise ToolError(f"Failed to toggle tool status: {str(e)}")
-
-    # async def invoke_tool(self, db: Session, name: str, arguments: Dict[str, Any]) -> ToolResult:
-    #     """
-    #     Invoke a registered tool and record execution metrics.
-
-    #     Args:
-    #         db: Database session.
-    #         name: Name of tool to invoke.
-    #         arguments: Tool arguments.
-
-    #     Returns:
-    #         Tool invocation result.
-
-    #     Raises:
-    #         ToolNotFoundError: If tool not found.
-    #         ToolInvocationError: If invocation fails.
-    #     """
-
-    #     tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.is_active)).scalar_one_or_none()
-    #     if not tool:
-    #         inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.is_active))).scalar_one_or_none()
-    #         if inactive_tool:
-    #             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-    #         raise ToolNotFoundError(f"Tool not found: {name}")
-    #     start_time = time.monotonic()
-    #     success = False
-    #     error_message = None
-    #     try:
-    #         # tool.validate_arguments(arguments)
-    #         # Build headers with auth if necessary.
-    #         headers = tool.headers or {}
-    #         if tool.integration_type == "REST":
-    #             credentials = decode_auth(tool.auth_value)
-    #             headers.update(credentials)
-
-    #             # Build the payload based on integration type.
-    #             payload = arguments
-
-    #             # Use the tool's request_type rather than defaulting to POST.
-    #             method = tool.request_type.upper()
-    #             if method == "GET":
-    #                 response = await self._http_client.get(tool.url, params=payload, headers=headers)
-    #             else:
-    #                 response = await self._http_client.request(method, tool.url, json=payload, headers=headers)
-    #             response.raise_for_status()
-    #             result = response.json()
-
-    #             if response.status_code not in [200, 201, 202, 204, 206]:
-    #                 tool_result = ToolResult(
-    #                     content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
-    #                     is_error=True,
-    #                 )
-    #             else:
-    #                 filtered_response = extract_using_jq(result, tool.jsonpath_filter)
-    #                 tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
-
-    #             success = True
-    #         elif tool.integration_type == "MCP":
-    #             gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
-    #             if gateway.auth_type == "bearer":
-    #                 headers = decode_auth(gateway.auth_value)
-    #             else:
-    #                 headers = {}
-
-    #             async def connect_to_sse_server(server_url: str):
-    #                 """
-    #                 Connect to an MCP server running with SSE transport
-
-    #                 Args:
-    #                     server_url: Server URL
-
-    #                 Returns:
-    #                     str: Tool call result
-    #                 """
-    #                 # Store the context managers so they stay alive
-    #                 _streams_context = sse_client(url=server_url, headers=headers)
-    #                 streams = await _streams_context.__aenter__()  #line 422
-
-    #                 _session_context = ClientSession(*streams)
-    #                 session: ClientSession = await _session_context.__aenter__()  #line 425
-
-    #                 # Initialize
-    #                 await session.initialize()
-    #                 tool_call_result = await session.call_tool(name, arguments)
-
-    #                 await _session_context.__aexit__(None, None, None)
-    #                 await _streams_context.__aexit__(None, None, None)  #line 432
-
-    #                 return tool_call_result
-
-    #             tool_gateway_id = tool.gateway_id
-    #             tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
-
-    #             tool_call_result = await connect_to_sse_server(tool_gateway.url)
-    #             content = tool_call_result.model_dump(by_alias=True).get("content", [])
-
-    #             success = True
-    #             filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-    #             tool_result = ToolResult(content=filtered_response)
-    #         else:
-    #             return ToolResult(content="Invalid tool type")
-
-    #         return tool_result
-    #     except Exception as e:
-    #         error_message = str(e)
-    #         raise ToolInvocationError(f"Tool invocation failed: {error_message}")
-    #     finally:
-    #         await self._record_tool_metric(db, tool, start_time, success, error_message)
 
     async def invoke_tool(self, db: Session, name: str, arguments: Dict[str, Any]) -> ToolResult:
         """
@@ -479,7 +372,19 @@ class ToolService:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
         """
-        tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.is_active)).scalar_one_or_none()
+        # gateway_slug = settings.gateway_tool_name_separator.join(name.split(settings.gateway_tool_name_separator)[:-1])
+        # stmt = (
+        #     select(DbTool)                       # target table
+        #     .join(DbGateway, DbTool.gateway)     # rely on the relationship
+        #     .where(
+        #         DbGateway.slug == gateway_slug,  # gateway identifier
+        #         DbTool.name == name,             # tool name
+        #         DbTool.is_active                 # optional extra filter
+        #     )
+        # )
+        # tool = db.scalar_one_or_none(stmt)
+        # logger.info(f'{tool=}')
+        tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.name == name).where(DbTool.is_active)).scalar_one_or_none()
         if not tool:
             inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.is_active))).scalar_one_or_none()
             if inactive_tool:
@@ -604,7 +509,7 @@ class ToolService:
         finally:
             await self._record_tool_metric(db, tool, start_time, success, error_message)
 
-    async def update_tool(self, db: Session, tool_id: int, tool_update: ToolUpdate) -> ToolRead:
+    async def update_tool(self, db: Session, tool_id: str, tool_update: ToolUpdate) -> ToolRead:
         """Update an existing tool.
 
         Args:
@@ -624,8 +529,8 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-            if tool_update.name is not None and tool_update.name != tool.name:
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool_update.name).where(DbTool.id != tool_id)).scalar_one_or_none()
+            if tool_update.name is not None and not (tool_update.name == tool.name and tool_update.gateway_id == tool.gateway_id):
+                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool_update.name).where(DbTool.gateway_id == tool_update.gateway_id).where(DbTool.id != tool_id)).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(
                         tool_update.name,
@@ -662,7 +567,7 @@ class ToolService:
             db.commit()
             db.refresh(tool)
             await self._notify_tool_updated(tool)
-            logger.info(f"Updated tool: {tool.name}")
+            logger.info(f"Updated tool: {tool.qualified_name}")
             return self._convert_tool_to_read(tool)
         except Exception as e:
             db.rollback()
@@ -679,7 +584,7 @@ class ToolService:
             "type": "tool_updated",
             "data": {
                 "id": tool.id,
-                "name": tool.name,
+                "name": tool.qualified_name,
                 "url": tool.url,
                 "description": tool.description,
                 "is_active": tool.is_active,
@@ -697,7 +602,7 @@ class ToolService:
         """
         event = {
             "type": "tool_activated",
-            "data": {"id": tool.id, "name": tool.name, "is_active": True},
+            "data": {"id": tool.id, "name": tool.qualified_name, "is_active": True},
             "timestamp": datetime.utcnow().isoformat(),
         }
         await self._publish_event(event)
@@ -711,7 +616,7 @@ class ToolService:
         """
         event = {
             "type": "tool_deactivated",
-            "data": {"id": tool.id, "name": tool.name, "is_active": False},
+            "data": {"id": tool.id, "name": tool.qualified_name, "is_active": False},
             "timestamp": datetime.utcnow().isoformat(),
         }
         await self._publish_event(event)
@@ -756,7 +661,7 @@ class ToolService:
             "type": "tool_added",
             "data": {
                 "id": tool.id,
-                "name": tool.name,
+                "name": tool.qualified_name,
                 "url": tool.url,
                 "description": tool.description,
                 "is_active": tool.is_active,
@@ -774,7 +679,7 @@ class ToolService:
         """
         event = {
             "type": "tool_removed",
-            "data": {"id": tool.id, "name": tool.name, "is_active": False},
+            "data": {"id": tool.id, "name": tool.qualified_name, "is_active": False},
             "timestamp": datetime.utcnow().isoformat(),
         }
         await self._publish_event(event)

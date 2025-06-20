@@ -504,7 +504,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str 
     """
     logger.debug(f"User {user} requested details for tool ID {tool_id}")
     tool = await tool_service.get_tool(db, tool_id)
-    return tool.dict(by_alias=True)
+    return tool.model_dump(by_alias=True)
 
 
 @admin_router.post("/tools/")

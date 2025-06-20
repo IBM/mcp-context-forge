@@ -31,7 +31,7 @@ from pydantic import (
     Field,
     model_validator,
     root_validator,
-    validator,
+    validator
 )
 
 from mcpgateway.types import ImageContent

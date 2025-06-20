@@ -189,11 +189,6 @@ class GatewayService:
 
             capabilities, tools = await self._initialize_gateway(str(gateway.url), auth_value, gateway.transport)
 
-            all_names = [td.name for td in tools]
-
-            existing_tools = db.execute(select(DbTool).where(DbTool.name.in_(all_names))).scalars().all()
-            existing_tool_names = [tool.name for tool in existing_tools]
-
             tools = [
                 DbTool(
                     name=tool.name,
@@ -210,9 +205,6 @@ class GatewayService:
                 for tool in tools
             ]
 
-            existing_tools = [tool for tool in tools if tool.name in existing_tool_names]
-            new_tools = [tool for tool in tools if tool.name not in existing_tool_names]
-
             # Create DB model
             db_gateway = DbGateway(
                 name=gateway.name,
@@ -223,8 +215,7 @@ class GatewayService:
                 last_seen=datetime.now(timezone.utc),
                 auth_type=auth_type,
                 auth_value=auth_value,
-                tools=new_tools,
-                # federated_tools=existing_tools + new_tools
+                tools=tools,
             )
 
             # Add to DB
@@ -270,7 +261,7 @@ class GatewayService:
         gateways = db.execute(query).scalars().all()
         return [GatewayRead.model_validate(g) for g in gateways]
 
-    async def update_gateway(self, db: Session, gateway_id: int, gateway_update: GatewayUpdate) -> GatewayRead:
+    async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate) -> GatewayRead:
         """Update a gateway.
 
         Args:
@@ -296,8 +287,8 @@ class GatewayService:
                 raise GatewayNotFoundError(f"Gateway '{gateway.name}' exists but is inactive")
 
             # Check for name conflicts if name is being changed
-            if gateway_update.name is not None and gateway_update.name != gateway.name:
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway_update.name).where(DbGateway.id != gateway_id)).scalar_one_or_none()
+            if gateway_update.url is not None and gateway_update.url != gateway.url:
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.url == gateway_update.url).where(DbGateway.id != gateway_id)).scalar_one_or_none()
 
                 if existing_gateway:
                     raise GatewayNameConflictError(
@@ -326,9 +317,33 @@ class GatewayService:
             # Try to reinitialize connection if URL changed
             if gateway_update.url is not None:
                 try:
-                    capabilities, _ = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
+                    capabilities, tools = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
+                    new_tool_names = [tool.name for tool in tools]
+
+                    for tool in tools:
+                        existing_tool = db.execute(select(DbTool).where(DbTool.name==tool.name).where(DbTool.gateway_id==gateway_id)).scalar_one_or_none()
+                        if not existing_tool:
+                            gateway.tools.append(
+                                DbTool(
+                                    name=tool.name,
+                                    url=str(gateway.url),
+                                    description=tool.description,
+                                    integration_type=tool.integration_type,
+                                    request_type=tool.request_type,
+                                    headers=tool.headers,
+                                    input_schema=tool.input_schema,
+                                    jsonpath_filter=tool.jsonpath_filter,
+                                    auth_type=gateway.auth_type,
+                                    auth_value=gateway.auth_value,
+                                )
+                            )
+
                     gateway.capabilities = capabilities
-                    gateway.last_seen = datetime.utcnow()
+                    gateway.tools = [
+                        tool for tool in gateway.tools
+                        if tool.name in new_tool_names          # keep only still-valid rows
+                    ]
+                    gateway.last_seen = datetime.now(timezone.utc)
 
                     # Update tracking with new URL
                     self._active_gateways.discard(gateway.url)
@@ -336,7 +351,7 @@ class GatewayService:
                 except Exception as e:
                     logger.warning(f"Failed to initialize updated gateway: {e}")
 
-            gateway.updated_at = datetime.utcnow()
+            gateway.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(gateway)
 
@@ -350,7 +365,7 @@ class GatewayService:
             db.rollback()
             raise GatewayError(f"Failed to update gateway: {str(e)}")
 
-    async def get_gateway(self, db: Session, gateway_id: int, include_inactive: bool = False) -> GatewayRead:
+    async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = False) -> GatewayRead:
         """Get a specific gateway by ID.
 
         Args:
@@ -373,7 +388,7 @@ class GatewayService:
 
         return GatewayRead.model_validate(gateway)
 
-    async def toggle_gateway_status(self, db: Session, gateway_id: int, activate: bool) -> GatewayRead:
+    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool) -> GatewayRead:
         """Toggle gateway active status.
 
         Args:
@@ -396,7 +411,7 @@ class GatewayService:
             # Update status if it's different
             if gateway.is_active != activate:
                 gateway.is_active = activate
-                gateway.updated_at = datetime.utcnow()
+                gateway.updated_at = datetime.now(timezone.utc)
 
                 # Update tracking
                 if activate:
@@ -404,8 +419,34 @@ class GatewayService:
                     # Try to initialize if activating
                     try:
                         capabilities, tools = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
-                        gateway.capabilities = capabilities.dict()
-                        gateway.last_seen = datetime.utcnow()
+
+                        new_tool_names = [tool.name for tool in tools]
+
+                        for tool in tools:
+                            existing_tool = db.execute(select(DbTool).where(DbTool.name==tool.name).where(DbTool.gateway_id==gateway_id)).scalar_one_or_none()
+                            if not existing_tool:
+                                gateway.tools.append(
+                                    DbTool(
+                                        name=tool.name,
+                                        url=str(gateway.url),
+                                        description=tool.description,
+                                        integration_type=tool.integration_type,
+                                        request_type=tool.request_type,
+                                        headers=tool.headers,
+                                        input_schema=tool.input_schema,
+                                        jsonpath_filter=tool.jsonpath_filter,
+                                        auth_type=gateway.auth_type,
+                                        auth_value=gateway.auth_value,
+                                    )
+                                )
+
+                        gateway.capabilities = capabilities
+                        gateway.tools = [
+                            tool for tool in gateway.tools
+                            if tool.name in new_tool_names          # keep only still-valid rows
+                        ]
+
+                        gateway.last_seen = datetime.now(timezone.utc)
                     except Exception as e:
                         logger.warning(f"Failed to initialize reactivated gateway: {e}")
                 else:
@@ -448,11 +489,11 @@ class GatewayService:
                 "description": gateway.description,
                 "is_active": gateway.is_active,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
-    async def delete_gateway(self, db: Session, gateway_id: int) -> None:
+    async def delete_gateway(self, db: Session, gateway_id: str) -> None:
         """Permanently delete a gateway.
 
         Args:
@@ -518,7 +559,7 @@ class GatewayService:
             result = response.json()
 
             # Update last seen timestamp
-            gateway.last_seen = datetime.utcnow()
+            gateway.last_seen = datetime.now(timezone.utc)
 
             if "error" in result:
                 raise GatewayError(f"Gateway error: {result['error'].get('message')}")
@@ -587,7 +628,7 @@ class GatewayService:
                                 response = await session.initialize()
 
                     # Mark successful check
-                    gateway.last_seen = datetime.utcnow()
+                    gateway.last_seen = datetime.now(timezone.utc)
 
                 except Exception as e:
                     await self._handle_gateway_failure(gateway)
@@ -830,7 +871,7 @@ class GatewayService:
                 "description": gateway.description,
                 "is_active": gateway.is_active,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -849,7 +890,7 @@ class GatewayService:
                 "url": gateway.url,
                 "is_active": True,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -868,7 +909,7 @@ class GatewayService:
                 "url": gateway.url,
                 "is_active": False,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -882,7 +923,7 @@ class GatewayService:
         event = {
             "type": "gateway_deleted",
             "data": gateway_info,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -896,7 +937,7 @@ class GatewayService:
         event = {
             "type": "gateway_removed",
             "data": {"id": gateway.id, "name": gateway.name, "is_active": False},
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 

@@ -2565,7 +2565,7 @@
       // Build mapping objects using your existing tools, resources, and prompts arrays
       window.toolMapping = {};
       {% for tool in tools %}
-      window.toolMapping["{{ tool.id }}"] = "{{ tool.name }}";
+      window.toolMapping["{{ tool.id }}"] = "{{ tool.qualifiedName }}";
       {% endfor %}
 
       window.resourceMapping = {};
