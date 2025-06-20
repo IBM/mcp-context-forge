@@ -35,6 +35,7 @@ from sqlalchemy import (
     func,
     make_url,
     select,
+    UniqueConstraint
 )
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
@@ -45,7 +46,10 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
     sessionmaker,
+    validates
 )
+import uuid
+from slugify import slugify
 
 from mcpgateway.config import settings
 from mcpgateway.types import ResourceContent
@@ -133,8 +137,8 @@ class Base(DeclarativeBase):
 server_tool_association = Table(
     "server_tool_association",
     Base.metadata,
-    Column("server_id", Integer, ForeignKey("servers.id"), primary_key=True),
-    Column("tool_id", Integer, ForeignKey("tools.id"), primary_key=True),
+    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
+    Column("tool_id", String, ForeignKey("tools.id"), primary_key=True),
 )
 
 # Association table for servers and resources
@@ -294,8 +298,8 @@ class Tool(Base):
 
     __tablename__ = "tools"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=True)
     description: Mapped[Optional[str]]
     integration_type: Mapped[str] = mapped_column(default="MCP")
@@ -322,6 +326,18 @@ class Tool(Base):
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
 
+    @property
+    def gateway_slug(self) -> str:
+        return self.gateway.slug
+    
+    __table_args__ = (
+        UniqueConstraint("gateway_id", "name", name="uq_gateway_name"),
+    )
+
+    @property
+    def qualified_name(self) -> str:
+        return f"{self.gateway_slug}{settings.gateway_tool_name_separator}{self.name}"
+    
     @hybrid_property
     def execution_count(self) -> int:
         """
@@ -812,7 +828,7 @@ class Server(Base):
 
     __tablename__ = "servers"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(unique=True)
     description: Mapped[Optional[str]]
     icon: Mapped[Optional[str]]
@@ -929,9 +945,10 @@ class Gateway(Base):
 
     __tablename__ = "gateways"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True)
-    url: Mapped[str]
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String)
+    url: Mapped[str] = mapped_column(String)
+    slug: Mapped[str] = mapped_column(String, unique=True)
     description: Mapped[Optional[str]]
     transport: Mapped[str] = mapped_column(default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
@@ -961,6 +978,11 @@ class Gateway(Base):
     # Authorizations
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", "headers" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+
+    @validates("url")
+    def _create_slug(self, _key, value):
+        self.slug = slugify(value)          # ← uses the *real* value
+        return value
 
 
 class SessionRecord(Base):

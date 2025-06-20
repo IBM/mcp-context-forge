@@ -182,7 +182,7 @@ class ServerService:
                 for tool_id in server_in.associated_tools:
                     if tool_id.strip() == "":
                         continue
-                    tool_obj = db.get(DbTool, int(tool_id))
+                    tool_obj = db.get(DbTool, tool_id)
                     if not tool_obj:
                         raise ServerError(f"Tool with id {tool_id} does not exist.")
                     db_server.tools.append(tool_obj)
@@ -327,7 +327,7 @@ class ServerService:
             if server_update.associated_tools is not None:
                 server.tools = []
                 for tool_id in server_update.associated_tools:
-                    tool_obj = db.get(DbTool, int(tool_id))
+                    tool_obj = db.get(DbTool, tool_id)
                     if tool_obj:
                         server.tools.append(tool_obj)
 

@@ -288,7 +288,7 @@ class ToolCreate(BaseModelWithConfig):
     )
     jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
-    gateway_id: Optional[int] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
     @root_validator(pre=True)
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -346,7 +346,7 @@ class ToolUpdate(BaseModelWithConfig):
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
     jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
-    gateway_id: Optional[int] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
     @root_validator(pre=True)
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -403,7 +403,7 @@ class ToolRead(BaseModelWithConfig):
     - Request type and authentication settings.
     """
 
-    id: int
+    id: str
     name: str
     url: Optional[str]
     description: Optional[str]
@@ -416,7 +416,7 @@ class ToolRead(BaseModelWithConfig):
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    gateway_id: Optional[int]
+    gateway_id: Optional[str]
     execution_count: int
     metrics: ToolMetrics
 
@@ -875,7 +875,7 @@ class GatewayRead(BaseModelWithConfig):
     - Authentication header value: for headers auth
     """
 
-    id: int = Field(None, description="Unique ID of the gateway")
+    id: str = Field(None, description="Unique ID of the gateway")
     name: str = Field(..., description="Unique name for the gateway")
     url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
@@ -1175,14 +1175,14 @@ class ServerRead(BaseModelWithConfig):
     - Metrics: Aggregated metrics for the server invocations.
     """
 
-    id: int
+    id: str
     name: str
     description: Optional[str]
     icon: Optional[str]
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    associated_tools: List[int] = []
+    associated_tools: List[str] = []
     associated_resources: List[int] = []
     associated_prompts: List[int] = []
     metrics: ServerMetrics
