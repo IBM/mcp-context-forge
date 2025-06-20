@@ -102,12 +102,12 @@ async def admin_list_servers(
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
-async def admin_get_server(server_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
+async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
     """
     Retrieve server details for the admin UI.
 
     Args:
-        server_id (int): The ID of the server to retrieve.
+        server_id (str): The ID of the server to retrieve.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
@@ -157,7 +157,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             name=form["name"],
             description=form.get("description"),
             icon=form.get("icon"),
-            associated_tools=form.get("associatedTools"),
+            associated_tools=",".join(form.getlist("associatedTools")),
             associated_resources=form.get("associatedResources"),
             associated_prompts=form.get("associatedPrompts"),
         )
@@ -174,7 +174,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
 @admin_router.post("/servers/{server_id}/edit")
 async def admin_edit_server(
-    server_id: int,
+    server_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -195,7 +195,7 @@ async def admin_edit_server(
       - associatedPrompts (optional, comma-separated): Updated list of prompts associated with this server
 
     Args:
-        server_id (int): The ID of the server to edit
+        server_id (str): The ID of the server to edit
         request (Request): FastAPI request containing form data
         db (Session): Database session dependency
         user (str): Authenticated user dependency
@@ -227,7 +227,7 @@ async def admin_edit_server(
 
 @admin_router.post("/servers/{server_id}/toggle")
 async def admin_toggle_server(
-    server_id: int,
+    server_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -241,7 +241,7 @@ async def admin_toggle_server(
     logs any errors that might occur during the status toggle operation.
 
     Args:
-        server_id (int): The ID of the server whose status to toggle.
+        server_id (str): The ID of the server whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -263,7 +263,7 @@ async def admin_toggle_server(
 
 
 @admin_router.post("/servers/{server_id}/delete")
-async def admin_delete_server(server_id: int, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
+async def admin_delete_server(server_id: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
     Delete a server via the admin UI.
 
@@ -271,7 +271,7 @@ async def admin_delete_server(server_id: int, request: Request, db: Session = De
     gracefully and logs any errors that occur during the deletion process.
 
     Args:
-        server_id (int): The ID of the server to delete
+        server_id (str): The ID of the server to delete
         request (Request): FastAPI request object (not used but required by route signature).
         db (Session): Database session dependency
         user (str): Authenticated user dependency
@@ -370,7 +370,7 @@ async def admin_list_gateways(
 
 @admin_router.post("/gateways/{gateway_id}/toggle")
 async def admin_toggle_gateway(
-    gateway_id: int,
+    gateway_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -383,7 +383,7 @@ async def admin_toggle_gateway(
     determine the new status of the gateway.
 
     Args:
-        gateway_id (int): The ID of the gateway to toggle.
+        gateway_id (str): The ID of the gateway to toggle.
         request (Request): The FastAPI request object containing form data.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
@@ -433,12 +433,12 @@ async def admin_ui(
         HTMLResponse: Rendered HTML template for the admin dashboard.
     """
     logger.debug(f"User {user} accessed the admin UI")
-    servers = [server.dict(by_alias=True) for server in await server_service.list_servers(db, include_inactive=include_inactive)]
-    tools = [tool.dict(by_alias=True) for tool in await tool_service.list_tools(db, include_inactive=include_inactive)]
-    resources = [resource.dict(by_alias=True) for resource in await resource_service.list_resources(db, include_inactive=include_inactive)]
-    prompts = [prompt.dict(by_alias=True) for prompt in await prompt_service.list_prompts(db, include_inactive=include_inactive)]
-    gateways = [gateway.dict(by_alias=True) for gateway in await gateway_service.list_gateways(db, include_inactive=include_inactive)]
-    roots = [root.dict(by_alias=True) for root in await root_service.list_roots()]
+    servers = [server.model_dump(by_alias=True) for server in await server_service.list_servers(db, include_inactive=include_inactive)]
+    tools = [tool.model_dump(by_alias=True) for tool in await tool_service.list_tools(db, include_inactive=include_inactive)]
+    resources = [resource.model_dump(by_alias=True) for resource in await resource_service.list_resources(db, include_inactive=include_inactive)]
+    prompts = [prompt.model_dump(by_alias=True) for prompt in await prompt_service.list_prompts(db, include_inactive=include_inactive)]
+    gateways = [gateway.model_dump(by_alias=True) for gateway in await gateway_service.list_gateways(db, include_inactive=include_inactive)]
+    roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
     root_path = settings.app_root_path
     response = request.app.state.templates.TemplateResponse(
         "admin.html",
@@ -486,7 +486,7 @@ async def admin_list_tools(
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
-async def admin_get_tool(tool_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
+async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
     """
     Retrieve specific tool details for the admin UI.
 
@@ -495,7 +495,7 @@ async def admin_get_tool(tool_id: int, db: Session = Depends(get_db), user: str 
     viewing and management purposes.
 
     Args:
-        tool_id (int): The ID of the tool to retrieve.
+        tool_id (str): The ID of the tool to retrieve.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -583,7 +583,7 @@ async def admin_add_tool(
 @admin_router.post("/tools/{tool_id}/edit/")
 @admin_router.post("/tools/{tool_id}/edit")
 async def admin_edit_tool(
-    tool_id: int,
+    tool_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -611,7 +611,7 @@ async def admin_edit_tool(
     snake-case keys expected by the schemas.
 
     Args:
-        tool_id (int): The ID of the tool to edit.
+        tool_id (str): The ID of the tool to edit.
         request (Request): FastAPI request containing form data.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -653,7 +653,7 @@ async def admin_edit_tool(
 
 
 @admin_router.post("/tools/{tool_id}/delete")
-async def admin_delete_tool(tool_id: int, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
+async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
     Delete a tool via the admin UI.
 
@@ -662,7 +662,7 @@ async def admin_delete_tool(tool_id: int, request: Request, db: Session = Depend
     and the user must be authenticated to access this route.
 
     Args:
-        tool_id (int): The ID of the tool to delete.
+        tool_id (str): The ID of the tool to delete.
         request (Request): FastAPI request object (not used directly, but required by route signature).
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -680,7 +680,7 @@ async def admin_delete_tool(tool_id: int, request: Request, db: Session = Depend
 
 @admin_router.post("/tools/{tool_id}/toggle")
 async def admin_toggle_tool(
-    tool_id: int,
+    tool_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -694,7 +694,7 @@ async def admin_toggle_tool(
     logs any errors that might occur during the status toggle operation.
 
     Args:
-        tool_id (int): The ID of the tool whose status to toggle.
+        tool_id (str): The ID of the tool whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -716,7 +716,7 @@ async def admin_toggle_tool(
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
-async def admin_get_gateway(gateway_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
+async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
     """Get gateway details for the admin UI.
 
     Args:
@@ -780,7 +780,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
 @admin_router.post("/gateways/{gateway_id}/edit")
 async def admin_edit_gateway(
-    gateway_id: int,
+    gateway_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -822,7 +822,7 @@ async def admin_edit_gateway(
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
-async def admin_delete_gateway(gateway_id: int, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
+async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
     Delete a gateway via the admin UI.
 
@@ -831,7 +831,7 @@ async def admin_delete_gateway(gateway_id: int, request: Request, db: Session = 
     operation for auditing purposes.
 
     Args:
-        gateway_id (int): The ID of the gateway to delete.
+        gateway_id (str): The ID of the gateway to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.

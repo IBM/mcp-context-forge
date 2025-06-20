@@ -419,6 +419,7 @@ class ToolRead(BaseModelWithConfig):
     gateway_id: Optional[str]
     execution_count: int
     metrics: ToolMetrics
+    qualified_name: str
 
     class Config(BaseModelWithConfig.Config):
         """
@@ -896,6 +897,8 @@ class GatewayRead(BaseModelWithConfig):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
+
+    slug: str = Field(None, description="Slug for gateway endpoint URL")
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
