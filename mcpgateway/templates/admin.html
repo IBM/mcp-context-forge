@@ -233,14 +233,14 @@
                   >
                     {{ server.description }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td class="px-6 py-4 max-w-xs break-words text-sm text-gray-500">
                     {% if server.associatedTools %} {{ server.associatedTools |
                     map('string') | join(', ') }} {% else %}
                     <span class="text-gray-500">N/A</span>
                     {% endif %}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500"
+                    class="px-6 py-4 max-w-xs break-words text-sm text-gray-500"
                   >
                     {% if server.associatedResources %} {{
                     server.associatedResources | join(', ') }} {% else %}
@@ -248,7 +248,7 @@
                     {% endif %}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500"
+                    class="px-6 py-4 max-w-xs break-words text-sm text-gray-500"
                   >
                     {% if server.associatedPrompts %} {{
                     server.associatedPrompts | join(', ') }} {% else %}
@@ -322,7 +322,7 @@
 
         <div class="bg-white shadow rounded-lg p-6">
           <h3 class="text-lg font-bold mb-4">Add New Server</h3>
-          <form method="POST" action="{{ root_path }}/admin/servers" id="add-server-form">
+          <form method="POST" action="{{ root_path }}/admin/servers" id="add-server-form" onreset="document.getElementById('associatedTools').selectedIndex = -1;">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label class="block text-sm font-medium text-gray-700"
@@ -356,20 +356,26 @@
               </div>
               <div>
                 <label for="associatedTools" class="block text-sm font-medium text-gray-700">
-                  Associated tools
+                  Associated Tools
                 </label>
                 <select
                   name="associatedTools"                 {# same name as before (minus camelCase) #}
                   id="associatedTools"
                   multiple                                {# remove if you want single-select #}
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm
-                        focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border border-gray-300
+                  bg-white text-sm px-3 py-2 shadow-sm
+                  h-32 overflow-y-auto         /* consistent height & scroll */
+                  focus:border-indigo-500 focus:ring-indigo-500"
                 >
                   {% for tool in tools %}
                     {# value can be tool.id, tool.slug, or any key you use later #}
                     <option value="{{ tool.id }}">{{ tool.qualifiedName }}</option>
                   {% endfor %}
                 </select>
+                <span id="selectedToolsPills"
+                      class="inline-flex flex-wrap gap-1 mt-2"></span>   <!-- container -->
+                <span id="selectedToolsWarning"
+                      class="block text-sm font-semibold text-red-600 mt-1"></span>
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700"
@@ -2487,16 +2493,25 @@
                     />
                   </div>
                   <div>
-                    <label class="block text-sm font-medium text-gray-700"
-                      >Associated Tools (comma-separated IDs)</label
-                    >
-                    <input
-                      type="text"
-                      name="associatedTools"
-                      id="edit-server-tools"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                      placeholder="e.g., 1,2"
-                    />
+                    <label for="edit-server-tools" class="block text-sm font-medium text-gray-700">
+                      Associated Tools
+                    </label>
+                    <select id="edit-server-tools"
+                            name="associatedTools"        {# same field name #}
+                            multiple
+                            class="mt-1 block w-full rounded-md border border-gray-300
+                            bg-white text-sm px-3 py-2 shadow-sm
+                            h-32 overflow-y-auto         /* consistent height & scroll */
+                            focus:border-indigo-500 focus:ring-indigo-500"
+                  >
+                      {% for tool in tools %}
+                        <option value="{{ tool.id }}">{{ tool.qualifiedName }}</option>
+                      {% endfor %}
+                    </select>
+                    <span id="selectedEditToolsPills"
+                          class="inline-flex flex-wrap gap-1 mt-2"></span>   <!-- container -->
+                    <span id="selectedEditToolsWarning"
+                          class="block text-sm font-semibold text-red-600 mt-1"></span>
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-gray-700"

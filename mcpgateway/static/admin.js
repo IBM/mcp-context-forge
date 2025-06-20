@@ -969,7 +969,7 @@ async function viewServer(serverId) {
         // Otherwise, lookup the name using the mapping (fallback to the id itself)
         const name = mapping[item] || item;
         return `<span class="inline-block px-2 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded">
-                      ${item}:${name}
+                      ${name}
                     </span>`;
       }
     };
@@ -1064,11 +1064,38 @@ async function editServer(serverId) {
       server.description || "";
     document.getElementById("edit-server-icon").value = server.icon || "";
     // Fill in the associated tools field (already working)
-    document.getElementById("edit-server-tools").value = Array.isArray(
-      server.associatedTools,
-    )
-      ? server.associatedTools.join(", ")
-      : "";
+    const select = document.getElementById('edit-server-tools');
+    const pillsBox = document.getElementById('selectedEditToolsPills');
+    const warnBox  = document.getElementById('selectedEditToolsWarning');
+
+    // mark every matching <option> as selected
+    for (const opt of select.options) {
+      if (server.associatedTools.includes(opt.innerText)) {
+        opt.selected = true;
+      }
+    }
+
+    const chosen = Array.from(select.selectedOptions);
+    const count  = chosen.length;
+    const max = 6;
+
+    const pillClasses =
+    "inline-block px-2 py-1 text-xs font-medium " +
+    "text-blue-800 bg-blue-100 rounded";
+
+    // ─── 1. rebuild pills  ───────────────────────────────────
+    pillsBox.innerHTML = "";                       // clear previous badges
+    chosen.forEach(opt => {
+      const span       = document.createElement("span");
+      span.className   = pillClasses;
+      span.textContent = opt.text;
+      pillsBox.appendChild(span);
+    });
+
+    // ─── 2. warning when > max  ─────────────────────────────
+    warnBox.textContent =
+      count > max ? `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.` : "";
+
     // Fill in the associated resources field (new)
     const resourcesField = document.getElementById("edit-server-resources");
     if (resourcesField) {
@@ -1798,6 +1825,64 @@ function updateRequestTypeOptions(preselectedValue = null) {
     requestTypeSelect.value = preselectedValue;
   }
 }
+
+/**
+ * Initialise a multi-select so it displays the chosen items
+ * and warns when the count exceeds a limit.
+ *
+ * @param {string} selectId   – id of the <select multiple>
+ * @param {string} infoId     – id of the div that lists selected names
+ * @param {string} warnId     – id of the warning div
+ * @param {number} max        – maximum allowed items before warning
+ */
+function initToolSelect(selectId,
+                        pillsId,
+                        warnId,
+                        max = 6) {
+
+  const select   = document.getElementById(selectId);
+  const pillsBox = document.getElementById(pillsId);
+  const warnBox  = document.getElementById(warnId);
+
+  const pillClasses =
+    "inline-block px-2 py-1 text-xs font-medium " +
+    "text-blue-800 bg-blue-100 rounded";
+
+  function update() {
+    const chosen = Array.from(select.selectedOptions);
+    const count  = chosen.length;
+
+    // ─── 1. rebuild pills  ───────────────────────────────────
+    pillsBox.innerHTML = "";                       // clear previous badges
+    chosen.forEach(opt => {
+      const span       = document.createElement("span");
+      span.className   = pillClasses;
+      span.textContent = opt.text;
+      pillsBox.appendChild(span);
+    });
+
+    // ─── 2. warning when > max  ─────────────────────────────
+    warnBox.textContent =
+      count > max ? `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.` : "";
+  }
+
+  update();                       // initial render
+  select.addEventListener("change", update);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  initToolSelect("associatedTools",
+                 "selectedToolsPills",
+                 "selectedToolsWarning",
+                 6);
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  initToolSelect("edit-server-tools",
+                 "selectedEditToolsPills",
+                 "selectedEditToolsWarning",
+                 6);
+});
 
 window.toggleInactiveItems = toggleInactiveItems;
 window.viewTool = viewTool;
