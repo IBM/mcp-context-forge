@@ -7,6 +7,7 @@ rules:
 # Ignore every YAML (and *.tpl) file under the Helm chart directory.
 ignore: |
   charts/mcp-stack/**/*.yaml
-  charts/mcp-stack/**/*.tpl      # if you template using .tpl files
+  charts/mcp-stack/**/*.tpl      # templates using .tpl files
   charts/mcp-stack/**/values.yaml
   charts/mcp-stack/**/Chart.yaml
+  charts/mcpgateway/templates/*.yaml
