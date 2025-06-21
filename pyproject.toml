@@ -137,6 +137,9 @@ dev = [
     "twine>=6.1.0",
     "ty>=0.0.1a9",
     "types-tabulate>=0.9.0.20241207",
+    "tox>=4.27.0",
+    "tox-uv>=1.26.0",
+    "uv>=0.7.13",
 ]
 
 # Convenience meta-extras
