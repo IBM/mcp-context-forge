@@ -8,7 +8,8 @@ Tests for the main API endpoints.
 """
 
 import os
-from unittest.mock import ANY, MagicMock, patch   # ← added ANY
+from unittest.mock import ANY, MagicMock, patch  # ← added ANY
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -44,11 +45,7 @@ def test_client(app):
 @pytest.fixture
 def mock_jwt_token():
     """Create a mock JWT token (kept for backwards-compat)."""
-    return (
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-        "eyJzdWIiOiJ0ZXN0X3VzZXIiLCJleHAiOjk5OTk5OTk5OTl9."
-        "this_is_a_test_token"
-    )
+    return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." "eyJzdWIiOiJ0ZXN0X3VzZXIiLCJleHAiOjk5OTk5OTk5OTl9." "this_is_a_test_token"
 
 
 @pytest.fixture
@@ -83,8 +80,8 @@ class TestAPIEndpoints:
 
         content = response.text
         # basic sanity checks on returned fragment
-        assert "<div" in content        # should be wrapped in a div
-        assert "App:" in content        # contains application metadata
+        assert "<div" in content  # should be wrapped in a div
+        assert "App:" in content  # contains application metadata
 
     def test_admin_ui_contains_version_tab(self, test_client, auth_headers):
         response = test_client.get("/admin", headers=auth_headers)
@@ -98,13 +95,13 @@ class TestAPIEndpoints:
         assert response.status_code == 200
 
         content = response.text
-        assert "<div" in content        # HTML present
-        assert "App:" in content        # metadata present
+        assert "<div" in content  # HTML present
+        assert "App:" in content  # metadata present
 
     # Root redirect ------------------------------------------------------- #
     def test_root_redirect(self, test_client):
         response = test_client.get("/", follow_redirects=False)  # ← param name
-        assert response.status_code == 303                       # ← actual code
+        assert response.status_code == 303  # ← actual code
         assert response.headers["location"] == "/admin"
 
     # Static files -------------------------------------------------------- #

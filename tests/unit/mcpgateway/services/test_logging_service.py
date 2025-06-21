@@ -27,7 +27,6 @@ import pytest
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.types import LogLevel
 
-
 # ---------------------------------------------------------------------------
 # Basic behaviour
 # ---------------------------------------------------------------------------
