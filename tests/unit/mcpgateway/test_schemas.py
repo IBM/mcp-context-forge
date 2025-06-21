@@ -786,6 +786,7 @@ class TestServerSchemas:
             id=2,
             name="Object Server",
             description="Server with object associations",
+            icon="http://example.com/object_server.png",
             created_at=one_hour_ago,
             updated_at=now,
             is_active=True,
