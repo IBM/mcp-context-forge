@@ -38,6 +38,7 @@ def mock_tool():
     tool = MagicMock(spec=DbTool)
     tool.id = 101
     tool.name = "test_tool"
+    tool._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return tool
 
 
@@ -46,6 +47,7 @@ def mock_resource():
     res = MagicMock(spec=DbResource)
     res.id = 201
     res.name = "test_resource"
+    res._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return res
 
 
@@ -54,6 +56,7 @@ def mock_prompt():
     pr = MagicMock(spec=DbPrompt)
     pr.id = 301
     pr.name = "test_prompt"
+    pr._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return pr
 
 
@@ -339,14 +342,17 @@ class TestServerService:
         new_tool = MagicMock(spec=DbTool)
         new_tool.id = 102
         new_tool.name = "new_tool"
+        new_tool._sa_instance_state = MagicMock()
 
         new_resource = MagicMock(spec=DbResource)
         new_resource.id = 202
         new_resource.name = "new_resource"
+        new_resource._sa_instance_state = MagicMock()
 
         new_prompt = MagicMock(spec=DbPrompt)
         new_prompt.id = 302
         new_prompt.name = "new_prompt"
+        new_prompt._sa_instance_state = MagicMock()
 
         test_db.get = Mock(
             side_effect=lambda cls, _id: (
