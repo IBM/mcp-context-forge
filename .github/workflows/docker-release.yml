@@ -76,8 +76,8 @@ jobs:
       # ----------------------------------------------------------------
       - name: ✅  Verify commit checks passed
         env:
-          SHA:   ${{ steps.meta.outputs.sha }}
-          REPO:  ${{ github.repository }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           STATUS=$(curl -sSL \
