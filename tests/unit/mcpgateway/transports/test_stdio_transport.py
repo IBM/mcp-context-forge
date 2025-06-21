@@ -24,7 +24,6 @@ import pytest
 
 from mcpgateway.transports.stdio_transport import StdioTransport
 
-
 # ---------------------------------------------------------------------------
 # Simple in-memory stand-ins for asyncio streams
 # ---------------------------------------------------------------------------
@@ -58,7 +57,7 @@ class _DummyReader:
         self._lines = [l.encode() + b"\n" for l in lines]
 
     async def readline(self) -> bytes:  # noqa: D401
-        await asyncio.sleep(0)           # let the event-loop breathe
+        await asyncio.sleep(0)  # let the event-loop breathe
         return self._lines.pop(0) if self._lines else b""
 
 
@@ -85,8 +84,8 @@ async def test_send_message_happy_path(transport):
     push it to the writer, and await `drain()`.
     """
     writer = _DummyWriter()
-    transport._stdout_writer = writer          # type: ignore[attr-defined]
-    transport._connected = True               # type: ignore[attr-defined]
+    transport._stdout_writer = writer  # type: ignore[attr-defined]
+    transport._connected = True  # type: ignore[attr-defined]
 
     payload = {"key": "value", "n": 123}
     await transport.send_message(payload)
@@ -108,9 +107,9 @@ async def test_send_message_not_connected_raises(transport):
 
 @pytest.mark.asyncio
 async def test_receive_message_decodes_until_eof(transport):
-    reader = _DummyReader(['{"a":1}', '{"b":2}'])   # two JSON lines then EOF
-    transport._stdin_reader = reader                # type: ignore[attr-defined]
-    transport._connected = True                     # type: ignore[attr-defined]
+    reader = _DummyReader(['{"a":1}', '{"b":2}'])  # two JSON lines then EOF
+    transport._stdin_reader = reader  # type: ignore[attr-defined]
+    transport._connected = True  # type: ignore[attr-defined]
 
     messages = [m async for m in transport.receive_message()]
 
@@ -127,8 +126,8 @@ async def test_receive_message_not_connected_raises(transport):
 @pytest.mark.asyncio
 async def test_disconnect_closes_writer_and_flags_state(transport):
     writer = _DummyWriter()
-    transport._stdout_writer = writer               # type: ignore[attr-defined]
-    transport._connected = True                     # type: ignore[attr-defined]
+    transport._stdout_writer = writer  # type: ignore[attr-defined]
+    transport._connected = True  # type: ignore[attr-defined]
 
     await transport.disconnect()
 
@@ -138,7 +137,7 @@ async def test_disconnect_closes_writer_and_flags_state(transport):
 
 @pytest.mark.asyncio
 async def test_is_connected_reports_state(transport):
-    transport._connected = False                    # type: ignore[attr-defined]
+    transport._connected = False  # type: ignore[attr-defined]
     assert await transport.is_connected() is False
-    transport._connected = True                     # type: ignore[attr-defined]
+    transport._connected = True  # type: ignore[attr-defined]
     assert await transport.is_connected() is True

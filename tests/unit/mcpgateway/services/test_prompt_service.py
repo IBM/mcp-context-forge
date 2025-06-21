@@ -33,7 +33,6 @@ from mcpgateway.services.prompt_service import (
 )
 from mcpgateway.types import LogLevel, Message, PromptResult, Role, TextContent
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -54,7 +53,6 @@ def _make_execute_result(*, scalar: Any = None, scalars_list: Optional[list] = N
     scalars_proxy.all.return_value = scalars_list or []
     result.scalars.return_value = scalars_proxy
     return result
-
 
 
 def _build_db_prompt(
@@ -184,10 +182,12 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_update_prompt_success(self, prompt_service, test_db):
         existing = _build_db_prompt()
-        test_db.execute = Mock(side_effect=[  # first call = find existing, second = conflict check
-            _make_execute_result(scalar=existing),
-            _make_execute_result(scalar=None),
-        ])
+        test_db.execute = Mock(
+            side_effect=[  # first call = find existing, second = conflict check
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=None),
+            ]
+        )
         test_db.commit = Mock()
         test_db.refresh = Mock()
         prompt_service._notify_prompt_updated = AsyncMock()
@@ -204,10 +204,12 @@ class TestPromptService:
     async def test_update_prompt_name_conflict(self, prompt_service, test_db):
         existing = _build_db_prompt()
         conflicting = _build_db_prompt(pid=2, name="other")
-        test_db.execute = Mock(side_effect=[
-            _make_execute_result(scalar=existing),
-            _make_execute_result(scalar=conflicting),
-        ])
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=conflicting),
+            ]
+        )
         upd = PromptUpdate(name="other")
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.update_prompt(test_db, "hello", upd)
@@ -259,15 +261,17 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_aggregate_and_reset_metrics(self, prompt_service, test_db):
         # Metrics numbers to be returned by scalar() calls
-        test_db.execute = Mock(side_effect=[
-            _make_execute_result(scalar=10),  # total
-            _make_execute_result(scalar=8),   # successful
-            _make_execute_result(scalar=2),   # failed
-            _make_execute_result(scalar=0.1),  # min_rt
-            _make_execute_result(scalar=0.9),  # max_rt
-            _make_execute_result(scalar=0.5),  # avg_rt
-            _make_execute_result(scalar=datetime(2025, 1, 1, tzinfo=timezone.utc)),  # last_time
-        ])
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=10),  # total
+                _make_execute_result(scalar=8),  # successful
+                _make_execute_result(scalar=2),  # failed
+                _make_execute_result(scalar=0.1),  # min_rt
+                _make_execute_result(scalar=0.9),  # max_rt
+                _make_execute_result(scalar=0.5),  # avg_rt
+                _make_execute_result(scalar=datetime(2025, 1, 1, tzinfo=timezone.utc)),  # last_time
+            ]
+        )
 
         metrics = await prompt_service.aggregate_metrics(test_db)
         assert metrics["total_executions"] == 10
