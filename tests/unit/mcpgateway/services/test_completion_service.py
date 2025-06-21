@@ -146,8 +146,10 @@ async def test_complete_resource_missing_uri():
         pass
 
     with pytest.raises(CompletionError) as exc:
-        await service._complete_resource_uri(DummySession(), {}, "arg", "")
+        # 3 args: session, ref dict, and the value
+        await service._complete_resource_uri(DummySession(), {}, "")
     assert "Missing URI template" in str(exc.value)
+
 
 
 @pytest.mark.asyncio
@@ -159,7 +161,7 @@ async def test_complete_resource_values():
         def execute(self, query):
             return FakeScalarsAllResult(resources)
 
-    result = await service._complete_resource_uri(DummySession(), {"uri": "template"}, "arg", "foo")
+    result = await service._complete_resource_uri(DummySession(), {"uri": "template"}, "foo")
     comp = result.completion
     assert set(comp["values"]) == {"foo", "bazfoo"}
     assert comp["total"] == 2
