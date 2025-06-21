@@ -43,21 +43,24 @@ def mock_server():
     server.updated_at = "2023-01-01T00:00:00"
     server.is_active = True
 
-    # Set up associated items
+    # associated objects -------------------------------------------------
     tool1 = MagicMock(spec=DbTool)
     tool1.id = 101
+    tool1._sa_instance_state = Mock()     # <-- SQLAlchemy expects this attr
 
     resource1 = MagicMock(spec=DbResource)
     resource1.id = 201
+    resource1._sa_instance_state = Mock()
 
     prompt1 = MagicMock(spec=DbPrompt)
     prompt1.id = 301
+    prompt1._sa_instance_state = Mock()
 
     server.tools = [tool1]
     server.resources = [resource1]
     server.prompts = [prompt1]
 
-    # Set up metrics
+    # dummy metrics fields
     server.metrics = []
     server.execution_count = 0
     server.successful_executions = 0
@@ -77,8 +80,8 @@ def mock_tool():
     tool = MagicMock(spec=DbTool)
     tool.id = 101
     tool.name = "test_tool"
+    tool._sa_instance_state = Mock()
     return tool
-
 
 @pytest.fixture
 def mock_resource():
@@ -86,6 +89,7 @@ def mock_resource():
     resource = MagicMock(spec=DbResource)
     resource.id = 201
     resource.name = "test_resource"
+    resource._sa_instance_state = Mock()
     return resource
 
 
@@ -95,6 +99,7 @@ def mock_prompt():
     prompt = MagicMock(spec=DbPrompt)
     prompt.id = 301
     prompt.name = "test_prompt"
+    prompt._sa_instance_state = Mock()
     return prompt
 
 
@@ -219,10 +224,9 @@ class TestServerService:
     async def test_list_servers(self, server_service, mock_server, test_db):
         """Test listing servers."""
         # Mock DB to return a list of servers
-        mock_scalar_result = MagicMock()
-        mock_scalar_result.all.return_value = [mock_server]
-        mock_execute = Mock(return_value=mock_scalar_result)
-        test_db.execute = mock_execute
+        exec_result = MagicMock()
+        exec_result.scalars.return_value.all.return_value = [mock_server]
+        test_db.execute = Mock(return_value=exec_result)
 
         # Set up conversion
         server_read = ServerRead(
@@ -259,6 +263,8 @@ class TestServerService:
         assert len(result) == 1
         assert result[0] == server_read
         server_service._convert_server_to_read.assert_called_once_with(mock_server)
+
+
 
     @pytest.mark.asyncio
     async def test_get_server(self, server_service, mock_server, test_db):
