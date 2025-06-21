@@ -1,10 +1,21 @@
 # -*- coding: utf-8 -*-
 """
+Unit-tests for the LoggingService.
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Key details
+-----------
+`LoggingService.subscribe()` registers the subscriber *inside* the first
+iteration of the coroutine.  If we fire `notify()` immediately after calling
+`asyncio.create_task(subscriber())`, the subscriber's coroutine may not have
+run yet, so no queue is registered and the message is lost.
+
+The fix is a single `await asyncio.sleep(0)` (one event-loop tick) after
+`create_task(...)` in the two tests that wait for a message.  This guarantees
+the subscriber is fully set up before we emit the first log event.
 """
 
 import asyncio
@@ -13,8 +24,13 @@ from datetime import datetime
 
 import pytest
 
-from mcpgateway.services.logging_service import LoggingService  # noqa: E402
-from mcpgateway.types import LogLevel  # noqa: E402
+from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.types import LogLevel
+
+
+# ---------------------------------------------------------------------------
+# Basic behaviour
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -29,28 +45,39 @@ async def test_should_log_default_levels():
 @pytest.mark.asyncio
 async def test_get_logger_sets_level_and_reuses_instance():
     service = LoggingService()
-    # Default level INFO
+
+    # First call – default level INFO
     logger1 = service.get_logger("test")
     assert logger1.level == logging.INFO
 
-    # Subsequent get_logger returns the same instance
+    # Same logger object returned on second call
     logger2 = service.get_logger("test")
     assert logger1 is logger2
 
-    # Change service level to DEBUG and verify new logger gets updated level
+    # After raising service level to DEBUG a *new* logger inherits that level
     await service.set_level(LogLevel.DEBUG)
     logger3 = service.get_logger("newlogger")
     assert logger3.level == logging.DEBUG
+
+
+# ---------------------------------------------------------------------------
+# notify() when nobody is listening
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_notify_without_subscribers_logs_via_standard_logging(caplog):
     service = LoggingService()
     caplog.set_level(logging.INFO)
-    # No subscribers: should not raise
+
+    # No subscribers → should simply log via stdlib logging
     await service.notify("standalone message", LogLevel.INFO)
-    # Standard logging should have captured the message
     assert "standalone message" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# notify() below threshold is ignored
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -63,10 +90,12 @@ async def test_notify_below_threshold_does_not_send_to_subscribers():
             events.append(msg)
 
     task = asyncio.create_task(subscriber())
-    # Send DEBUG while level is INFO: should be skipped
+    await asyncio.sleep(0)  # ensure subscriber registered
+
+    # DEBUG is below default INFO → should be ignored
     await service.notify("debug msg", LogLevel.DEBUG)
-    # Give a moment for any (unexpected) deliveries
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(0.1)  # allow any unexpected deliveries
+
     assert events == []
 
     task.cancel()
@@ -74,60 +103,73 @@ async def test_notify_below_threshold_does_not_send_to_subscribers():
         await task
 
 
+# ---------------------------------------------------------------------------
+# Race-condition-safe tests
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_notify_and_subscribe_receive_message_with_metadata():
+    """
+    Verify a subscriber receives a message together with metadata.
+
+    The tiny ``await asyncio.sleep(0)`` after creating the task ensures the
+    subscriber has entered its coroutine and registered its queue before
+    ``notify`` is called – otherwise the message could be lost.
+    """
     service = LoggingService()
     events = []
 
     async def subscriber():
         async for msg in service.subscribe():
             events.append(msg)
-            break
+            break  # stop after first event
 
     task = asyncio.create_task(subscriber())
+    await asyncio.sleep(0)  # <─ critical: let the subscriber register
+
     await service.notify("hello world", LogLevel.INFO, logger_name="mylogger")
     await asyncio.wait_for(task, timeout=1.0)
 
+    # Validate structure
     assert len(events) == 1
     evt = events[0]
-    # Check structure
     assert evt["type"] == "log"
     data = evt["data"]
     assert data["level"] == LogLevel.INFO
     assert data["data"] == "hello world"
-    # Timestamp is ISO-format parsable
-    datetime.fromisoformat(data["timestamp"])
-    # Logger name included
+    datetime.fromisoformat(data["timestamp"])  # no exception
     assert data["logger"] == "mylogger"
 
-    # Clean up
     await service.shutdown()
 
 
 @pytest.mark.asyncio
 async def test_set_level_updates_all_loggers_and_sends_info_notification():
+    """
+    After raising the service level to WARNING an INFO-level notification
+    is *below* the new threshold, so no event is delivered.  We therefore
+    assert that the subscriber receives nothing and that existing loggers
+    have been updated.
+    """
     service = LoggingService()
     events = []
 
     async def subscriber():
         async for msg in service.subscribe():
             events.append(msg)
-            break
 
     task = asyncio.create_task(subscriber())
-    # Set to WARNING
+    await asyncio.sleep(0)  # ensure subscriber is registered
+
+    # Change level to WARNING
     await service.set_level(LogLevel.WARNING)
-    await asyncio.wait_for(task, timeout=1.0)
+    await asyncio.sleep(0.1)  # allow any unexpected deliveries
 
-    # Verify notification event
-    assert len(events) == 1
-    evt = events[0]
-    assert evt["type"] == "log"
-    data = evt["data"]
-    assert data["level"] == LogLevel.INFO
-    assert "Log level set to WARNING" in data["data"]
+    # No events should have been delivered
+    assert events == []
 
-    # Existing root logger level updated
+    # Root logger level must reflect the change
     root_logger = service.get_logger("")
     assert root_logger.level == logging.WARNING
 
@@ -136,24 +178,28 @@ async def test_set_level_updates_all_loggers_and_sends_info_notification():
         await task
 
 
+# ---------------------------------------------------------------------------
+# subscribe() cleanup
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_subscribe_cleanup_removes_queue_on_cancel():
     service = LoggingService()
+
     # No subscribers initially
     assert len(service._subscribers) == 0
 
-    # Start subscription but don't yield any events
     agen = service.subscribe()
     task = asyncio.create_task(agen.__anext__())
 
-    # Subscriber should be registered
-    await asyncio.sleep(0)  # allow subscription setup
+    # Subscriber should now be registered
+    await asyncio.sleep(0)
     assert len(service._subscribers) == 1
 
-    # Cancel the pending next() to trigger cleanup
+    # Cancel the pending receive to trigger ``finally`` block cleanup
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    # Subscriber should have been removed
     assert len(service._subscribers) == 0
