@@ -17,6 +17,18 @@ from unittest.mock import Mock
 import pytest
 from pydantic import ValidationError
 
+from mcpgateway.schemas import (
+    AdminGatewayCreate,
+    AdminToolCreate,
+    EventMessage,
+    ListFilters,
+    ServerCreate,
+    ServerMetrics,
+    ServerRead,
+    ServerUpdate,
+    StatusToggleRequest,
+    StatusToggleResponse,
+)
 from mcpgateway.types import (
     ClientCapabilities,
     CreateMessageResult,
@@ -43,19 +55,6 @@ from mcpgateway.types import (
     TextContent,
     Tool,
     ToolResult,
-)
-
-from mcpgateway.schemas import (
-    EventMessage,
-    AdminToolCreate,
-    AdminGatewayCreate,
-    ServerCreate,
-    ServerUpdate,
-    ServerRead,
-    ServerMetrics,
-    StatusToggleRequest,
-    StatusToggleResponse,
-    ListFilters,
 )
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
