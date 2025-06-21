@@ -140,6 +140,7 @@ dev = [
     "tox>=4.27.0",
     "tox-uv>=1.26.0",
     "uv>=0.7.13",
+    "yamllint>=1.37.1",
 ]
 
 # Convenience meta-extras

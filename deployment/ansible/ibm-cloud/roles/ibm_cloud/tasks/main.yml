@@ -58,7 +58,7 @@
 # 5️⃣  Convenience facts for later templates
 - name: Extract DB connection strings
   set_fact:
-    pg_conn:    "{{ pg_key.resource.connection[0].postgres.composed[0] }}"
+    pg_conn: "{{ pg_key.resource.connection[0].postgres.composed[0] }}"
     redis_conn: "{{ redis_key.resource.connection[0].rediss.composed[0] }}"
 
 # 6️⃣  Fetch kubeconfig (CLI) — simplest universal path
