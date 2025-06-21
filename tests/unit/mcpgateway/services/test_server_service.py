@@ -10,6 +10,7 @@ Tests for server service implementation.
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
@@ -33,7 +34,31 @@ def server_service() -> ServerService:
 
 
 @pytest.fixture
-def mock_server():
+def mock_tool():
+    tool = MagicMock(spec=DbTool)
+    tool.id = 101
+    tool.name = "test_tool"
+    return tool
+
+
+@pytest.fixture
+def mock_resource():
+    res = MagicMock(spec=DbResource)
+    res.id = 201
+    res.name = "test_resource"
+    return res
+
+
+@pytest.fixture
+def mock_prompt():
+    pr = MagicMock(spec=DbPrompt)
+    pr.id = 301
+    pr.name = "test_prompt"
+    return pr
+
+
+@pytest.fixture
+def mock_server(mock_tool, mock_resource, mock_prompt):
     """Return a mocked DbServer object with minimal required attributes."""
     server = MagicMock(spec=DbServer)
     server.id = 1
@@ -45,52 +70,13 @@ def mock_server():
     server.is_active = True
 
     # Associated objects -------------------------------------------------- #
-    tool1 = MagicMock(spec=DbTool)
-    tool1.id = 101
-    tool1._sa_instance_state = Mock()
-
-    resource1 = MagicMock(spec=DbResource)
-    resource1.id = 201
-    resource1._sa_instance_state = Mock()
-
-    prompt1 = MagicMock(spec=DbPrompt)
-    prompt1.id = 301
-    prompt1._sa_instance_state = Mock()
-
-    server.tools = [tool1]
-    server.resources = [resource1]
-    server.prompts = [prompt1]
+    server.tools = [mock_tool]
+    server.resources = [mock_resource]
+    server.prompts = [mock_prompt]
 
     # Dummy metrics
     server.metrics = []
     return server
-
-
-@pytest.fixture
-def mock_tool():
-    tool = MagicMock(spec=DbTool)
-    tool.id = 101
-    tool.name = "test_tool"
-    tool._sa_instance_state = Mock()
-    return tool
-
-
-@pytest.fixture
-def mock_resource():
-    res = MagicMock(spec=DbResource)
-    res.id = 201
-    res.name = "test_resource"
-    res._sa_instance_state = Mock()
-    return res
-
-
-@pytest.fixture
-def mock_prompt():
-    pr = MagicMock(spec=DbPrompt)
-    pr.id = 301
-    pr.name = "test_prompt"
-    pr._sa_instance_state = Mock()
-    return pr
 
 
 # --------------------------------------------------------------------------- #
@@ -101,23 +87,66 @@ class TestServerService:
 
     # ------------------------- register_server -------------------------- #
     @pytest.mark.asyncio
-    async def test_register_server(
-        self, server_service, test_db, mock_tool, mock_resource, mock_prompt
-    ):
+    async def test_register_server(self, server_service, test_db, mock_tool, mock_resource, mock_prompt):
         """
         Successful registration returns a populated ServerRead.
-        We DO NOT patch DbServer – we let SQLAlchemy keep the real mapped class
-        so that select(DbServer) works correctly.
+        We mock the DB operations to avoid SQLAlchemy state issues.
         """
         # Pretend there is no existing server with the same name
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
 
-        # Basic Session stubs
-        test_db.add = Mock()
+        # Mock the created server instance
+        mock_db_server = MagicMock(spec=DbServer)
+        mock_db_server.id = 1
+        mock_db_server.name = "test_server"
+        mock_db_server.description = "A test server"
+        mock_db_server.icon = "server-icon"
+        mock_db_server.created_at = "2023-01-01T00:00:00"
+        mock_db_server.updated_at = "2023-01-01T00:00:00"
+        mock_db_server.is_active = True
+        mock_db_server.metrics = []
+
+        # Create mock lists with append methods
+        mock_tools = MagicMock()
+        mock_resources = MagicMock()
+        mock_prompts = MagicMock()
+
+        # Track what gets appended
+        appended_tools = []
+        appended_resources = []
+        appended_prompts = []
+
+        mock_tools.append = Mock(side_effect=lambda x: appended_tools.append(x))
+        mock_resources.append = Mock(side_effect=lambda x: appended_resources.append(x))
+        mock_prompts.append = Mock(side_effect=lambda x: appended_prompts.append(x))
+
+        # Make the lists iterable for the conversion
+        mock_tools.__iter__ = Mock(return_value=iter(appended_tools))
+        mock_resources.__iter__ = Mock(return_value=iter(appended_resources))
+        mock_prompts.__iter__ = Mock(return_value=iter(appended_prompts))
+
+        mock_db_server.tools = mock_tools
+        mock_db_server.resources = mock_resources
+        mock_db_server.prompts = mock_prompts
+
+        # Mock db.add to capture the server being added
+        added_server = None
+
+        def capture_add(server):
+            nonlocal added_server
+            added_server = server
+            # Set up the mock server to be returned later
+            server.id = 1
+            server.tools = mock_tools
+            server.resources = mock_resources
+            server.prompts = mock_prompts
+            server.metrics = []
+
+        test_db.add = Mock(side_effect=capture_add)
         test_db.commit = Mock()
-        test_db.refresh = Mock()
+        test_db.refresh = Mock(side_effect=lambda x: None)  # Just pass through
 
         # Resolve associated objects
         test_db.get = Mock(
@@ -178,7 +207,6 @@ class TestServerService:
         assert 201 in result.associated_resources
         assert 301 in result.associated_prompts
 
-
     @pytest.mark.asyncio
     async def test_register_server_name_conflict(self, server_service, mock_server, test_db):
         """Server name clash is surfaced as ServerError (wrapped by service)."""
@@ -200,13 +228,16 @@ class TestServerService:
     @pytest.mark.asyncio
     async def test_register_server_invalid_associated_tool(self, server_service, test_db):
         """
-        Non‑existent associated tool raises ServerError.
-        No patching of DbServer – keep the real mapped class intact.
+        Non-existent associated tool raises ServerError.
+        We let the real exception flow through without patching DbServer.
         """
         # No existing server with the same name
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock db.add to not actually add anything
+        test_db.add = Mock()
 
         # Simulate lookup failure for tool id 999
         test_db.get = Mock(return_value=None)
@@ -223,7 +254,6 @@ class TestServerService:
 
         assert "Tool with id 999 does not exist" in str(exc.value)
         test_db.rollback.assert_called_once()
-
 
     # --------------------------- list & get ----------------------------- #
     @pytest.mark.asyncio
@@ -304,17 +334,28 @@ class TestServerService:
 
     # --------------------------- update -------------------------------- #
     @pytest.mark.asyncio
-    async def test_update_server(
-        self, server_service, mock_server, test_db, mock_tool, mock_resource, mock_prompt
-    ):
+    async def test_update_server(self, server_service, mock_server, test_db, mock_tool, mock_resource, mock_prompt):
+        # Mock new associated items
+        new_tool = MagicMock(spec=DbTool)
+        new_tool.id = 102
+        new_tool.name = "new_tool"
+
+        new_resource = MagicMock(spec=DbResource)
+        new_resource.id = 202
+        new_resource.name = "new_resource"
+
+        new_prompt = MagicMock(spec=DbPrompt)
+        new_prompt.id = 302
+        new_prompt.name = "new_prompt"
+
         test_db.get = Mock(
             side_effect=lambda cls, _id: (
                 mock_server
                 if (cls, _id) == (DbServer, 1)
                 else {
-                    (DbTool, 102): mock_tool,
-                    (DbResource, 202): mock_resource,
-                    (DbPrompt, 302): mock_prompt,
+                    (DbTool, 102): new_tool,
+                    (DbResource, 202): new_resource,
+                    (DbPrompt, 302): new_prompt,
                 }.get((cls, _id))
             )
         )
@@ -324,6 +365,29 @@ class TestServerService:
         test_db.execute = Mock(return_value=mock_scalar)
         test_db.commit = Mock()
         test_db.refresh = Mock()
+
+        # Set up mock server to track changes with mock lists
+        mock_tools = MagicMock()
+        mock_resources = MagicMock()
+        mock_prompts = MagicMock()
+
+        # These will hold the actual items
+        tool_items = []
+        resource_items = []
+        prompt_items = []
+
+        mock_tools.append = Mock(side_effect=lambda x: tool_items.append(x))
+        mock_resources.append = Mock(side_effect=lambda x: resource_items.append(x))
+        mock_prompts.append = Mock(side_effect=lambda x: prompt_items.append(x))
+
+        # Make them iterable for conversion
+        mock_tools.__iter__ = Mock(return_value=iter(tool_items))
+        mock_resources.__iter__ = Mock(return_value=iter(resource_items))
+        mock_prompts.__iter__ = Mock(return_value=iter(prompt_items))
+
+        mock_server.tools = mock_tools
+        mock_server.resources = mock_resources
+        mock_server.prompts = mock_prompts
 
         server_service._notify_server_updated = AsyncMock()
         server_service._convert_server_to_read = Mock(

@@ -103,7 +103,6 @@ async def test_initialize_adds_default_roots(monkeypatch):
     await service.shutdown()
 
 
-
 @pytest.mark.asyncio
 async def test_subscribe_changes_receives_events():
     service = RootService()
@@ -112,7 +111,7 @@ async def test_subscribe_changes_receives_events():
     async def subscriber():
         async for ev in service.subscribe_changes():
             events.append(ev)
-            if len(events) >= 2:        # expect "added" then "removed"
+            if len(events) >= 2:  # expect "added" then "removed"
                 break
 
     # Start subscription and give the event-loop one tick so the queue
@@ -122,7 +121,7 @@ async def test_subscribe_changes_receives_events():
 
     # Add a root, then remove it again.
     r = await service.add_root("subscriber-test")
-    await service.remove_root(str(r.uri).rstrip("/"))   # match stored key
+    await service.remove_root(str(r.uri).rstrip("/"))  # match stored key
 
     # Collect both events or time-out
     await asyncio.wait_for(task, timeout=1.0)

@@ -589,8 +589,7 @@ class TestToolService:
 
         # Mock decode_auth to return empty dict when auth_value is None
         # Mock extract_using_jq to return the input unmodified when filter is empty
-        with patch('mcpgateway.services.tool_service.decode_auth', return_value={}), \
-             patch('mcpgateway.config.extract_using_jq', return_value={"result": "REST tool response"}):
+        with patch("mcpgateway.services.tool_service.decode_auth", return_value={}), patch("mcpgateway.config.extract_using_jq", return_value={"result": "REST tool response"}):
             # Invoke tool
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"})
 
@@ -628,7 +627,7 @@ class TestToolService:
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Mock decode_auth to return empty dict
-        with patch('mcpgateway.services.tool_service.decode_auth', return_value={}):
+        with patch("mcpgateway.services.tool_service.decode_auth", return_value={}):
             # Mock HTTP client to raise an error
             tool_service._http_client.request.side_effect = Exception("HTTP error")
 
