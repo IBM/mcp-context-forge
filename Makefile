@@ -430,12 +430,9 @@ pstats:                             ## 📊  Static call-graph image
 spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 	sort -d -f -o $< $<
 
-tox:                                ## 🧪  Multi-Python tox matrix
-	@echo "🧪  Running tox …"
-	uv pip install tox-travis tox-pdm
-	pdm add -G dev
-	pdm python install 3.11 3.12
-	python3 -m tox -p 2
+tox:                                ## 🧪  Multi-Python tox matrix (uv)
+	@echo "🧪  Running tox with uv …"
+	python -m tox -p auto $(TOXARGS)
 
 sbom:								## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report…"
@@ -459,9 +456,9 @@ check-manifest:						## 📦  Verify MANIFEST.in completeness
 # -----------------------------------------------------------------------------
 # 📑 YAML / JSON / TOML LINTERS
 # -----------------------------------------------------------------------------
-# help: yamllint            - Lint YAML files (uses .yamllint)
-# help: jsonlint            - Validate every *.json file with jq (‐‐exit-status)
-# help: tomllint            - Validate *.toml files with tomlcheck
+# help: yamllint             - Lint YAML files (uses .yamllint)
+# help: jsonlint             - Validate every *.json file with jq (‐‐exit-status)
+# help: tomllint             - Validate *.toml files with tomlcheck
 #
 # ➊  Add the new linters to the master list
 LINTERS += yamllint jsonlint tomllint
