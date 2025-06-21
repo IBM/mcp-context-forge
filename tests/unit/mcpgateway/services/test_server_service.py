@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 Tests for server service implementation.
 """
 
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -18,7 +18,6 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate
 from mcpgateway.services.server_service import (
     ServerError,
-    ServerNameConflictError,
     ServerNotFoundError,
     ServerService,
 )
@@ -113,6 +112,21 @@ class TestServerService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
+        # Create a mock server instance that will be returned by db.add
+        mock_db_server = MagicMock(spec=DbServer)
+        mock_db_server.id = 1
+        mock_db_server.name = "test_server"
+        mock_db_server.description = "A test server"
+        mock_db_server.icon = "server-icon"
+        mock_db_server.created_at = "2023-01-01T00:00:00"
+        mock_db_server.updated_at = "2023-01-01T00:00:00"
+        mock_db_server.is_active = True
+
+        # Mock the relationship lists as simple lists
+        mock_db_server.tools = []
+        mock_db_server.resources = []
+        mock_db_server.prompts = []
+
         # Stub db.get to resolve associated items
         test_db.get = Mock(
             side_effect=lambda cls, _id: {
@@ -158,7 +172,9 @@ class TestServerService:
             associated_prompts=["301"],
         )
 
-        result = await server_service.register_server(test_db, server_create)
+        # Mock the DbServer constructor to return our mock instance
+        with patch('mcpgateway.services.server_service.DbServer', return_value=mock_db_server):
+            result = await server_service.register_server(test_db, server_create)
 
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
@@ -204,8 +220,15 @@ class TestServerService:
             associated_tools=["999"],
         )
 
-        with pytest.raises(ServerError) as exc:
-            await server_service.register_server(test_db, server_create)
+        # Mock the DbServer constructor
+        mock_db_server = MagicMock(spec=DbServer)
+        mock_db_server.tools = []
+        mock_db_server.resources = []
+        mock_db_server.prompts = []
+
+        with patch('mcpgateway.services.server_service.DbServer', return_value=mock_db_server):
+            with pytest.raises(ServerError) as exc:
+                await server_service.register_server(test_db, server_create)
 
         assert "Tool with id 999 does not exist" in str(exc.value)
         test_db.rollback.assert_called_once()
