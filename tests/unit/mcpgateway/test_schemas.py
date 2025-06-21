@@ -11,7 +11,8 @@ defined in the types.py module.
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+from unittest.mock import Mock
 
 import pytest
 from pydantic import ValidationError
@@ -42,6 +43,19 @@ from mcpgateway.types import (
     TextContent,
     Tool,
     ToolResult,
+)
+
+from mcpgateway.schemas import (
+    EventMessage,
+    AdminToolCreate,
+    AdminGatewayCreate,
+    ServerCreate,
+    ServerUpdate,
+    ServerRead,
+    ServerMetrics,
+    StatusToggleRequest,
+    StatusToggleResponse,
+    ListFilters,
 )
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
