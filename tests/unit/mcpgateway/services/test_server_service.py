@@ -104,30 +104,22 @@ class TestServerService:
     async def test_register_server(
         self, server_service, test_db, mock_tool, mock_resource, mock_prompt
     ):
-        """Successful registration returns populated ServerRead."""
+        """
+        Successful registration returns a populated ServerRead.
+        We DO NOT patch DbServer – we let SQLAlchemy keep the real mapped class
+        so that select(DbServer) works correctly.
+        """
+        # Pretend there is no existing server with the same name
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
+
+        # Basic Session stubs
         test_db.add = Mock()
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # Create a mock server instance that will be returned by db.add
-        mock_db_server = MagicMock(spec=DbServer)
-        mock_db_server.id = 1
-        mock_db_server.name = "test_server"
-        mock_db_server.description = "A test server"
-        mock_db_server.icon = "server-icon"
-        mock_db_server.created_at = "2023-01-01T00:00:00"
-        mock_db_server.updated_at = "2023-01-01T00:00:00"
-        mock_db_server.is_active = True
-
-        # Mock the relationship lists as simple lists
-        mock_db_server.tools = []
-        mock_db_server.resources = []
-        mock_db_server.prompts = []
-
-        # Stub db.get to resolve associated items
+        # Resolve associated objects
         test_db.get = Mock(
             side_effect=lambda cls, _id: {
                 (DbTool, 101): mock_tool,
@@ -136,7 +128,7 @@ class TestServerService:
             }.get((cls, _id))
         )
 
-        # Patch conversion helper
+        # Stub helper that converts to the public schema
         server_service._notify_server_added = AsyncMock()
         server_service._convert_server_to_read = Mock(
             return_value=ServerRead(
@@ -172,10 +164,10 @@ class TestServerService:
             associated_prompts=["301"],
         )
 
-        # Mock the DbServer constructor to return our mock instance
-        with patch('mcpgateway.services.server_service.DbServer', return_value=mock_db_server):
-            result = await server_service.register_server(test_db, server_create)
+        # Run
+        result = await server_service.register_server(test_db, server_create)
 
+        # Assertions
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
@@ -185,6 +177,7 @@ class TestServerService:
         assert 101 in result.associated_tools
         assert 201 in result.associated_resources
         assert 301 in result.associated_prompts
+
 
     @pytest.mark.asyncio
     async def test_register_server_name_conflict(self, server_service, mock_server, test_db):
@@ -206,11 +199,16 @@ class TestServerService:
 
     @pytest.mark.asyncio
     async def test_register_server_invalid_associated_tool(self, server_service, test_db):
-        """Non-existent associated tool raises ServerError."""
+        """
+        Non‑existent associated tool raises ServerError.
+        No patching of DbServer – keep the real mapped class intact.
+        """
+        # No existing server with the same name
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
 
+        # Simulate lookup failure for tool id 999
         test_db.get = Mock(return_value=None)
         test_db.rollback = Mock()
 
@@ -220,18 +218,12 @@ class TestServerService:
             associated_tools=["999"],
         )
 
-        # Mock the DbServer constructor
-        mock_db_server = MagicMock(spec=DbServer)
-        mock_db_server.tools = []
-        mock_db_server.resources = []
-        mock_db_server.prompts = []
-
-        with patch('mcpgateway.services.server_service.DbServer', return_value=mock_db_server):
-            with pytest.raises(ServerError) as exc:
-                await server_service.register_server(test_db, server_create)
+        with pytest.raises(ServerError) as exc:
+            await server_service.register_server(test_db, server_create)
 
         assert "Tool with id 999 does not exist" in str(exc.value)
         test_db.rollback.assert_called_once()
+
 
     # --------------------------- list & get ----------------------------- #
     @pytest.mark.asyncio
