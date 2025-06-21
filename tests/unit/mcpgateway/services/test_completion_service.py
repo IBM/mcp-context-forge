@@ -151,7 +151,6 @@ async def test_complete_resource_missing_uri():
     assert "Missing URI template" in str(exc.value)
 
 
-
 @pytest.mark.asyncio
 async def test_complete_resource_values():
     service = CompletionService()

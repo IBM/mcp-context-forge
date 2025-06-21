@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from mcpgateway.config import Settings, get_settings
 
@@ -27,7 +27,6 @@ def test_settings_default_values():
     assert settings.basic_auth_user == "admin"
     assert settings.basic_auth_password == "changeme"
     assert settings.auth_required is True
-
 
 
 def test_api_key_property():

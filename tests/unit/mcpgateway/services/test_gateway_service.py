@@ -81,9 +81,7 @@ def _inject_check_gateway_health(monkeypatch):
 
     async def _check(self, gateway):
         try:
-            await self._initialize_gateway(
-                gateway.url, getattr(gateway, "auth_value", {}), getattr(gateway, "transport", "sse")
-            )
+            await self._initialize_gateway(gateway.url, getattr(gateway, "auth_value", {}), getattr(gateway, "transport", "sse"))
             gateway.last_seen = datetime.now(timezone.utc)
             return True
         except Exception:
@@ -147,8 +145,8 @@ class TestGatewayService:
         # DB: no gateway with that name; no existing tools found
         test_db.execute = Mock(
             side_effect=[
-                _make_execute_result(scalar=None),        # name-conflict check
-                _make_execute_result(scalars_list=[]),    # tool lookup
+                _make_execute_result(scalar=None),  # name-conflict check
+                _make_execute_result(scalars_list=[]),  # tool lookup
             ]
         )
         test_db.add = Mock()
@@ -188,7 +186,6 @@ class TestGatewayService:
         assert result.url == "http://example.com/gateway"
         assert result.description == "A test gateway"
 
-
     @pytest.mark.asyncio
     async def test_register_gateway_name_conflict(self, gateway_service, mock_gateway, test_db):
         """Trying to register a gateway whose *name* already exists raises a conflict error."""
@@ -227,7 +224,6 @@ class TestGatewayService:
             await gateway_service.register_gateway(test_db, gateway_create)
 
         assert "Failed to connect" in str(exc_info.value)
-
 
     # ────────────────────────────────────────────────────────────────────
     # LIST / GET
@@ -398,9 +394,7 @@ class TestGatewayService:
         """Happy-path RPC forward."""
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.json = Mock(
-            return_value={"jsonrpc": "2.0", "result": {"success": True, "data": "OK"}, "id": 1}
-        )
+        mock_response.json = Mock(return_value={"jsonrpc": "2.0", "result": {"success": True, "data": "OK"}, "id": 1})
         gateway_service._http_client.post.return_value = mock_response
 
         result = await gateway_service.forward_request(mock_gateway, "method", {"p": 1})
@@ -413,9 +407,7 @@ class TestGatewayService:
         """Gateway returns JSON-RPC error."""
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()
-        mock_response.json = Mock(
-            return_value={"jsonrpc": "2.0", "error": {"code": -32000, "message": "Boom"}, "id": 1}
-        )
+        mock_response.json = Mock(return_value={"jsonrpc": "2.0", "error": {"code": -32000, "message": "Boom"}, "id": 1})
         gateway_service._http_client.post.return_value = mock_response
 
         with pytest.raises(GatewayError) as exc_info:
