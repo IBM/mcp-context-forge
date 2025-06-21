@@ -415,16 +415,16 @@ func main() {
         })
         fmt.Fprintf(flag.CommandLine.Output(),
             "Examples:\n"+
-            ind+"%s -transport=stdio -log-level=none\n"+
-            ind+"%s -transport=sse -listen=0.0.0.0 -port=8080\n"+
-            ind+"%s -transport=http -addr=127.0.0.1:9090\n"+
-            ind+"%s -transport=dual -port=8080 -auth-token=secret123\n\n"+
-            "MCP Protocol Endpoints:\n"+
-            ind+"SSE:  /sse (events), /messages (messages)\n"+
-            ind+"HTTP: / (single endpoint)\n"+
-            ind+"DUAL: /sse & /messages (SSE), /http (HTTP)\n\n"+
-            "Environment Variables:\n"+
-            ind+"AUTH_TOKEN - Bearer token for authentication (overrides -auth-token flag)\n",
+                ind+"%s -transport=stdio -log-level=none\n"+
+                ind+"%s -transport=sse -listen=0.0.0.0 -port=8080\n"+
+                ind+"%s -transport=http -addr=127.0.0.1:9090\n"+
+                ind+"%s -transport=dual -port=8080 -auth-token=secret123\n\n"+
+                "MCP Protocol Endpoints:\n"+
+                ind+"SSE:  /sse (events), /messages (messages)\n"+
+                ind+"HTTP: / (single endpoint)\n"+
+                ind+"DUAL: /sse & /messages (SSE), /http (HTTP)\n\n"+
+                "Environment Variables:\n"+
+                ind+"AUTH_TOKEN - Bearer token for authentication (overrides -auth-token flag)\n",
             os.Args[0], os.Args[0], os.Args[0], os.Args[0])
     }
 
