@@ -56,7 +56,7 @@ mcp_app = Server("mcp-streamable-http-stateless")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default=None)
 
-## ------------------------------ Event store ------------------------------
+# ------------------------------ Event store ------------------------------
 
 
 @dataclass
@@ -92,7 +92,16 @@ class InMemoryEventStore(EventStore):
         self.event_index: dict[EventId, EventEntry] = {}
 
     async def store_event(self, stream_id: StreamId, message: JSONRPCMessage) -> EventId:
-        """Stores an event with a generated event ID."""
+        """
+        Stores an event with a generated event ID.
+
+        Args:
+            stream_id (StreamId): The ID of the stream.
+            message (JSONRPCMessage): The message to store.
+
+        Returns:
+            EventId: The ID of the stored event.
+        """
         event_id = str(uuid4())
         event_entry = EventEntry(event_id=event_id, stream_id=stream_id, message=message)
 
@@ -117,7 +126,16 @@ class InMemoryEventStore(EventStore):
         last_event_id: EventId,
         send_callback: EventCallback,
     ) -> StreamId | None:
-        """Replays events that occurred after the specified event ID."""
+        """
+        Replays events that occurred after the specified event ID.
+
+        Args:
+            last_event_id (EventId): The ID of the last received event. Replay starts after this event.
+            send_callback (EventCallback): Async callback to send each replayed event.
+
+        Returns:
+            StreamId | None: The stream ID if the event is found and replayed, otherwise None.
+        """
         if last_event_id not in self.event_index:
             logger.warning(f"Event ID {last_event_id} not found in store")
             return None
@@ -138,7 +156,7 @@ class InMemoryEventStore(EventStore):
         return stream_id
 
 
-## ------------------------------ Streamable HTTP Transport ------------------------------
+# ------------------------------ Streamable HTTP Transport ------------------------------
 
 
 @asynccontextmanager
@@ -148,7 +166,7 @@ async def get_db():
 
     Yields:
         A database session instance from SessionLocal.
-    Ensures the session is closed after use.
+        Ensures the session is closed after use.
     """
     db = SessionLocal()
     try:
@@ -168,7 +186,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
 
     Returns:
         List of content (TextContent, ImageContent, or EmbeddedResource) from the tool response.
-    Logs and returns an empty list on failure.
+        Logs and returns an empty list on failure.
     """
     try:
         async with get_db() as db:
@@ -190,7 +208,7 @@ async def list_tools() -> List[types.Tool]:
 
     Returns:
         A list of Tool objects containing metadata such as name, description, and input schema.
-    Logs and returns an empty list on failure.
+        Logs and returns an empty list on failure.
     """
     server_id = server_id_var.get()
 
@@ -260,6 +278,10 @@ class SessionManagerWrapper:
             scope (Scope): ASGI scope object containing connection information.
             receive (Receive): ASGI receive callable.
             send (Send): ASGI send callable.
+
+        Raises:
+            Exception: Any exception raised during request handling is logged.
+
         Logs any exceptions that occur during request handling.
         """
 
@@ -277,20 +299,30 @@ class SessionManagerWrapper:
             raise
 
 
-## ------------------------- Authentication for /mcp routes ------------------------------
+# ------------------------- Authentication for /mcp routes ------------------------------
 
 
 async def streamable_http_auth(scope, receive, send):
     """
     Perform authentication check in middleware context (ASGI scope).
 
-    If path does not end with "/mcp", just continue (return True).
+    This function is intended to be used in middleware wrapping ASGI apps.
+    It authenticates only requests targeting paths ending in "/mcp" or "/mcp/".
 
-    Only check Authorization header for Bearer token.
-    If no Bearer token provided, allow (return True).
+    Behavior:
+    - If the path does not end with "/mcp", authentication is skipped.
+    - If there is no Authorization header, the request is allowed.
+    - If a Bearer token is present, it is verified using `verify_credentials`.
+    - If verification fails, a 401 Unauthorized JSON response is sent.
 
-    If auth_required is True and Bearer token provided, verify it.
-    If verification fails, send 401 JSONResponse and return False.
+    Args:
+        scope: The ASGI scope dictionary, which includes request metadata.
+        receive: ASGI receive callable used to receive events.
+        send: ASGI send callable used to send events (e.g. a 401 response).
+
+    Returns:
+        bool: True if authentication passes or is skipped.
+              False if authentication fails and a 401 response is sent.
     """
 
     path = scope.get("path", "")
