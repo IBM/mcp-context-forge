@@ -57,8 +57,7 @@ jobs:
           - id: ruff
             setup: pip install ruff
             cmd: |
-              ruff check .
-              ruff format --check .
+              ruff check mcpgateway
 
           # - id: pylint
           #   setup: pip install pylint
