@@ -150,6 +150,7 @@ class ToolService:
             tool_dict["auth"] = None
 
         tool_dict["name"] = tool.name
+        tool_dict["gateway_slug"] = tool.gateway_slug
 
         return ToolRead.model_validate(tool_dict)
 

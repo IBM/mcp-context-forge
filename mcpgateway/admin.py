@@ -452,6 +452,7 @@ async def admin_ui(
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
         },
     )
 

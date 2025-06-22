@@ -336,9 +336,23 @@ class Tool(Base):
     # def gateway_slug(self) -> str:
     #     return self.gateway.slug
 
-    @property
-    def name(self) -> str:
-        return f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
+    _computed_name = Column("name", String, unique=True)  # Stored column
+
+    @hybrid_property
+    def name(self):
+        return self._computed_name or f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
+    
+    @name.setter 
+    def name(self, value):
+        self._computed_name = value
+    
+    @name.expression
+    def name(cls):
+        return cls._computed_name
+
+    # @property
+    # def name(self) -> str:
+    #     return f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
 
     __table_args__ = (
         UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"),

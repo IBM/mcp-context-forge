@@ -420,6 +420,7 @@ class ToolRead(BaseModelWithConfig):
     execution_count: int
     metrics: ToolMetrics
     name: str
+    gateway_slug: str
 
     class Config(BaseModelWithConfig.Config):
         """
