@@ -571,7 +571,7 @@ async function viewTool(toolId) {
 
     document.getElementById("tool-details").innerHTML = `
       <div class="space-y-2">
-        <p><strong>Name:</strong> ${tool.qualifiedName}</p>
+        <p><strong>Name:</strong> ${tool.name}</p>
         <p><strong>URL:</strong> ${tool.url}</p>
         <p><strong>Type:</strong> ${tool.integrationType}</p>
         <p><strong>Description:</strong> ${tool.description || "N/A"}</p>
@@ -622,7 +622,7 @@ async function editTool(toolId) {
     // Set form action and populate basic fields.
     document.getElementById("edit-tool-form").action =
       `${window.ROOT_PATH}/admin/tools/${toolId}/edit`;
-    document.getElementById("edit-tool-name").value = tool.qualifiedName;
+    document.getElementById("edit-tool-name").value = tool.name;
     document.getElementById("edit-tool-url").value = tool.url;
     document.getElementById("edit-tool-description").value =
       tool.description || "";
@@ -1492,7 +1492,7 @@ async function loadTopTools() {
       const count = tool.metrics?.totalExecutions ?? tool.executionCount ?? 0;
       html += `<tr>
           <td class="py-1 px-2 border">${tool.id}</td>
-          <td class="py-1 px-2 border">${tool.qualifiedName}</td>
+          <td class="py-1 px-2 border">${tool.name}</td>
           <td class="py-1 px-2 border">${count}</td>
         </tr>`;
     });
@@ -1627,7 +1627,7 @@ function testTool(toolId) {
       currentTestTool = tool;
       // Use the tool's name as title and show its description (if available)
       document.getElementById("tool-test-modal-title").innerText =
-        "Test Tool: " + tool.qualifiedName;
+        "Test Tool: " + tool.name;
       document.getElementById("tool-test-modal-description").innerText =
         tool.description || "No description available.";
 
@@ -1704,7 +1704,7 @@ async function runToolTest() {
   const payload = {
     jsonrpc: "2.0",
     id: Date.now(),
-    method: currentTestTool.qualifiedName,
+    method: currentTestTool.name,
     params: params,
   };
 

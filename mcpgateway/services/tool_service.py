@@ -149,7 +149,7 @@ class ToolService:
         else:
             tool_dict["auth"] = None
 
-        tool_dict["qualified_name"] = tool.qualified_name
+        tool_dict["name"] = tool.name
 
         return ToolRead.model_validate(tool_dict)
 
@@ -197,7 +197,7 @@ class ToolService:
             existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name).where(DbTool.gateway_id == tool.gateway_id)).scalar_one_or_none()
             if existing_tool:
                 raise ToolNameConflictError(
-                    existing_tool.qualified_name,
+                    existing_tool.name,
                     is_active=existing_tool.is_active,
                     tool_id=existing_tool.id,
                 )
@@ -210,7 +210,7 @@ class ToolService:
                 auth_value = tool.auth.auth_value
 
             db_tool = DbTool(
-                name=tool.name,
+                original_name=tool.name,
                 url=str(tool.url),
                 description=tool.description,
                 integration_type=tool.integration_type,
@@ -226,7 +226,7 @@ class ToolService:
             db.commit()
             db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
-            logger.info(f"Registered tool: {db_tool.qualified_name}")
+            logger.info(f"Registered tool: {db_tool.name}")
             return self._convert_tool_to_read(db_tool)
         except IntegrityError:
             db.rollback()
@@ -313,7 +313,7 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-            tool_info = {"id": tool.id, "name": tool.qualified_name}
+            tool_info = {"id": tool.id, "name": tool.name}
             db.delete(tool)
             db.commit()
             await self._notify_tool_deleted(tool_info)
@@ -350,7 +350,7 @@ class ToolService:
                     await self._notify_tool_activated(tool)
                 else:
                     await self._notify_tool_deactivated(tool)
-                logger.info(f"Tool {tool.qualified_name} {'activated' if activate else 'deactivated'}")
+                logger.info(f"Tool {tool.name} {'activated' if activate else 'deactivated'}")
             return self._convert_tool_to_read(tool)
         except Exception as e:
             db.rollback()
@@ -372,21 +372,9 @@ class ToolService:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
         """
-        # gateway_slug = settings.gateway_tool_name_separator.join(name.split(settings.gateway_tool_name_separator)[:-1])
-        # stmt = (
-        #     select(DbTool)                       # target table
-        #     .join(DbGateway, DbTool.gateway)     # rely on the relationship
-        #     .where(
-        #         DbGateway.slug == gateway_slug,  # gateway identifier
-        #         DbTool.name == name,             # tool name
-        #         DbTool.is_active                 # optional extra filter
-        #     )
-        # )
-        # tool = db.scalar_one_or_none(stmt)
-        # logger.info(f'{tool=}')
-        tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.name == name).where(DbTool.is_active)).scalar_one_or_none()
+        tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name == name).where(DbTool.is_active)).scalar_one_or_none()
         if not tool:
-            inactive_tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.name == name).where(not_(DbTool.is_active))).scalar_one_or_none()
+            inactive_tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name == name).where(not_(DbTool.is_active))).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")
@@ -445,7 +433,7 @@ class ToolService:
                 success = True
             elif tool.integration_type == "MCP":
                 transport = tool.request_type.lower()
-                gateway = db.execute(select(DbGateway).where(DbGateway.slug == tool.gateway_slug).where(DbGateway.is_active)).scalar_one_or_none()
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
                 if gateway.auth_type == "bearer":
                     headers = decode_auth(gateway.auth_value)
                 else:
@@ -466,7 +454,7 @@ class ToolService:
                         async with ClientSession(*streams) as session:
                             # Initialize the session
                             await session.initialize()
-                            tool_call_result = await session.call_tool(name, arguments)
+                            tool_call_result = await session.call_tool(tool.original_name, arguments)
                     return tool_call_result
 
                 async def connect_to_streamablehttp_server(server_url: str) -> str:
@@ -484,11 +472,11 @@ class ToolService:
                         async with ClientSession(read_stream, write_stream) as session:
                             # Initialize the session
                             await session.initialize()
-                            tool_call_result = await session.call_tool(name, arguments)
+                            tool_call_result = await session.call_tool(tool.original_name, arguments)
                     return tool_call_result
 
-                tool_gateway_slug = tool.gateway_slug
-                tool_gateway = db.execute(select(DbGateway).where(DbGateway.slug == tool_gateway_slug).where(DbGateway.is_active)).scalar_one_or_none()
+                tool_gateway_id = tool.gateway_id
+                tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
 
                 if transport == "sse":
                     tool_call_result = await connect_to_sse_server(tool_gateway.url)
@@ -567,7 +555,7 @@ class ToolService:
             db.commit()
             db.refresh(tool)
             await self._notify_tool_updated(tool)
-            logger.info(f"Updated tool: {tool.qualified_name}")
+            logger.info(f"Updated tool: {tool.name}")
             return self._convert_tool_to_read(tool)
         except Exception as e:
             db.rollback()
@@ -584,7 +572,7 @@ class ToolService:
             "type": "tool_updated",
             "data": {
                 "id": tool.id,
-                "name": tool.qualified_name,
+                "name": tool.name,
                 "url": tool.url,
                 "description": tool.description,
                 "is_active": tool.is_active,
@@ -602,7 +590,7 @@ class ToolService:
         """
         event = {
             "type": "tool_activated",
-            "data": {"id": tool.id, "name": tool.qualified_name, "is_active": True},
+            "data": {"id": tool.id, "name": tool.name, "is_active": True},
             "timestamp": datetime.utcnow().isoformat(),
         }
         await self._publish_event(event)
@@ -616,7 +604,7 @@ class ToolService:
         """
         event = {
             "type": "tool_deactivated",
-            "data": {"id": tool.id, "name": tool.qualified_name, "is_active": False},
+            "data": {"id": tool.id, "name": tool.name, "is_active": False},
             "timestamp": datetime.utcnow().isoformat(),
         }
         await self._publish_event(event)
@@ -661,7 +649,7 @@ class ToolService:
             "type": "tool_added",
             "data": {
                 "id": tool.id,
-                "name": tool.qualified_name,
+                "name": tool.name,
                 "url": tool.url,
                 "description": tool.description,
                 "is_active": tool.is_active,
@@ -679,7 +667,7 @@ class ToolService:
         """
         event = {
             "type": "tool_removed",
-            "data": {"id": tool.id, "name": tool.qualified_name, "is_active": False},
+            "data": {"id": tool.id, "name": tool.name, "is_active": False},
             "timestamp": datetime.utcnow().isoformat(),
         }
         await self._publish_event(event)

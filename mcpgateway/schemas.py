@@ -404,7 +404,7 @@ class ToolRead(BaseModelWithConfig):
     """
 
     id: str
-    name: str
+    original_name: str
     url: Optional[str]
     description: Optional[str]
     request_type: str
@@ -419,7 +419,7 @@ class ToolRead(BaseModelWithConfig):
     gateway_id: Optional[str]
     execution_count: int
     metrics: ToolMetrics
-    qualified_name: str
+    name: str
 
     class Config(BaseModelWithConfig.Config):
         """
