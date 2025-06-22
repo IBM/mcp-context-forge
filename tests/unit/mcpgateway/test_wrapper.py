@@ -50,22 +50,22 @@ def _install_fake_mcp(monkeypatch) -> None:
 
         # decorator helpers just hand the coroutine straight back
         def list_tools(self):
-            return lambda fn: fn  # noqa: E704
+            return lambda fn: fn
 
         def call_tool(self):
-            return lambda fn: fn  # noqa: E704
+            return lambda fn: fn
 
         def list_resources(self):
-            return lambda fn: fn  # noqa: E704
+            return lambda fn: fn
 
         def read_resource(self):
-            return lambda fn: fn  # noqa: E704
+            return lambda fn: fn
 
         def list_prompts(self):
-            return lambda fn: fn  # noqa: E704
+            return lambda fn: fn
 
         def get_prompt(self):
-            return lambda fn: fn  # noqa: E704
+            return lambda fn: fn
 
         def get_capabilities(self, **_):  # used by wrapper
             return {}
@@ -494,10 +494,10 @@ async def test_handle_list_resources(monkeypatch, wrapper):
 @pytest.mark.asyncio
 async def test_handle_list_prompts(monkeypatch, wrapper):
     async def _ids(_):
-        return ["p1"]  # noqa: E704
+        return ["p1"]
 
     async def _meta(_):
-        return [{"name": "Hello", "description": "", "arguments": []}]  # noqa: E704
+        return [{"name": "Hello", "description": "", "arguments": []}]
 
     monkeypatch.setattr(wrapper, "get_prompts_from_mcp_server", _ids)
     monkeypatch.setattr(wrapper, "prompts_metadata", _meta)
