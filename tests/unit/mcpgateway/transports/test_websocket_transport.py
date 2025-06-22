@@ -8,8 +8,7 @@ Authors: Mihai Criveti
 Tests for the MCP Gateway WebSocket transport implementation.
 """
 
-import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import WebSocket, WebSocketDisconnect

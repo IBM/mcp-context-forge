@@ -8,7 +8,6 @@ Authors: Mihai Criveti
 Comprehensive unit tests for the forwarding service module.
 """
 
-import asyncio
 from datetime import datetime
 
 import pytest

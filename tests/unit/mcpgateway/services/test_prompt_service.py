@@ -14,10 +14,8 @@ SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
-from string import Formatter
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -27,11 +25,10 @@ from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
 from mcpgateway.services.prompt_service import (
     PromptError,
-    PromptNameConflictError,
     PromptNotFoundError,
     PromptService,
 )
-from mcpgateway.types import LogLevel, Message, PromptResult, Role, TextContent
+from mcpgateway.types import Message, PromptResult, Role
 
 # ---------------------------------------------------------------------------
 # helpers
