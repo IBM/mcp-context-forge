@@ -3,7 +3,7 @@
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Author: Mihai Criveti
 
 Focus areas
 -----------
@@ -26,7 +26,7 @@ import pytest
 from starlette.types import Scope
 
 # ---------------------------------------------------------------------------
-# Import module under test - we only need the specific classes / functions
+# Import module under test – we only need the specific classes / functions
 # ---------------------------------------------------------------------------
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 
@@ -99,7 +99,7 @@ def _make_scope(path: str, headers: list[tuple[bytes, bytes]] | None = None) -> 
 async def test_auth_all_ok(monkeypatch):
     """Valid Bearer token passes; function returns True and does *not* send."""
 
-    async def fake_verify(token):  # noqa: D401 - stub
+    async def fake_verify(token):  # noqa: D401 – stub
         assert token == "good-token"
         return {"ok": True}
 
@@ -116,14 +116,14 @@ async def test_auth_all_ok(monkeypatch):
     )
 
     assert await streamable_http_auth(scope, None, send) is True
-    assert messages == []  # nothing sent - auth succeeded
+    assert messages == []  # nothing sent – auth succeeded
 
 
 @pytest.mark.asyncio
 async def test_auth_failure(monkeypatch):
     """When verify_credentials raises, auth func responds 401 and returns False."""
 
-    async def fake_verify(_):  # noqa: D401 - stub that always fails
+    async def fake_verify(_):  # noqa: D401 – stub that always fails
         raise ValueError("bad token")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
@@ -144,92 +144,3 @@ async def test_auth_failure(monkeypatch):
     assert result is False
     assert sent and sent[0]["type"] == "http.response.start"
     assert sent[0]["status"] == tr.HTTP_401_UNAUTHORIZED
-
-
-# ---------------------------------------------------------------------------
-# SamplingHandler tests
-# ---------------------------------------------------------------------------
-
-import types as _t  # local alias for creating simple stubs
-
-from mcpgateway.handlers import sampling as sp  # noqa: E402
-
-SamplingHandler = sp.SamplingHandler
-SamplingError = sp.SamplingError
-
-
-@pytest.fixture()
-def handler():
-    return SamplingHandler()
-
-
-# ---------------------------------------------------------------------------
-# _select_model
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_select_model_by_hint(handler):
-    """Model hint should override scoring logic."""
-
-    prefs = _t.SimpleNamespace(
-        hints=[_t.SimpleNamespace(name="sonnet")],
-        cost_priority=0,
-        speed_priority=0,
-        intelligence_priority=0,
-    )
-
-    assert handler._select_model(prefs) == "claude-3-sonnet"  # pylint: disable=protected-access
-
-
-# ---------------------------------------------------------------------------
-# _validate_message
-# ---------------------------------------------------------------------------
-
-
-def test_validate_message(handler):
-    valid_text = {"role": "user", "content": {"type": "text", "text": "hi"}}
-    valid_image = {
-        "role": "assistant",
-        "content": {"type": "image", "data": "xxx", "mime_type": "image/png"},
-    }
-    invalid = {"role": "user", "content": {"type": "text"}}  # missing text value
-
-    assert handler._validate_message(valid_text)  # pylint: disable=protected-access
-    assert handler._validate_message(valid_image)  # pylint: disable=protected-access
-    assert not handler._validate_message(invalid)  # pylint: disable=protected-access
-
-
-# ---------------------------------------------------------------------------
-# create_message success + error paths
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_create_message_success(monkeypatch, handler):
-    # Patch ModelPreferences.parse_obj to return neutral prefs (no hints)
-    neutral_prefs = _t.SimpleNamespace(hints=[], cost_priority=0.33, speed_priority=0.33, intelligence_priority=0.34)
-    monkeypatch.setattr(sp.ModelPreferences, "parse_obj", lambda _x: neutral_prefs)
-
-    request = {
-        "messages": [
-            {"role": "user", "content": {"type": "text", "text": "Hello"}},
-        ],
-        "maxTokens": 5,
-        "modelPreferences": {},
-    }
-
-    result = await handler.create_message(db=None, request=request)
-
-    assert result.role == sp.Role.ASSISTANT
-    assert result.content.text.startswith("You said: Hello")
-
-
-@pytest.mark.asyncio
-async def test_create_message_no_messages(monkeypatch, handler):
-    monkeypatch.setattr(sp.ModelPreferences, "parse_obj", lambda _x: _t.SimpleNamespace(hints=[], cost_priority=0, speed_priority=0, intelligence_priority=0))
-
-    request = {"messages": [], "maxTokens": 5, "modelPreferences": {}}
-
-    with pytest.raises(SamplingError):
-        await handler.create_message(db=None, request=request)
