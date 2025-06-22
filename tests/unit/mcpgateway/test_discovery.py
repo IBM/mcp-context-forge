@@ -10,7 +10,6 @@ Comprehensive unit tests for the discovery service module.
 
 # tests/test_discovery.py
 import asyncio
-from datetime import datetime
 
 import pytest
 
