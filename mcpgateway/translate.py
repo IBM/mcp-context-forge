@@ -175,7 +175,7 @@ def _build_fastapi(
             yield {
                 "event": "endpoint",
                 "data": endpoint_url,
-                "retry": keep_alive * 1000,
+                "retry": int(keep_alive * 1000),
             }
 
             # 2️⃣ Immediate keepalive so clients know the stream is alive
