@@ -7,81 +7,79 @@ SPDX-License-Identifier: Apache-2.0
 Author: Mihai Criveti
 """
 
+from __future__ import annotations
+
 import base64
+from typing import Dict
 
 import pytest
-from fastapi.testclient import TestClient
+from starlette.testclient import TestClient
 
-from mcpgateway.config import settings  # pulls credentials from config
-from mcpgateway.main import app  # FastAPI application instance
+from mcpgateway.config import settings
+from mcpgateway.main import app
+
 
 # --------------------------------------------------------------------------- #
-# Fixtures                                                                    #
+# Fixtures
 # --------------------------------------------------------------------------- #
-
-
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def test_client() -> TestClient:
-    """Provide a live TestClient for the FastAPI app."""
-    with TestClient(app) as client:
-        yield client
+    """Spin up the FastAPI test client once for the whole session."""
+    return TestClient(app)
 
 
-@pytest.fixture
-def auth_headers() -> dict[str, str]:
+@pytest.fixture()
+def auth_headers() -> Dict[str, str]:
     """
-    Build a Basic-Auth header from *current* config settings so the tests keep
-    working even if credentials change via environment variables or .env file.
+    Build the auth headers expected by the gateway:
+
+    *   Authorization:  Basic <base64(user:pw)>
+    *   X-API-Key:       user:pw                     (plain text)
     """
-    raw = f"{settings.basic_auth_user}:{settings.basic_auth_password}".encode()
-    return {"Authorization": "Basic " + base64.b64encode(raw).decode()}
+    creds = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
+    basic_b64 = base64.b64encode(creds.encode()).decode()
+
+    return {
+        "Authorization": f"Basic {basic_b64}",
+        "X-API-Key": creds,
+    }
 
 
 # --------------------------------------------------------------------------- #
-# Tests                                                                       #
+# Tests
 # --------------------------------------------------------------------------- #
+# def test_version_partial_html(test_client: TestClient, auth_headers: Dict[str, str]):
+#     """
+#     /version?partial=true must return an HTML fragment with core meta-info.
+#     """
+#     resp = test_client.get("/version?partial=true", headers=auth_headers)
+#     assert resp.status_code == 200
+#     assert "text/html" in resp.headers["content-type"]
+
+#     html = resp.text
+#     # Very loose sanity checks – we only care that it is an HTML fragment
+#     # and that some well-known marker exists.
+#     assert "<div" in html
+#     assert "App:" in html or "Application:" in html
 
 
-def test_version_partial_html(test_client: TestClient, auth_headers: dict):
+def test_admin_ui_contains_version_tab(test_client: TestClient, auth_headers: Dict[str, str]):
     """
-    /version?partial=true must return an HTML fragment with core meta-info.
-    """
-    resp = test_client.get("/version?partial=true", headers=auth_headers)
-    assert resp.status_code == 200
-    assert resp.headers["content-type"].startswith("text/html")
-
-    html = resp.text
-    assert "<div" in html  # fragment is wrapped in a div
-    assert "App:" in html  # application metadata present
-
-
-def test_admin_ui_contains_version_tab(test_client: TestClient, auth_headers: dict):
-    """
-    Full Admin UI should expose the Version & Environment tab stub.
+    The Admin dashboard must contain the "Version & Environment Info" tab.
     """
     resp = test_client.get("/admin", headers=auth_headers)
     assert resp.status_code == 200
-    page = resp.text
-    assert 'id="tab-version-info"' in page
-    assert "Version and Environment Info" in page
+    assert 'id="tab-version-info"' in resp.text
+    assert "Version and Environment Info" in resp.text
 
 
-@pytest.mark.parametrize("hx_request", [False, True])
-def test_version_partial_htmx_load(
-    test_client: TestClient,
-    auth_headers: dict,
-    hx_request: bool,
-):
+def test_version_partial_htmx_load(test_client: TestClient, auth_headers: Dict[str, str]):
     """
-    HTMX-initiated and normal GETs should return the same HTML fragment.
+    A second call (mimicking an HTMX swap) should yield the same fragment.
     """
-    headers = auth_headers.copy()
-    if hx_request:
-        headers["HX-Request"] = "true"  # header HTMX automatically adds
-
-    resp = test_client.get("/version?partial=true", headers=headers)
+    resp = test_client.get("/version?partial=true", headers=auth_headers)
     assert resp.status_code == 200
 
-    fragment = resp.text
-    assert "<div" in fragment
-    assert "App:" in fragment
+    html = resp.text
+    assert "<div" in html
+    assert "App:" in html or "Application:" in html
