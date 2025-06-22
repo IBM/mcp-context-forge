@@ -117,20 +117,16 @@ check-env:
 
 
 # =============================================================================
-# ▶️ SERVE & TESTING
+# ▶️ SERVE
 # =============================================================================
-# help: ▶️ SERVE & TESTING
+# help: ▶️ SERVE
 # help: serve                - Run production Gunicorn server on :4444
 # help: certs                - Generate self-signed TLS cert & key in ./certs (won't overwrite)
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: run                  - Execute helper script ./run.sh
-# help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test                 - Run unit tests with pytest
-# help: test-curl            - Smoke-test API endpoints with curl script
-# help: pytest-examples      - Run README / examples through pytest-examples
 
-.PHONY: serve serve-ssl dev run test test-curl pytest-examples certs clean
+.PHONY: serve serve-ssl dev run certs
 
 ## --- Primary servers ---------------------------------------------------------
 serve:
@@ -159,25 +155,6 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 	fi
 	chmod 640 certs/key.pem
 
-## --- Testing -----------------------------------------------------------------
-smoketest:
-	@echo "🚀 Running smoketest…"
-	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
-	@echo "✅ Smoketest passed!"
-
-test:
-	@echo "🧪 Running tests..."
-	@test -d "$(VENV_DIR)" || make venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install pytest pytest-asyncio pytest-cov -q && python3 -m pytest --maxfail=0 --disable-warnings -v"
-
-pytest-examples:
-	@echo "🧪 Testing README examples..."
-	@test -d "$(VENV_DIR)" || make venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install pytest pytest-examples -q && pytest -v test_readme.py"
-
-test-curl:
-	./test_endpoints.sh
-
 ## --- House-keeping -----------------------------------------------------------
 # help: clean                - Remove caches, build artefacts, virtualenv, docs, certs, coverage, SBOM, etc.
 .PHONY: clean
@@ -195,16 +172,32 @@ clean:
 
 
 # =============================================================================
-# 📊 COVERAGE & METRICS
+# 🧪 TESTING
 # =============================================================================
-# help: 📊 COVERAGE & METRICS
+# help: 🧪 TESTING
+# help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
+# help: test                 - Run unit tests with pytest
 # help: coverage             - Run tests with coverage, emit md/HTML/XML + badge
-# help: pip-licenses         - Produce dependency license inventory (markdown)
-# help: scc                  - Quick LoC/complexity snapshot with scc
-# help: scc-report           - Generate HTML LoC & per-file metrics with scc
-.PHONY: coverage pip-licenses scc scc-report
+# help: test-curl            - Smoke-test API endpoints with curl script
+# help: pytest-examples      - Run README / examples through pytest-examples
+
+.PHONY: smoketest test coverage pytest-examples test-curl
+
+## --- Automated checks --------------------------------------------------------
+smoketest:
+	@echo "🚀 Running smoketest…"
+	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
+	@echo "✅ Smoketest passed!"
+
+test:
+	@echo "🧪 Running tests…"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pytest pytest-asyncio pytest-cov && \
+		python3 -m pytest --maxfail=0 --disable-warnings -v"
 
 coverage:
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(TEST_DOCS_DIR)
 	@printf "# Unit tests\n\n" > $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -217,12 +210,29 @@ coverage:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		coverage report --format=markdown -m --no-skip-covered \
 		>> $(DOCS_DIR)/docs/test/unittest.md"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		coverage html -d $(COVERAGE_DIR) --include=app/*"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=app/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@echo "✅  Coverage artefacts: md, HTML in $(COVERAGE_DIR), XML & badge ✔"
+
+pytest-examples:
+	@echo "🧪 Testing README examples…"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pytest pytest-examples && \
+		pytest -v test_readme.py"
+
+test-curl:
+	./test_endpoints.sh
+
+# =============================================================================
+# 📊 METRICS
+# =============================================================================
+# help: 📊 METRICS
+# help: pip-licenses         - Produce dependency license inventory (markdown)
+# help: scc                  - Quick LoC/complexity snapshot with scc
+# help: scc-report           - Generate HTML LoC & per-file metrics with scc
+.PHONY: pip-licenses scc scc-report
 
 pip-licenses:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install pip-licenses"
@@ -700,9 +710,7 @@ dockle:
 
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
-HADOFILES := Containerfile Dockerfile Dockerfile.*
-
-# Which files to check (edit as you like)
+# List of Containerfile/Dockerfile patterns to scan
 HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
