@@ -23,12 +23,11 @@ pytest -q --cov=mcpgateway.translate
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import importlib
 import json
 import sys
-from typing import Any, Dict, List, Sequence
+from typing import Sequence
 
 import pytest
 from fastapi.testclient import TestClient

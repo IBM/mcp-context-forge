@@ -16,7 +16,7 @@ from itertools import count
 
 import pytest
 
-from mcpgateway.federation.manager import FederationError, FederationManager
+from mcpgateway.federation.manager import FederationManager
 from mcpgateway.types import Prompt, Resource, ServerCapabilities, Tool
 
 # ---------------------------------------------------------------------------

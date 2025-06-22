@@ -18,7 +18,6 @@ from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     ToolError,
     ToolInvocationError,
-    ToolNameConflictError,
     ToolNotFoundError,
     ToolService,
 )
