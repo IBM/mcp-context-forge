@@ -36,6 +36,8 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCr
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.services_auth import decode_auth
 
+from slugify import slugify
+
 try:
     import redis
 
@@ -191,7 +193,7 @@ class GatewayService:
 
             tools = [
                 DbTool(
-                    name=tool.name,
+                    original_name=tool.name,
                     url=str(gateway.url),
                     description=tool.description,
                     integration_type=tool.integration_type,
@@ -208,6 +210,7 @@ class GatewayService:
             # Create DB model
             db_gateway = DbGateway(
                 name=gateway.name,
+                slug=slugify(gateway.name),
                 url=str(gateway.url),
                 description=gateway.description,
                 transport=gateway.transport,
@@ -300,6 +303,7 @@ class GatewayService:
             # Update fields if provided
             if gateway_update.name is not None:
                 gateway.name = gateway_update.name
+                gateway.slug = slugify(gateway_update.name)
             if gateway_update.url is not None:
                 gateway.url = str(gateway_update.url)
             if gateway_update.description is not None:
@@ -325,7 +329,7 @@ class GatewayService:
                         if not existing_tool:
                             gateway.tools.append(
                                 DbTool(
-                                    name=tool.name,
+                                    original_name=tool.name,
                                     url=str(gateway.url),
                                     description=tool.description,
                                     integration_type=tool.integration_type,
@@ -427,7 +431,7 @@ class GatewayService:
                             if not existing_tool:
                                 gateway.tools.append(
                                     DbTool(
-                                        name=tool.name,
+                                        original_name=tool.name,
                                         url=str(gateway.url),
                                         description=tool.description,
                                         integration_type=tool.integration_type,

@@ -107,7 +107,7 @@ class ServerService:
             "last_execution_time": last_time,
         }
         # Also update associated IDs (if not already done)
-        server_dict["associated_tools"] = [tool.qualified_name for tool in server.tools] if server.tools else []
+        server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
         return ServerRead.model_validate(server_dict)
@@ -277,7 +277,7 @@ class ServerService:
             "created_at": server.created_at,
             "updated_at": server.updated_at,
             "is_active": server.is_active,
-            "associated_tools": [tool.qualified_name for tool in server.tools],
+            "associated_tools": [tool.name for tool in server.tools],
             "associated_resources": [res.id for res in server.resources],
             "associated_prompts": [prompt.id for prompt in server.prompts],
         }

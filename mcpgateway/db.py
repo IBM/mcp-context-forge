@@ -39,6 +39,7 @@ from sqlalchemy import (
     literal,
     cast,
     event,
+    update
 )
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
@@ -49,7 +50,8 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
     sessionmaker,
-    validates
+    validates,
+    object_session
 )
 import uuid
 from slugify import slugify
@@ -301,8 +303,8 @@ class Tool(Base):
 
     __tablename__ = "tools"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    original_name: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=True)
     description: Mapped[Optional[str]]
     integration_type: Mapped[str] = mapped_column(default="MCP")
@@ -320,8 +322,8 @@ class Tool(Base):
 
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
-    gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
-    gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_slug == Gateway.slug", foreign_keys=[gateway_slug], back_populates="tools")
+    # gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
+    gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_id == Gateway.id", foreign_keys=[gateway_id], back_populates="tools")
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
 
     # Many-to-many relationship with Servers
@@ -335,12 +337,22 @@ class Tool(Base):
     #     return self.gateway.slug
 
     @property
-    def qualified_name(self) -> str:
-        return f"{self.gateway.slug}{settings.gateway_tool_name_separator}{self.name}"
+    def name(self) -> str:
+        return f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
 
     __table_args__ = (
-        UniqueConstraint("gateway_slug", "name", name="uq_gateway_slug__name"),
+        UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"),
     )
+
+    @hybrid_property  
+    def gateway_slug(self):
+        """Always returns the current slug from the related Gateway"""
+        return self.gateway.slug if self.gateway else None
+    
+    @gateway_slug.expression
+    def gateway_slug(cls):
+        """For database queries - auto-joins to get current slug"""
+        return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
 
     @hybrid_property
     def execution_count(self) -> int:
@@ -832,7 +844,7 @@ class Server(Base):
 
     __tablename__ = "servers"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     name: Mapped[str] = mapped_column(unique=True)
     description: Mapped[Optional[str]]
     icon: Mapped[Optional[str]]
@@ -949,8 +961,9 @@ class Gateway(Base):
 
     __tablename__ = "gateways"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    slug: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     url: Mapped[str] = mapped_column(String, unique=True)
     description: Mapped[Optional[str]]
     transport: Mapped[str] = mapped_column(default="SSE")
@@ -961,7 +974,7 @@ class Gateway(Base):
     last_seen: Mapped[Optional[datetime]]
 
     # Relationship with local tools this gateway provides
-    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_slug", cascade="all, delete-orphan")
+    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan")
 
     # Relationship with local prompts this gateway provides
     prompts: Mapped[List["Prompt"]] = relationship(back_populates="gateway", cascade="all, delete-orphan")
@@ -981,29 +994,6 @@ class Gateway(Base):
     # Authorizations
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", "headers" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
-
-    # @property
-    # def slug(self) -> str:
-    #     # return slugify("/".join(self.url.split("://")[1].split("/")[:-1]))
-    #     return slugify(self.name)
-
-    slug = Column(String, nullable=False, unique=True)
-
-    __table_args__ = (
-        UniqueConstraint("slug", name="uq_gateway_slug"),
-    )
-
-    # @validates("name")
-    # def _create_slug(self, key, value):
-    #     self.slug = slugify(value)          # ← uses the *real* value
-    #     return value
-
-
-# # ── automatically fill/refresh slug ────────────────────────
-@event.listens_for(Gateway.name, "set", retval=False)
-def _set_slug(target, value, oldvalue, initiator):    # ← add 4th arg
-    if value and (not target.slug or value != oldvalue):
-        target.slug = slugify(value)
 
 
 class SessionRecord(Base):

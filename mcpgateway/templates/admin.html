@@ -369,7 +369,7 @@
                 >
                   {% for tool in tools %}
                     {# value can be tool.id, tool.slug, or any key you use later #}
-                    <option value="{{ tool.id }}">{{ tool.qualifiedName }}</option>
+                    <option value="{{ tool.id }}">{{ tool.name }}</option>
                   {% endfor %}
                 </select>
                 <span id="selectedToolsPills"
@@ -489,7 +489,7 @@
                   <td
                     class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24"
                   >
-                    {{ tool.qualifiedName }}
+                    {{ tool.name }}
                   </td>
                   <td
                     class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 w-24"
@@ -2505,7 +2505,7 @@
                             focus:border-indigo-500 focus:ring-indigo-500"
                   >
                       {% for tool in tools %}
-                        <option value="{{ tool.id }}">{{ tool.qualifiedName }}</option>
+                        <option value="{{ tool.id }}">{{ tool.name }}</option>
                       {% endfor %}
                     </select>
                     <span id="selectedEditToolsPills"
@@ -2565,7 +2565,7 @@
       // Build mapping objects using your existing tools, resources, and prompts arrays
       window.toolMapping = {};
       {% for tool in tools %}
-      window.toolMapping["{{ tool.id }}"] = "{{ tool.qualifiedName }}";
+      window.toolMapping["{{ tool.id }}"] = "{{ tool.name }}";
       {% endfor %}
 
       window.resourceMapping = {};
