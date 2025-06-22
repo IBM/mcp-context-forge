@@ -11,6 +11,7 @@ Covered behaviour
 * Graceful handling of None for encode_auth / decode_auth
 * get_key raises ValueError when the encryption secret is unset
 """
+
 import pytest
 
 # --------------------------------------------------------------------------- #

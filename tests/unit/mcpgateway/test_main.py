@@ -45,7 +45,7 @@ def test_client(app):
 @pytest.fixture
 def mock_jwt_token():
     """Create a mock JWT token (kept for backwards-compat)."""
-    return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." "eyJzdWIiOiJ0ZXN0X3VzZXIiLCJleHAiOjk5OTk5OTk5OTl9." "this_is_a_test_token"
+    return "123.123.this_is_a_test_token"
 
 
 @pytest.fixture

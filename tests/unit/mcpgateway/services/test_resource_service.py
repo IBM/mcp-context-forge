@@ -16,7 +16,6 @@ from mcpgateway.services.resource_service import (
     ResourceError,
     ResourceNotFoundError,
     ResourceService,
-    ResourceURIConflictError,
 )
 
 

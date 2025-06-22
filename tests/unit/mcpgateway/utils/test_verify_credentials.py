@@ -18,6 +18,7 @@ Only dependencies needed are ``pytest`` and ``PyJWT`` (already required by the
 target module).  FastAPI `HTTPException` objects are asserted for status code
 and detail.
 """
+
 from __future__ import annotations
 
 import datetime as _dt

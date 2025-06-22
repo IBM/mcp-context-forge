@@ -589,7 +589,7 @@ class GatewayService:
                     # Mark successful check
                     gateway.last_seen = datetime.utcnow()
 
-                except Exception as e:
+                except Exception:
                     await self._handle_gateway_failure(gateway)
 
         # All gateways passed
