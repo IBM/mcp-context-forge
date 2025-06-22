@@ -608,6 +608,54 @@ async function viewTool(toolId) {
   }
 }
 
+function protectInputPrefix(inputElement, protectedText) {
+    let lastValidValue = protectedText;
+    
+    // Set initial value
+    inputElement.value = protectedText;
+    
+    // Listen for input events
+    inputElement.addEventListener('input', function(e) {
+        const currentValue = e.target.value;
+        
+        // Check if protected text is still intact
+        if (!currentValue.startsWith(protectedText)) {
+            // Restore the protected text
+            e.target.value = lastValidValue;
+            // Move cursor to end of protected text
+            e.target.setSelectionRange(protectedText.length, protectedText.length);
+        } else {
+            // Save valid state
+            lastValidValue = currentValue;
+        }
+    });
+    
+    // Prevent selection/editing of protected portion
+    inputElement.addEventListener('keydown', function(e) {
+        const start = e.target.selectionStart;
+        const end = e.target.selectionEnd;
+        
+        // Block edits that would affect protected text
+        if (start < protectedText.length) {
+            // Allow navigation keys
+            const allowedKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab'];
+            if (!allowedKeys.includes(e.key)) {
+                e.preventDefault();
+                // Move cursor to end of protected text
+                e.target.setSelectionRange(protectedText.length, protectedText.length);
+            }
+        }
+    });
+    
+    // Handle paste events
+    inputElement.addEventListener('paste', function(e) {
+        const start = e.target.selectionStart;
+        if (start < protectedText.length) {
+            e.preventDefault();
+        }
+    });
+}
+
 /**
  * Fetches tool details from the backend and populates the edit modal form,
  * including Request Type and Authentication fields, so that they are pre-filled for editing.
@@ -622,6 +670,11 @@ async function editTool(toolId) {
     // Set form action and populate basic fields.
     document.getElementById("edit-tool-form").action =
       `${window.ROOT_PATH}/admin/tools/${toolId}/edit`;
+    // const toolNameInput = document.getElementById("edit-tool-name");
+    // const protectedPrefix = tool.gatewaySlug + `${window.GATEWAY_TOOL_NAME_SEPARATOR}`;
+    // protectInputPrefix(toolNameInput, protectedPrefix);
+    // toolNameInput.value = protectedPrefix + (tool.name.startsWith(protectedPrefix) ? 
+    // tool.name.substring(protectedPrefix.length) : tool.name);
     document.getElementById("edit-tool-name").value = tool.name;
     document.getElementById("edit-tool-url").value = tool.url;
     document.getElementById("edit-tool-description").value =

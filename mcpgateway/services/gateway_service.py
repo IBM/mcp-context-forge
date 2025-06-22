@@ -325,7 +325,7 @@ class GatewayService:
                     new_tool_names = [tool.name for tool in tools]
 
                     for tool in tools:
-                        existing_tool = db.execute(select(DbTool).where(DbTool.name==tool.name).where(DbTool.gateway_id==gateway_id)).scalar_one_or_none()
+                        existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
                         if not existing_tool:
                             gateway.tools.append(
                                 DbTool(
@@ -345,7 +345,7 @@ class GatewayService:
                     gateway.capabilities = capabilities
                     gateway.tools = [
                         tool for tool in gateway.tools
-                        if tool.name in new_tool_names          # keep only still-valid rows
+                        if tool.original_name in new_tool_names          # keep only still-valid rows
                     ]
                     gateway.last_seen = datetime.now(timezone.utc)
 
@@ -423,11 +423,10 @@ class GatewayService:
                     # Try to initialize if activating
                     try:
                         capabilities, tools = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
-
                         new_tool_names = [tool.name for tool in tools]
 
                         for tool in tools:
-                            existing_tool = db.execute(select(DbTool).where(DbTool.name==tool.name).where(DbTool.gateway_id==gateway_id)).scalar_one_or_none()
+                            existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
                             if not existing_tool:
                                 gateway.tools.append(
                                     DbTool(
@@ -447,7 +446,7 @@ class GatewayService:
                         gateway.capabilities = capabilities
                         gateway.tools = [
                             tool for tool in gateway.tools
-                            if tool.name in new_tool_names          # keep only still-valid rows
+                            if tool.original_name in new_tool_names          # keep only still-valid rows
                         ]
 
                         gateway.last_seen = datetime.now(timezone.utc)
