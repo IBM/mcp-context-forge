@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Full-coverage test-suite for **mcpgateway.translate**.
 
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti + contributors
+
 The suite exercises:
 
 * `_PubSub` fan-out logic (including QueueFull removal path)
