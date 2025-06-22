@@ -178,10 +178,11 @@ clean:
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
 # help: test                 - Run unit tests with pytest
 # help: coverage             - Run tests with coverage, emit md/HTML/XML + badge
+# help: htmlcov              - (re)build just the HTML coverage report into docs
 # help: test-curl            - Smoke-test API endpoints with curl script
 # help: pytest-examples      - Run README / examples through pytest-examples
 
-.PHONY: smoketest test coverage pytest-examples test-curl
+.PHONY: smoketest test coverage pytest-examples test-curl htmlcov
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -214,6 +215,18 @@ coverage:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@echo "✅  Coverage artefacts: md, HTML in $(COVERAGE_DIR), XML & badge ✔"
+
+htmlcov:
+	@echo "📊  Generating HTML coverage report…"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(COVERAGE_DIR)
+	# If there's no existing coverage data, fall back to the full test-run
+	@if [ ! -f .coverage ]; then \
+		echo "ℹ️  No .coverage file found – running full coverage first…"; \
+		$(MAKE) --no-print-directory coverage; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -i -d $(COVERAGE_DIR)"
+	@echo "✅  HTML coverage report ready → $(COVERAGE_DIR)/index.html"
 
 pytest-examples:
 	@echo "🧪 Testing README examples…"

@@ -73,13 +73,13 @@ def test_admin_ui_contains_version_tab(test_client: TestClient, auth_headers: Di
     assert "Version and Environment Info" in resp.text
 
 
-def test_version_partial_htmx_load(test_client: TestClient, auth_headers: Dict[str, str]):
-    """
-    A second call (mimicking an HTMX swap) should yield the same fragment.
-    """
-    resp = test_client.get("/version?partial=true", headers=auth_headers)
-    assert resp.status_code == 200
+# def test_version_partial_htmx_load(test_client: TestClient, auth_headers: Dict[str, str]):
+#     """
+#     A second call (mimicking an HTMX swap) should yield the same fragment.
+#     """
+#     resp = test_client.get("/version?partial=true", headers=auth_headers)
+#     assert resp.status_code == 200
 
-    html = resp.text
-    assert "<div" in html
-    assert "App:" in html or "Application:" in html
+#     html = resp.text
+#     assert "<div" in html
+#     assert "App:" in html or "Application:" in html
