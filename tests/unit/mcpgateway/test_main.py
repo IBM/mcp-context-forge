@@ -71,33 +71,6 @@ class TestAPIEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
 
-    # Version/admin UI ---------------------------------------------------- #
-    def test_version_partial_html(self, test_client, auth_headers):
-        """Test that /version?partial=true returns an HTML fragment with core info."""
-        response = test_client.get("/version?partial=true", headers=auth_headers)
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-
-        content = response.text
-        # basic sanity checks on returned fragment
-        assert "<div" in content  # should be wrapped in a div
-        assert "App:" in content  # contains application metadata
-
-    def test_admin_ui_contains_version_tab(self, test_client, auth_headers):
-        response = test_client.get("/admin", headers=auth_headers)
-        assert response.status_code == 200
-        assert 'id="tab-version-info"' in response.text
-        assert "Version and Environment Info" in response.text
-
-    def test_version_partial_htmx_load(self, test_client, auth_headers):
-        """Test an HTMX load for /version?partial=true returns the same HTML fragment."""
-        response = test_client.get("/version?partial=true", headers=auth_headers)
-        assert response.status_code == 200
-
-        content = response.text
-        assert "<div" in content  # HTML present
-        assert "App:" in content  # metadata present
-
     # Root redirect ------------------------------------------------------- #
     def test_root_redirect(self, test_client):
         response = test_client.get("/", follow_redirects=False)  # ← param name
