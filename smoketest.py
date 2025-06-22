@@ -33,7 +33,6 @@ import signal
 import socket
 import subprocess
 import sys
-import textwrap
 import threading
 import time
 from collections import deque
@@ -178,9 +177,9 @@ def generate_jwt() -> str:
     Create a short-lived admin JWT that matches the gateway's settings.
     Resolution order → environment-variable override, then package defaults.
     """
-    user   = os.getenv("BASIC_AUTH_USER", "admin")
+    user = os.getenv("BASIC_AUTH_USER", "admin")
     secret = os.getenv("JWT_SECRET_KEY", "my-test-key")
-    expiry = os.getenv("TOKEN_EXPIRY", "300")          # seconds
+    expiry = os.getenv("TOKEN_EXPIRY", "300")  # seconds
 
     cmd = [
         "docker",
@@ -189,12 +188,14 @@ def generate_jwt() -> str:
         "python3",
         "-m",
         "mcpgateway.utils.create_jwt_token",
-        "--username", user,
-        "--exp",      expiry,
-        "--secret",   secret,
+        "--username",
+        user,
+        "--exp",
+        expiry,
+        "--secret",
+        secret,
     ]
     return subprocess.check_output(cmd, text=True).strip().strip('"')
-
 
 
 def request(method: str, path: str, *, json_data=None, **kw):
@@ -253,14 +254,14 @@ def step_4_docker_run():
     sh(MAKE_DOCKER_RUN, "4️⃣  Run Docker container (HTTPS)")
 
     # Build one token and reuse it for the health probes below.
-    token        = generate_jwt()
+    token = generate_jwt()
     auth_headers = {"Authorization": f"Bearer {token}"}
 
     # Probe endpoints until they respond with 200.
     for ep in ("/health", "/ready", "/version"):
-        full      = f"https://localhost:{PORT_GATEWAY}{ep}"
+        full = f"https://localhost:{PORT_GATEWAY}{ep}"
         need_auth = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
-        headers   = auth_headers if (ep == "/version" or need_auth) else None
+        headers = auth_headers if (ep == "/version" or need_auth) else None
         if not wait_http_ok(full, 45, headers=headers):
             raise RuntimeError(f"Gateway endpoint {ep} not ready")
 

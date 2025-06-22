@@ -165,7 +165,17 @@ def _build_fastapi(
     # ----- GET /sse ---------------------------------------------------------#
     @app.get(sse_path)
     async def get_sse(request: Request) -> EventSourceResponse:  # noqa: D401
-        """Fan-out *stdout* of the subprocess to any number of SSE clients."""
+        """Stream subprocess stdout to any number of SSE clients.
+
+        Args:
+            request (Request): The incoming ``GET`` request that will be
+                upgraded to a Server-Sent Events (SSE) stream.
+
+        Returns:
+            EventSourceResponse: A streaming response that forwards JSON-RPC
+            messages from the child process and emits periodic ``keepalive``
+            frames so that clients and proxies do not time out.
+        """
         queue = pubsub.subscribe()
         session_id = uuid.uuid4().hex
 
@@ -210,7 +220,19 @@ def _build_fastapi(
     # ----- POST /message ----------------------------------------------------#
     @app.post(message_path, status_code=status.HTTP_202_ACCEPTED)
     async def post_message(raw: Request, session_id: str | None = None) -> Response:  # noqa: D401
-        """Forward the raw JSON body to the stdio process without modification."""
+        """Forward a raw JSON-RPC request to the stdio subprocess.
+
+        Args:
+            raw (Request): The incoming ``POST`` request whose body contains
+                a single JSON-RPC message.
+            session_id (str | None): The SSE session identifier that originated
+                this back-channel call (present when the client obtained the
+                endpoint URL from an ``endpoint`` bootstrap frame).
+
+        Returns:
+            Response: ``202 Accepted`` if the payload is forwarded successfully,
+            or ``400 Bad Request`` when the body is not valid JSON.
+        """
         payload = await raw.body()
         try:
             json.loads(payload)  # validate

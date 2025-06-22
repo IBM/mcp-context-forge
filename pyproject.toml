@@ -220,13 +220,34 @@ profile = "black"
 multi_line_output = 3
 
 [tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-strict = true
-show_error_codes = true
-warn_unreachable = true
+# Target Python version
+python_version = "3.11"
+
+# Full strictness and individual checks
+strict = true                           # Enable all strict checks
+
+check_untyped_defs = true              # Type-check the bodies of untyped functions
+no_implicit_optional = true            # Require explicit Optional for None default
+disallow_untyped_defs = true           # Require type annotations for all functions
+disallow_untyped_calls = true          # Disallow calling functions without type info
+disallow_any_unimported = true         # Disallow Any from missing imports
+warn_return_any = true                 # Warn if a function returns Any
+warn_unreachable = true                # Warn about unreachable code
+warn_unused_ignores = true             # Warn if a "# type: ignore" is unnecessary
+warn_unused_configs = true             # Warn about unused config options
+warn_redundant_casts = true            # Warn if a cast does nothing
+strict_equality = true                 # Disallow ==/!= between incompatible types
+
+# Output formatting
+show_error_codes = true                # Show error codes in output
+pretty = true                          # Format output nicely
+
+# Exclude these paths from analysis
+exclude = [
+  '^build/',
+  '^\\.venv/',
+  '^\\.mypy_cache/',
+]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
