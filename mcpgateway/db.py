@@ -16,10 +16,12 @@ and to record tool execution metrics.
 """
 
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import jsonschema
+from slugify import slugify
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -31,15 +33,11 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     create_engine,
     func,
     make_url,
     select,
-    UniqueConstraint,
-    literal,
-    cast,
-    event,
-    update
 )
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
@@ -50,11 +48,7 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
     sessionmaker,
-    validates,
-    object_session
 )
-import uuid
-from slugify import slugify
 
 from mcpgateway.config import settings
 from mcpgateway.types import ResourceContent
@@ -341,11 +335,11 @@ class Tool(Base):
     @hybrid_property
     def name(self):
         return self._computed_name or f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
-    
-    @name.setter 
+
+    @name.setter
     def name(self, value):
         self._computed_name = value
-    
+
     @name.expression
     def name(cls):
         return cls._computed_name
@@ -354,18 +348,24 @@ class Tool(Base):
     # def name(self) -> str:
     #     return f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
 
-    __table_args__ = (
-        UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"),
-    )
+    __table_args__ = (UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"),)
 
-    @hybrid_property  
+    @hybrid_property
     def gateway_slug(self):
-        """Always returns the current slug from the related Gateway"""
+        """Always returns the current slug from the related Gateway
+
+        Returns:
+            str: slug for Python use
+        """
         return self.gateway.slug if self.gateway else None
-    
+
     @gateway_slug.expression
     def gateway_slug(cls):
-        """For database queries - auto-joins to get current slug"""
+        """For database queries - auto-joins to get current slug
+
+        Returns:
+            str: slug for SQL use
+        """
         return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
 
     @hybrid_property
