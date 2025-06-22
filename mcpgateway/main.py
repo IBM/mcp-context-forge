@@ -713,7 +713,7 @@ async def sse_endpoint(request: Request, server_id: str, user: str = Depends(req
 
     Args:
         request (Request): The incoming request.
-        server_id (int): The ID of the server for which updates are received.
+        server_id (str): The ID of the server for which updates are received.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -750,7 +750,7 @@ async def message_endpoint(request: Request, server_id: str, user: str = Depends
 
     Args:
         request (Request): The incoming message request.
-        server_id (int): The ID of the server receiving the message.
+        server_id (str): The ID of the server receiving the message.
         user (str): The authenticated user making the request.
 
     Returns:

@@ -41,7 +41,6 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.types import TextContent, ToolResult
 from mcpgateway.utils.services_auth import decode_auth
-from slugify import slugify
 
 from ..config import extract_using_jq
 
@@ -264,7 +263,7 @@ class ToolService:
 
         Args:
             db (Session): The SQLAlchemy database session.
-            server_id (int): Server ID
+            server_id (str): Server ID
             include_inactive (bool): If True, include inactive tools in the result.
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
@@ -375,7 +374,9 @@ class ToolService:
         """
         tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name == name).where(DbTool.is_active)).scalar_one_or_none()
         if not tool:
-            inactive_tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name == name).where(not_(DbTool.is_active))).scalar_one_or_none()
+            inactive_tool = db.execute(
+                select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name == name).where(not_(DbTool.is_active))
+            ).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")

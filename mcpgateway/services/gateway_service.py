@@ -25,6 +25,7 @@ from filelock import FileLock, Timeout
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from slugify import slugify
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -35,8 +36,6 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.services_auth import decode_auth
-
-from slugify import slugify
 
 try:
     import redis
@@ -343,10 +342,7 @@ class GatewayService:
                             )
 
                     gateway.capabilities = capabilities
-                    gateway.tools = [
-                        tool for tool in gateway.tools
-                        if tool.original_name in new_tool_names          # keep only still-valid rows
-                    ]
+                    gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                     gateway.last_seen = datetime.now(timezone.utc)
 
                     # Update tracking with new URL
@@ -444,10 +440,7 @@ class GatewayService:
                                 )
 
                         gateway.capabilities = capabilities
-                        gateway.tools = [
-                            tool for tool in gateway.tools
-                            if tool.original_name in new_tool_names          # keep only still-valid rows
-                        ]
+                        gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
 
                         gateway.last_seen = datetime.now(timezone.utc)
                     except Exception as e:
@@ -633,7 +626,7 @@ class GatewayService:
                     # Mark successful check
                     gateway.last_seen = datetime.now(timezone.utc)
 
-                except Exception as e:
+                except Exception:
                     await self._handle_gateway_failure(gateway)
 
         # All gateways passed
@@ -690,6 +683,7 @@ class GatewayService:
         Args:
             url: Gateway URL
             authentication: Optional authentication headers
+            transport: Transport type
 
         Returns:
             Capabilities dictionary as provided by the gateway.
