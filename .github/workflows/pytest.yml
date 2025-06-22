@@ -60,13 +60,13 @@ jobs:
       # -----------------------------------------------------------
       # 2️⃣  Install project + dev/test dependencies
       # -----------------------------------------------------------
-      - name: 📦  Install dependencies
+      - name: 📦 Install dependencies (editable + dev extra)
         run: |
           python -m pip install --upgrade pip
-          # Install mcpgateway with its dev extras (defined in pyproject.toml)
-          # This is the same as:  make install-dev
-          pip install '.[dev]'
-          # Ensure core testing tools are present (no-ops if already satisfied)
+          # install the project itself in *editable* mode so tests import the same codebase
+          # and pull in every dev / test extra declared in pyproject.toml
+          pip install -e .[dev]
+          # belt-and-braces – keep the core test tool-chain pinned here too
           pip install pytest pytest-cov pytest-asyncio coverage[toml]
 
       # -----------------------------------------------------------
