@@ -1,0 +1,133 @@
+# ===============================================================
+# 🔍  Lint & Static Analysis – Code Quality Gate
+# ===============================================================
+#
+#   - runs each linter in its own matrix job for visibility
+#   - mirrors the actual CLI commands used locally (no `make`)
+#   - ensures fast-failure isolation: one failure doesn't hide others
+#   - each job installs the project in dev-editable mode
+#   - logs are grouped and plain-text for readability
+# ---------------------------------------------------------------
+
+name: Lint & Static Analysis
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # -------------------------------------------------------
+          # 🧼 Syntax & Format Checkers
+          # -------------------------------------------------------
+          - id: yamllint
+            setup: pip install yamllint
+            cmd: yamllint -c .yamllint .
+
+          - id: jsonlint
+            setup: |
+              sudo apt-get update -qq
+              sudo apt-get install -y jq
+            cmd: |
+              find . -type f -name '*.json' -not -path './node_modules/*' -print0 |
+                xargs -0 -I{} jq empty "{}"
+
+          - id: tomllint
+            setup: pip install tomlcheck
+            cmd: |
+              find . -type f -name '*.toml' -print0 |
+                xargs -0 -I{} tomlcheck "{}"
+
+          # -------------------------------------------------------
+          # 🐍 Python Linters & Type Checkers
+          # -------------------------------------------------------
+          - id: flake8
+            setup: pip install flake8
+            cmd: flake8 mcpgateway
+
+          - id: ruff
+            setup: pip install ruff
+            cmd: |
+              ruff check .
+              ruff format --check .
+
+          # - id: pylint
+          #   setup: pip install pylint
+          #   cmd: pylint mcpgateway
+
+          # - id: mypy
+          #   setup: pip install mypy
+          #   cmd: mypy mcpgateway
+
+          # - id: pycodestyle
+          #   setup: pip install pycodestyle
+          #   cmd: pycodestyle mcpgateway --max-line-length=200
+
+          # - id: pydocstyle
+          #   setup: pip install pydocstyle
+          #   cmd: pydocstyle mcpgateway
+
+          # - id: pyright
+          #   setup: npm install -g pyright
+          #   cmd: pyright mcpgateway tests
+
+          # -------------------------------------------------------
+          # 🔒 Security & Packaging Checks
+          # -------------------------------------------------------
+          # - id: bandit
+          #   setup: pip install bandit
+          #   cmd: bandit -r mcpgateway
+
+          # - id: check-manifest
+          #   setup: pip install check-manifest
+          #   cmd: check-manifest
+
+    name: ${{ matrix.id }}
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # -----------------------------------------------------------
+      # 1️⃣  Python Setup
+      # -----------------------------------------------------------
+      - name: 🐍  Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # -----------------------------------------------------------
+      # 2️⃣  Install Project + Dev Dependencies
+      # -----------------------------------------------------------
+      - name: 📦  Install project (editable mode)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      # -----------------------------------------------------------
+      # 3️⃣  Install Tool-Specific Requirements
+      # -----------------------------------------------------------
+      - name: 🔧  Install tool - ${{ matrix.id }}
+        run: ${{ matrix.setup }}
+
+      # -----------------------------------------------------------
+      # 4️⃣  Run Linter / Validator
+      # -----------------------------------------------------------
+      - name: 🔍  Run ${{ matrix.id }}
+        run: ${{ matrix.cmd }}
