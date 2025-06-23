@@ -9,8 +9,8 @@ This module defines configuration settings for the MCP Gateway using Pydantic.
 It loads configuration from environment variables with sensible defaults.
 
 Environment variables:
-- APP_NAME: Gateway name (default: "MCP Gateway")
-- HOST: Host to bind to (default: "0.0.0.0")
+- APP_NAME: Gateway name (default: "MCP_Gateway")
+- HOST: Host to bind to (default: "127.0.0.1")
 - PORT: Port to listen on (default: 4444)
 - DATABASE_URL: SQLite database URL (default: "sqlite:///./mcp.db")
 - BASIC_AUTH_USER: Admin username (default: "admin")
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     """MCP Gateway configuration settings."""
 
     # Basic Settings
-    app_name: str = Field("MCP Gateway", env="APP_NAME")
+    app_name: str = Field("MCP_Gateway", env="APP_NAME")
     host: str = Field("127.0.0.1", env="HOST")
     port: int = Field(4444, env="PORT")
     database_url: str = "sqlite:///./mcp.db"

@@ -47,9 +47,26 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
 python -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-test-key
 ```
 
+## 🔗 Option 2 · Streamable HTTP (best for prod / remote)
+
+### 2 · Create `.vscode/mcp.json`
+
+```json
+{
+  "servers": {
+    "mcp-gateway": {
+      "type": "http",
+      "url": "https://mcpgateway.example.com/servers/1/mcp/",
+      "headers": {
+        "Authorization": "Bearer <YOUR_JWT_TOKEN>"
+      }
+    }
+  }
+}
+
 ---
 
-## 🔗 Option 2 · Local stdio bridge (`mcpgateway.wrapper`)
+## 🔗 Option 3 · Local stdio bridge (`mcpgateway.wrapper`)
 
 Perfect when:
 
