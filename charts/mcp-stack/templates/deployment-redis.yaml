@@ -1,7 +1,11 @@
-{{- /*
-Redis Deployment
-Enabled when .Values.redis.enabled = true
-*/ -}}
+{{/* -------------------------------------------------------------------
+     DEPLOYMENT — Redis
+     -------------------------------------------------------------------
+     • Name + labels templated with <release>-mcp-stack-redis.
+     • Keeps a single replica; if you need HA, swap for a StatefulSet
+       or an external Redis cluster.
+     ------------------------------------------------------------------- */}}
+
 {{- if .Values.redis.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -9,18 +13,16 @@ metadata:
   name: {{ include "mcp-stack.fullname" . }}-redis
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
-    app: redis
+    app: {{ include "mcp-stack.fullname" . }}-redis
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: redis
-      release: {{ .Release.Name }}
+      app: {{ include "mcp-stack.fullname" . }}-redis
   template:
     metadata:
       labels:
-        app: redis
-        release: {{ .Release.Name }}
+        app: {{ include "mcp-stack.fullname" . }}-redis
     spec:
       containers:
         - name: redis

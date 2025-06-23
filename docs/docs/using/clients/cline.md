@@ -34,21 +34,30 @@ To integrate Cline with your MCP Gateway:
 1. **Configure MCP Server**:
    - Open the Cline settings in VS Code.
    - Navigate to the MCP Servers section.
-   - Add a new MCP server with the following configuration:
+   - Add a new MCP server with the following configuration under mcpServers as shown below:
 
      ```json
-     {
-       "name": "MCP Gateway",
-       "url": "http://localhost:4444",
-       "auth": {
-         "type": "basic",
-         "username": "admin",
-         "password": "changeme"
-       }
-     }
+     "mcpServers": {
+         "mcpgateway-wrapper": {
+            "disabled": true,
+            "timeout": 60,
+            "type": "stdio",
+            "command": "uv",
+            "args": [
+            "run",
+            "--directory",
+            "REPLACE_WITH_PATH_TO_REPO",
+            "-m",
+            "mcpgateway.wrapper"
+            ],
+            "env": {
+               "MCP_SERVER_CATALOG_URLS": "http://localhost:4444",
+               "MCP_AUTH_TOKEN": "REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN",
+               "MCP_WRAPPER_LOG_LEVEL": "OFF"
+            }
+         }
+      }
      ```
-
-   - Replace the URL, username, and password with your MCP Gateway's details.
 
 2. **Enable the MCP Server**:
    - Ensure the newly added MCP server is enabled in the Cline settings.

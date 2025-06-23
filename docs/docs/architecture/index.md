@@ -6,7 +6,7 @@ This gateway:
 
 - Wraps REST/MCP tools and resources under JSON-RPC and streaming protocols
 - Offers a pluggable backend (cache, auth, storage)
-- Exposes multiple transports (HTTP, WS, SSE, stdio)
+- Exposes multiple transports (HTTP, WS, SSE, StreamableHttp, stdio)
 - Automatically discovers and merges federated peers
 
 ## System Architecture

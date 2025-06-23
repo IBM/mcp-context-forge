@@ -95,7 +95,7 @@ Admin UI and API are protected by Basic Auth or JWT.
 To generate a JWT:
 
 ```bash
-python -m mcpgateway.utils.create_jwt_token \
+python3 -m mcpgateway.utils.create_jwt_token \
   -u admin \
   -e 10080 | tee token.txt
 
@@ -154,5 +154,3 @@ GitHub Actions enforce:
 CI configs live in `.github/workflows/`.
 
 ---
-
-Let me know if you'd like a shorter version or want to customize for internal team handoff.

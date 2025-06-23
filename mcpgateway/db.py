@@ -933,6 +933,7 @@ class Gateway(Base):
     name: Mapped[str] = mapped_column(unique=True)
     url: Mapped[str]
     description: Mapped[Optional[str]]
+    transport: Mapped[str] = mapped_column(default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

@@ -23,6 +23,7 @@ The gateway will support the following built-in transports:
 - **HTTP JSON-RPC** (primary RPC interface)
 - **WebSocket** (bidirectional messaging)
 - **SSE (Server-Sent Events)** (for push-only event streaming)
+- **Streamable HTTP**  (bidirectional, resumable streams, efficient MCP transport over HTTP)
 - **STDIO** (optional local CLI / subprocess transport)
 
 Transport selection is dynamic, based on environment (`TRANSPORT_TYPE`) and route grouping. All transports share the same service layer and authentication mechanisms.

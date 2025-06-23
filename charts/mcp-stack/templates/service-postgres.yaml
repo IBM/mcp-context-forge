@@ -2,13 +2,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres
+  name: {{ include "mcp-stack.fullname" . }}-postgres
   labels:
-    app: postgres
+    {{- include "mcp-stack.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.postgres.service.type }}
   ports:
-    - port: {{ .Values.postgres.service.port }}
+    - name: postgres
+      port: {{ .Values.postgres.service.port }}
+      targetPort: {{ .Values.postgres.service.targetPort | default .Values.postgres.service.port }}
   selector:
-    app: postgres
+    app: {{ include "mcp-stack.fullname" . }}-postgres
 {{- end }}

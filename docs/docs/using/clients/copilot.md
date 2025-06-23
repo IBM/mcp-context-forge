@@ -1,34 +1,38 @@
-# 🧠 Microsoft GitHub Copilot + MCP Gateway
+# 🧠 GitHub Copilot + MCP Gateway
 
-Extend GitHub Copilot's functionality in VS Code by connecting it to your **MCP Gateway**, enabling powerful tool invocation, resource access, and dynamic integration—all via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
+Super-charge Copilot (or any VS Code chat agent that speaks MCP) with tools, prompts and
+resources from **your own MCP Gateway**.
 
-GitHub Copilot can also be configured to use local models via [Ollama](https://ollama.com/).
+With Copilot → MCP you can:
+
+* 🔧 call custom / enterprise tools from chat
+* 📂 pull live resources (configs, docs, snippets)
+* 🧩 render prompts or templates directly inside the IDE
+
+Copilot supports **SSE** streams out-of-the-box; for environments that forbid long-lived
+HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`** bridge.
 
 ---
 
 ## 🛠 Prerequisites
 
 * **VS Code ≥ 1.99**
-* `"chat.mcp.enabled": true` in your VS Code settings
-* MCP Gateway running (via `make serve` or Docker)
-* Admin JWT or basic credentials to authenticate
+* `"chat.mcp.enabled": true` in your *settings.json*
+* An MCP Gateway running (`make serve`, Docker, or container image)
+* A JWT or Basic credentials (`admin` / `changeme` in dev)
 
 ---
 
-## 🔗 Option 1: SSE (Direct HTTP Integration)
+## 🔗 Option 1 · Direct SSE (best for prod / remote)
 
-For remote or authenticated servers, use the **SSE transport** in `.vscode/mcp.json`:
-
-### 1. Create the Config File
-
-Create `.vscode/mcp.json` in your project root:
+### 1 · Create `.vscode/mcp.json`
 
 ```json
 {
   "servers": {
-    "mcp": {
+    "mcp-gateway": {
       "type": "sse",
-      "url": "https://mcpgateway.domain/servers/1/sse",
+      "url": "https://mcpgateway.example.com/servers/1/sse",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -37,110 +41,112 @@ Create `.vscode/mcp.json` in your project root:
 }
 ```
 
-> 💡 You can generate a JWT with:
+> **Tip – generate a token**
 
 ```bash
-python -m mcpgateway.utils.create_jwt_token -u admin -e 10080 > token.txt
+python -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-test-key
 ```
+
+## 🔗 Option 2 · Streamable HTTP (best for prod / remote)
+
+### 2 · Create `.vscode/mcp.json`
+
+```json
+{
+  "servers": {
+    "mcp-gateway": {
+      "type": "http",
+      "url": "https://mcpgateway.example.com/servers/1/mcp/",
+      "headers": {
+        "Authorization": "Bearer <YOUR_JWT_TOKEN>"
+      }
+    }
+  }
+}
 
 ---
 
-## 🔗 Option 2: `mcpgateway-wrapper` (STDIO Integration)
+## 🔗 Option 3 · Local stdio bridge (`mcpgateway.wrapper`)
 
-If your client (e.g., Copilot) supports **stdio-based MCP servers**, use `mcpgateway-wrapper` to expose the Gateway as a local process:
+Perfect when:
 
-### 1. Install the Wrapper
+* the IDE cannot add HTTP headers, or
+* you're offline / behind a corp proxy.
 
-Clone or download the [`mcpgateway-wrapper`](https://github.com/IBM/mcp-context-forge) repository and navigate to it:
-
-```bash
-# Clone the repo
-git clone git@github.com:IBM/mcp-context-forge.git
-cd mcp-context-forge
-
-# Install dependencies and activate the venv
-make venv install activate
-. ~/.venv/mcpgateway/bin/activate
-
-# Install uvx
-pip install uvx
-
-cd mcpgateway-wrapper
-```
-
-### 2. Run the Wrapper Locally
+### 1 · Install the wrapper (one-liner)
 
 ```bash
-uv run mcpgateway-wrapper
+pipx install --include-deps mcp-contextforge-gateway          # isolates in ~/.local/pipx/venvs
+#   - or -
+uv pip install mcp-contextforge-gateway                       # inside any uv/venv you like
 ```
 
-Or using Inspector for debug:
-
-```bash
-npx @modelcontextprotocol/inspector uv --directory . run mcpgateway-wrapper
-```
-
-### 3. Create `.vscode/mcp.json`
-
-Point Copilot to the local wrapper process:
+### 2 · Create `.vscode/mcp.json`
 
 ```json
 {
   "servers": {
     "mcp-wrapper": {
       "type": "stdio",
-      "command": "uv",
-      "args": [
-        "--directory",
-        "path/to/mcpgateway-wrapper",
-        "run",
-        "mcpgateway-wrapper"
-      ],
+      "command": "python3",
+      "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_GATEWAY_BASE_URL": "http://localhost:4444",
         "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
-        "MCP_AUTH_TOKEN": "your_bearer_token"
+        "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>",
+        "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
   }
 }
 ```
 
-> ✅ This setup allows Copilot to invoke Gateway-managed tools without HTTP auth headers, ideal for local dev or restrictive environments.
+That's it – VS Code spawns the stdio process, pipes JSON-RPC, and you're ready to roll.
+
+<details>
+<summary><strong>🐳 Docker alternative</strong></summary>
+
+```jsonc
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "--network=host", "-i",
+    "-e", "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1",
+    "-e", "MCP_AUTH_TOKEN=<YOUR_JWT_TOKEN>",
+    "ghcr.io/ibm/mcp-context-forge:latest",
+    "python3", "-m", "mcpgateway.wrapper"
+  ]
+}
+```
+
+</details>
 
 ---
 
-## 🧪 Verifying Tool Access
+## 🧪 Verify inside Copilot
 
-After setup:
-
-1. Open the **Copilot chat** pane (`Ctrl + Shift + i`)
-2. Switch to **Agent Mode**
-3. Click **Tools** - tools from your MCP server should appear
-
-Try prompting:
+1. Open **Copilot Chat** → switch to *Agent* mode.
+2. Click **Tools** – your Gateway tools should list.
+3. Try:
 
 ```
-#echo { "message": "Hello" }
+#echo { "message": "Hello from VS Code" }
 ```
 
-Expected: Copilot invokes the Gateway's `echo` tool and displays the response.
+Copilot routes the call → Gateway → tool, and prints the reply.
 
 ---
 
-## 📝 Tips for Success
+## 📝 Good to know
 
-* Use **SSE** for production, **stdio** for local/CLI workflows
-* Register servers via Admin UI or `/admin#catalog`
-* Use JWTs for secure, headless integration
-
----
-
-## 📚 Resources
-
-* [MCP Gateway GitHub](https://github.com/hexmos/mcpgateway)
-* [mcpgateway-wrapper](https://github.com/hexmos/mcpgateway-wrapper)
-* [MCP Spec](https://modelcontext.org)
-* [Copilot Docs](https://github.com/features/copilot)
+* **Use SSE for production**, stdio for local/offline.
+* You can manage servers, tools and prompts from the Gateway **Admin UI** (`/admin`).
+* Need a bearer quickly?
+  `export MCP_AUTH_TOKEN=$(python -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)`
 
 ---
+
+## 📚 Further Reading
+
+* **Gateway GitHub** → [https://github.com/ibm/mcp-context-forge](https://github.com/ibm/mcp-context-forge)
+* **MCP Spec** → [https://modelcontextprotocol.io/](https://modelcontextprotocol.io/)
+* **Copilot docs** → [https://github.com/features/copilot](https://github.com/features/copilot)

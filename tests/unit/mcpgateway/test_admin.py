@@ -56,7 +56,6 @@ from mcpgateway.admin import (
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
-from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerNotFoundError, ServerService
 from mcpgateway.services.tool_service import (
     ToolNameConflictError,
@@ -74,6 +73,11 @@ def mock_db():
 def mock_request():
     """Create a mock FastAPI request."""
     request = MagicMock(spec=Request)
+
+    # FastAPI's Request always has a .scope dict; many admin helpers read "root_path".
+    request.scope = {"root_path": ""}
+
+    # Pretend form() returns the full set of fields our admin helpers expect
     request.form = AsyncMock(
         return_value={
             "name": "test-name",
@@ -102,8 +106,13 @@ def mock_request():
             "activate": "true",
         }
     )
+
+    # Basic template rendering stub
+    request.app = MagicMock()  # ensure .app exists
+    request.app.state = MagicMock()  # ensure .app.state exists
     request.app.state.templates = MagicMock()
     request.app.state.templates.TemplateResponse.return_value = HTMLResponse(content="<html></html>")
+
     request.query_params = {"include_inactive": "false"}
     return request
 
@@ -195,12 +204,10 @@ class TestAdminServerRoutes:
         assert "/admin#catalog" in result.headers["location"]
 
     @patch.object(ServerService, "delete_server")
-    async def test_admin_delete_server(self, mock_delete_server, mock_db):
+    async def test_admin_delete_server(self, mock_delete_server, mock_request, mock_db):
         """Test deleting a server through admin UI."""
-        # Execute
-        result = await admin_delete_server(1, mock_db, "test-user")
+        result = await admin_delete_server(1, mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_server.assert_called_once_with(mock_db, 1)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -309,12 +316,10 @@ class TestAdminToolRoutes:
         assert "/admin#tools" in result.headers["location"]
 
     @patch.object(ToolService, "delete_tool")
-    async def test_admin_delete_tool(self, mock_delete_tool, mock_db):
+    async def test_admin_delete_tool(self, mock_delete_tool, mock_request, mock_db):
         """Test deleting a tool through admin UI."""
-        # Execute
-        result = await admin_delete_tool(1, mock_db, "test-user")
+        result = await admin_delete_tool(1, mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_tool.assert_called_once_with(mock_db, 1)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -399,12 +404,10 @@ class TestAdminResourceRoutes:
         assert "/admin#resources" in result.headers["location"]
 
     @patch.object(ResourceService, "delete_resource")
-    async def test_admin_delete_resource(self, mock_delete_resource, mock_db):
+    async def test_admin_delete_resource(self, mock_delete_resource, mock_request, mock_db):
         """Test deleting a resource through admin UI."""
-        # Execute
-        result = await admin_delete_resource("/test/resource", mock_db, "test-user")
+        result = await admin_delete_resource("/test/resource", mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_resource.assert_called_once_with(mock_db, "/test/resource")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -503,12 +506,10 @@ class TestAdminPromptRoutes:
         assert "/admin#prompts" in result.headers["location"]
 
     @patch.object(PromptService, "delete_prompt")
-    async def test_admin_delete_prompt(self, mock_delete_prompt, mock_db):
+    async def test_admin_delete_prompt(self, mock_delete_prompt, mock_request, mock_db):
         """Test deleting a prompt through admin UI."""
-        # Execute
-        result = await admin_delete_prompt("test-prompt", mock_db, "test-user")
+        result = await admin_delete_prompt("test-prompt", mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_prompt.assert_called_once_with(mock_db, "test-prompt")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -589,12 +590,10 @@ class TestAdminGatewayRoutes:
         assert "/admin#gateways" in result.headers["location"]
 
     @patch.object(GatewayService, "delete_gateway")
-    async def test_admin_delete_gateway(self, mock_delete_gateway, mock_db):
+    async def test_admin_delete_gateway(self, mock_delete_gateway, mock_request, mock_db):
         """Test deleting a gateway through admin UI."""
-        # Execute
-        result = await admin_delete_gateway(1, mock_db, "test-user")
+        result = await admin_delete_gateway(1, mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_gateway.assert_called_once_with(mock_db, 1)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -604,25 +603,22 @@ class TestAdminGatewayRoutes:
 class TestAdminRootRoutes:
     """Test admin routes for root management."""
 
-    @patch.object(RootService, "add_root")
-    async def test_admin_add_root(self, mock_add_root, mock_request, mock_db):
+    @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
+    async def test_admin_add_root(self, mock_add_root, mock_request):
         """Test adding a root through admin UI."""
-        # Execute
-        result = await admin_add_root(mock_request, mock_db, "test-user")
+        result = await admin_add_root(mock_request, "test-user")
 
-        # Assert
-        mock_add_root.assert_called_once_with("/test/resource", None)
+        # expect ("uri", "name") → "test-name" comes from the form fixture
+        mock_add_root.assert_called_once_with("/test/resource", "test-name")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "/admin#roots" in result.headers["location"]
 
-    @patch.object(RootService, "remove_root")
-    async def test_admin_delete_root(self, mock_remove_root, mock_db):
+    @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
+    async def test_admin_delete_root(self, mock_remove_root, mock_request):
         """Test deleting a root through admin UI."""
-        # Execute
-        result = await admin_delete_root("/test/root", mock_db, "test-user")
+        result = await admin_delete_root("/test/root", mock_request, "test-user")
 
-        # Assert
         mock_remove_root.assert_called_once_with("/test/root")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
