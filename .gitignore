@@ -1,3 +1,4 @@
+gateway_service_leader.lock
 docs/docs/test/
 tmp
 *.tgz
