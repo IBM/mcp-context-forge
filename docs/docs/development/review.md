@@ -49,17 +49,26 @@ Before you read code or leave comments, **always** verify the PR builds and test
 make venv install install-dev serve   # Install into a fresh venv, and test it runs locally
 ```
 
-### 3.2 Container Build (if applicable)
+### 3.2 Container Build and testing with Postgres and Redis (compose)
 
 ```bash
 make docker-prod    # Build a new image
+# Change: image: mcpgateway/mcpgateway:latest in docker-compose.yml to use the local image
 make compose-up     # spins up the Docker Compose stack
+
+# Test the basics
+curl -k https://localhost:4444/health` # {"status":"healthy"}
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+curl -sk -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/version  | jq -c '.database, .redis'
+
+# Add an MCP server to http://localhost:4444 then check logs:
+make compose-logs
 ```
 
 ### 3.3 Automated Tests
 
 ```bash
-make test           # or `pytest`, `npm test`, etc.
+make test           # or `pytest`
 ```
 
 ### 3.4 Lint & Static Analysis
