@@ -334,6 +334,10 @@ helm upgrade --install mcp-stack . \
   --namespace mcp-private \
   -f my-values.yaml \
   --wait --timeout 15m --debug
+
+# 8. Check status
+kubectl get all -n mcp-private
+helm status mcp-stack -n mcp-private --show-desc
 ```
 
 ---
