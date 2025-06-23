@@ -148,30 +148,43 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
   document
-    .getElementById("add-gateway-form")
-    .addEventListener("submit", (e) => {
-      e.preventDefault();
-      const form = e.target;
-      const formData = new FormData(form);
-      fetch(`${window.ROOT_PATH}/admin/gateways`, {
-        method: "POST",
-        body: formData,
+  .getElementById("add-gateway-form")
+  .addEventListener("submit", (e) => {
+    e.preventDefault();
+
+    const form = e.target;
+    const formData = new FormData(form);
+
+    const status = document.getElementById("status-gateways");
+    const loading = document.getElementById("add-gateway-loading");
+
+    // Show loading and clear previous status
+    loading.style.display = "block";
+    status.textContent = "";
+    status.classList.remove("error-status");
+
+    fetch(`${window.ROOT_PATH}/admin/gateways`, {
+      method: "POST",
+      body: formData,
+    })
+      .then((response) => {
+        if (!response.ok) {
+          status.textContent = "Connection failed!";
+          status.classList.add("error-status");
+        } else {
+          location.reload(); // Will exit before hiding spinner
+        }
       })
-        .then((response) => {
-          console.log(response);
-          if (!response.ok) {
-            const status = document.getElementById("status-gateways");
-            status.textContent = "Connection failed!";
-            status.classList.add("error-status");
-          } else {
-            location.reload();
-          console.log(response);
-          }
-        })
-        .catch((error) => {
-          console.error("Error:", error);
-        });
-    });
+      .catch((error) => {
+        console.error("Error:", error);
+        status.textContent = "An error occurred!";
+        status.classList.add("error-status");
+      })
+      .finally(() => {
+        loading.style.display = "none"; // Hide loading
+      });
+  });
+
 
   document
     .getElementById("add-resource-form")
@@ -318,7 +331,7 @@ document.addEventListener("DOMContentLoaded", function () {
   );
 
   const requestTypeMap = {
-    MCP: ["SSE", "STDIO"],
+    MCP: ["SSE", "STREAMABLE", "STDIO"],
     REST: ["GET", "POST", "PUT", "DELETE"],
   };
 
@@ -377,16 +390,16 @@ function showTab(tabName) {
     panel.classList.add("hidden");
   });
   document.querySelectorAll(".tab-link").forEach((link) => {
-    link.classList.remove("border-indigo-500", "text-indigo-600");
-    link.classList.add("border-transparent", "text-gray-500");
+    link.classList.remove("border-indigo-500", "text-indigo-600", "dark:text-indigo-500", "dark:border-indigo-400");
+    link.classList.add("border-transparent", "text-gray-500", "dark:text-gray-400");
   });
   document.getElementById(`${tabName}-panel`).classList.remove("hidden");
   document
     .querySelector(`[href="#${tabName}"]`)
-    .classList.add("border-indigo-500", "text-indigo-600");
+    .classList.add("border-indigo-500", "text-indigo-600", "dark:text-indigo-500", "dark:border-indigo-400");
   document
     .querySelector(`[href="#${tabName}"]`)
-    .classList.remove("border-transparent", "text-gray-500");
+    .classList.remove("border-transparent", "text-gray-500", "dark:text-gray-400");
 
   if (tabName === "metrics") {
     loadAggregatedMetrics();
@@ -896,6 +909,10 @@ async function viewGateway(gatewayId) {
           <p><strong>Name:</strong> ${gateway.name}</p>
           <p><strong>URL:</strong> ${gateway.url}</p>
           <p><strong>Description:</strong> ${gateway.description || "N/A"}</p>
+          <p><strong>Transport:</strong>
+            ${gateway.transport === "STREAMABLEHTTP" ? "Streamable HTTP" :
+              gateway.transport === "SSE" ? "SSE" : "N/A"}
+          </p>
           <p><strong>Status:</strong>
             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${gateway.isActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}">
               ${gateway.isActive ? "Active" : "Inactive"}
@@ -927,6 +944,7 @@ async function editGateway(gatewayId) {
     document.getElementById("edit-gateway-url").value = gateway.url;
     document.getElementById("edit-gateway-description").value =
       gateway.description || "";
+    document.getElementById("edit-gateway-transport").value = gateway.transport;
     openModal("gateway-edit-modal");
   } catch (error) {
     console.error("Error fetching gateway details:", error);
@@ -1310,64 +1328,64 @@ async function loadAggregatedMetrics() {
 
     // Build an aggregated metrics table
     const tableHTML = `
-        <table class="min-w-full bg-white border">
+        <table class="min-w-full bg-white border dark:bg-gray-900">
           <thead>
             <tr>
-              <th class="py-2 px-4 border">Entity</th>
-              <th class="py-2 px-4 border">Total</th>
-              <th class="py-2 px-4 border">Successful</th>
-              <th class="py-2 px-4 border">Failed</th>
-              <th class="py-2 px-4 border">Failure Rate</th>
-              <th class="py-2 px-4 border">Min RT</th>
-              <th class="py-2 px-4 border">Max RT</th>
-              <th class="py-2 px-4 border">Avg RT</th>
-              <th class="py-2 px-4 border">Last Exec</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Entity</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Total</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Successful</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Failed</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Failure Rate</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Min RT</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Max RT</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Avg RT</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Last Exec</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Tools</td>
-              <td class="py-2 px-4 border">${toolsTotal}</td>
-              <td class="py-2 px-4 border">${toolsSuccess}</td>
-              <td class="py-2 px-4 border">${toolsFailed}</td>
-              <td class="py-2 px-4 border">${toolsFailureRate}</td>
-              <td class="py-2 px-4 border">${toolsMin}</td>
-              <td class="py-2 px-4 border">${toolsMax}</td>
-              <td class="py-2 px-4 border">${toolsAvg}</td>
-              <td class="py-2 px-4 border">${toolsLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Tools</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsLast}</td>
             </tr>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Resources</td>
-              <td class="py-2 px-4 border">${resourcesTotal}</td>
-              <td class="py-2 px-4 border">${resourcesSuccess}</td>
-              <td class="py-2 px-4 border">${resourcesFailed}</td>
-              <td class="py-2 px-4 border">${resourcesFailureRate}</td>
-              <td class="py-2 px-4 border">${resourcesMin}</td>
-              <td class="py-2 px-4 border">${resourcesMax}</td>
-              <td class="py-2 px-4 border">${resourcesAvg}</td>
-              <td class="py-2 px-4 border">${resourcesLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Resources</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesLast}</td>
             </tr>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Servers</td>
-              <td class="py-2 px-4 border">${serversTotal}</td>
-              <td class="py-2 px-4 border">${serversSuccess}</td>
-              <td class="py-2 px-4 border">${serversFailed}</td>
-              <td class="py-2 px-4 border">${serversFailureRate}</td>
-              <td class="py-2 px-4 border">${serversMin}</td>
-              <td class="py-2 px-4 border">${serversMax}</td>
-              <td class="py-2 px-4 border">${serversAvg}</td>
-              <td class="py-2 px-4 border">${serversLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Servers</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversLast}</td>
             </tr>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Prompts</td>
-              <td class="py-2 px-4 border">${promptsTotal}</td>
-              <td class="py-2 px-4 border">${promptsSuccess}</td>
-              <td class="py-2 px-4 border">${promptsFailed}</td>
-              <td class="py-2 px-4 border">${promptsFailureRate}</td>
-              <td class="py-2 px-4 border">${promptsMin}</td>
-              <td class="py-2 px-4 border">${promptsMax}</td>
-              <td class="py-2 px-4 border">${promptsAvg}</td>
-              <td class="py-2 px-4 border">${promptsLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Prompts</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsLast}</td>
             </tr>
           </tbody>
         </table>
@@ -1437,9 +1455,9 @@ async function loadTopTools() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
@@ -1473,10 +1491,10 @@ async function loadTopResources() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">URI</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">URI</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
@@ -1511,9 +1529,9 @@ async function loadTopServers() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
@@ -1547,9 +1565,9 @@ async function loadTopPrompts() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
@@ -1645,9 +1663,9 @@ async function runToolTest() {
   const formData = new FormData(form);
   const params = {};
   for (const [key, value] of formData.entries()) {
-    if(isNaN(value)) {
-      if(value.toLowerCase() ===  "true" || value.toLowerCase() === "false") {
-        params[key] = Boolean(value.toLowerCase() ===  "true");
+    if (isNaN(value)) {
+      if (value.toLowerCase() === "true" || value.toLowerCase() === "false") {
+        params[key] = value.toLowerCase() === "true";
       } else {
         params[key] = value;
       }
@@ -1656,7 +1674,6 @@ async function runToolTest() {
     }
   }
 
-  // Build the JSON-RPC payload using the tool's name as the method
   const payload = {
     jsonrpc: "2.0",
     id: Date.now(),
@@ -1664,37 +1681,39 @@ async function runToolTest() {
     params: params,
   };
 
-  // Send the request to your /rpc endpoint
-  fetch(`${window.ROOT_PATH}/rpc`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json", // ← make sure we include this
-    },
-    body: JSON.stringify(payload),
-    credentials: "include",
-  })
-    .then((response) => response.json())
-    .then((result) => {
-      const resultStr = JSON.stringify(result, null, 2);
+  // Show loading
+  const loadingElement = document.getElementById("tool-test-loading");
+  loadingElement.style.display = "block";
+  const resultContainer = document.getElementById("tool-test-result");
+  resultContainer.innerHTML = "";
 
-      const container = document.getElementById("tool-test-result");
-      container.innerHTML = '';        // clear any old editor
-
-      toolTestResultEditor = window.CodeMirror(
-        document.getElementById("tool-test-result"),
-        {
-          value: resultStr,
-          mode: "application/json",
-          theme: "monokai",
-          readOnly: true,
-          lineNumbers: true,
-        },
-      );
-    })
-    .catch((error) => {
-      document.getElementById("tool-test-result").innerText = "Error: " + error;
+  try {
+    const response = await fetch(`${window.ROOT_PATH}/rpc`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      credentials: "include",
     });
+
+    const result = await response.json();
+    const resultStr = JSON.stringify(result, null, 2);
+
+    toolTestResultEditor = window.CodeMirror(resultContainer, {
+      value: resultStr,
+      mode: "application/json",
+      theme: "monokai",
+      readOnly: true,
+      lineNumbers: true,
+    });
+  } catch (error) {
+    resultContainer.innerText = "Error: " + error;
+  } finally {
+    loadingElement.style.display = "none"; // Hide loading after fetch or error
+  }
 }
+
 
 /* ---------------------------------------------------------------
  * Utility: copy a JSON string (or any text) to the system clipboard
@@ -1753,7 +1772,7 @@ function closeModal(modalId, clearId=null) {
 }
 
 const integrationRequestMap = {
-  MCP: ["SSE", "STDIO"],
+  MCP: ["SSE", "STREAMABLE", "STDIO"],
   REST: ["GET", "POST", "PUT", "DELETE"],
 };
 
