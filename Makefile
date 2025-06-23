@@ -117,20 +117,16 @@ check-env:
 
 
 # =============================================================================
-# ▶️ SERVE & TESTING
+# ▶️ SERVE
 # =============================================================================
-# help: ▶️ SERVE & TESTING
+# help: ▶️ SERVE
 # help: serve                - Run production Gunicorn server on :4444
 # help: certs                - Generate self-signed TLS cert & key in ./certs (won't overwrite)
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: run                  - Execute helper script ./run.sh
-# help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test                 - Run unit tests with pytest
-# help: test-curl            - Smoke-test API endpoints with curl script
-# help: pytest-examples      - Run README / examples through pytest-examples
 
-.PHONY: serve serve-ssl dev run test test-curl pytest-examples certs clean
+.PHONY: serve serve-ssl dev run certs
 
 ## --- Primary servers ---------------------------------------------------------
 serve:
@@ -159,25 +155,6 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 	fi
 	chmod 640 certs/key.pem
 
-## --- Testing -----------------------------------------------------------------
-smoketest:
-	@echo "🚀 Running smoketest…"
-	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
-	@echo "✅ Smoketest passed!"
-
-test:
-	@echo "🧪 Running tests..."
-	@test -d "$(VENV_DIR)" || make venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install pytest pytest-asyncio pytest-cov -q && python3 -m pytest --maxfail=0 --disable-warnings -v"
-
-pytest-examples:
-	@echo "🧪 Testing README examples..."
-	@test -d "$(VENV_DIR)" || make venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install pytest pytest-examples -q && pytest -v test_readme.py"
-
-test-curl:
-	./test_endpoints.sh
-
 ## --- House-keeping -----------------------------------------------------------
 # help: clean                - Remove caches, build artefacts, virtualenv, docs, certs, coverage, SBOM, etc.
 .PHONY: clean
@@ -195,16 +172,33 @@ clean:
 
 
 # =============================================================================
-# 📊 COVERAGE & METRICS
+# 🧪 TESTING
 # =============================================================================
-# help: 📊 COVERAGE & METRICS
+# help: 🧪 TESTING
+# help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
+# help: test                 - Run unit tests with pytest
 # help: coverage             - Run tests with coverage, emit md/HTML/XML + badge
-# help: pip-licenses         - Produce dependency license inventory (markdown)
-# help: scc                  - Quick LoC/complexity snapshot with scc
-# help: scc-report           - Generate HTML LoC & per-file metrics with scc
-.PHONY: coverage pip-licenses scc scc-report
+# help: htmlcov              - (re)build just the HTML coverage report into docs
+# help: test-curl            - Smoke-test API endpoints with curl script
+# help: pytest-examples      - Run README / examples through pytest-examples
+
+.PHONY: smoketest test coverage pytest-examples test-curl htmlcov
+
+## --- Automated checks --------------------------------------------------------
+smoketest:
+	@echo "🚀 Running smoketest…"
+	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
+	@echo "✅ Smoketest passed!"
+
+test:
+	@echo "🧪 Running tests…"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pytest pytest-asyncio pytest-cov && \
+		python3 -m pytest --maxfail=0 --disable-warnings -v"
 
 coverage:
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(TEST_DOCS_DIR)
 	@printf "# Unit tests\n\n" > $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -217,12 +211,41 @@ coverage:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		coverage report --format=markdown -m --no-skip-covered \
 		>> $(DOCS_DIR)/docs/test/unittest.md"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		coverage html -d $(COVERAGE_DIR) --include=app/*"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=app/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@echo "✅  Coverage artefacts: md, HTML in $(COVERAGE_DIR), XML & badge ✔"
+
+htmlcov:
+	@echo "📊  Generating HTML coverage report…"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(COVERAGE_DIR)
+	# If there's no existing coverage data, fall back to the full test-run
+	@if [ ! -f .coverage ]; then \
+		echo "ℹ️  No .coverage file found – running full coverage first…"; \
+		$(MAKE) --no-print-directory coverage; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -i -d $(COVERAGE_DIR)"
+	@echo "✅  HTML coverage report ready → $(COVERAGE_DIR)/index.html"
+
+pytest-examples:
+	@echo "🧪 Testing README examples…"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pytest pytest-examples && \
+		pytest -v test_readme.py"
+
+test-curl:
+	./test_endpoints.sh
+
+# =============================================================================
+# 📊 METRICS
+# =============================================================================
+# help: 📊 METRICS
+# help: pip-licenses         - Produce dependency license inventory (markdown)
+# help: scc                  - Quick LoC/complexity snapshot with scc
+# help: scc-report           - Generate HTML LoC & per-file metrics with scc
+.PHONY: pip-licenses scc scc-report
 
 pip-licenses:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install pip-licenses"
@@ -280,10 +303,10 @@ images:
 	@mkdir -p $(DOCS_DIR)/docs/design/images
 	@code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
-	@python3 -m pip install snakefood3
-	@python3 -m snakefood3 app > snakefood.dot
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install snakefood3"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m snakefood3 . mcpgateway > snakefood.dot"
 	@dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
-	@pyreverse --colorized app || true
+	@pyreverse --colorized mcpgateway || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black classes.dot -o $(DOCS_DIR)/docs/design/images/classes.svg || true
 	@rm -f packages.dot classes.dot snakefood.dot || true
@@ -430,12 +453,9 @@ pstats:                             ## 📊  Static call-graph image
 spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 	sort -d -f -o $< $<
 
-tox:                                ## 🧪  Multi-Python tox matrix
-	@echo "🧪  Running tox …"
-	uv pip install tox-travis tox-pdm
-	pdm add -G dev
-	pdm python install 3.11 3.12
-	python3 -m tox -p 2
+tox:                                ## 🧪  Multi-Python tox matrix (uv)
+	@echo "🧪  Running tox with uv …"
+	python -m tox -p auto $(TOXARGS)
 
 sbom:								## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report…"
@@ -459,9 +479,9 @@ check-manifest:						## 📦  Verify MANIFEST.in completeness
 # -----------------------------------------------------------------------------
 # 📑 YAML / JSON / TOML LINTERS
 # -----------------------------------------------------------------------------
-# help: yamllint            - Lint YAML files (uses .yamllint)
-# help: jsonlint            - Validate every *.json file with jq (‐‐exit-status)
-# help: tomllint            - Validate *.toml files with tomlcheck
+# help: yamllint             - Lint YAML files (uses .yamllint)
+# help: jsonlint             - Validate every *.json file with jq (‐‐exit-status)
+# help: tomllint             - Validate *.toml files with tomlcheck
 #
 # ➊  Add the new linters to the master list
 LINTERS += yamllint jsonlint tomllint
@@ -703,9 +723,7 @@ dockle:
 
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
-HADOFILES := Containerfile Dockerfile Dockerfile.*
-
-# Which files to check (edit as you like)
+# List of Containerfile/Dockerfile patterns to scan
 HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:

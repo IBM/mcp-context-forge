@@ -87,13 +87,17 @@ async def test_remove_nonexistent_root_raises():
 
 @pytest.mark.asyncio
 async def test_initialize_adds_default_roots(monkeypatch):
-    # Monkeypatch default_roots in settings
+    # Pretend the app was configured with two default roots
     monkeypatch.setattr(settings, "default_roots", ["http://a.com", "local/path"])
+
     service = RootService()
     await service.initialize()
-    roots = await service.list_roots()
-    uris = {r.uri for r in roots}
-    assert "http://a.com" in uris
+
+    # Cast the FileUrl objects to plain strings for comparison
+    uris = {str(r.uri) for r in await service.list_roots()}
+
+    # FileUrl normalises the HTTP URI to include a trailing slash
+    assert "http://a.com/" in uris
     assert "file://local/path" in uris
 
     await service.shutdown()
@@ -102,31 +106,27 @@ async def test_initialize_adds_default_roots(monkeypatch):
 @pytest.mark.asyncio
 async def test_subscribe_changes_receives_events():
     service = RootService()
-    # Start subscription
     events = []
 
     async def subscriber():
         async for ev in service.subscribe_changes():
             events.append(ev)
-            if len(events) >= 2:
+            if len(events) >= 2:  # expect "added" then "removed"
                 break
 
+    # Start subscription and give the event-loop one tick so the queue
+    # is fully registered before we emit any events.
     task = asyncio.create_task(subscriber())
-    # Add and remove a root
+    await asyncio.sleep(0)
+
+    # Add a root, then remove it again.
     r = await service.add_root("subscriber-test")
-    await service.remove_root(r.uri)
-    # Wait for subscriber to collect both events
+    await service.remove_root(str(r.uri).rstrip("/"))  # match stored key
+
+    # Collect both events or time-out
     await asyncio.wait_for(task, timeout=1.0)
 
-    # Validate the events
-    assert events[0] == {
-        "type": "root_added",
-        "data": {"uri": r.uri, "name": r.name},
-    }
-    assert events[1] == {
-        "type": "root_removed",
-        "data": {"uri": r.uri},
-    }
+    assert events[0] == {"type": "root_added", "data": {"uri": r.uri, "name": r.name}}
+    assert events[1] == {"type": "root_removed", "data": {"uri": r.uri}}
 
-    # After breaking, the subscription should be cleaned up without error
     await service.shutdown()

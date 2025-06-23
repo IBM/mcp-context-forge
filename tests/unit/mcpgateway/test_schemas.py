@@ -11,11 +11,24 @@ defined in the types.py module.
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+from unittest.mock import Mock
 
 import pytest
 from pydantic import ValidationError
 
+from mcpgateway.schemas import (
+    AdminGatewayCreate,
+    AdminToolCreate,
+    EventMessage,
+    ListFilters,
+    ServerCreate,
+    ServerMetrics,
+    ServerRead,
+    ServerUpdate,
+    StatusToggleRequest,
+    StatusToggleResponse,
+)
 from mcpgateway.types import (
     ClientCapabilities,
     CreateMessageResult,
@@ -772,6 +785,7 @@ class TestServerSchemas:
             id=2,
             name="Object Server",
             description="Server with object associations",
+            icon="http://example.com/object_server.png",
             created_at=one_hour_ago,
             updated_at=now,
             is_active=True,

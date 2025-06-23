@@ -1,17 +1,23 @@
 # MCP Gateway
+
 > Model Context Protocol gateway & proxy — unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
+
+![](docs/docs/images/contextforge-banner.png)
 
 <!-- === CI / Security / Build Badges === -->
 [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
 [![CodeQL](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml)&nbsp;
 [![Bandit Security](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml)&nbsp;
 [![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
+[![Tests & Coverage](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml)&nbsp;
+[![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
 
 <!-- === Container Build & Deploy === -->
 [![Secure Docker Build](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml)&nbsp;
 [![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml)
 
 <!-- === Package / Container === -->
+[![Async](https://img.shields.io/badge/async-await-green.svg)](https://docs.python.org/3/library/asyncio.html)
 [![License](https://img.shields.io/github/license/ibm/mcp-context-forge)](LICENSE)&nbsp;
 [![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/)&nbsp;
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
@@ -31,7 +37,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
     - [1 · Minimum viable run](#1--minimum-viable-run)
     - [2 · Persist the SQLite database](#2--persist-the-sqlite-database)
     - [3 · Local tool discovery (host network)](#3--local-tool-discovery-host-network)
-  - [Podman (rootless-friendly)](#-podman-rootless-friendly)  
+  - [Podman (rootless-friendly)](#-podman-rootless-friendly)
     - [1 · Basic run](#1--basic-run)
     - [2 · Persist SQLite](#2--persist-sqlite)
     - [3 · Host networking (rootless)](#3--host-networking-rootless)
@@ -315,6 +321,10 @@ docker run -d --name mcpgateway \
 
 # Tail logs (Ctrl+C to quit)
 docker logs -f mcpgateway
+
+# Generating an API key
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.1.1 \
+  python -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `admin` / pass `changeme`).
