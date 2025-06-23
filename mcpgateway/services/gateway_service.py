@@ -683,7 +683,7 @@ class GatewayService:
         Args:
             url: Gateway URL
             authentication: Optional authentication headers
-            transport: Transport type
+            transport: Transport type ("SSE" or "StreamableHTTP")
 
         Returns:
             Capabilities dictionary as provided by the gateway.

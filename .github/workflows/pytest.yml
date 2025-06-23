@@ -1,0 +1,143 @@
+# ===============================================================
+# 🧪  PyTest & Coverage – Quality Gate
+# ===============================================================
+#
+#   • runs the full test-suite across three Python versions
+#   • measures branch + line coverage (fails < 40 %)
+#   • uploads the XML/HTML coverage reports as build artifacts
+#   • (optionally) generates / commits an SVG badge — kept disabled
+#   • posts a concise per-file coverage table to the job summary
+#   • executes on every push / PR to *main*  ➕  a weekly cron
+# ---------------------------------------------------------------
+
+name: Tests & Coverage
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  # schedule:
+  #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
+
+permissions:
+  contents: write # needed *only* if the badge-commit step is enabled
+  checks: write
+  actions: read
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # -----------------------------------------------------------
+      # 1️⃣  Set-up Python
+      # -----------------------------------------------------------
+      - name: 🐍  Setup Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # -----------------------------------------------------------
+      # 2️⃣  Install project + dev/test dependencies
+      # -----------------------------------------------------------
+      - name: 📦 Install dependencies (editable + dev extra)
+        run: |
+          python -m pip install --upgrade pip
+          # install the project itself in *editable* mode so tests import the same codebase
+          # and pull in every dev / test extra declared in pyproject.toml
+          pip install -e .[dev]
+          # belt-and-braces – keep the core test tool-chain pinned here too
+          pip install pytest pytest-cov pytest-asyncio coverage[toml]
+
+      # -----------------------------------------------------------
+      # 3️⃣  Run the tests with coverage
+      # -----------------------------------------------------------
+      - name: 🧪  Run pytest
+        run: |
+          pytest \
+            --cov=mcpgateway \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term \
+            --cov-branch \
+            --cov-fail-under=40
+
+    # -----------------------------------------------------------
+    # 4️⃣  Upload coverage artifacts (XML + HTML)
+    #       ––– keep disabled unless you need them –––
+    # -----------------------------------------------------------
+    # - name: 📤  Upload coverage.xml
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: coverage-xml-${{ matrix.python }}
+    #     path: coverage.xml
+    #
+    # - name: 📤  Upload HTML coverage
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: htmlcov-${{ matrix.python }}
+    #     path: htmlcov/
+
+    # -----------------------------------------------------------
+    # 5️⃣  Generate + commit badge (main branch, highest Python)
+    #       ––– intentionally commented-out –––
+    # -----------------------------------------------------------
+    # - name: 📊  Create coverage badge
+    #   if: matrix.python == '3.11' && github.ref == 'refs/heads/main'
+    #   id: make_badge
+    #   uses: tj-actions/coverage-badge@v2
+    #   with:
+    #     coverage-file: coverage.xml          # input
+    #     output: .github/badges/coverage.svg  # output file
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #
+    # - name: 🚀  Commit badge
+    #   if: steps.make_badge.outputs.badge-updated == 'true'
+    #   uses: stefanzweifel/git-auto-commit-action@v5
+    #   with:
+    #     commit_message: "docs(badge): update coverage badge"
+    #     file_pattern: ".github/badges/coverage.svg"
+
+    # -----------------------------------------------------------
+    # 6️⃣  Publish coverage table to the job summary
+    # -----------------------------------------------------------
+
+#     - name: 📝  Coverage summary
+#       if: always()
+#       run: |
+#         echo "### Coverage – Python ${{ matrix.python }}" >> "$GITHUB_STEP_SUMMARY"
+#         echo "| File | Stmts | Miss | Branch | BrMiss | Cover |" >> "$GITHUB_STEP_SUMMARY"
+#         echo "|------|------:|-----:|-------:|-------:|------:|" >> "$GITHUB_STEP_SUMMARY"
+#         coverage json -q -o cov.json
+#         python - <<'PY'
+# import json, pathlib, sys, os
+# data = json.load(open("cov.json"))
+# root = pathlib.Path().resolve()
+# for f in data["files"].values():
+#     rel = pathlib.Path(f["filename"]).resolve().relative_to(root)
+#     s   = f["summary"]
+#     print(f"| {rel} | {s['num_statements']} | {s['missing_lines']} | "
+#           f"{s['num_branches']} | {s['missing_branches']} | "
+#           f"{s['percent_covered']:.1f}% |")
+# PY >> "$GITHUB_STEP_SUMMARY"

@@ -33,7 +33,6 @@ import signal
 import socket
 import subprocess
 import sys
-import textwrap
 import threading
 import time
 from collections import deque
@@ -153,13 +152,13 @@ def port_open(port: int, host="127.0.0.1", timeout=1.0) -> bool:
         return s.connect_ex((host, port)) == 0
 
 
-def wait_http_ok(url: str, timeout: int = 30) -> bool:
+def wait_http_ok(url: str, timeout: int = 30, *, headers: dict | None = None) -> bool:
     import requests
 
     end = time.time() + timeout
     while time.time() < end:
         try:
-            if requests.get(url, timeout=2, verify=False).status_code == 200:
+            if requests.get(url, timeout=2, verify=False, headers=headers).status_code == 200:
                 return True
         except requests.RequestException:
             pass
@@ -174,14 +173,29 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def generate_jwt() -> str:
-    return (
-        subprocess.check_output(
-            ["docker", "exec", DOCKER_CONTAINER, "python3", "-m", "mcpgateway.utils.create_jwt_token", "--username", "admin", "--exp", "300", "--secret", "my-test-key"],
-            text=True,
-        )
-        .strip()
-        .strip('"')
-    )
+    """
+    Create a short-lived admin JWT that matches the gateway's settings.
+    Resolution order → environment-variable override, then package defaults.
+    """
+    user = os.getenv("BASIC_AUTH_USER", "admin")
+    secret = os.getenv("JWT_SECRET_KEY", "my-test-key")
+    expiry = os.getenv("TOKEN_EXPIRY", "300")  # seconds
+
+    cmd = [
+        "docker",
+        "exec",
+        DOCKER_CONTAINER,
+        "python3",
+        "-m",
+        "mcpgateway.utils.create_jwt_token",
+        "--username",
+        user,
+        "--exp",
+        expiry,
+        "--secret",
+        secret,
+    ]
+    return subprocess.check_output(cmd, text=True).strip().strip('"')
 
 
 def request(method: str, path: str, *, json_data=None, **kw):
@@ -238,11 +252,19 @@ def step_3_docker_build():
 
 def step_4_docker_run():
     sh(MAKE_DOCKER_RUN, "4️⃣  Run Docker container (HTTPS)")
-    # wait until gateway exposes the basic endpoints
+
+    # Build one token and reuse it for the health probes below.
+    token = generate_jwt()
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    # Probe endpoints until they respond with 200.
     for ep in ("/health", "/ready", "/version"):
         full = f"https://localhost:{PORT_GATEWAY}{ep}"
-        if not wait_http_ok(full, 45):
+        need_auth = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
+        headers = auth_headers if (ep == "/version" or need_auth) else None
+        if not wait_http_ok(full, 45, headers=headers):
             raise RuntimeError(f"Gateway endpoint {ep} not ready")
+
     logging.info("✅ Gateway /health /ready /version all OK")
 
 
