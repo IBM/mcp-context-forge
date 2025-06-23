@@ -1,23 +1,31 @@
+########################################################################
+# GLOBAL SETTINGS
+# These are applied across the entire Helm release.
+########################################################################
 global:
-  imagePullSecrets: []
-  nameOverride: ""
-  fullnameOverride: ""
+  imagePullSecrets: []          # e.g. ["ghcr-creds"] for a private registry
+  nameOverride: ""              # short name applied to all resources (optional)
+  fullnameOverride: ""          # fully-qualified name override (optional)
 
-# ───────────────────────────────────────────────────────────────────────────
+########################################################################
+# MCP CONTEXT-FORGE (Gateway / API tier)
+########################################################################
 mcpContextForge:
-  replicaCount: 1
+  replicaCount: 1               # horizontal scaling for the gateway
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest                 # pin a version tag in prod
+    tag: latest                 # pin a specific immutable tag in production
     pullPolicy: IfNotPresent
 
+  # Service that fronts the gateway
   service:
     type: ClusterIP
-    port: 80
+    port: 80                    # external port → containerPort below
 
-  containerPort: 4444
+  containerPort: 4444           # port the app listens on inside the pod
 
+  # Kubernetes resource requests / limits
   resources:
     limits:
       cpu: 200m
@@ -26,42 +34,147 @@ mcpContextForge:
       cpu: 100m
       memory: 512Mi
 
+  # Optional ingress for HTTP traffic
   ingress:
     enabled: true
     className: nginx
-    host: gateway.local          # change to your domain
+    host: gateway.local         # CHANGE to your FQDN (e.g. api.example.com)
     path: /
     pathType: Prefix
     annotations:
       nginx.ingress.kubernetes.io/rewrite-target: /
 
+  ####################################################################
+  # CORE ENVIRONMENT — injected one-by-one as name/value pairs.
+  # Only the DATABASE / CACHE connection points live here; everything
+  # else goes into the ConfigMap or Secret blocks below.
+  ####################################################################
   env:
-    host: 0.0.0.0
+    host: 0.0.0.0               # bind address inside the container
+
     postgres:
-      host: postgres
+      # host is auto-generated as <release>-mcp-stack-postgres
+      # host: postgres          # uncomment to override the generated name
       port: 5432
       db: postgresdb
-      userKey: POSTGRES_USER
+      userKey: POSTGRES_USER    # key in the secret that stores the username
       passwordKey: POSTGRES_PASSWORD
-    redis:
-      host: redis
-      port: 6379
-    extras:
-      - name: CACHE_TYPE
-        value: redis
-      - name: REDIS_URL
-        value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
-      - name: DATABASE_URL
-        value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
 
-  # Mount shared Secret & ConfigMap
+    redis:
+      # host is auto-generated as <release>-mcp-stack-redis
+      # host: redis             # uncomment to override the generated name
+      port: 6379
+
+  ####################################################################
+  # PLAIN-TEXT (NON-SECRET) SETTINGS
+  # Rendered into a ConfigMap; readable by anyone with GET access.
+  ####################################################################
+  config:
+    # ─ Basic application info ─
+    APP_NAME: MCP_Gateway
+    HOST: 0.0.0.0
+    PORT: "4444"
+    APP_ROOT_PATH: ""           # e.g. "/gateway" when deploying under sub-path
+
+    # ─ Connection pooling ─
+    DB_POOL_SIZE: "200"
+    DB_MAX_OVERFLOW: "10"
+    DB_POOL_TIMEOUT: "30"
+    DB_POOL_RECYCLE: "3600"
+
+    # ─ Cache behaviour ─
+    CACHE_TYPE: redis
+    CACHE_PREFIX: mcpgw
+    SESSION_TTL: "3600"
+    MESSAGE_TTL: "600"
+
+    # ─ Protocol & feature toggles ─
+    PROTOCOL_VERSION: 2025-03-26
+    MCPGATEWAY_UI_ENABLED: "true"
+    MCPGATEWAY_ADMIN_API_ENABLED: "true"
+    CORS_ENABLED: "true"
+    ALLOWED_ORIGINS: '["http://localhost","http://localhost:4444"]'
+    SKIP_SSL_VERIFY: "false"
+
+    # ─ Logging ─
+    LOG_LEVEL: INFO
+    LOG_FORMAT: json
+
+    # ─ Transports ─
+    TRANSPORT_TYPE: all
+    WEBSOCKET_PING_INTERVAL: "30"
+    SSE_RETRY_TIMEOUT: "5000"
+
+    # ─ Streaming sessions ─
+    USE_STATEFUL_SESSIONS: "false"
+    JSON_RESPONSE_ENABLED: "true"
+
+    # ─ Federation ─
+    FEDERATION_ENABLED: "true"
+    FEDERATION_DISCOVERY: "false"
+    FEDERATION_PEERS: '[]'
+    FEDERATION_TIMEOUT: "30"
+    FEDERATION_SYNC_INTERVAL: "300"
+
+    # ─ Resource cache ─
+    RESOURCE_CACHE_SIZE: "1000"
+    RESOURCE_CACHE_TTL: "3600"
+    MAX_RESOURCE_SIZE: "10485760"
+
+    # ─ Tool limits ─
+    TOOL_TIMEOUT: "60"
+    MAX_TOOL_RETRIES: "3"
+    TOOL_RATE_LIMIT: "100"
+    TOOL_CONCURRENT_LIMIT: "10"
+
+    # ─ Prompt cache ─
+    PROMPT_CACHE_SIZE: "100"
+    MAX_PROMPT_SIZE: "102400"
+    PROMPT_RENDER_TIMEOUT: "10"
+
+    # ─ Health checks ─
+    HEALTH_CHECK_INTERVAL: "60"
+    HEALTH_CHECK_TIMEOUT: "10"
+    UNHEALTHY_THRESHOLD: "3"
+    FILELOCK_PATH: /tmp/gateway_healthcheck_init.lock
+
+    # ─ Development toggles ─
+    DEV_MODE: "false"
+    RELOAD: "false"
+    DEBUG: "false"
+
+  ####################################################################
+  # SENSITIVE SETTINGS
+  # Rendered into an Opaque Secret.  NO $(VAR) expansion here.
+  # DATABASE_URL & REDIS_URL are declared inside the Deployment
+  # so their placeholders resolve at runtime. Override them if needed.
+  ####################################################################
+  secret:
+    # ─ Admin & auth ─
+    BASIC_AUTH_USER: admin
+    BASIC_AUTH_PASSWORD: changeme
+    AUTH_REQUIRED: "true"
+    JWT_SECRET_KEY: my-test-key
+    JWT_ALGORITHM: HS256
+    TOKEN_EXPIRY: "10080"
+    AUTH_ENCRYPTION_SECRET: my-test-salt
+    # (derived URLs are defined in deployment-mcp.yaml)
+    # ─ Optional overrides ─
+    # DATABASE_URL: "postgresql://admin:s3cr3t@db.acme.com:5432/prod"
+    # REDIS_URL:    "redis://cache.acme.com:6379/0"
+
+  ####################################################################
+  # Names of ConfigMap / Secret are resolved by templates; leave as-is.
+  ####################################################################
   envFrom:
     - secretRef:
         name: mcp-gateway-secret
     - configMapRef:
         name: mcp-gateway-config
 
-# ───────────────────────────────────────────────────────────────────────────
+########################################################################
+# POSTGRES DATABASE
+########################################################################
 postgres:
   enabled: true
 
@@ -74,54 +187,66 @@ postgres:
     type: ClusterIP
     port: 5432
 
+  # PersistentVolumeClaim for data durability
   persistence:
     enabled: true
-    storageClassName: manual     # pick your StorageClass
+    storageClassName: manual     # pick a StorageClass (e.g. gp2, standard)
     accessModes: [ReadWriteMany]
     size: 5Gi
 
-  # Leave this empty to have Helm autogenerate postgres-secret
-  # (based on the credentials block below).  If you already have
-  # a Secret with the correct keys, put its name here instead.
+  # Leave blank to autogenerate <release>-mcp-stack-postgres-secret.
   existingSecret: ""
 
-  credentials:
+  credentials:                  # used only when existingSecret is blank
     database: postgresdb
     user: admin
-    password: test123            # replace in production
+    password: test123           # CHANGE ME in production!
 
-# ───────────────────────────────────────────────────────────────────────────
+########################################################################
+# REDIS CACHE
+########################################################################
 redis:
   enabled: true
+
   image:
     repository: redis
     tag: latest
     pullPolicy: IfNotPresent
+
   service:
     type: ClusterIP
     port: 6379
 
-# ───────────────────────────────────────────────────────────────────────────
+########################################################################
+# PGADMIN — Web UI for Postgres
+########################################################################
 pgadmin:
   enabled: true
+
   image:
     repository: dpage/pgadmin4
     tag: latest
     pullPolicy: IfNotPresent
+
   service:
     type: ClusterIP
     port: 80
+
   env:
     email: admin@example.com
-    password: admin123           # replace in production
+    password: admin123           # CHANGE ME in production!
 
-# ───────────────────────────────────────────────────────────────────────────
+########################################################################
+# REDIS-COMMANDER — Web UI for Redis
+########################################################################
 redisCommander:
   enabled: true
+
   image:
     repository: rediscommander/redis-commander
     tag: latest
     pullPolicy: IfNotPresent
+
   service:
     type: ClusterIP
     port: 8081
