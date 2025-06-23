@@ -1,0 +1,52 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpgateway
+spec:
+  replicas: {{ gateway_replicas }}
+  selector:
+    matchLabels: { app: mcpgateway }
+  template:
+    metadata:
+      labels: { app: mcpgateway }
+    spec:
+      containers:
+        - name: mcpgateway
+          image: "{{ gateway_image }}"
+          ports: [ { containerPort: 80 } ]
+          envFrom:
+            - secretRef:   { name: mcpgateway-secrets }
+            - configMapRef:{ name: mcpgateway-env }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpgateway
+spec:
+  selector: { app: mcpgateway }
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcpgateway
+  annotations:
+    kubernetes.io/ingress.class: "{{ ingress_class }}"
+spec:
+  rules:
+    - host: "gateway.{{ prefix }}.apps.{{ region }}.containers.appdomain.cloud"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcpgateway
+                port: { number: 80 }
+  tls:
+    - hosts:
+        - "gateway.{{ prefix }}.apps.{{ region }}.containers.appdomain.cloud"

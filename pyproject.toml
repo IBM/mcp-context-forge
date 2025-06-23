@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "0.1.0"
+version = "0.1.1"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -22,7 +22,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Framework :: FastAPI",
@@ -31,7 +30,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 
 # SPDX licence expression + explicit licence file (PEP 639)
 license = "Apache-2.0"
@@ -46,26 +45,26 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "cryptography>=45.0.3",
-    "fastapi>=0.115.12",
+    "cryptography>=45.0.4",
+    "fastapi>=0.115.13",
+    "filelock>=3.18.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
-    "jq>=1.8.0",
+    "jq>=1.9.1",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.24.0",
-    "mcp>=1.9.3",
+    "mcp>=1.9.4",
     "parse>=1.20.2",
     "psutil>=7.0.0",
-    "pydantic>=2.11.5",
-    "pydantic-settings>=2.9.1",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.0",
     "pyjwt>=2.10.1",
     "sqlalchemy>=2.0.41",
     "sse-starlette>=2.3.6",
     "starlette>=0.46.2",
     "uvicorn>=0.34.3",
     "zeroconf>=0.147.0",
-    "filelock>=3.18.0",
 ]
 
 # ----------------------------------------------------------------
@@ -96,21 +95,21 @@ asyncpg = [
 dev = [
     "argparse-manpage>=4.6",
     "autoflake>=2.3.1",
-    "bandit>=1.8.3",
+    "bandit>=1.8.5",
     "black>=25.1.0",
     "bump2version>=1.0.1",
     "check-manifest>=0.50",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
-    "coverage>=7.8.2",
+    "coverage>=7.9.1",
     "coverage-badge>=1.1.2",
     "darglint>=1.8.1",
     "fawltydeps>=0.20.0",
-    "flake8>=7.2.0",
+    "flake8>=7.3.0",
     "gprof2dot>=2025.4.14",
     "importchecker>=3.0",
     "isort>=6.0.1",
-    "mypy>=1.16.0",
+    "mypy>=1.16.1",
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",
     "pip_audit>=2.9.0",
@@ -119,33 +118,37 @@ dev = [
     "pylint>=3.3.7",
     "pylint-pydantic>=0.3.5",
     "pyre-check>=0.9.23",
-    "pyright>=1.1.401",
+    "pyright>=1.1.402",
     "pyroma>=4.2",
     "pyspelling>=2.10",
-    "pytest>=8.4.0",
+    "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
-    "pytest-cov>=6.1.1",
+    "pytest-cov>=6.2.1",
     "pytest-examples>=0.0.18",
     "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=15.1",
     "pytest-xdist>=3.7.0",
     "pytype>=2024.10.11",
     "radon>=6.0.1",
-    "ruff>=0.11.13",
+    "ruff>=0.12.0",
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "tomlcheck>=0.2.3",
+    "tox>=4.27.0",
+    "tox-uv>=1.26.0",
     "twine>=6.1.0",
-    "ty>=0.0.1a8",
+    "ty>=0.0.1a11",
     "types-tabulate>=0.9.0.20241207",
+    "uv>=0.7.13",
+    "yamllint>=1.37.1",
 ]
 
 # Convenience meta-extras
 all = [
-    "mcpgateway[redis]",
+    "mcp-contextforge-gateway[redis]>=0.1.1",
 ]
 dev-all = [
-    "mcpgateway[redis,dev]",
+    "mcp-contextforge-gateway[redis,dev]>=0.1.1",
 ]
 
 # --------------------------------------------------------------------
@@ -217,13 +220,34 @@ profile = "black"
 multi_line_output = 3
 
 [tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-strict = true
-show_error_codes = true
-warn_unreachable = true
+# Target Python version
+python_version = "3.11"
+
+# Full strictness and individual checks
+strict = true                           # Enable all strict checks
+
+check_untyped_defs = true              # Type-check the bodies of untyped functions
+no_implicit_optional = true            # Require explicit Optional for None default
+disallow_untyped_defs = true           # Require type annotations for all functions
+disallow_untyped_calls = true          # Disallow calling functions without type info
+disallow_any_unimported = true         # Disallow Any from missing imports
+warn_return_any = true                 # Warn if a function returns Any
+warn_unreachable = true                # Warn about unreachable code
+warn_unused_ignores = true             # Warn if a "# type: ignore" is unnecessary
+warn_unused_configs = true             # Warn about unused config options
+warn_redundant_casts = true            # Warn if a cast does nothing
+strict_equality = true                 # Disallow ==/!= between incompatible types
+
+# Output formatting
+show_error_codes = true                # Show error codes in output
+pretty = true                          # Format output nicely
+
+# Exclude these paths from analysis
+exclude = [
+  '^build/',
+  '^\\.venv/',
+  '^\\.mypy_cache/',
+]
 
 [tool.pytest.ini_options]
 minversion = "6.0"

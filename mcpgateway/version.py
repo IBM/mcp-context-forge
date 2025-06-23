@@ -395,7 +395,8 @@ async def version_endpoint(
     if partial:
         # Return partial HTML fragment for HTMX embedding
         from fastapi.templating import Jinja2Templates
-        templates = Jinja2Templates(directory="mcpgateway/templates")
+
+        templates = Jinja2Templates(directory=str(settings.templates_dir))
         return templates.TemplateResponse("version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")
     if wants_html:

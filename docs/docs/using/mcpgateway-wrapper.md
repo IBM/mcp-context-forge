@@ -1,146 +1,304 @@
-# STDIO Wrapper
+# 🛠 STDIO Wrapper (`mcpgateway.wrapper`)
 
-`mcpgateway-wrapper` acts as a lightweight **MCP-compatible stdio server** that dynamically mirrors tools from a live [MCP Gateway](../overview/index.md). It allows any client that supports the MCP protocol — such as Claude Desktop, Cline, or Continue — to invoke tools directly via the Gateway.
+`mcpgateway.wrapper` ships **inside** the main PyPI package and re-publishes
+your Gateway's **tools / prompts / resources** over `stdin ↔ stdout`,
+while connecting securely to the gateway using `SSE` + `JWT`.
 
----
-
-## 🔑 Key Features
-
-- **Dynamic Tool Access**
-  Automatically fetches all tools from a given MCP Gateway server catalog in real time.
-
-- **Centralized Gateway Integration**
-  Exposes all tools managed by your MCP Gateway under a single stdio-compatible interface.
-
-- **Full MCP Protocol Support**
-  Responds to `initialize`, `ping`, `notify`, `complete`, and `createMessage` via stdio transport.
-
-- **Tool Invocation**
-  All tool calls are proxied to the Gateway's tool registry via HTTP.
-
-- **Extensible**
-  Future support for Prompts and Resources is planned.
+> Perfect for clients that can't open SSE streams or attach JWT headers
+> (e.g. **Claude Desktop**, **Cline**, **Continue**, custom CLI scripts).
 
 ---
 
-## ⚙️ Components
+## 🔑 Key Highlights
 
-### ✅ Tools
-Fetched from the configured server catalog (`/servers/{id}`) and exposed dynamically.
-
-### 🚧 Resources (Coming Soon)
-Will mirror resources registered on the Gateway.
-
-### 🚧 Prompts (Coming Soon)
-Will fetch and expose prompt templates via the MCP interface.
+* **Dynamic catalog** – auto-syncs from one or more `…/servers/{id}` Virtual Server endpoints
+* **Full MCP protocol** – `initialize`, `ping`, `tools/call`, streaming content, resources and prompts/template rendering
+* **Transparent proxy** – stdio → Gateway → tool, results stream back to stdout
+* **Secure** – wrapper keeps using your **JWT** to talk to the Gateway
 
 ---
 
-## 🚀 Quickstart
+## 🚀 Launch Options
 
-### 1. Change to the wrapper directory
-
-```bash
-cd mcpgateway-wrapper
-```
-
-### 2. Integrate with Claude Desktop
-
-On macOS:
+Ensure you have a valid JWT tokens:
 
 ```bash
-~/Library/Application Support/Claude/claude_desktop_config.json
+export MCP_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+      --username admin --exp 10080 --secret my-test-key)
 ```
 
-On Windows:
+Configure the wrapper via ENV variables:
 
 ```bash
-%APPDATA%/Claude/claude_desktop_config.json
+export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/1'  # select a virtual server
+export MCP_TOOL_CALL_TIMEOUT=120          # tool call timeout in seconds (optional – default 90)
+export MCP_WRAPPER_LOG_LEVEL=INFO         # DEBUG | INFO | OFF
 ```
 
-Add a new server block:
+Configure via Pip or Docker. Note that lauching the wrapper should be done from an MCP Client (ex: via the JSON configuration).
 
-```json
- {
-  "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "path-to-folder/mcpgateway-wrapper",
-        "run",
-        "mcpgateway-wrapper"
-      ],
-      "env": {
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
-        "MCP_AUTH_TOKEN": "your_bearer_token"
+Launching it in your terminal (ex: `python -m mcpgateway.wrapper`) is useful for testing.
+
+=== "Local shell (venv)"
+
+    ```bash
+    pip install mcp-contextforge-gateway
+    python -m mcpgateway.wrapper
+    ```
+
+=== "Docker / Podman"
+
+    ```bash
+    docker run -i --rm --network=host \
+      -e MCP_SERVER_CATALOG_URLS=$MCP_SERVER_CATALOG_URLS \
+      -e MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN \
+      ghcr.io/ibm/mcp-context-forge:latest \
+      python -m mcpgateway.wrapper
+    ```
+
+=== "pipx (one-liner)"
+
+    ```bash
+    pipx install --include-deps mcp-contextforge-gateway
+    MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN \
+    MCP_SERVER_CATALOG_URLS=$MCP_SERVER_CATALOG_URLS \
+    python -m mcpgateway.wrapper
+    ```
+
+=== "uv / uvenv (ultra-fast)"
+
+    ```bash
+    curl -Ls https://astral.sh/uv/install.sh | sh
+    uv venv ~/.venv/mcpgw && source ~/.venv/mcpgw/bin/activate
+    uv pip install mcp-contextforge-gateway
+    uv python -m mcpgateway.wrapper
+    ```
+
+The wrapper now waits for JSON-RPC on **stdin** and emits replies on **stdout**.
+
+---
+
+## ✅ Environment Variables
+
+| Variable                  | Purpose                                      | Default |
+| ------------------------- | -------------------------------------------- | ------- |
+| `MCP_SERVER_CATALOG_URLS` | Comma-sep list of `/servers/{id}` endpoints  | —       |
+| `MCP_AUTH_TOKEN`          | Bearer token the wrapper forwards to Gateway | —       |
+| `MCP_TOOL_CALL_TIMEOUT`   | Per-tool timeout (seconds)                   | `90`    |
+| `MCP_WRAPPER_LOG_LEVEL`   | `OFF`, `INFO`, `DEBUG`, …                    | `INFO`  |
+
+---
+
+## 🖥 GUI Client Config JSON Snippets
+
+You can run `mcpgateway.wrapper` from any MCP client, using either `python3`, `uv`, `uvenv`, `uvx`, `pipx`, `docker`, or `podman` entrypoints.
+
+The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-gateway` module installed, able to call `mcpgateway.wrapper` and the right `env` settings exported (`MCP_SERVER_CATALOG_URLS` and `MCP_AUTH_TOKEN` at a minimum).
+
+=== "Claude Desktop (venv)"
+
+    ```json
+    {
+      "mcpServers": {
+        "mcpgateway-wrapper": {
+          "command": "python3",
+          "args": ["-m", "mcpgateway.wrapper"],
+          "env": {
+            "MCP_AUTH_TOKEN": "<paste-token>",
+            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1"
+          }
+        }
       }
     }
-  }
-}
-```
+    ```
+
+    !!! tip "Use your venv's Python"
+        Replace `/path/to/python` with the exact interpreter in your venv (e.g. `$HOME/.venv/mcpgateway/bin/python3`) - where the `mcp-contextforge-gateway` module is installed.
 
 
-> Replace `path-to-mcpgateway-wrapper` with the actual folder path.
+=== "Claude Desktop (uvenv)"
 
-### ✅ Environment Variables
+    ```json
+    {
+      "mcpServers": {
+        "mcpgateway-wrapper": {
+          "command": "uvenv",
+          "args": [
+            "run",
+            "--",
+            "python",
+            "-m",
+            "mcpgateway.wrapper"
+          ],
+          "env": {
+            "MCP_AUTH_TOKEN": "<paste-token>",
+            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1"
+          }
+        }
+      }
+    }
+    ```
 
-| Variable                  | Purpose                                            |
-| ------------------------- | -------------------------------------------------- |
-| `MCP_SERVER_CATALOG_URLS` | One or more `/servers/{id}` catalog URLs           |
-| `MCP_AUTH_TOKEN`          | Bearer Token Authentication                        |
+=== "Continue (python3)"
 
+    Add to **Settings → Continue: MCP Servers**:
+
+    ```json
+    {
+      "mcpgateway-wrapper": {
+        "command": "/path/to/python",
+        "args": ["-m", "mcpgateway.wrapper"],
+        "env": {
+          "MCP_AUTH_TOKEN": "<token>",
+          "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1"
+        }
+      }
+    }
+    ```
+
+    *(Replace `/path/to/python` with your venv interpreter.)*
+
+=== "Cline (uv)"
+
+    ```json
+    {
+      "mcpServers": {
+        "mcpgateway-wrapper": {
+          "disabled": false,
+          "timeout": 60,
+          "type": "stdio",
+          "command": "uv",
+          "args": [
+            "run",
+            "--directory",
+            "REPLACE_WITH_PATH_TO_REPO",
+            "-m",
+            "mcpgateway.wrapper"
+          ],
+          "env": {
+            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+            "MCP_AUTH_TOKEN": "REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN",
+            "MCP_WRAPPER_LOG_LEVEL": "OFF"
+          }
+        }
+      }
+    }
+    ```
 
 ---
 
 ## 🐍 Local Development
 
-To run locally:
-
 ```bash
-uv run mcpgateway-wrapper
+# Hot-reload wrapper code while hacking
+uv --dev run python -m mcpgateway.wrapper
 ```
 
-Or debug using the MCP Inspector:
+### 🔎 MCP Inspector
 
 ```bash
-npx @modelcontextprotocol/inspector uv --directory "path-to-wrapper" run mcpgateway-wrapper
-```
-
----
-
-## 🏗 Build
-
-Use [`uv`](https://github.com/astral-sh/uv) to manage builds:
-
-```bash
-uv sync       # Install dependencies
+npx @modelcontextprotocol/inspector \
+     python -m mcpgateway.wrapper -- \
+     --log-level DEBUG
 ```
 
 ---
 
-## 📝 Example Use Case
-
-Once launched, any MCP-compatible client (e.g. Claude Desktop or Cline) can call:
+## 📝 Example call flow
 
 ```json
 {
-  "method": "hello_world",
-  "params": { "name": "Alice" }
+  "method": "get_current_time",
+  "params": { "timezone": "Europe/Dublin" }
 }
 ```
 
-And the wrapper will:
-
-1. Match the method to a tool in the Gateway's registry
-2. Send a tool invocation request to the Gateway
-3. Return the result via stdout
+1. Wrapper maps `get_current_time` → tool ID 123 in the catalog.
+2. Sends RPC to the Gateway with your JWT token.
+3. Gateway executes the tool and returns JSON → wrapper → stdout.
 
 ---
 
-## 🔮 Planned Features
+## 🧪 Manual JSON-RPC Smoke-test
 
-* Prompt rendering support
-* Resource URI fetching
-* Token caching for long-lived auth
-* Federation fallback if the Gateway is unreachable
+The wrapper speaks plain JSON-RPC over **stdin/stdout**, so you can exercise it from any
+terminal—no GUI required.
+Open two shells or use a tool like `jq -c | nc -U` to pipe messages in and view replies.
+
+??? example "Step-by-step request sequence"
+    ```json
+    # 1️⃣ Initialize session
+    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},
+      "clientInfo":{"name":"demo","version":"0.0.1"}
+    }}
+
+    # 2️⃣ Ack initialisation (required by MCP)
+    {"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+
+    # 3️⃣ Prompts
+    {"jsonrpc":"2.0","id":4,"method":"prompts/list"}
+    {"jsonrpc":"2.0","id":5,"method":"prompts/get",
+     "params":{"name":"greeting","arguments":{"user":"Bob"}}}
+
+    # 4️⃣ Resources
+    {"jsonrpc":"2.0","id":6,"method":"resources/list"}
+    {"jsonrpc":"2.0","id":7,"method":"resources/read",
+     "params":{"uri":"https://example.com/some.txt"}}
+
+    # 5️⃣ Tools (list / call)
+    {"jsonrpc":"2.0","id":2,"method":"tools/list"}
+    {"jsonrpc":"2.0","id":3,"method":"tools/call",
+     "params":{"name":"get_current_time","arguments":{"timezone":"Europe/Dublin"}}}
+    ```
+
+??? success "Sample responses you should see"
+    ```json
+    # Initialise
+    {"jsonrpc":"2.0","id":1,"result":{
+      "protocolVersion":"2025-03-26",
+      "capabilities":{
+        "experimental":{},
+        "prompts":{"listChanged":false},
+        "resources":{"subscribe":false,"listChanged":false},
+        "tools":{"listChanged":false}
+      },
+      "serverInfo":{"name":"mcpgateway-wrapper","version":"0.1.1"}
+    }}
+
+    # Empty tool list
+    {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
+
+    # …after adding tools (example)
+    {"jsonrpc":"2.0","id":2,"result":{
+      "tools":[
+        {
+          "name":"get_current_time",
+          "description":"Get current time in a specific timezone",
+          "inputSchema":{
+            "type":"object",
+            "properties":{
+              "timezone":{
+                "type":"string",
+                "description":"IANA timezone name (e.g. 'Europe/London')."
+              }
+            },
+            "required":["timezone"]
+          }
+        }
+      ]
+    }}
+
+    # Tool invocation
+    {"jsonrpc":"2.0","id":3,"result":{
+      "content":[
+        {
+          "type":"text",
+          "text":"{ \"timezone\": \"Europe/Dublin\", \"datetime\": \"2025-06-08T21:47:07+01:00\", \"is_dst\": true }"
+        }
+      ],
+      "isError":false
+    }}
+    ```
+
+---

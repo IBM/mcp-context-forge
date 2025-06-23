@@ -48,7 +48,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.root_service import RootService
@@ -755,6 +755,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         name=form["name"],
         url=form["url"],
         description=form.get("description"),
+        transport=form.get("transport", "SSE"),
         auth_type=form.get("auth_type", ""),
         auth_username=form.get("auth_username", ""),
         auth_password=form.get("auth_password", ""),
@@ -762,10 +763,19 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         auth_header_key=form.get("auth_header_key", ""),
         auth_header_value=form.get("auth_header_value", ""),
     )
-    await gateway_service.register_gateway(db, gateway)
-
     root_path = request.scope.get("root_path", "")
-    return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+    try:
+        await gateway_service.register_gateway(db, gateway)
+        return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+    except Exception as ex:
+        if isinstance(ex, GatewayConnectionError):
+            return RedirectResponse(f"{root_path}/admin#gateways", status_code=502)
+        if isinstance(ex, ValueError):
+            return RedirectResponse(f"{root_path}/admin#gateways", status_code=400)
+        if isinstance(ex, RuntimeError):
+            return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
+
+        return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/edit")
@@ -797,6 +807,7 @@ async def admin_edit_gateway(
         name=form["name"],
         url=form["url"],
         description=form.get("description"),
+        transport=form.get("transport", "SSE"),
         auth_type=form.get("auth_type", None),
         auth_username=form.get("auth_username", None),
         auth_password=form.get("auth_password", None),

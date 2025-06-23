@@ -1,0 +1,6 @@
+- name: Provision IBM Cloud & deploy MCP Context-Forge
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - ibm_cloud     # infra, DBs, kubeconfig
+    - k8s           # secrets + app rollout

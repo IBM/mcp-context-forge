@@ -1214,7 +1214,7 @@
       <!-- Gateways Panel -->
       <div id="gateways-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-2xl font-bold">Federated Gateways (MCP)</h2>
+          <h2 class="text-2xl font-bold">Federated Gateways (MCP Registry)</h2>
           <p class="text-sm text-gray-600 mt-1">Gateways are where you register external MCP servers to federate their tools/resources/prompts into your environment.</p>
           <div class="flex items-center">
             <input
@@ -1396,6 +1396,18 @@
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700"
+                  >Transport Type</label
+                >
+                <select
+                  name="transport"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                >
+                  <option value="SSE" selected>SSE</option>
+                  <option value="STREAMABLEHTTP">Streamable HTTP</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700"
                   >Authentication Type</label
                 >
                 <select
@@ -1465,6 +1477,9 @@
                     placeholder="********"
                   />
                 </div>
+              </div>
+              <div id="add-gateway-loading" style="display: none;">
+                <div class="spinner"></div>
               </div>
               <div id="status-gateways"></div>
             </div>
@@ -1718,6 +1733,10 @@
                   Run Tool
                 </button>
               </div>
+              <div id="tool-test-loading" style="display: none;">
+                <div class="spinner"></div>
+              </div>
+
             </form>
             <!-- The result area now uses a fixed height for a larger view -->
             <div
@@ -1738,6 +1757,9 @@
         </div>
       </div>
     </div>
+
+
+
 
     <!-- Tool Edit Modal -->
     <div id="tool-edit-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
@@ -2258,6 +2280,19 @@
                       id="edit-gateway-description"
                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                     ></textarea>
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700"
+                      >Transport Type</label
+                    >
+                    <select
+                      name="transport"
+                      id="edit-gateway-transport"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    >
+                      <option value="SSE" selected>SSE</option>
+                      <option value="STREAMABLEHTTP">Streamable HTTP</option>
+                    </select>
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-gray-700"

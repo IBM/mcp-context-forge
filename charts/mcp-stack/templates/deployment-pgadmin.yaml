@@ -35,7 +35,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: postgres-secret
-                  key: password
+                  key: POSTGRES_PASSWORD
             - name: PGADMIN_LISTEN_PORT
               value: "{{ .Values.pgadmin.service.port }}"
           {{- with .Values.pgadmin.resources }}

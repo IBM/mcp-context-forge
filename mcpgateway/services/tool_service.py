@@ -25,6 +25,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import delete, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -493,28 +494,49 @@ class ToolService:
                 headers.update(credentials)
 
                 # Build the payload based on integration type.
-                payload = arguments
+                payload = arguments.copy()
+
+                # Handle URL path parameter substitution
+                final_url = tool.url
+                if "{" in tool.url and "}" in tool.url:
+                    # Extract path parameters from URL template and arguments
+                    import re
+
+                    url_params = re.findall(r"\{(\w+)\}", tool.url)
+                    url_substitutions = {}
+
+                    for param in url_params:
+                        if param in payload:
+                            url_substitutions[param] = payload.pop(param)  # Remove from payload
+                            final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
+                        else:
+                            raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
                 # Use the tool's request_type rather than defaulting to POST.
                 method = tool.request_type.upper()
                 if method == "GET":
-                    response = await self._http_client.get(tool.url, params=payload, headers=headers)
+                    response = await self._http_client.get(final_url, params=payload, headers=headers)
                 else:
-                    response = await self._http_client.request(method, tool.url, json=payload, headers=headers)
+                    response = await self._http_client.request(method, final_url, json=payload, headers=headers)
                 response.raise_for_status()
-                result = response.json()
 
-                if response.status_code not in [200, 201, 202, 204, 206]:
+                # Handle 204 No Content responses that have no body
+                if response.status_code == 204:
+                    tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                elif response.status_code not in [200, 201, 202, 206]:
+                    result = response.json()
                     tool_result = ToolResult(
                         content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
                         is_error=True,
                     )
                 else:
+                    result = response.json()
                     filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                     tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
 
                 success = True
             elif tool.integration_type == "MCP":
+                transport = tool.request_type.lower()
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
                 if gateway.auth_type == "bearer":
                     headers = decode_auth(gateway.auth_value)
@@ -539,10 +561,31 @@ class ToolService:
                             tool_call_result = await session.call_tool(name, arguments)
                     return tool_call_result
 
+                async def connect_to_streamablehttp_server(server_url: str) -> str:
+                    """
+                    Connect to an MCP server running with Streamable HTTP transport
+
+                    Args:
+                        server_url (str): MCP Server URL
+
+                    Returns:
+                        str: Result of tool call
+                    """
+                    # Use async with directly to manage the context
+                    async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, get_session_id):
+                        async with ClientSession(read_stream, write_stream) as session:
+                            # Initialize the session
+                            await session.initialize()
+                            tool_call_result = await session.call_tool(name, arguments)
+                    return tool_call_result
+
                 tool_gateway_id = tool.gateway_id
                 tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
 
-                tool_call_result = await connect_to_sse_server(tool_gateway.url)
+                if transport == "sse":
+                    tool_call_result = await connect_to_sse_server(tool_gateway.url)
+                elif transport == "streamablehttp":
+                    tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url)
                 content = tool_call_result.model_dump(by_alias=True).get("content", [])
 
                 success = True

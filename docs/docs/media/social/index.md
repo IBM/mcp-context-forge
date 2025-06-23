@@ -32,3 +32,10 @@
 
     !!! quote
         "AI agents and tool integration are exciting — until you actually try to connect them. Different authentication systems (or none), fragmented documentation, and incompatible protocols quickly turn what should be simple integrations into debugging nightmares. MCP Gateway solves this."
+
+!!! details "Model Context Protocol (MCP) Gateway — a middleware meant to productionize MCP for an enterprise"
+    **Author:** Manoj Jahgirdar - AI Engineer, Agentic AI @ IBM | **Date:** June 13, 2025 | **6 min read**
+    [Read on Medium](https://medium.com/@manojjahgirdar/model-context-protocol-mcp-gateway-a-middleware-meant-to-productionize-mcp-for-an-enterprise-bbdb2bc350be)
+
+    !!! quote
+        "Learn how ContextForge MCP Gateway works — a secure, unified middleware for scaling agentic AI integrations in the enterprise."

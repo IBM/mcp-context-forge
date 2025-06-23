@@ -1,36 +1,51 @@
+{{/* -------------------------------------------------------------------
+     DEPLOYMENT — Postgres
+     -------------------------------------------------------------------
+     • Pods are labelled <release>-mcp-stack-postgres so the Service
+       selector (also templated) matches correctly.
+     ------------------------------------------------------------------- */}}
+
 {{- if .Values.postgres.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: postgres
+  # <release>-mcp-stack-postgres
+  name: {{ include "mcp-stack.fullname" . }}-postgres
   labels:
-    app: postgres
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-postgres
 spec:
-  replicas: 1
+  replicas: 1                   # one DB pod; use StatefulSet if you ever scale
   selector:
     matchLabels:
-      app: postgres
+      app: {{ include "mcp-stack.fullname" . }}-postgres
   template:
     metadata:
       labels:
-        app: postgres
+        app: {{ include "mcp-stack.fullname" . }}-postgres
     spec:
       containers:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
-          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          imagePullPolicy: "{{ .Values.postgres.image.pullPolicy }}"
           ports:
             - containerPort: {{ .Values.postgres.service.port }}
+
+          # ConfigMap holds non-secret tuning (postgresql.conf, etc.)
+          # Secret stores POSTGRES_USER / POSTGRES_PASSWORD.
           envFrom:
             - configMapRef:
                 name: postgres-config
             - secretRef:
-                name: postgres-secret
+                name: {{ include "mcp-stack.postgresSecretName" . | trim | quote }}
+
+          # Mount PVC for data durability
           volumeMounts:
-            - mountPath: /var/lib/postgresql/data
-              name: postgredb
+            - name: postgredb
+              mountPath: /var/lib/postgresql/data
+
       volumes:
         - name: postgredb
           persistentVolumeClaim:
-            claimName: postgres-pv-claim
+            claimName: postgres-pv-claim   # keep aligned with templates/postgres-pvc.yaml
 {{- end }}

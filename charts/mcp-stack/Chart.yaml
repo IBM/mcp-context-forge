@@ -1,11 +1,49 @@
+# --------------------------------------------------------------------
+# CHART METADATA — Helm reads this file to identify and display the
+# chart in registries such as Artifact Hub or ChartMuseum.
+# --------------------------------------------------------------------
 apiVersion: v2
 name: mcp-stack
+
 description: |
-  A complete Helm chart for MCP Gateway stack (Context Forge) including:
-    * MCP Application
-    * PostgreSQL database with persistence
-    * Redis cache
-    * Optional PgAdmin & Redis Commander UIs
+  A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
+  & Registry — Context-Forge**.  It bundles:
+    • MCP Gateway application (HTTP / WebSocket server)
+    • PostgreSQL database with persistent storage
+    • Redis cache for sessions & completions
+    • Optional PgAdmin and Redis-Commander web UIs
+
 type: application
-version: 0.1.0
-appVersion: "1.0.0"
+
+# --------------------------------------------------------------------
+# Versioning
+# * version      — chart package version (SemVer).  Bump on *any* chart
+#                  change, even if the app container tag is the same.
+# * appVersion   — upstream application version; shown in UIs but not
+#                  used for upgrade logic.
+# --------------------------------------------------------------------
+version: 0.2.0
+appVersion: "0.2.0"
+
+# Icon shown by registries / dashboards (must be an http(s) URL).
+icon: https://raw.githubusercontent.com/IBM/mcp-context-forge/main/docs/theme/logo.png
+
+# Optional but useful metadata
+keywords:
+  - mcp
+  - gateway
+  - postgres
+  - redis
+  - llm
+  - context-forge
+home: https://github.com/IBM/mcp-context-forge
+
+sources:
+  - https://github.com/IBM/mcp-context-forge
+
+maintainers:
+  - name: Mihai Criveti
+    url: https://github.com/IBM
+
+# Require Kubernetes ≥1.21 for networking v1 and recent securityContext fields
+kubeVersion: ">=1.21.0"

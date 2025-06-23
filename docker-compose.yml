@@ -24,7 +24,8 @@ services:
   # MCP Gateway - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
-    image: ghcr.io/ibm/mcp-context-forge:latest
+    #image: ghcr.io/ibm/mcp-context-forge:0.1.1 # Use the release MCP Context Forge image
+    image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
     build:
       context: .
       dockerfile: Containerfile     # Same one the Makefile builds
@@ -45,7 +46,7 @@ services:
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET_KEY=changeme
+      - JWT_SECRET_KEY=my-test-key
       - BASIC_AUTH_USER=admin
       - BASIC_AUTH_PASSWORD=changeme
       # - SSL=true

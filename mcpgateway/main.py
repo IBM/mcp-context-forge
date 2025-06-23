@@ -28,7 +28,6 @@ Structure:
 import asyncio
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
@@ -78,7 +77,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import (
     PromptError,
@@ -105,6 +104,10 @@ from mcpgateway.services.tool_service import (
     ToolService,
 )
 from mcpgateway.transports.sse_transport import SSETransport
+from mcpgateway.transports.streamablehttp_transport import (
+    SessionManagerWrapper,
+    streamable_http_auth,
+)
 from mcpgateway.types import (
     InitializeRequest,
     InitializeResult,
@@ -144,6 +147,9 @@ root_service = RootService()
 completion_service = CompletionService()
 sampling_handler = SamplingHandler()
 server_service = ServerService()
+
+# Initialize session manager for Streamable HTTP transport
+streamable_http_session = SessionManagerWrapper()
 
 
 # Initialize session registry
@@ -191,6 +197,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await logging_service.initialize()
         await sampling_handler.initialize()
         await resource_cache.initialize()
+        await streamable_http_session.initialize()
+
         logger.info("All services initialized successfully")
         yield
     except Exception as e:
@@ -198,17 +206,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise
     finally:
         logger.info("Shutting down MCP Gateway services")
-        for service in [
-            resource_cache,
-            sampling_handler,
-            logging_service,
-            completion_service,
-            root_service,
-            gateway_service,
-            prompt_service,
-            resource_service,
-            tool_service,
-        ]:
+        # await stop_streamablehttp()
+        for service in [resource_cache, sampling_handler, logging_service, completion_service, root_service, gateway_service, prompt_service, resource_service, tool_service, streamable_http_session]:
             try:
                 await service.shutdown()
             except Exception as e:
@@ -263,6 +262,54 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class MCPPathRewriteMiddleware:
+    """
+    Supports requests like '/servers/<server_id>/mcp' by rewriting the path to '/mcp'.
+
+    - Only rewrites paths ending with '/mcp' but not exactly '/mcp'.
+    - Performs authentication before rewriting.
+    - Passes rewritten requests to `streamable_http_session`.
+    - All other requests are passed through without change.
+    """
+
+    def __init__(self, app):
+        """
+        Initialize the middleware with the ASGI application.
+
+        Args:
+            app (Callable): The next ASGI application in the middleware stack.
+        """
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        """
+        Intercept and potentially rewrite the incoming HTTP request path.
+
+        Args:
+            scope (dict): The ASGI connection scope.
+            receive (Callable): Awaitable that yields events from the client.
+            send (Callable): Awaitable used to send events to the client.
+        """
+        # Only handle HTTP requests, HTTPS uses scope["type"] == "http" in ASGI
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Call auth check first
+        auth_ok = await streamable_http_auth(scope, receive, send)
+        if not auth_ok:
+            return
+
+        original_path = scope.get("path", "")
+        scope["modified_path"] = original_path
+        if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+            # Rewrite path so mounted app at /mcp handles it
+            scope["path"] = "/mcp"
+            await streamable_http_session.handle_streamable_http(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -276,6 +323,10 @@ app.add_middleware(
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
+
+# Add streamable HTTP middleware for /mcp routes
+app.add_middleware(MCPPathRewriteMiddleware)
+
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -1506,7 +1557,17 @@ async def register_gateway(
         Created gateway.
     """
     logger.debug(f"User '{user}' requested to register gateway: {gateway}")
-    return await gateway_service.register_gateway(db, gateway)
+    try:
+        return await gateway_service.register_gateway(db, gateway)
+    except Exception as ex:
+        if isinstance(ex, GatewayConnectionError):
+            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=502)
+        elif isinstance(ex, ValueError):
+            return JSONResponse(content={"message": "Unable to process input"}, status_code=400)
+        elif isinstance(ex, RuntimeError):
+            return JSONResponse(content={"message": "Error during execution"}, status_code=500)
+        else:
+            return JSONResponse(content={"message": "Unexpected error"}, status_code=500)
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
@@ -2018,6 +2079,9 @@ if ADMIN_API_ENABLED:
     app.include_router(admin_router)  # Admin routes imported from admin.py
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
+
+# Streamable http Mount
+app.mount("/mcp", app=streamable_http_session.handle_streamable_http)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:

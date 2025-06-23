@@ -24,6 +24,7 @@ import httpx
 from filelock import FileLock, Timeout
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -37,6 +38,7 @@ from mcpgateway.utils.services_auth import decode_auth
 
 try:
     import redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -97,7 +99,7 @@ class GatewayService:
         """Initialize the gateway service."""
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify)
-        self._health_check_interval = GW_HEALTH_CHECK_INTERVAL 
+        self._health_check_interval = GW_HEALTH_CHECK_INTERVAL
         self._health_check_task: Optional[asyncio.Task] = None
         self._active_gateways: Set[str] = set()  # Track active gateway URLs
         self._stream_response = None
@@ -110,9 +112,9 @@ class GatewayService:
 
         if self.redis_url and REDIS_AVAILABLE:
             self._redis_client = redis.from_url(self.redis_url)
-            self._instance_id = str(uuid.uuid4())             # Unique ID for this process
+            self._instance_id = str(uuid.uuid4())  # Unique ID for this process
             self._leader_key = "gateway_service_leader"
-            self._leader_ttl = 40                             # seconds
+            self._leader_ttl = 40  # seconds
         elif settings.cache_type != "none":
             # Fallback: File-based lock
             self._redis_client = None
@@ -122,7 +124,11 @@ class GatewayService:
             self._redis_client = None
 
     async def initialize(self) -> None:
-        """Initialize the service and start health check if this instance is the leader."""
+        """Initialize the service and start health check if this instance is the leader.
+
+        Raises:
+            ConnectionError: When redis ping fails
+        """
         logger.info("Initializing gateway service")
 
         if self._redis_client:
@@ -165,6 +171,7 @@ class GatewayService:
 
         Raises:
             GatewayNameConflictError: If gateway name already exists
+            []: When ExceptionGroup found
         """
         try:
             # Check for name conflicts (both active and inactive)
@@ -180,7 +187,7 @@ class GatewayService:
             auth_type = getattr(gateway, "auth_type", None)
             auth_value = getattr(gateway, "auth_value", {})
 
-            capabilities, tools = await self._initialize_gateway(str(gateway.url), auth_value)
+            capabilities, tools = await self._initialize_gateway(str(gateway.url), auth_value, gateway.transport)
 
             all_names = [td.name for td in tools]
 
@@ -211,6 +218,7 @@ class GatewayService:
                 name=gateway.name,
                 url=str(gateway.url),
                 description=gateway.description,
+                transport=gateway.transport,
                 capabilities=capabilities,
                 last_seen=datetime.now(timezone.utc),
                 auth_type=auth_type,
@@ -231,19 +239,18 @@ class GatewayService:
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(gateway)
+        except* GatewayConnectionError as ge:
+            logger.error("GatewayConnectionError in group: %s", ge.exceptions)
+            raise ge.exceptions[0]
         except* ValueError as ve:
             logger.error("ValueErrors in group: %s", ve.exceptions)
+            raise ve.exceptions[0]
         except* RuntimeError as re:
             logger.error("RuntimeErrors in group: %s", re.exceptions)
+            raise re.exceptions[0]
         except* BaseException as other:  # catches every other sub-exception
             logger.error("Other grouped errors: %s", other.exceptions)
-        # except IntegrityError as ex:
-        #     logger.error(f"Error adding gateway: {ex}")
-        #     db.rollback()
-        #     raise GatewayError(f"Gateway already exists: {gateway.name}")
-        # except Exception as e:
-        #     db.rollback()
-        #     raise GatewayError(f"Failed to register gateway: {str(e)}")
+            raise other.exceptions[0]
 
     async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
         """List all registered gateways.
@@ -306,6 +313,8 @@ class GatewayService:
                 gateway.url = str(gateway_update.url)
             if gateway_update.description is not None:
                 gateway.description = gateway_update.description
+            if gateway_update.transport is not None:
+                gateway.transport = gateway_update.transport
 
             if getattr(gateway, "auth_type", None) is not None:
                 gateway.auth_type = gateway_update.auth_type
@@ -317,7 +326,7 @@ class GatewayService:
             # Try to reinitialize connection if URL changed
             if gateway_update.url is not None:
                 try:
-                    capabilities, _ = await self._initialize_gateway(gateway.url, gateway.auth_value)
+                    capabilities, _ = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
                     gateway.capabilities = capabilities
                     gateway.last_seen = datetime.utcnow()
 
@@ -394,7 +403,7 @@ class GatewayService:
                     self._active_gateways.add(gateway.url)
                     # Try to initialize if activating
                     try:
-                        capabilities, tools = await self._initialize_gateway(gateway.url, gateway.auth_value)
+                        capabilities, tools = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
                         gateway.capabilities = capabilities.dict()
                         gateway.last_seen = datetime.utcnow()
                     except Exception as e:
@@ -566,16 +575,23 @@ class GatewayService:
                     headers = decode_auth(auth_data)
 
                     # Perform the GET and raise on 4xx/5xx
-                    async with client.stream("GET", gateway.url, headers=headers) as response:
-                        # This will raise immediately if status is 4xx/5xx
-                        response.raise_for_status()
+                    if (gateway.transport).lower() == "sse":
+                        timeout = httpx.Timeout(settings.health_check_timeout)
+                        async with client.stream("GET", gateway.url, headers=headers, timeout=timeout) as response:
+                            # This will raise immediately if status is 4xx/5xx
+                            response.raise_for_status()
+                    elif (gateway.transport).lower() == "streamablehttp":
+                        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, get_session_id):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                # Initialize the session
+                                response = await session.initialize()
 
                     # Mark successful check
                     gateway.last_seen = datetime.utcnow()
 
                 except Exception:
                     await self._handle_gateway_failure(gateway)
-                    
+
         # All gateways passed
         return True
 
@@ -624,12 +640,13 @@ class GatewayService:
         finally:
             self._event_subscribers.remove(queue)
 
-    async def _initialize_gateway(self, url: str, authentication: Optional[Dict[str, str]] = None) -> Any:
+    async def _initialize_gateway(self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE") -> Any:
         """Initialize connection to a gateway and retrieve its capabilities.
 
         Args:
             url: Gateway URL
             authentication: Optional authentication headers
+            transport: Transport type ("SSE" or "StreamableHTTP")
 
         Returns:
             Capabilities dictionary as provided by the gateway.
@@ -671,7 +688,45 @@ class GatewayService:
 
                 return capabilities, tools
 
-            capabilities, tools = await connect_to_sse_server(url, authentication)
+            async def connect_to_streamablehttp_server(server_url: str, authentication: Optional[Dict[str, str]] = None):
+                """
+                Connect to an MCP server running with Streamable HTTP transport
+
+                Args:
+                    server_url: URL to connect to the server
+                    authentication: Authentication headers for connection to URL
+
+                Returns:
+                    list, list: List of capabilities and tools
+                """
+                if authentication is None:
+                    authentication = {}
+                # Store the context managers so they stay alive
+                decoded_auth = decode_auth(authentication)
+
+                # Use async with for both streamablehttp_client and ClientSession
+                async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, get_session_id):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        # Initialize the session
+                        response = await session.initialize()
+                        # if get_session_id:
+                        #     session_id = get_session_id()
+                        #     if session_id:
+                        #         print(f"Session ID: {session_id}")
+                        capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                        response = await session.list_tools()
+                        tools = response.tools
+                        tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                        tools = [ToolCreate.model_validate(tool) for tool in tools]
+                        for tool in tools:
+                            tool.request_type = "STREAMABLEHTTP"
+
+                return capabilities, tools
+
+            if transport.lower() == "sse":
+                capabilities, tools = await connect_to_sse_server(url, authentication)
+            elif transport.lower() == "streamablehttp":
+                capabilities, tools = await connect_to_streamablehttp_server(url, authentication)
 
             return capabilities, tools
         except Exception as e:
@@ -718,7 +773,7 @@ class GatewayService:
                         logger.error(f"Health check run failed: {str(e)}")
 
                     await asyncio.sleep(self._health_check_interval)
-                
+
                 else:
                     # FileLock-based leader fallback
                     try:

@@ -1,30 +1,51 @@
+########################################################################
+# DEPLOYMENT — MCP Context-Forge (Gateway)
+#
+# • Spins up the HTTP / WebSocket gateway pods.
+# • Injects release-scoped hosts for Postgres & Redis.
+# • Pulls ALL other environment variables from the dedicated
+#   ConfigMap + Secret via envFrom (mounted later in this file).
+# • DATABASE_URL and REDIS_URL are declared LAST so that every
+#   $(POSTGRES_*) / $(REDIS_*) placeholder is already defined.
+########################################################################
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  # <release>-mcp-stack-app
   name: {{ include "mcp-stack.fullname" . }}-app
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.mcpContextForge.replicaCount }}
+
   selector:
     matchLabels:
       app: {{ include "mcp-stack.fullname" . }}-app
+
   template:
     metadata:
       labels:
         app: {{ include "mcp-stack.fullname" . }}-app
+
     spec:
       containers:
         - name: mcp-context-forge
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
           imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
+
+          # Gateway's internal port
           ports:
             - containerPort: {{ .Values.mcpContextForge.containerPort }}
+
+          ################################################################
+          # EXPLICIT ENV-VARS
+          # • DB/cache endpoints must be set here so they can be used as
+          #   placeholders in the derived URL variables declared below.
+          ################################################################
           env:
-            - name: HOST
-              value: "{{ .Values.mcpContextForge.env.host }}"
+            # ---------- POSTGRES ----------
             - name: POSTGRES_HOST
-              value: "{{ .Values.mcpContextForge.env.postgres.host }}"
+              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
             - name: POSTGRES_PORT
               value: "{{ .Values.mcpContextForge.env.postgres.port }}"
             - name: POSTGRES_DB
@@ -32,15 +53,38 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: postgres-secret
-                  key: user
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: postgres-secret
-                  key: password
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_PASSWORD
+
+            # ---------- REDIS ----------
             - name: REDIS_HOST
-              value: "{{ .Values.mcpContextForge.env.redis.host }}"
+              value: {{ printf "%s-redis" (include "mcp-stack.fullname" .) }}
             - name: REDIS_PORT
               value: "{{ .Values.mcpContextForge.env.redis.port }}"
-          resources: {{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
+
+            # ---------- DERIVED URLS ----------
+            # These MUST be placed *after* the concrete vars above so the
+            # $(…) placeholders are expanded correctly inside the pod.
+            - name: DATABASE_URL
+              value: >-
+                postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
+            - name: REDIS_URL
+              value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
+
+          ################################################################
+          # BULK ENV-VARS — pulled from ConfigMap + Secret
+          ################################################################
+          envFrom:
+            - secretRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+            - configMapRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-config
+
+          # Resource requests / limits
+          resources:
+{{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
