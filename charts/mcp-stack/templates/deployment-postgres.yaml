@@ -18,17 +18,17 @@ spec:
       containers:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
-          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          imagePullPolicy: "{{ .Values.postgres.image.pullPolicy }}"
           ports:
             - containerPort: {{ .Values.postgres.service.port }}
           envFrom:
             - configMapRef:
                 name: postgres-config
             - secretRef:
-                name: postgres-secret
+                name: {{ include "mcp-stack.postgresSecretName" . | trim | quote }}
           volumeMounts:
-            - mountPath: /var/lib/postgresql/data
-              name: postgredb
+            - name: postgredb
+              mountPath: /var/lib/postgresql/data
       volumes:
         - name: postgredb
           persistentVolumeClaim:
