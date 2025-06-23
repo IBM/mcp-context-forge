@@ -51,6 +51,7 @@ from sqlalchemy.orm import (
 
 from mcpgateway.config import settings
 from mcpgateway.types import ResourceContent
+from mcpgateway.utils.create_slug import slugify
 
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", …)

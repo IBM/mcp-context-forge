@@ -36,6 +36,8 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCr
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.services_auth import decode_auth
 
+from mcpgateway.utils.create_slug import slugify
+
 try:
     import redis
 
