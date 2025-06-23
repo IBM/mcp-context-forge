@@ -290,7 +290,7 @@ class GatewayService:
 
             # Check for name conflicts if name is being changed
             if gateway_update.url is not None and gateway_update.url != gateway.url:
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.url == gateway_update.url).where(DbGateway.id != gateway_id)).scalar_one_or_none()
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway_update.name).where(DbGateway.id != gateway_id)).scalar_one_or_none()
 
                 if existing_gateway:
                     raise GatewayNameConflictError(
