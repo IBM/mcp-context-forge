@@ -25,7 +25,6 @@ from filelock import FileLock, Timeout
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from slugify import slugify
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -188,12 +187,12 @@ class GatewayService:
             auth_type = getattr(gateway, "auth_type", None)
             auth_value = getattr(gateway, "auth_value", {})
 
-            capabilities, tools = await self._initialize_gateway(str(gateway.url), auth_value, gateway.transport)
+            capabilities, tools = await self._initialize_gateway(gateway.url, auth_value, gateway.transport)
 
             tools = [
                 DbTool(
                     original_name=tool.name,
-                    url=str(gateway.url),
+                    url=gateway.url,
                     description=tool.description,
                     integration_type=tool.integration_type,
                     request_type=tool.request_type,
@@ -209,8 +208,8 @@ class GatewayService:
             # Create DB model
             db_gateway = DbGateway(
                 name=gateway.name,
-                slug=slugify(gateway.name),
-                url=str(gateway.url),
+                slug=gateway.name,
+                url=gateway.url,
                 description=gateway.description,
                 transport=gateway.transport,
                 capabilities=capabilities,
@@ -219,17 +218,17 @@ class GatewayService:
                 auth_value=auth_value,
                 tools=tools,
             )
-
+            
             # Add to DB
             db.add(db_gateway)
             db.commit()
             db.refresh(db_gateway)
 
-            # Update tracking
-            self._active_gateways.add(db_gateway.url)
+            # # Update tracking
+            # self._active_gateways.add(db_gateway.url)
 
-            # Notify subscribers
-            await self._notify_gateway_added(db_gateway)
+            # # Notify subscribers
+            # await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(gateway)
         except* GatewayConnectionError as ge:
@@ -304,7 +303,7 @@ class GatewayService:
                 gateway.name = gateway_update.name
                 gateway.slug = slugify(gateway_update.name)
             if gateway_update.url is not None:
-                gateway.url = str(gateway_update.url)
+                gateway.url = gateway_update.url
             if gateway_update.description is not None:
                 gateway.description = gateway_update.description
             if gateway_update.transport is not None:
@@ -329,7 +328,7 @@ class GatewayService:
                             gateway.tools.append(
                                 DbTool(
                                     original_name=tool.name,
-                                    url=str(gateway.url),
+                                    url=gateway.url,
                                     description=tool.description,
                                     integration_type=tool.integration_type,
                                     request_type=tool.request_type,
@@ -427,7 +426,7 @@ class GatewayService:
                                 gateway.tools.append(
                                     DbTool(
                                         original_name=tool.name,
-                                        url=str(gateway.url),
+                                        url=gateway.url,
                                         description=tool.description,
                                         integration_type=tool.integration_type,
                                         request_type=tool.request_type,

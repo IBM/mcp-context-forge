@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import jsonschema
-from slugify import slugify
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -112,8 +111,8 @@ class Base(DeclarativeBase):
 # tool_gateway_table = Table(
 #     "tool_gateway_association",
 #     Base.metadata,
-#     Column("tool_id", Integer, ForeignKey("tools.id"), primary_key=True),
-#     Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
+#     Column("tool_id", String, ForeignKey("tools.id"), primary_key=True),
+#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
 # )
 
 # # Association table for resources and gateways (federation)
@@ -121,7 +120,7 @@ class Base(DeclarativeBase):
 #     "resource_gateway_association",
 #     Base.metadata,
 #     Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
-#     Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
+#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
 # )
 
 # # Association table for prompts and gateways (federation)
@@ -129,7 +128,7 @@ class Base(DeclarativeBase):
 #     "prompt_gateway_association",
 #     Base.metadata,
 #     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
-#     Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
+#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
 # )
 
 # Association table for servers and tools
@@ -144,7 +143,7 @@ server_tool_association = Table(
 server_resource_association = Table(
     "server_resource_association",
     Base.metadata,
-    Column("server_id", Integer, ForeignKey("servers.id"), primary_key=True),
+    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
     Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
 )
 
@@ -152,7 +151,7 @@ server_resource_association = Table(
 server_prompt_association = Table(
     "server_prompt_association",
     Base.metadata,
-    Column("server_id", Integer, ForeignKey("servers.id"), primary_key=True),
+    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
 )
 
@@ -175,7 +174,7 @@ class ToolMetric(Base):
     __tablename__ = "tool_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tool_id: Mapped[int] = mapped_column(Integer, ForeignKey("tools.id"), nullable=False)
+    tool_id: Mapped[str] = mapped_column(String, ForeignKey("tools.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -217,7 +216,7 @@ class ServerMetric(Base):
 
     Attributes:
         id (int): Primary key.
-        server_id (int): Foreign key linking to the server.
+        server_id (str): Foreign key linking to the server.
         timestamp (datetime): The time when the invocation occurred.
         response_time (float): The response time in seconds.
         is_success (bool): True if the invocation succeeded, False otherwise.
@@ -227,7 +226,7 @@ class ServerMetric(Base):
     __tablename__ = "server_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    server_id: Mapped[int] = mapped_column(Integer, ForeignKey("servers.id"), nullable=False)
+    server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -334,7 +333,7 @@ class Tool(Base):
 
     @hybrid_property
     def name(self):
-        return self._computed_name or f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
+        return self._computed_name or f"{(slugify(self.gateway.name))}{settings.gateway_tool_name_separator}{self.original_name}"
 
     @name.setter
     def name(self, value):
@@ -537,7 +536,7 @@ class Resource(Base):
     # Subscription tracking
     subscriptions: Mapped[List["ResourceSubscription"]] = relationship("ResourceSubscription", back_populates="resource", cascade="all, delete-orphan")
 
-    gateway_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gateways.id"))
+    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="resources")
     # federated_with = relationship("Gateway", secondary=resource_gateway_table, back_populates="federated_resources")
 
@@ -718,7 +717,7 @@ class Prompt(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
 
-    gateway_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gateways.id"))
+    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="prompts")
     # federated_with = relationship("Gateway", secondary=prompt_gateway_table, back_populates="federated_prompts")
 
