@@ -21,6 +21,7 @@ spec:
           ports:
             - containerPort: {{ .Values.mcpContextForge.containerPort }}
           env:
+            # ── core settings ────────────────────────────────────────────
             - name: HOST
               value: "{{ .Values.mcpContextForge.env.host }}"
             - name: POSTGRES_HOST
@@ -32,15 +33,24 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: postgres-secret
-                  key: user
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: postgres-secret
-                  key: password
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_PASSWORD
             - name: REDIS_HOST
               value: "{{ .Values.mcpContextForge.env.redis.host }}"
             - name: REDIS_PORT
               value: "{{ .Values.mcpContextForge.env.redis.port }}"
-          resources: {{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
+
+            # ── extras injected via values.yaml (DATABASE_URL, etc.) ─────
+{{- if .Values.mcpContextForge.env.extras }}
+{{- range .Values.mcpContextForge.env.extras }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+{{- end }}
+{{- end }}
+          resources:
+{{- toYaml .Values.mcpContextForge.resources | nindent 12 }}

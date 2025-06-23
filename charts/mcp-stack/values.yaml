@@ -3,16 +3,21 @@ global:
   nameOverride: ""
   fullnameOverride: ""
 
+# ───────────────────────────────────────────────────────────────────────────
 mcpContextForge:
   replicaCount: 1
+
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest
+    tag: latest                 # pin a version tag in prod
     pullPolicy: IfNotPresent
+
   service:
     type: ClusterIP
     port: 80
+
   containerPort: 4444
+
   resources:
     limits:
       cpu: 200m
@@ -20,14 +25,16 @@ mcpContextForge:
     requests:
       cpu: 100m
       memory: 512Mi
+
   ingress:
     enabled: true
     className: nginx
-    host: gateway.local
+    host: gateway.local          # change to your domain
     path: /
     pathType: Prefix
     annotations:
       nginx.ingress.kubernetes.io/rewrite-target: /
+
   env:
     host: 0.0.0.0
     postgres:
@@ -39,26 +46,51 @@ mcpContextForge:
     redis:
       host: redis
       port: 6379
+    extras:
+      - name: CACHE_TYPE
+        value: redis
+      - name: REDIS_URL
+        value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
+      - name: DATABASE_URL
+        value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
 
+  # Mount shared Secret & ConfigMap
+  envFrom:
+    - secretRef:
+        name: mcp-gateway-secret
+    - configMapRef:
+        name: mcp-gateway-config
+
+# ───────────────────────────────────────────────────────────────────────────
 postgres:
   enabled: true
+
   image:
     repository: postgres
     tag: "17"
     pullPolicy: IfNotPresent
+
   service:
     type: ClusterIP
     port: 5432
+
   persistence:
     enabled: true
-    storageClassName: manual
+    storageClassName: manual     # pick your StorageClass
     accessModes: [ReadWriteMany]
     size: 5Gi
+
+  # Leave this empty to have Helm autogenerate postgres-secret
+  # (based on the credentials block below).  If you already have
+  # a Secret with the correct keys, put its name here instead.
+  existingSecret: ""
+
   credentials:
     database: postgresdb
     user: admin
-    password: test123
+    password: test123            # replace in production
 
+# ───────────────────────────────────────────────────────────────────────────
 redis:
   enabled: true
   image:
@@ -69,8 +101,9 @@ redis:
     type: ClusterIP
     port: 6379
 
+# ───────────────────────────────────────────────────────────────────────────
 pgadmin:
-  enabled: false
+  enabled: true
   image:
     repository: dpage/pgadmin4
     tag: latest
@@ -79,11 +112,12 @@ pgadmin:
     type: ClusterIP
     port: 80
   env:
-    email: admin@local.test
-    password: admin123
+    email: admin@example.com
+    password: admin123           # replace in production
 
+# ───────────────────────────────────────────────────────────────────────────
 redisCommander:
-  enabled: false
+  enabled: true
   image:
     repository: rediscommander/redis-commander
     tag: latest

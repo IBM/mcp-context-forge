@@ -89,7 +89,7 @@ Verify installation:
 
 ```bash
 helm version
-kubectl version --short
+kubectl version
 kubectl config get-contexts
 ```
 
