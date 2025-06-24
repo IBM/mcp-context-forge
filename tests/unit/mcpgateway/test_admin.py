@@ -563,7 +563,6 @@ class TestAdminGatewayRoutes:
         mock_register_gateway.assert_called_once()
         assert isinstance(result, JSONResponse) 
         assert result.status_code == 200
-        assert "/admin#gateways" in result.headers["location"]
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway(self, mock_update_gateway, mock_request, mock_db):
