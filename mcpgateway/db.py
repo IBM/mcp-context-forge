@@ -299,6 +299,7 @@ class Tool(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     original_name: Mapped[str] = mapped_column(String, nullable=False)
+    original_name_slug: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=True)
     description: Mapped[Optional[str]]
     integration_type: Mapped[str] = mapped_column(default="MCP")
@@ -334,7 +335,7 @@ class Tool(Base):
 
     @hybrid_property
     def name(self):
-        return self._computed_name or f"{(slugify(self.gateway.name))}{settings.gateway_tool_name_separator}{self.original_name}"
+        return self._computed_name or f"{(slugify(self.gateway.name))}{settings.gateway_tool_name_separator}{slugify(self.original_name)}"
 
     @name.setter
     def name(self, value):
@@ -343,7 +344,7 @@ class Tool(Base):
     @name.expression
     def name(cls):
         return cls._computed_name
-
+    
     # @property
     # def name(self) -> str:
     #     return f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
@@ -367,6 +368,7 @@ class Tool(Base):
             str: slug for SQL use
         """
         return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
+
 
     @hybrid_property
     def execution_count(self) -> int:

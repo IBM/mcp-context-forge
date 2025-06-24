@@ -15,8 +15,3 @@ def slugify(text):
     # Normalize the non-ASCII text to ASCII
     slug = normalize('NFKD', slug).encode('ascii', 'ignore').decode()
     return slug
-
-# # Example usage:
-# print(slugify("C'est déjà l'été."))  # Output: c-est-deja-lete
-# print(slugify('影師嗎'))              # Output: (empty string)
-# print(slugify('Hello, World!'))      # Output: hello-world

@@ -194,6 +194,7 @@ class GatewayService:
             tools = [
                 DbTool(
                     original_name=tool.name,
+                    original_name_slug=slugify(tool.name),
                     url=gateway.url,
                     description=tool.description,
                     integration_type=tool.integration_type,
@@ -210,7 +211,7 @@ class GatewayService:
             # Create DB model
             db_gateway = DbGateway(
                 name=gateway.name,
-                slug=gateway.name,
+                slug=slugify(gateway.name),
                 url=gateway.url,
                 description=gateway.description,
                 transport=gateway.transport,
@@ -330,6 +331,7 @@ class GatewayService:
                             gateway.tools.append(
                                 DbTool(
                                     original_name=tool.name,
+                                    original_name_slug=slugify(tool.name),
                                     url=gateway.url,
                                     description=tool.description,
                                     integration_type=tool.integration_type,
@@ -428,6 +430,7 @@ class GatewayService:
                                 gateway.tools.append(
                                     DbTool(
                                         original_name=tool.name,
+                                        original_name_slug=slugify(tool.name),
                                         url=gateway.url,
                                         description=tool.description,
                                         integration_type=tool.integration_type,
