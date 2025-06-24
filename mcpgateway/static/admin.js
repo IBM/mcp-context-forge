@@ -390,16 +390,16 @@ function showTab(tabName) {
     panel.classList.add("hidden");
   });
   document.querySelectorAll(".tab-link").forEach((link) => {
-    link.classList.remove("border-indigo-500", "text-indigo-600");
-    link.classList.add("border-transparent", "text-gray-500");
+    link.classList.remove("border-indigo-500", "text-indigo-600", "dark:text-indigo-500", "dark:border-indigo-400");
+    link.classList.add("border-transparent", "text-gray-500", "dark:text-gray-400");
   });
   document.getElementById(`${tabName}-panel`).classList.remove("hidden");
   document
     .querySelector(`[href="#${tabName}"]`)
-    .classList.add("border-indigo-500", "text-indigo-600");
+    .classList.add("border-indigo-500", "text-indigo-600", "dark:text-indigo-500", "dark:border-indigo-400");
   document
     .querySelector(`[href="#${tabName}"]`)
-    .classList.remove("border-transparent", "text-gray-500");
+    .classList.remove("border-transparent", "text-gray-500", "dark:text-gray-400");
 
   if (tabName === "metrics") {
     loadAggregatedMetrics();
@@ -1328,64 +1328,64 @@ async function loadAggregatedMetrics() {
 
     // Build an aggregated metrics table
     const tableHTML = `
-        <table class="min-w-full bg-white border">
+        <table class="min-w-full bg-white border dark:bg-gray-900">
           <thead>
             <tr>
-              <th class="py-2 px-4 border">Entity</th>
-              <th class="py-2 px-4 border">Total</th>
-              <th class="py-2 px-4 border">Successful</th>
-              <th class="py-2 px-4 border">Failed</th>
-              <th class="py-2 px-4 border">Failure Rate</th>
-              <th class="py-2 px-4 border">Min RT</th>
-              <th class="py-2 px-4 border">Max RT</th>
-              <th class="py-2 px-4 border">Avg RT</th>
-              <th class="py-2 px-4 border">Last Exec</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Entity</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Total</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Successful</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Failed</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Failure Rate</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Min RT</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Max RT</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Avg RT</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Last Exec</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Tools</td>
-              <td class="py-2 px-4 border">${toolsTotal}</td>
-              <td class="py-2 px-4 border">${toolsSuccess}</td>
-              <td class="py-2 px-4 border">${toolsFailed}</td>
-              <td class="py-2 px-4 border">${toolsFailureRate}</td>
-              <td class="py-2 px-4 border">${toolsMin}</td>
-              <td class="py-2 px-4 border">${toolsMax}</td>
-              <td class="py-2 px-4 border">${toolsAvg}</td>
-              <td class="py-2 px-4 border">${toolsLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Tools</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsLast}</td>
             </tr>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Resources</td>
-              <td class="py-2 px-4 border">${resourcesTotal}</td>
-              <td class="py-2 px-4 border">${resourcesSuccess}</td>
-              <td class="py-2 px-4 border">${resourcesFailed}</td>
-              <td class="py-2 px-4 border">${resourcesFailureRate}</td>
-              <td class="py-2 px-4 border">${resourcesMin}</td>
-              <td class="py-2 px-4 border">${resourcesMax}</td>
-              <td class="py-2 px-4 border">${resourcesAvg}</td>
-              <td class="py-2 px-4 border">${resourcesLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Resources</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesLast}</td>
             </tr>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Servers</td>
-              <td class="py-2 px-4 border">${serversTotal}</td>
-              <td class="py-2 px-4 border">${serversSuccess}</td>
-              <td class="py-2 px-4 border">${serversFailed}</td>
-              <td class="py-2 px-4 border">${serversFailureRate}</td>
-              <td class="py-2 px-4 border">${serversMin}</td>
-              <td class="py-2 px-4 border">${serversMax}</td>
-              <td class="py-2 px-4 border">${serversAvg}</td>
-              <td class="py-2 px-4 border">${serversLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Servers</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversLast}</td>
             </tr>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Prompts</td>
-              <td class="py-2 px-4 border">${promptsTotal}</td>
-              <td class="py-2 px-4 border">${promptsSuccess}</td>
-              <td class="py-2 px-4 border">${promptsFailed}</td>
-              <td class="py-2 px-4 border">${promptsFailureRate}</td>
-              <td class="py-2 px-4 border">${promptsMin}</td>
-              <td class="py-2 px-4 border">${promptsMax}</td>
-              <td class="py-2 px-4 border">${promptsAvg}</td>
-              <td class="py-2 px-4 border">${promptsLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Prompts</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsLast}</td>
             </tr>
           </tbody>
         </table>
@@ -1455,9 +1455,9 @@ async function loadTopTools() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
@@ -1491,10 +1491,10 @@ async function loadTopResources() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">URI</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">URI</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
@@ -1529,9 +1529,9 @@ async function loadTopServers() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
@@ -1565,9 +1565,9 @@ async function loadTopPrompts() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
