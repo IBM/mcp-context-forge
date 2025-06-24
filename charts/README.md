@@ -1,6 +1,6 @@
 # MCP Gateway Stack – Helm Chart
 
-Deploy the full **MCP Gateway Stack**—MCP Context Forge gateway, PostgreSQL, Redis, and optional PgAdmin & Redis‑Commander UIs—on any Kubernetes distribution with a single Helm release. The chart lives in [`charts/mcp-stack`](https://github.com/IBM/mcp-context-forge/tree/main/charts/mcp-stack).
+Deploy the full **MCP Gateway Stack**-MCP Context Forge gateway, PostgreSQL, Redis, and optional PgAdmin & Redis‑Commander UIs-on any Kubernetes distribution with a single Helm release. The chart lives in [`charts/mcp-stack`](https://github.com/IBM/mcp-context-forge/tree/main/charts/mcp-stack).
 
 ---
 
@@ -128,7 +128,7 @@ Below is a minimal example. Copy the default file and adjust for your environmen
 mcpContextForge:
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: v1.0.0
+    tag: 0.2.0
   ingress:
     enabled: true
     host: gateway.local   # replace with real DNS
@@ -201,14 +201,14 @@ kubectl delete namespace mcp
 helm lint .
 helm package . -d dist/
 
-# Push the package to GitHub Container Registry
-helm push dist/mcp-stack-*.tgz oci://ghcr.io/<your-org>/charts
+# Push the package to GitHub Container Registry (only for mcp-context-forge release managers!)
+helm push dist/mcp-stack-*.tgz oci://ghcr.io/ibm/mcp-context-forge
 ```
 
 Use the OCI URL below in Argo CD or Flux:
 
 ```
-oci://ghcr.io/<your-org>/charts/mcp-stack
+oci://ghcr.io/ibm/mcp-context-forge
 ```
 
 ---
@@ -260,4 +260,4 @@ For every setting see the [full annotated `values.yaml`](https://github.com/IBM/
 1. Fork the repo and create a feature branch.
 2. Update templates or `values.yaml`.
 3. Test with `helm lint` and `helm template`.
-4. Open a pull request—thank you!
+4. Open a pull request-thank you!
