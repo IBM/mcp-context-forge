@@ -421,6 +421,7 @@ class ToolRead(BaseModelWithConfig):
     metrics: ToolMetrics
     name: str
     gateway_slug: str
+    original_name_slug: str
 
     class Config(BaseModelWithConfig.Config):
         """

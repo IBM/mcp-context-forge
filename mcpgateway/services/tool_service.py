@@ -150,6 +150,7 @@ class ToolService:
 
         tool_dict["name"] = tool.name
         tool_dict["gateway_slug"] = tool.gateway_slug
+        tool_dict["original_name_slug"] = tool.original_name_slug
 
         return ToolRead.model_validate(tool_dict)
 
@@ -372,10 +373,10 @@ class ToolService:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
         """
-        tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name == name).where(DbTool.is_active)).scalar_one_or_none()
+        tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name_slug == name).where(DbTool.is_active)).scalar_one_or_none()
         if not tool:
             inactive_tool = db.execute(
-                select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name == name).where(not_(DbTool.is_active))
+                select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name_slug == name).where(not_(DbTool.is_active))
             ).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")

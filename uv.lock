@@ -256,6 +256,15 @@ filecache = [
 ]
 
 [[package]]
+name = "cachetools"
+version = "6.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/89/817ad5d0411f136c484d535952aef74af9b25e0d99e90cdffbe121e6d628/cachetools-6.1.0.tar.gz", hash = "sha256:b4c4f404392848db3ce7aac34950d17be4d864da4b8b66911008e430bc544587", size = 30714, upload-time = "2025-06-16T18:51:03.07Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/f0/2ef431fe4141f5e334759d73e81120492b23b2824336883a91ac04ba710b/cachetools-6.1.0-py3-none-any.whl", hash = "sha256:1c7bb3cf9193deaf3508b7c5f2a79986c13ea38965c5adcff1f84519cf39163e", size = 11189, upload-time = "2025-06-16T18:51:01.514Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2025.6.15"
 source = { registry = "https://pypi.org/simple" }
@@ -1237,6 +1246,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
+    { name = "slugify" },
     { name = "sqlalchemy" },
     { name = "sse-starlette" },
     { name = "starlette" },
@@ -1296,9 +1306,13 @@ dev = [
     { name = "settings-doc" },
     { name = "snakeviz" },
     { name = "tomlcheck" },
+    { name = "tox" },
+    { name = "tox-uv" },
     { name = "twine" },
     { name = "ty" },
     { name = "types-tabulate" },
+    { name = "uv" },
+    { name = "yamllint" },
 ]
 dev-all = [
     { name = "argparse-manpage" },
@@ -1343,9 +1357,13 @@ dev-all = [
     { name = "settings-doc" },
     { name = "snakeviz" },
     { name = "tomlcheck" },
+    { name = "tox" },
+    { name = "tox-uv" },
     { name = "twine" },
     { name = "ty" },
     { name = "types-tabulate" },
+    { name = "uv" },
+    { name = "yamllint" },
 ]
 postgres = [
     { name = "psycopg2-binary" },
@@ -1360,33 +1378,33 @@ requires-dist = [
     { name = "argparse-manpage", marker = "extra == 'dev'", specifier = ">=4.6" },
     { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.30.0" },
     { name = "autoflake", marker = "extra == 'dev'", specifier = ">=2.3.1" },
-    { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.8.3" },
+    { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.8.5" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=25.1.0" },
     { name = "bump2version", marker = "extra == 'dev'", specifier = ">=1.0.1" },
     { name = "check-manifest", marker = "extra == 'dev'", specifier = ">=0.50" },
     { name = "code2flow", marker = "extra == 'dev'", specifier = ">=2.5.1" },
     { name = "cookiecutter", marker = "extra == 'dev'", specifier = ">=2.6.0" },
-    { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.9.0" },
+    { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.9.1" },
     { name = "coverage-badge", marker = "extra == 'dev'", specifier = ">=1.1.2" },
     { name = "cryptography", specifier = ">=45.0.4" },
     { name = "darglint", marker = "extra == 'dev'", specifier = ">=1.8.1" },
-    { name = "fastapi", specifier = ">=0.115.12" },
+    { name = "fastapi", specifier = ">=0.115.13" },
     { name = "fawltydeps", marker = "extra == 'dev'", specifier = ">=0.20.0" },
     { name = "filelock", specifier = ">=3.18.0" },
-    { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.2.0" },
+    { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.3.0" },
     { name = "gprof2dot", marker = "extra == 'dev'", specifier = ">=2025.4.14" },
     { name = "gunicorn", specifier = ">=23.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "importchecker", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=6.0.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "jq", specifier = ">=1.8.0" },
+    { name = "jq", specifier = ">=1.9.1" },
     { name = "jsonpath-ng", specifier = ">=1.7.0" },
     { name = "jsonschema", specifier = ">=4.24.0" },
     { name = "mcp", specifier = ">=1.9.4" },
-    { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'" },
-    { name = "mcp-contextforge-gateway", extras = ["redis", "dev"], marker = "extra == 'dev-all'" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.16.0" },
+    { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=0.1.1" },
+    { name = "mcp-contextforge-gateway", extras = ["redis", "dev"], marker = "extra == 'dev-all'", specifier = ">=0.1.1" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.16.1" },
     { name = "parse", specifier = ">=1.20.2" },
     { name = "pexpect", marker = "extra == 'dev'", specifier = ">=4.9.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.9.0" },
@@ -1394,8 +1412,8 @@ requires-dist = [
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "psycopg2-binary", marker = "extra == 'postgres'", specifier = ">=2.9.10" },
-    { name = "pydantic", specifier = ">=2.11.5" },
-    { name = "pydantic-settings", specifier = ">=2.9.1" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pydantic-settings", specifier = ">=2.10.0" },
     { name = "pydocstyle", marker = "extra == 'dev'", specifier = ">=6.3.0" },
     { name = "pyjwt", specifier = ">=2.10.1" },
     { name = "pylint", marker = "extra == 'dev'", specifier = ">=3.3.7" },
@@ -1404,7 +1422,7 @@ requires-dist = [
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.402" },
     { name = "pyroma", marker = "extra == 'dev'", specifier = ">=4.2" },
     { name = "pyspelling", marker = "extra == 'dev'", specifier = ">=2.10" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.2.1" },
     { name = "pytest-examples", marker = "extra == 'dev'", specifier = ">=0.0.18" },
@@ -1414,17 +1432,22 @@ requires-dist = [
     { name = "pytype", marker = "extra == 'dev'", specifier = ">=2024.10.11" },
     { name = "radon", marker = "extra == 'dev'", specifier = ">=6.0.1" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=6.2.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.13" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.0" },
     { name = "settings-doc", marker = "extra == 'dev'", specifier = ">=4.3.2" },
+    { name = "slugify", specifier = "==0.0.1" },
     { name = "snakeviz", marker = "extra == 'dev'", specifier = ">=2.2.2" },
     { name = "sqlalchemy", specifier = ">=2.0.41" },
     { name = "sse-starlette", specifier = ">=2.3.6" },
     { name = "starlette", specifier = ">=0.46.2" },
     { name = "tomlcheck", marker = "extra == 'dev'", specifier = ">=0.2.3" },
+    { name = "tox", marker = "extra == 'dev'", specifier = ">=4.27.0" },
+    { name = "tox-uv", marker = "extra == 'dev'", specifier = ">=1.26.0" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=6.1.0" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a9" },
+    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a11" },
     { name = "types-tabulate", marker = "extra == 'dev'", specifier = ">=0.9.0.20241207" },
+    { name = "uv", marker = "extra == 'dev'", specifier = ">=0.7.13" },
     { name = "uvicorn", specifier = ">=0.34.3" },
+    { name = "yamllint", marker = "extra == 'dev'", specifier = ">=1.37.1" },
     { name = "zeroconf", specifier = ">=0.147.0" },
 ]
 provides-extras = ["redis", "postgres", "aiosqlite", "asyncpg", "dev", "all", "dev-all"]
@@ -1947,16 +1970,16 @@ wheels = [
 
 [[package]]
 name = "pydantic-settings"
-version = "2.9.1"
+version = "2.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/67/1d/42628a2c33e93f8e9acbde0d5d735fa0850f3e6a2f8cb1eb6c40b9a732ac/pydantic_settings-2.9.1.tar.gz", hash = "sha256:c509bf79d27563add44e8446233359004ed85066cd096d8b510f715e6ef5d268", size = 163234, upload-time = "2025-04-18T16:44:48.265Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/ef/3d61472b7801c896f9efd9bb8750977d9577098b05224c5c41820690155e/pydantic_settings-2.10.0.tar.gz", hash = "sha256:7a12e0767ba283954f3fd3fefdd0df3af21b28aa849c40c35811d52d682fa876", size = 172625, upload-time = "2025-06-21T13:56:55.898Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b6/5f/d6d641b490fd3ec2c4c13b4244d68deea3a1b970a97be64f34fb5504ff72/pydantic_settings-2.9.1-py3-none-any.whl", hash = "sha256:59b4f431b1defb26fe620c71a7d3968a710d719f5f4cdbbdb7926edeb770f6ef", size = 44356, upload-time = "2025-04-18T16:44:46.617Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/9e/fce9331fecf1d2761ff0516c5dceab8a5fd415e82943e727dc4c5fa84a90/pydantic_settings-2.10.0-py3-none-any.whl", hash = "sha256:33781dfa1c7405d5ed2b6f150830a93bb58462a847357bd8f162f8bacb77c027", size = 45232, upload-time = "2025-06-21T13:56:53.682Z" },
 ]
 
 [[package]]
@@ -2060,6 +2083,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/bb/22/f1129e69d94ffff626bdb5c835506b3a5b4f3d070f17ea295e12c2c6f60f/pyparsing-3.2.3.tar.gz", hash = "sha256:b9c13f1ab8b3b542f72e28f634bad4de758ab3ce4546e4301970ad6fa77c38be", size = 1088608, upload-time = "2025-03-25T05:01:28.114Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/05/e7/df2285f3d08fee213f2d041540fa4fc9ca6c2d44cf36d3a035bf2a8d2bcc/pyparsing-3.2.3-py3-none-any.whl", hash = "sha256:a749938e02d6fd0b59b356ca504a24982314bb090c383e3cf201c95ef7e2bfcf", size = 111120, upload-time = "2025-03-25T05:01:24.908Z" },
+]
+
+[[package]]
+name = "pyproject-api"
+version = "1.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/fd/437901c891f58a7b9096511750247535e891d2d5a5a6eefbc9386a2b41d5/pyproject_api-1.9.1.tar.gz", hash = "sha256:43c9918f49daab37e302038fc1aed54a8c7a91a9fa935d00b9a485f37e0f5335", size = 22710, upload-time = "2025-05-12T14:41:58.025Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/e6/c293c06695d4a3ab0260ef124a74ebadba5f4c511ce3a4259e976902c00b/pyproject_api-1.9.1-py3-none-any.whl", hash = "sha256:7d6238d92f8962773dd75b5f0c4a6a27cce092a14b623b811dba656f3b628948", size = 13158, upload-time = "2025-05-12T14:41:56.217Z" },
 ]
 
 [[package]]
@@ -2605,6 +2640,12 @@ wheels = [
 ]
 
 [[package]]
+name = "slugify"
+version = "0.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/89/fbb7391d777b60c82d4e1376bb181b98e75adf506b3f7ffe837eca64570b/slugify-0.0.1.tar.gz", hash = "sha256:c5703cc11c1a6947536f3ce8bb306766b8bb5a84a53717f5a703ce0f18235e4c", size = 1156, upload-time = "2010-12-07T16:36:05.53Z" }
+
+[[package]]
 name = "snakeviz"
 version = "2.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2847,6 +2888,40 @@ wheels = [
 ]
 
 [[package]]
+name = "tox"
+version = "4.27.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cachetools" },
+    { name = "chardet" },
+    { name = "colorama" },
+    { name = "filelock" },
+    { name = "packaging" },
+    { name = "platformdirs" },
+    { name = "pluggy" },
+    { name = "pyproject-api" },
+    { name = "virtualenv" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a5/b7/19c01717747076f63c54d871ada081cd711a7c9a7572f2225675c3858b94/tox-4.27.0.tar.gz", hash = "sha256:b97d5ecc0c0d5755bcc5348387fef793e1bfa68eb33746412f4c60881d7f5f57", size = 198351, upload-time = "2025-06-17T15:17:50.585Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/3a/30889167f41ecaffb957ec4409e1cbc1d5d558a5bbbdfb734a5b9911930f/tox-4.27.0-py3-none-any.whl", hash = "sha256:2b8a7fb986b82aa2c830c0615082a490d134e0626dbc9189986da46a313c4f20", size = 173441, upload-time = "2025-06-17T15:17:48.689Z" },
+]
+
+[[package]]
+name = "tox-uv"
+version = "1.26.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "tox" },
+    { name = "uv" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/00/98e564731fc361cc2f1e39c58d2feb0b4c9f9a7cb06f0c769cdeb9a98004/tox_uv-1.26.1.tar.gz", hash = "sha256:241cc530b4a80436c4487977c8303d9aace398c6561d5e7d8845606fa7d482ab", size = 21849, upload-time = "2025-06-23T20:17:54.96Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/0b/e47c1bb2bc9e20b22a6913ea2162b7bb5729d38924fa2c1d4eaf95d3b36f/tox_uv-1.26.1-py3-none-any.whl", hash = "sha256:edc25b254e5cdbb13fc5d23d6d05b511dee562ab72b0e99da4a874a78018c38e", size = 16661, upload-time = "2025-06-23T20:17:52.492Z" },
+]
+
+[[package]]
 name = "trove-classifiers"
 version = "2025.5.9.12"
 source = { registry = "https://pypi.org/simple" }
@@ -2990,6 +3065,31 @@ wheels = [
 ]
 
 [[package]]
+name = "uv"
+version = "0.7.14"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/de/15dac9c3ebcadd5ec08b11340394cf9a2aee7cd207173ca6b59847b1de68/uv-0.7.14.tar.gz", hash = "sha256:0bdc5b64bd93bac674e1ff1f2cbda340eb12568d6092397cc33b01952c5fe943", size = 3340075, upload-time = "2025-06-23T17:56:21.767Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/64/c413ecaf92f2db25ce61e432fb4799656bfaaf182e801b200d6226c9d2c8/uv-0.7.14-py3-none-linux_armv6l.whl", hash = "sha256:c4a291317c1a055cf647fd69095ccf881be78619934a95a1535353863dc6860b", size = 17254753, upload-time = "2025-06-23T17:55:24.327Z" },
+    { url = "https://files.pythonhosted.org/packages/77/81/1527f56b8acd84cd6a2a8f458b5d47177dabd896430600bd2cc922fceef5/uv-0.7.14-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:6d9355e39a401d368b90d29bb183ec8f159b6fef4823a0819177a96e1e1036b9", size = 17305070, upload-time = "2025-06-23T17:55:29.139Z" },
+    { url = "https://files.pythonhosted.org/packages/84/d4/dd443c38dadf756a3dc0f6fc676872141265be2415a27dbf90fdc52a3c39/uv-0.7.14-py3-none-macosx_11_0_arm64.whl", hash = "sha256:8722f24e1a754746aeaa425d03f3184ca1d8832eb1e967eeaf502dc87d87e7f4", size = 15955080, upload-time = "2025-06-23T17:55:32.252Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/7f/823416d2b47477d633bd7304fda9282f1f72041c57f89fcbd9cc9cbdc683/uv-0.7.14-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:fb93fda6aaf7d9fc503f6b8a997ec111cfd420f55c92b389b30a669210ea5307", size = 16497776, upload-time = "2025-06-23T17:55:35.66Z" },
+    { url = "https://files.pythonhosted.org/packages/24/fe/074b211cc818c3b3da17f2b5f2ac3573c42a0e6a84edad06503fb09b3569/uv-0.7.14-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:72bcea629ee7e9aa518460a10b06896f70f9253cb9d724613a21fbf83f48c9e7", size = 16980128, upload-time = "2025-06-23T17:55:38.929Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/53/27f7331c1b42c8eb2fec57ab5867bfa17afb088304fb6605e89f72b67fcc/uv-0.7.14-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:80f295f9406ec6827c754f0b8a0c833d9037332a3c67878d4da843c287b14f9f", size = 17695384, upload-time = "2025-06-23T17:55:42.069Z" },
+    { url = "https://files.pythonhosted.org/packages/38/c0/515dc1b181575899ab2ee13a6583a2405f9f131a993a2218f0aaf10e1a2c/uv-0.7.14-py3-none-manylinux_2_17_ppc64.manylinux2014_ppc64.whl", hash = "sha256:c12c6046bdb064924df6e252f7aac4f9192a21b9c9588bbb048c07d95f6074fa", size = 18581182, upload-time = "2025-06-23T17:55:45.892Z" },
+    { url = "https://files.pythonhosted.org/packages/77/ac/3e2a6be7767a1ed0bc9e9616bb32f7a2aae84e1f3d0083112a45f706c772/uv-0.7.14-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:84c4c2d31d9831326f05b5f78886d987bd0b2cde723d95a21c0c337b40138561", size = 18247487, upload-time = "2025-06-23T17:55:49.033Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/01/3bc9345dac57243a8d72647dd87f311ba5fc76aea8b5e5a5e0beedba8b4a/uv-0.7.14-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:86f26813c3a62c75f7719e09fd1495610317b64a462af904c02edb8acf3f4cd3", size = 18480533, upload-time = "2025-06-23T17:55:52.363Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/8f/3f19a726998166b09040d696a94eee7ff3a20c830b6b3e2d93bb9be26737/uv-0.7.14-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f5f39150d3e70a5bb3d0cb1708496c054591b220f94c292d454b90065387463f", size = 17955401, upload-time = "2025-06-23T17:55:55.744Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/d9/54541ce12b7049207a677ef0a36e6229dbdfd6d76990d42cc1cd39b3affe/uv-0.7.14-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:f76ad3add9aeacde15986b8f967744874ed4bdf73c9ba941fc64187f1616c497", size = 16779700, upload-time = "2025-06-23T17:55:58.807Z" },
+    { url = "https://files.pythonhosted.org/packages/65/e8/13be0dd91fecd8060ed46b5401035365f5e817cd315330fd472cd91db6b0/uv-0.7.14-py3-none-musllinux_1_1_armv7l.whl", hash = "sha256:46be74107e5f0f1e9754d1cd9b4e001eaa682bf99044d1e280832c219a52e2a7", size = 16926557, upload-time = "2025-06-23T17:56:01.97Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/a6/85819497dc9631c65ea536292c22b86c9a0fc638ef64192f99d049f7dab3/uv-0.7.14-py3-none-musllinux_1_1_i686.whl", hash = "sha256:7791eaf0c90b8f1920d3324e866b1baa34a5298c6838212a467b35d9d0203d65", size = 17225463, upload-time = "2025-06-23T17:56:05.451Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/9e/732b411c3cd0dacb1e6eb73730f280ea9bcd34103a64b1bb8a294b5e8730/uv-0.7.14-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:a2e1c051f4078cd839506246e420076b0bc2fb7eb82d247cfee72a96035d1ab2", size = 18052839, upload-time = "2025-06-23T17:56:09.102Z" },
+    { url = "https://files.pythonhosted.org/packages/38/ef/a2332be17ae21af9ccdbf7a1f8cec5751e732a6e4e60725a6f9bd504a11e/uv-0.7.14-py3-none-win32.whl", hash = "sha256:63f0a7ba7230575352179b4ed73b2d45e7ccf371b5ba81836fcb91cf85908e49", size = 17556027, upload-time = "2025-06-23T17:56:12.325Z" },
+    { url = "https://files.pythonhosted.org/packages/af/cc/d16ad99fd666da29cbed13602ac6c6d6e61a5d6307943eea0f400991049a/uv-0.7.14-py3-none-win_amd64.whl", hash = "sha256:e41719e940b31ee0b869bfe91cdde2bc59da1505f2c92a6dbdca707a766af7b3", size = 19076213, upload-time = "2025-06-23T17:56:15.997Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/ba/21384eb564e441b4497f7204eb231a7555991a970eb3c347b014f82e62cc/uv-0.7.14-py3-none-win_arm64.whl", hash = "sha256:f9fe75732139393280dc743b94d696693d3d748ce83781fc6be88c1910738823", size = 17730252, upload-time = "2025-06-23T17:56:19.087Z" },
+]
+
+[[package]]
 name = "uvicorn"
 version = "0.34.3"
 source = { registry = "https://pypi.org/simple" }
@@ -3044,6 +3144,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0b/02/ae6ceac1baeda530866a85075641cec12989bd8d31af6d5ab4a3e8c92f47/webencodings-0.5.1.tar.gz", hash = "sha256:b36a1c245f2d304965eb4e0a82848379241dc04b865afcc4aab16748587e1923", size = 9721, upload-time = "2017-04-05T20:21:34.189Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/24/2a3e3df732393fed8b3ebf2ec078f05546de641fe1b667ee316ec1dcf3b7/webencodings-0.5.1-py2.py3-none-any.whl", hash = "sha256:a0af1213f3c2226497a97e2b3aa01a7e4bee4f403f95be16fc9acd2947514a78", size = 11774, upload-time = "2017-04-05T20:21:32.581Z" },
+]
+
+[[package]]
+name = "yamllint"
+version = "1.37.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pathspec" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/f2/cd8b7584a48ee83f0bc94f8a32fea38734cefcdc6f7324c4d3bfc699457b/yamllint-1.37.1.tar.gz", hash = "sha256:81f7c0c5559becc8049470d86046b36e96113637bcbe4753ecef06977c00245d", size = 141613, upload-time = "2025-05-04T08:25:54.355Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/b9/be7a4cfdf47e03785f657f94daea8123e838d817be76c684298305bd789f/yamllint-1.37.1-py3-none-any.whl", hash = "sha256:364f0d79e81409f591e323725e6a9f4504c8699ddf2d7263d8d2b539cd66a583", size = 68813, upload-time = "2025-05-04T08:25:52.552Z" },
 ]
 
 [[package]]
