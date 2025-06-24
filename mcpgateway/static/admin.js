@@ -569,7 +569,7 @@ async function viewTool(toolId) {
     }
 
     document.getElementById("tool-details").innerHTML = `
-      <div class="space-y-2">
+      <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
         <p><strong>Name:</strong> ${tool.name}</p>
         <p><strong>URL:</strong> ${tool.url}</p>
         <p><strong>Type:</strong> ${tool.integrationType}</p>
@@ -578,11 +578,11 @@ async function viewTool(toolId) {
         ${authHTML}
         <div>
           <strong>Headers:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Input Schema:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Metrics:</strong>
@@ -707,7 +707,7 @@ async function viewResource(resourceUri) {
     const resource = data.resource;
     const content = data.content;
     document.getElementById("resource-details").innerHTML = `
-          <div class="space-y-2">
+          <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
             <p><strong>URI:</strong> ${resource.uri}</p>
             <p><strong>Name:</strong> ${resource.name}</p>
             <p><strong>Type:</strong> ${resource.mimeType || "N/A"}</p>
@@ -799,7 +799,7 @@ async function viewPrompt(promptName) {
     );
     const prompt = await response.json();
     document.getElementById("prompt-details").innerHTML = `
-          <div class="space-y-2">
+          <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
             <p><strong>Name:</strong> ${prompt.name}</p>
             <p><strong>Description:</strong> ${prompt.description || "N/A"}</p>
             <p><strong>Status:</strong>
@@ -819,7 +819,7 @@ async function viewPrompt(promptName) {
             </div>
             <div>
               <strong>Arguments:</strong>
-              <pre class="mt-1 bg-gray-100 p-2 rounded">${JSON.stringify(prompt.arguments || [], null, 2)}</pre>
+              <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(prompt.arguments || [], null, 2)}</pre>
             </div>
             <!-- ADD THIS: Metrics section -->
             <div>
@@ -904,7 +904,7 @@ async function viewGateway(gatewayId) {
     }
 
     document.getElementById("gateway-details").innerHTML = `
-        <div class="space-y-2">
+        <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
           <p><strong>Name:</strong> ${gateway.name}</p>
           <p><strong>URL:</strong> ${gateway.url}</p>
           <p><strong>Description:</strong> ${gateway.description || "N/A"}</p>
@@ -921,7 +921,7 @@ async function viewGateway(gatewayId) {
           ${authHTML}
           <div>
             <strong>Capabilities:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded">${JSON.stringify(gateway.capabilities || {}, null, 2)}</pre>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(gateway.capabilities || {}, null, 2)}</pre>
           </div>
         </div>
       `;
@@ -997,7 +997,7 @@ async function viewServer(serverId) {
         : "N/A";
 
     document.getElementById("server-details").innerHTML = `
-          <div class="space-y-2">
+          <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
             <p><strong>Name:</strong> ${server.name}</p>
             <p><strong>Description:</strong> ${server.description || "N/A"}</p>
             <p><strong>Status:</strong>
@@ -1327,7 +1327,7 @@ async function loadAggregatedMetrics() {
 
     // Build an aggregated metrics table
     const tableHTML = `
-        <table class="min-w-full bg-white border dark:bg-gray-900">
+        <table class="min-w-full bg-white border dark:bg-gray-900 dark:text-gray-100">
           <thead>
             <tr>
               <th class="py-2 px-4 border dark:text-gray-200">Entity</th>
@@ -1643,7 +1643,7 @@ function testTool(toolId) {
           input.type = "text";
           input.required = schema.required && schema.required.includes(key);
           input.className =
-            "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500";
+            "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
           fieldDiv.appendChild(input);
 
           container.appendChild(fieldDiv);
