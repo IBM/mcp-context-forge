@@ -202,7 +202,7 @@
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for server in servers %}
                 <tr>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -217,28 +217,28 @@
                     {% endif %}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ server.id }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ server.name }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
+                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {{ server.description }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {% if server.associatedTools %} {{ server.associatedTools |
                     map('string') | join(', ') }} {% else %}
                     <span class="text-gray-500 dark:text-gray-300">N/A</span>
                     {% endif %}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
+                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {% if server.associatedResources %} {{
                     server.associatedResources | join(', ') }} {% else %}
@@ -246,7 +246,7 @@
                     {% endif %}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
+                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {% if server.associatedPrompts %} {{
                     server.associatedPrompts | join(', ') }} {% else %}
@@ -464,36 +464,36 @@
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for tool in tools %}
                 <tr>
                   <td
-                    class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12"
+                    class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12 dark:text-gray-100"
                   >
                     {{ tool.id }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24"
+                    class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24 dark:text-gray-100"
                   >
                     {{ tool.name }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-24"
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500 w-24"
                   >
                     {{ tool.url }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-12"
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500 w-12"
                   >
                     {{ tool.integrationType }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-12"
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500 w-12"
                   >
                     {{ tool.requestType }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {{ tool.description }}
                   </td>
@@ -841,30 +841,30 @@
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for resource in resources %}
                 <tr>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ resource.id }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ resource.uri }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ resource.name }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ resource.description or "N/A" }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ resource.mimeType or "N/A" }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -1036,54 +1036,54 @@
               <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     ID
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Name
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Description
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Arguments
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Status
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for prompt in prompts %}
                 <tr>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ prompt.id }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ prompt.name }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ prompt.description }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {% for arg in prompt.arguments %}{{ arg.name }}{% if not
                     loop.last %}, {% endif %}{% endfor %}
                   </td>
@@ -1244,51 +1244,51 @@
               <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     ID
                   </th>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Name
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider w-24"
                   >
                     URL
                   </th>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Status
                   </th>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Last Seen
                   </th>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for gateway in gateways %}
                 <tr>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ gateway.id }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ gateway.name }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ gateway.url }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -1298,7 +1298,7 @@
                       {{ "Active" if gateway.isActive else "Inactive" }}
                     </span>
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                     gateway.lastSeen else 'Never' }}
                   </td>
@@ -1408,7 +1408,7 @@
                 >
                 <select
                   name="transport"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 >
                   <option value="SSE" selected>SSE</option>
                   <option value="STREAMABLEHTTP">Streamable HTTP</option>
@@ -1551,16 +1551,16 @@
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for root in roots %}
                 <tr>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                     {{ root.id }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100s">
                     {{ root.uri }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ root.name }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -1687,15 +1687,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Tool Details</h3>
-            <div class="mt-4 space-y-4" id="tool-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Tool Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="tool-details"></div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('tool-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -1716,10 +1716,10 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
             <h3
               id="tool-test-modal-title"
-              class="text-lg font-medium text-gray-900"
+              class="text-lg font-medium text-gray-900 dark:text-gray-100"
             >
               Test Tool
             </h3>
@@ -1749,7 +1749,7 @@
             <!-- The result area now uses a fixed height for a larger view -->
             <div
               id="tool-test-result"
-              class="mt-4 bg-gray-100 p-2 rounded overflow-auto"
+              class="mt-4 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300"
               style="height: 400px"
             ></div>
           </div>
@@ -1757,7 +1757,7 @@
             <button
               type="button"
               onclick="closeModal('tool-test-modal', 'tool-test-result')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -1780,8 +1780,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Tool</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Tool</h3>
             <div class="mt-4">
               <form id="edit-tool-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -1945,11 +1945,11 @@
                     />
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('tool-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
@@ -1978,15 +1978,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Resource Details</h3>
-            <div class="mt-4 space-y-4" id="resource-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Resource Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="resource-details"></div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('resource-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -2009,8 +2009,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Resource</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Resource</h3>
             <div class="mt-4">
               <form id="edit-resource-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -2073,11 +2073,11 @@
                     ></textarea>
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('resource-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
@@ -2106,15 +2106,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Prompt Details</h3>
-            <div class="mt-4 space-y-4" id="prompt-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Prompt Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="prompt-details"></div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('prompt-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -2137,8 +2137,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Prompt</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Prompt</h3>
             <div class="mt-4">
               <form id="edit-prompt-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -2186,11 +2186,11 @@
                     ></textarea>
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('prompt-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
@@ -2219,15 +2219,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Gateway Details</h3>
-            <div class="mt-4 space-y-4" id="gateway-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Gateway Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="gateway-details"></div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('gateway-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -2250,8 +2250,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Gateway</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Gateway</h3>
             <div class="mt-4">
               <form id="edit-gateway-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -2296,7 +2296,7 @@
                     <select
                       name="transport"
                       id="edit-gateway-transport"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     >
                       <option value="SSE" selected>SSE</option>
                       <option value="STREAMABLEHTTP">Streamable HTTP</option>
@@ -2375,11 +2375,11 @@
                     </div>
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('gateway-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
@@ -2408,15 +2408,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Server Details</h3>
-            <div class="mt-4 space-y-4" id="server-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Server Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="server-details"></div>
           </div>
           <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('server-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -2439,8 +2439,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Server</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Server</h3>
             <div class="mt-4">
               <form id="edit-server-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -2515,11 +2515,11 @@
                     />
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('server-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
