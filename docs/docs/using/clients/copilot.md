@@ -63,6 +63,7 @@ python -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-tes
     }
   }
 }
+```
 
 ---
 
