@@ -34,9 +34,8 @@ from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
 from mcpgateway.services.tool_service import ToolService
-from mcpgateway.utils.services_auth import decode_auth
-
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.services_auth import decode_auth
 
 try:
     import redis
@@ -221,7 +220,7 @@ class GatewayService:
                 auth_value=auth_value,
                 tools=tools,
             )
-            
+
             # Add to DB
             db.add(db_gateway)
             db.commit()

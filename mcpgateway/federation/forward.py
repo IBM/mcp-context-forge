@@ -184,7 +184,7 @@ class ForwardingService:
     async def _forward_to_gateway(
         self,
         db: Session,
-        gateway_id: int,
+        gateway_id: str,
         method: str,
         params: Optional[Dict[str, Any]] = None,
     ) -> Any:

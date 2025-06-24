@@ -247,7 +247,7 @@ class PromptService:
         prompts = db.execute(query).scalars().all()
         return [PromptRead.model_validate(self._convert_db_prompt(p)) for p in prompts]
 
-    async def list_server_prompts(self, db: Session, server_id: int, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
+    async def list_server_prompts(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
         """
         Retrieve a list of prompt templates from the database.
 
