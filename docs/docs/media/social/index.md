@@ -4,6 +4,11 @@
 
 ## LinkedIn Posts:
 
+!!! details "[MCP Context Forge Collaboration & Open-Source Release (LinkedIn)](https://www.linkedin.com/posts/mgupta76_github-ibmmcp-context-forge-a-model-context-activity-7340773401583632384-ZiLi)"
+
+    !!! quote "Manav Gupta – Vice President & CTO, IBM Canada @ IBM | June 24, 2025"
+        "I have been lucky to collaborate and contribute to mcp-context-forge. It serves as a central management point for tools, resources, and prompts that can be accessed by MCP-compatible LLM applications. Converts REST API endpoints to MCP, composes virtual MCP servers with added security and observability, and converts between protocols (stdio, SSE, Streamable HTTP). I think this will be way to build AI Agents of the future."
+
 !!! details "IBM's Armand Ruiz on MCP Gateway & ACP (LinkedIn)"
     **Author:** Analytics India Magazine | **Date:** June 10, 2025
     [View on LinkedIn](https://www.linkedin.com/posts/analytics-india-magazine_armand-ruiz-ibms-vp-of-ai-platform-hails-activity-7338162493652946962-AF9J)
