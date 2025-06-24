@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" 
+<html lang="en"
   x-data="{ darkMode: JSON.parse(localStorage.getItem('darkMode') || 'false') }"
   x-bind:class="darkMode ? 'dark' : ''"
   x-init="$watch('darkMode', val => localStorage.setItem('darkMode', val))">
