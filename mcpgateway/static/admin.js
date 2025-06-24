@@ -570,7 +570,7 @@ async function viewTool(toolId) {
     }
 
     document.getElementById("tool-details").innerHTML = `
-      <div class="space-y-2">
+      <div class="space-y-2 dark:bg-gray-800 dark:text-gray-300">
         <p><strong>Name:</strong> ${tool.name}</p>
         <p><strong>URL:</strong> ${tool.url}</p>
         <p><strong>Type:</strong> ${tool.integrationType}</p>
@@ -579,11 +579,11 @@ async function viewTool(toolId) {
         ${authHTML}
         <div>
           <strong>Headers:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Input Schema:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Metrics:</strong>
@@ -724,7 +724,7 @@ async function viewResource(resourceUri) {
             </p>
             <div>
               <strong>Content:</strong>
-              <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80">
+              <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-900 dark:text-gray-300">
                 ${
                   typeof content === "object"
                     ? JSON.stringify(content, null, 2)
@@ -814,13 +814,13 @@ async function viewPrompt(promptName) {
             </p>
             <div>
               <strong>Template:</strong>
-              <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80">
+              <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-900 dark:text-gray-300">
                 ${prompt.template}
               </pre>
             </div>
             <div>
               <strong>Arguments:</strong>
-              <pre class="mt-1 bg-gray-100 p-2 rounded">${JSON.stringify(prompt.arguments || [], null, 2)}</pre>
+              <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(prompt.arguments || [], null, 2)}</pre>
             </div>
             <!-- ADD THIS: Metrics section -->
             <div>
@@ -922,7 +922,7 @@ async function viewGateway(gatewayId) {
           ${authHTML}
           <div>
             <strong>Capabilities:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded">${JSON.stringify(gateway.capabilities || {}, null, 2)}</pre>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(gateway.capabilities || {}, null, 2)}</pre>
           </div>
         </div>
       `;
@@ -1627,14 +1627,14 @@ function testTool(toolId) {
           // Field label
           const label = document.createElement("label");
           label.innerText = key;
-          label.className = "block text-sm font-medium text-gray-700";
+          label.className = "block text-sm font-medium text-gray-700 dark:text-gray-200";
           fieldDiv.appendChild(label);
 
           // If a description exists, display it as help text
           if (prop.description) {
             const description = document.createElement("small");
             description.innerText = prop.description;
-            description.className = "text-gray-500 block mb-1";
+            description.className = "text-gray-500 block mb-1 dark:text-gray-200";
             fieldDiv.appendChild(description);
           }
 
@@ -1644,7 +1644,7 @@ function testTool(toolId) {
           input.type = "text";
           input.required = schema.required && schema.required.includes(key);
           input.className =
-            "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500";
+            "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900";
           fieldDiv.appendChild(input);
 
           container.appendChild(fieldDiv);
