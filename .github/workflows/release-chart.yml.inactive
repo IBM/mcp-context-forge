@@ -2,7 +2,7 @@
 name: Release Helm Chart
 on:
   release:
-    types: [published]            # tag repo, ex: v0.1.1 to trigger
+    types: [published]            # tag repo, ex: v0.2.0 to trigger
 permissions:
   contents: read
   packages: write

@@ -561,7 +561,7 @@ class TestAdminGatewayRoutes:
 
         # Assert
         mock_register_gateway.assert_called_once()
-        assert isinstance(result, JSONResponse) 
+        assert isinstance(result, JSONResponse)
         assert result.status_code == 200
 
     @patch.object(GatewayService, "update_gateway")
