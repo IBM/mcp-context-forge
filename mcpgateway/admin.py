@@ -763,7 +763,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         auth_header_key=form.get("auth_header_key", ""),
         auth_header_value=form.get("auth_header_value", ""),
     )
-    root_path = request.scope.get("root_path", "")
     try:
         await gateway_service.register_gateway(db, gateway)
         return JSONResponse(
@@ -779,7 +778,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         if isinstance(ex, RuntimeError):
             return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-
 
 
 @admin_router.post("/gateways/{gateway_id}/edit")
