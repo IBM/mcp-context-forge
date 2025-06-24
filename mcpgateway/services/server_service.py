@@ -253,7 +253,7 @@ class ServerService:
         servers = db.execute(query).scalars().all()
         return [self._convert_server_to_read(s) for s in servers]
 
-    async def get_server(self, db: Session, server_id: int) -> ServerRead:
+    async def get_server(self, db: Session, server_id: str) -> ServerRead:
         """Retrieve server details by ID.
 
         Args:
@@ -284,7 +284,7 @@ class ServerService:
         logger.debug(f"Server Data: {server_data}")
         return self._convert_server_to_read(server)
 
-    async def update_server(self, db: Session, server_id: int, server_update: ServerUpdate) -> ServerRead:
+    async def update_server(self, db: Session, server_id: str, server_update: ServerUpdate) -> ServerRead:
         """Update an existing server.
 
         Args:
@@ -375,7 +375,7 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to update server: {str(e)}")
 
-    async def toggle_server_status(self, db: Session, server_id: int, activate: bool) -> ServerRead:
+    async def toggle_server_status(self, db: Session, server_id: str, activate: bool) -> ServerRead:
         """Toggle the activation status of a server.
 
         Args:
@@ -424,7 +424,7 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to toggle server status: {str(e)}")
 
-    async def delete_server(self, db: Session, server_id: int) -> None:
+    async def delete_server(self, db: Session, server_id: str) -> None:
         """Permanently delete a server.
 
         Args:

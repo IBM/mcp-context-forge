@@ -344,7 +344,7 @@ class Tool(Base):
     @name.expression
     def name(cls):
         return cls._computed_name
-    
+
     # @property
     # def name(self) -> str:
     #     return f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
@@ -368,7 +368,6 @@ class Tool(Base):
             str: slug for SQL use
         """
         return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
-
 
     @hybrid_property
     def execution_count(self) -> int:

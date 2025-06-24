@@ -561,7 +561,7 @@ async def list_servers(
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
-async def get_server(server_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
+async def get_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
@@ -615,7 +615,7 @@ async def create_server(
 
 @server_router.put("/{server_id}", response_model=ServerRead)
 async def update_server(
-    server_id: int,
+    server_id: str,
     server: ServerUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -648,7 +648,7 @@ async def update_server(
 
 @server_router.post("/{server_id}/toggle", response_model=ServerRead)
 async def toggle_server_status(
-    server_id: int,
+    server_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -678,7 +678,7 @@ async def toggle_server_status(
 
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
-async def delete_server(server_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
@@ -786,7 +786,7 @@ async def message_endpoint(request: Request, server_id: str, user: str = Depends
 
 @server_router.get("/{server_id}/tools", response_model=List[ToolRead])
 async def server_get_tools(
-    server_id: int,
+    server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -814,7 +814,7 @@ async def server_get_tools(
 
 @server_router.get("/{server_id}/resources", response_model=List[ResourceRead])
 async def server_get_resources(
-    server_id: int,
+    server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -842,7 +842,7 @@ async def server_get_resources(
 
 @server_router.get("/{server_id}/prompts", response_model=List[PromptRead])
 async def server_get_prompts(
-    server_id: int,
+    server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -937,7 +937,7 @@ async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
 async def get_tool(
-    tool_id: int,
+    tool_id: str,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
     apijsonpath: JsonPathModifier = Body(None),
@@ -973,7 +973,7 @@ async def get_tool(
 
 @tool_router.put("/{tool_id}", response_model=ToolRead)
 async def update_tool(
-    tool_id: int,
+    tool_id: str,
     tool: ToolUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1001,7 +1001,7 @@ async def update_tool(
 
 
 @tool_router.delete("/{tool_id}")
-async def delete_tool(tool_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_tool(tool_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
@@ -1026,7 +1026,7 @@ async def delete_tool(tool_id: int, db: Session = Depends(get_db), user: str = D
 
 @tool_router.post("/{tool_id}/toggle")
 async def toggle_tool_status(
-    tool_id: int,
+    tool_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1480,7 +1480,7 @@ async def delete_prompt(name: str, db: Session = Depends(get_db), user: str = De
 ################
 @gateway_router.post("/{gateway_id}/toggle")
 async def toggle_gateway_status(
-    gateway_id: int,
+    gateway_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1571,7 +1571,7 @@ async def register_gateway(
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
-async def get_gateway(gateway_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
+async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
     """
     Retrieve a gateway by ID.
 
@@ -1589,7 +1589,7 @@ async def get_gateway(gateway_id: int, db: Session = Depends(get_db), user: str 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
 async def update_gateway(
-    gateway_id: int,
+    gateway_id: str,
     gateway: GatewayUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1611,7 +1611,7 @@ async def update_gateway(
 
 
 @gateway_router.delete("/{gateway_id}")
-async def delete_gateway(gateway_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
