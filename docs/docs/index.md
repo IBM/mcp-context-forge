@@ -131,6 +131,7 @@ Jump straight to:
 
 !!! note
     Source → [https://github.com/IBM/mcp-context-forge](https://github.com/IBM/mcp-context-forge)
+
     Docs → [https://ibm.github.io/mcp-context-forge/](https://ibm.github.io/mcp-context-forge/)
 
 ---
