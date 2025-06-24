@@ -147,43 +147,42 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
 
-  document
-  .getElementById("add-gateway-form")
-  .addEventListener("submit", (e) => {
-    e.preventDefault();
+    document.getElementById("add-gateway-form")
+      .addEventListener("submit", async (e) => {
+        e.preventDefault();
 
-    const form = e.target;
-    const formData = new FormData(form);
+        const form = e.target;
+        const formData = new FormData(form);
 
-    const status = document.getElementById("status-gateways");
-    const loading = document.getElementById("add-gateway-loading");
+        const status = document.getElementById("status-gateways");
+        const loading = document.getElementById("add-gateway-loading");
 
-    // Show loading and clear previous status
-    loading.style.display = "block";
-    status.textContent = "";
-    status.classList.remove("error-status");
+        // Show loading and clear previous status
+        loading.style.display = "block";
+        status.textContent = "";
+        status.classList.remove("error-status");
 
-    fetch(`${window.ROOT_PATH}/admin/gateways`, {
-      method: "POST",
-      body: formData,
-    })
-      .then((response) => {
-        if (!response.ok) {
-          status.textContent = "Connection failed!";
+        try {
+          const response = await fetch(`${window.ROOT_PATH}/admin/gateways`, {
+            method: "POST",
+            body: formData,
+          });
+
+          let result = await response.json();
+            if (!result.success) {
+              alert(result.message || "An error occurred");
+            } else {
+              window.location.href = `${window.ROOT_PATH}/admin#gateways`; // Redirect on success
+            }
+
+        } catch (error) {
+          console.error("Error:", error);
+          status.textContent = error.message || "An error occurred!";
           status.classList.add("error-status");
-        } else {
-          location.reload(); // Will exit before hiding spinner
+        } finally {
+          loading.style.display = "none"; // Hide loading spinner
         }
-      })
-      .catch((error) => {
-        console.error("Error:", error);
-        status.textContent = "An error occurred!";
-        status.classList.add("error-status");
-      })
-      .finally(() => {
-        loading.style.display = "none"; // Hide loading
       });
-  });
 
 
   document
@@ -305,7 +304,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!result.success) {
           alert(result.message || "An error occurred");
         } else {
-          window.location.href = "/admin#tools"; // Redirect on success
+          window.location.href = `${window.ROOT_PATH}/admin#tools`; // Redirect on success
         }
       } catch (error) {
         console.error("Fetch error:", error);
