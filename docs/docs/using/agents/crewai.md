@@ -18,3 +18,4 @@ To use MCP tools in CrewAI, install the `crewai-tools` package with MCP support:
 
 ```bash
 pip install "crewai-tools[mcp]"
+```
