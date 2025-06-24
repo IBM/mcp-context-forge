@@ -2,7 +2,7 @@ apiVersion: v2
 name: mcpgateway
 description: A Helm chart for deploying MCP Gateway to Kubernetes
 type: application
-version: 0.1.1
+version: 0.2.0
 appVersion: "latest"
 keywords:
   - mcp
