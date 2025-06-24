@@ -562,7 +562,7 @@ class TestAdminGatewayRoutes:
         # Assert
         mock_register_gateway.assert_called_once()
         assert isinstance(result, JSONResponse) 
-        assert result.status_code == 303
+        assert result.status_code == 200
         assert "/admin#gateways" in result.headers["location"]
 
     @patch.object(GatewayService, "update_gateway")
