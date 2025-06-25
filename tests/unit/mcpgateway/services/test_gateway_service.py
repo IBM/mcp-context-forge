@@ -110,7 +110,7 @@ def gateway_service():
 def mock_gateway():
     """Return a minimal but realistic DbGateway MagicMock."""
     gw = MagicMock(spec=DbGateway)
-    gw.id = 1
+    gw.id = "c30e104b37d54b4887e97c7b69ff110a"
     gw.name = "test_gateway"
     gw.url = "http://example.com/gateway"
     gw.description = "A test gateway"
@@ -119,7 +119,7 @@ def mock_gateway():
     gw.is_active = True
 
     # one dummy tool hanging off the gateway
-    tool = MagicMock(spec=DbTool, id=101, name="dummy_tool")
+    tool = MagicMock(spec=DbTool, id="487070d3ee7e473d95230d2edd101c14", name="dummy_tool")
     gw.tools = [tool]
     gw.federated_tools = []
     gw.transport = "sse"
@@ -244,8 +244,8 @@ class TestGatewayService:
     async def test_get_gateway(self, gateway_service, mock_gateway, test_db):
         """Gateway is fetched and returned by ID."""
         test_db.get = Mock(return_value=mock_gateway)
-        result = await gateway_service.get_gateway(test_db, 1)
-        test_db.get.assert_called_once_with(DbGateway, 1)
+        result = await gateway_service.get_gateway(test_db, "c30e104b37d54b4887e97c7b69ff110a")
+        test_db.get.assert_called_once_with(DbGateway, "c30e104b37d54b4887e97c7b69ff110a")
         assert result.name == "test_gateway"
         assert result.capabilities == mock_gateway.capabilities
 
@@ -254,7 +254,7 @@ class TestGatewayService:
         """Missing ID → GatewayNotFoundError."""
         test_db.get = Mock(return_value=None)
         with pytest.raises(GatewayNotFoundError):
-            await gateway_service.get_gateway(test_db, 999)
+            await gateway_service.get_gateway(test_db, "1f3154a317264e08af27a68327c75cae")
 
     @pytest.mark.asyncio
     async def test_get_gateway_inactive(self, gateway_service, mock_gateway, test_db):
@@ -262,7 +262,7 @@ class TestGatewayService:
         mock_gateway.is_active = False
         test_db.get = Mock(return_value=mock_gateway)
         with pytest.raises(GatewayNotFoundError):
-            await gateway_service.get_gateway(test_db, 1)
+            await gateway_service.get_gateway(test_db, "c30e104b37d54b4887e97c7b69ff110a")
 
     # ────────────────────────────────────────────────────────────────────
     # UPDATE
@@ -306,20 +306,20 @@ class TestGatewayService:
         test_db.get = Mock(return_value=None)
         gateway_update = GatewayUpdate(name="whatever")
         with pytest.raises(GatewayError) as exc_info:
-            await gateway_service.update_gateway(test_db, 999, gateway_update)
-        assert "Gateway not found: 999" in str(exc_info.value)
+            await gateway_service.update_gateway(test_db, "1f3154a317264e08af27a68327c75cae", gateway_update)
+        assert "Gateway not found: 1f3154a317264e08af27a68327c75cae" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_update_gateway_name_conflict(self, gateway_service, mock_gateway, test_db):
         """Changing the name to one that already exists raises GatewayError."""
         test_db.get = Mock(return_value=mock_gateway)
-        conflicting = MagicMock(spec=DbGateway, id=2, name="existing_gateway", is_active=True)
+        conflicting = MagicMock(spec=DbGateway, id="0c82dd4bbf5e4282a8ff94572b9d558e", name="existing_gateway", url="http://example.com/existing", is_active=True)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=conflicting))
         test_db.rollback = Mock()
 
         gateway_update = GatewayUpdate(name="existing_gateway")
         with pytest.raises(GatewayError) as exc_info:
-            await gateway_service.update_gateway(test_db, 1, gateway_update)
+            await gateway_service.update_gateway(test_db, "008d710f612b42228de58dfb6fb96d2f", gateway_update)
 
         assert "Gateway already exists with name" in str(exc_info.value)
 
