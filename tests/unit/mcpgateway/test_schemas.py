@@ -745,14 +745,14 @@ class TestServerSchemas:
         one_hour_ago = now - timedelta(hours=1)
 
         server = ServerRead(
-            id=1,
+            id="84335e5b41f24d0f800943f9ea7661aa",
             name="Test Server",
             description="Test server instance",
             icon="http://example.com/server.png",
             created_at=one_hour_ago,
             updated_at=now,
             is_active=True,
-            associated_tools=[1, 2, 3],
+            associated_tools=["b760ba25d2b34382b855263f474a252a", "6abb132a0b3445c8b47b3d60a603a96b", "eb5d9ea60f0841b392df9390c6df4b8c"],
             associated_resources=[4, 5],
             associated_prompts=[6],
             metrics=ServerMetrics(
@@ -767,14 +767,14 @@ class TestServerSchemas:
             ),
         )
 
-        assert server.id == 1
+        assert server.id == "84335e5b41f24d0f800943f9ea7661aa"
         assert server.name == "Test Server"
         assert server.description == "Test server instance"
         assert server.icon == "http://example.com/server.png"
         assert server.created_at == one_hour_ago
         assert server.updated_at == now
         assert server.is_active is True
-        assert server.associated_tools == [1, 2, 3]
+        assert server.associated_tools == ["b760ba25d2b34382b855263f474a252a", "6abb132a0b3445c8b47b3d60a603a96b", "eb5d9ea60f0841b392df9390c6df4b8c"]
         assert server.associated_resources == [4, 5]
         assert server.associated_prompts == [6]
         assert server.metrics.total_executions == 100
@@ -782,14 +782,14 @@ class TestServerSchemas:
 
         # Test root validator for associated IDs
         server_with_objects = ServerRead(
-            id=2,
+            id="f1548803b0ff4bf7833b762b0a8c5c34",
             name="Object Server",
             description="Server with object associations",
             icon="http://example.com/object_server.png",
             created_at=one_hour_ago,
             updated_at=now,
             is_active=True,
-            associated_tools=[Mock(id=10), Mock(id=11)],
+            associated_tools=[Mock(id="b443684aad094fbcbd7766a5eb1d179c"), Mock(id="75f5884ea06144c7b8f02a7d4ac6e57c")],
             associated_resources=[Mock(id=12)],
             associated_prompts=[Mock(id=13)],
             metrics=ServerMetrics(
@@ -800,7 +800,7 @@ class TestServerSchemas:
             ),
         )
 
-        assert server_with_objects.associated_tools == [10, 11]
+        assert server_with_objects.associated_tools == ["b443684aad094fbcbd7766a5eb1d179c", "75f5884ea06144c7b8f02a7d4ac6e57c"]
         assert server_with_objects.associated_resources == [12]
         assert server_with_objects.associated_prompts == [13]
 
