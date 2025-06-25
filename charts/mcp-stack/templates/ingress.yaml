@@ -20,4 +20,13 @@ spec:
                 name: {{ include "mcp-stack.fullname" . }}-mcpgateway
                 port:
                   number: {{ .Values.mcpContextForge.service.port }}
+          {{- if and .Values.mcpFastTimeServer.enabled .Values.mcpFastTimeServer.ingress.enabled }}
+          - path: {{ .Values.mcpFastTimeServer.ingress.path }}
+            pathType: {{ .Values.mcpFastTimeServer.ingress.pathType }}
+            backend:
+              service:
+                name: mcp-fast-time-server
+                port:
+                  number: {{ .Values.mcpFastTimeServer.ingress.servicePort }}
+          {{- end }}
 {{- end }}

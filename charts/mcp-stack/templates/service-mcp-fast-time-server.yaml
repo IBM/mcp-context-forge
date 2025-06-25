@@ -1,0 +1,13 @@
+{{- if .Values.mcpFastTimeServer.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-fast-time-server
+spec:
+  selector:
+    app: mcp-fast-time-server
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: {{ .Values.mcpFastTimeServer.port }}
+{{- end }}
