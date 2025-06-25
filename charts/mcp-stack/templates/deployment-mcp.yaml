@@ -11,8 +11,8 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  # <release>-mcp-stack-app
-  name: {{ include "mcp-stack.fullname" . }}-app
+  # <release>-mcp-stack-mcpgateway
+  name: {{ include "mcp-stack.fullname" . }}-mcpgateway
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
 spec:
@@ -20,12 +20,12 @@ spec:
 
   selector:
     matchLabels:
-      app: {{ include "mcp-stack.fullname" . }}-app
+      app: {{ include "mcp-stack.fullname" . }}-mcpgateway
 
   template:
     metadata:
       labels:
-        app: {{ include "mcp-stack.fullname" . }}-app
+        app: {{ include "mcp-stack.fullname" . }}-mcpgateway
 
     spec:
       containers:

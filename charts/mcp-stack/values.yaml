@@ -11,7 +11,7 @@ global:
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################
 mcpContextForge:
-  replicaCount: 1               # horizontal scaling for the gateway
+  replicaCount: 3               # horizontal scaling for the gateway
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
