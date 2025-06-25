@@ -1,5 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="en"
+  x-data="{ darkMode: JSON.parse(localStorage.getItem('darkMode') || 'false') }"
+  x-bind:class="darkMode ? 'dark' : ''"
+  x-init="$watch('darkMode', val => localStorage.setItem('darkMode', val))">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,10 +14,12 @@
       sizes="32x32"
       href="{{ root_path }}/static/favicon.ico"
     />
-    <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css"
-      rel="stylesheet"
-    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class'
+      }
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -30,28 +35,28 @@
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
   </head>
 
-  <body class="bg-gray-100">
+  <body class="bg-gray-100 dark:bg-gray-900">
     <div class="w-full max-w-screen-2xl mx-auto px-4 py-8">
     <header class="mb-8">
-      <h1 class="text-3xl font-bold text-gray-800">
+      <h1 class="text-3xl font-bold text-gray-800 dark:text-gray-200">
         MCP Context Forge – Gateway Administration
       </h1>
 
-      <p class="text-gray-600">
+      <p class="text-gray-600 dark:text-gray-400">
         Manage tools, resources, prompts, servers, and federated gateways
         (remote MCP servers)
         <span class="mx-2 text-gray-400">|</span>
         <a
           href="https://ibm.github.io/mcp-context-forge/"
           target="_blank"
-          class="text-indigo-600 hover:underline"
+          class="text-indigo-600 dark:text-indigo-500 hover:underline"
           > Docs</a
         >
         <span class="mx-2 text-gray-400">|</span>
         <a
           href="https://github.com/IBM/mcp-context-forge"
           target="_blank"
-          class="text-indigo-600 hover:underline"
+          class="text-indigo-600 dark:text-indigo-500 hover:underline"
           >⭐ Star mcp-context-forge on GitHub</a
         >
       </p>
@@ -66,49 +71,49 @@
             <a
               href="#catalog"
               id="tab-catalog"
-              class="tab-link border-indigo-500 text-indigo-600 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              class="tab-link border-indigo-500 text-indigo-600 dark:text-indigo-500 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
               Virtual Servers Catalog
             </a>
             <a
               href="#tools"
               id="tab-tools"
-              class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
               Global Tools
             </a>
             <a
               href="#resources"
               id="tab-resources"
-              class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
               Global Resources
             </a>
             <a
               href="#prompts"
               id="tab-prompts"
-              class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
               Global Prompts
             </a>
             <a
               href="#gateways"
               id="tab-gateways"
-              class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
               Gateways/MCP Servers
             </a>
             <a
               href="#roots"
               id="tab-roots"
-              class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
               Roots
             </a>
             <a
               href="#metrics"
               id="tab-metrics"
-              class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
               Metrics
             </a>
@@ -116,10 +121,13 @@
             <a
               href="#version-info"
               id="tab-version-info"
-              class="tab-link border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
               Version and Environment Info
             </a>
+            <button @click="darkMode = !darkMode" class="p-2">
+              <span x-text="darkMode ? '☀️' : '🌙'"></span>
+            </button>
           </nav>
         </div>
       </div>
@@ -130,8 +138,8 @@
       <!-- Catalog Panel -->
       <div id="catalog-panel" class="tab-panel">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-2xl font-bold">MCP Servers Catalog</h2>
-          <p class="text-sm text-gray-600 mt-1">Virtual Servers let you combine Tools, Resources, and Prompts from the global Tools catalog into a reusable configuration.</p>
+          <h2 class="text-2xl font-bold dark:text-gray-200">MCP Servers Catalog</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Virtual Servers let you combine Tools, Resources, and Prompts from the global Tools catalog into a reusable configuration.</p>
 
           <div class="flex items-center">
             <input
@@ -142,23 +150,23 @@
             />
             <label
               for="show-inactive-servers"
-              class="text-sm font-medium text-gray-700"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
               >Show Inactive</label
             >
           </div>
         </div>
-        <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
+              <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Icon
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     S. No.
                   </th>
@@ -168,38 +176,38 @@
                     ID
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Name
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Description
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Tools
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Resources
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Prompts
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for server in servers %}
                 <tr>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -210,11 +218,11 @@
                       class="h-8 w-8"
                     />
                     {% else %}
-                    <span class="text-gray-500">N/A</span>
+                    <span class="text-gray-500 dark:text-gray-300">N/A</span>
                     {% endif %}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ loop.index }}
                   </td>
@@ -224,35 +232,36 @@
                     {{ server.id }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ server.name }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500"
+                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {{ server.description }}
                   </td>
-                  <td class="px-6 py-4 max-w-xs break-words text-sm text-gray-500">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {% if server.associatedTools %} {{ server.associatedTools |
                     map('string') | join(', ') }} {% else %}
-                    <span class="text-gray-500">N/A</span>
+                    <span class="text-gray-500 dark:text-gray-300">N/A</span>
                     {% endif %}
                   </td>
                   <td
-                    class="px-6 py-4 max-w-xs break-words text-sm text-gray-500"
+                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {% if server.associatedResources %} {{
                     server.associatedResources | join(', ') }} {% else %}
-                    <span class="text-gray-500">N/A</span>
+                    <span class="text-gray-500 dark:text-gray-300">N/A</span>
                     {% endif %}
                   </td>
                   <td
                     class="px-6 py-4 max-w-xs break-words text-sm text-gray-500"
+                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {% if server.associatedPrompts %} {{
                     server.associatedPrompts | join(', ') }} {% else %}
-                    <span class="text-gray-500">N/A</span>
+                    <span class="text-gray-500 dark:text-gray-300">N/A</span>
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -289,7 +298,7 @@
                     {% endif %}
                     <button
                       onclick="viewServer('{{ server.id }}')"
-                      class="text-indigo-600 hover:text-indigo-900 mr-2"
+                      class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2"
                     >
                       View
                     </button>
@@ -319,53 +328,49 @@
             </table>
           </div>
         </div>
-
-        <div class="bg-white shadow rounded-lg p-6">
-          <h3 class="text-lg font-bold mb-4">Add New Server</h3>
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+          <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Server</h3>
           <form method="POST" action="{{ root_path }}/admin/servers" id="add-server-form" onreset="document.getElementById('associatedTools').selectedIndex = -1;">
             <div class="grid grid-cols-1 gap-6">
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Description</label
                 >
                 <textarea
                   name="description"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Icon URL</label
                 >
                 <input
                   type="url"
                   name="icon"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
-                <label for="associatedTools" class="block text-sm font-medium text-gray-700">
+                <label for="associatedTools" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                   Associated Tools
                 </label>
                 <select
                   name="associatedTools"                 {# same name as before (minus camelCase) #}
                   id="associatedTools"
                   multiple                                {# remove if you want single-select #}
-                  class="mt-1 block w-full rounded-md border border-gray-300
-                  bg-white text-sm px-3 py-2 shadow-sm
-                  h-32 overflow-y-auto         /* consistent height & scroll */
-                  focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 >
                   {% for tool in tools %}
                     {# value can be tool.id, tool.slug, or any key you use later #}
@@ -378,24 +383,24 @@
                       class="block text-sm font-semibold text-red-600 mt-1"></span>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Associated Resources (comma-separated IDs)</label
                 >
                 <input
                   type="text"
                   name="associatedResources"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="e.g., resource1, resource2"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Associated Prompts (comma-separated IDs)</label
                 >
                 <input
                   type="text"
                   name="associatedPrompts"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="e.g., prompt1, prompt2"
                 />
               </div>
@@ -415,8 +420,8 @@
       <!-- Tools Panel -->
       <div id="tools-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-2xl font-bold">Registered Tools</h2>
-          <p class="text-sm text-gray-600 mt-1">This is the global catalog of Tools available. Create a Virtual Server using one of these tools.</p>
+          <h2 class="text-2xl font-bold dark:text-gray-200">Registered Tools</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">This is the global catalog of Tools available. Create a Virtual Server using one of these tools.</p>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -426,88 +431,88 @@
             />
             <label
               for="show-inactive-tools"
-              class="text-sm font-medium text-gray-700"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
               >Show Inactive</label
             >
           </div>
         </div>
-        <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
+              <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12"
                   >
                     S. No.
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24"
                   >
                     Name
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24"
                   >
                     URL
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12"
                   >
                     Type
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12"
                   >
                     Request Type
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Description
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12"
                   >
                     Status
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-32"
                   >
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for tool in tools %}
                 <tr>
                   <td
-                    class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12"
+                    class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12 dark:text-gray-100"
                   >
                     {{ loop.index }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24"
+                    class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24 dark:text-gray-100"
                   >
                     {{ tool.name }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 w-24"
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500 w-24"
                   >
                     {{ tool.url }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 w-12"
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500 w-12"
                   >
                     {{ tool.integrationType }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 w-12"
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500 w-12"
                   >
                     {{ tool.requestType }}
                   </td>
                   <td
-                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500"
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {{ tool.description }}
                   </td>
@@ -559,7 +564,7 @@
                     {% endif %}
                     <button
                       onclick="viewTool('{{ tool.id }}')"
-                      class="text-indigo-600 hover:text-indigo-900 mr-2"
+                      class="text-red-600 dark:text-indigo-500 hover:text-indigo-900 mr-2"
                     >
                       View
                     </button>
@@ -590,49 +595,49 @@
           </div>
         </div>
 
-        <div class="bg-white shadow rounded-lg p-6">
-          <h3 class="text-lg font-bold mb-4">Add New Tool</h3>
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+          <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Tool</h3>
           <form id="add-tool-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >URL</label
                 >
                 <input
                   type="url"
                   name="url"
                   required
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Description</label
                 >
                 <textarea
                   name="description"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Integration Type</label
                 >
                 <select
                   id="integrationType"
                   name="integrationType"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   onchange="updateRequestTypeOptions()"
                 >
                   <option value="MCP">MCP</option>
@@ -640,33 +645,33 @@
                 </select>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Request Type</label
                 >
                 <select
                   id="requestType"
                   name="requestType"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 >
                   <!-- options will be filled by JS -->
                 </select>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Headers (JSON)</label
                 >
                 <textarea
                   name="headers"
                   id="headers-editor"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Input Schema (JSON)</label
                 >
                 <div class="mb-2">
-                  <label class="mr-4">
+                  <label class="mr-4 dark:text-gray-300">
                     <input
                       type="radio"
                       name="schema_input_mode"
@@ -675,7 +680,7 @@
                     />
                     Schema Builder
                   </label>
-                  <label>
+                  <label class="dark:text-gray-300">
                     <input type="radio" name="schema_input_mode" value="json" />
                     JSON Input
                   </label>
@@ -694,29 +699,29 @@
                   <textarea
                     name="input_schema"
                     id="schema-editor"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   ></textarea>
                 </div>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Json Path Filter</label
                 >
                 <input
                   type="text"
                   name="jsonpath_filter"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <!-- Authentication Section -->
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Authentication Type</label
                 >
                 <select
                   name="auth_type"
                   id="auth-type"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 >
                   <option value="">None</option>
                   <option value="basic">Basic</option>
@@ -732,7 +737,7 @@
                   <input
                     type="text"
                     name="auth_username"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
                 <div>
@@ -742,7 +747,7 @@
                   <input
                     type="password"
                     name="auth_password"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
               </div>
@@ -754,7 +759,7 @@
                   <input
                     type="password"
                     name="auth_token"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
               </div>
@@ -766,7 +771,7 @@
                   <input
                     type="text"
                     name="auth_header_key"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
                 <div>
@@ -776,7 +781,7 @@
                   <input
                     type="password"
                     name="auth_header_value"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     placeholder="********"
                   />
                 </div>
@@ -797,8 +802,8 @@
       <!-- Resources Panel -->
       <div id="resources-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-2xl font-bold">Available Resources</h2>
-          <p class="text-sm text-gray-600 mt-1">Resources are reusable data assets—like text, code, or media—that Tools and Prompts can reference by URI.</p>
+          <h2 class="text-2xl font-bold dark:text-gray-200">Available Resources</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Resources are reusable data assets—like text, code, or media—that Tools and Prompts can reference by URI.</p>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -808,77 +813,77 @@
             />
             <label
               for="show-inactive-resources"
-              class="text-sm font-medium text-gray-700"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
               >Show Inactive</label
             >
           </div>
         </div>
-        <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
+              <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     ID
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     URI
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Name
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Description
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     MIME Type
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Status
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for resource in resources %}
                 <tr>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ resource.id }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ resource.uri }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ resource.name }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ resource.description or "N/A" }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ resource.mimeType or "N/A" }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -922,7 +927,7 @@
                     {% endif %}
                     <button
                       onclick="viewResource('{{ resource.uri }}')"
-                      class="text-indigo-600 hover:text-indigo-900 mr-2"
+                      class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2"
                     >
                       View
                     </button>
@@ -953,54 +958,54 @@
           </div>
         </div>
 
-        <div class="bg-white shadow rounded-lg p-6">
-          <h3 class="text-lg font-bold mb-4">Add New Resource</h3>
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+          <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Resource</h3>
           <form id="add-resource-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >URI</label
                 >
                 <input
                   type="text"
                   name="uri"
                   required
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Description</label
                 >
                 <textarea
                   name="description"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >MIME Type</label
                 >
                 <input
                   type="text"
                   name="mimeType"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="text/plain"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Content</label
                 >
                 <textarea
@@ -1028,8 +1033,8 @@
       <!-- Prompts Panel -->
       <div id="prompts-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-2xl font-bold">Available Prompts</h2>
-          <p class="text-sm text-gray-600 mt-1">Prompts define reusable message templates with parameters, useful for driving LLM interactions or Tool input.</p>
+          <h2 class="text-2xl font-bold dark:text-gray-200">Available Prompts</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Prompts define reusable message templates with parameters, useful for driving LLM interactions or Tool input.</p>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -1039,65 +1044,65 @@
             />
             <label
               for="show-inactive-prompts"
-              class="text-sm font-medium text-gray-700"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
               >Show Inactive</label
             >
           </div>
         </div>
-        <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
+              <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     ID
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Name
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Description
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Arguments
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Status
                   </th>
                   <th
-                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for prompt in prompts %}
                 <tr>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ prompt.id }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ prompt.name }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ prompt.description }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {% for arg in prompt.arguments %}{{ arg.name }}{% if not
                     loop.last %}, {% endif %}{% endfor %}
                   </td>
@@ -1142,7 +1147,7 @@
                     {% endif %}
                     <button
                       onclick="viewPrompt('{{ prompt.name }}')"
-                      class="text-indigo-600 hover:text-indigo-900 mr-2"
+                      class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2"
                     >
                       View
                     </button>
@@ -1173,32 +1178,32 @@
           </div>
         </div>
 
-        <div class="bg-white shadow rounded-lg p-6">
-          <h3 class="text-lg font-bold mb-4">Add New Prompt</h3>
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+          <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Prompt</h3>
           <form method="POST" action="{{ root_path }}/admin/prompts" id="add-prompt-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Description</label
                 >
                 <textarea
                   name="description"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Template</label
                 >
                 <textarea
@@ -1210,13 +1215,13 @@
                 </textarea>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Arguments (JSON)</label
                 >
                 <textarea
                   name="arguments"
                   id="prompt-args-editor"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="[{'name':'arg1','description':'Argument 1','required':true}]"
                 ></textarea>
               </div>
@@ -1236,8 +1241,8 @@
       <!-- Gateways Panel -->
       <div id="gateways-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-2xl font-bold">Federated Gateways (MCP Registry)</h2>
-          <p class="text-sm text-gray-600 mt-1">Gateways are where you register external MCP servers to federate their tools/resources/prompts into your environment.</p>
+          <h2 class="text-2xl font-bold dark:text-gray-200">Federated Gateways (MCP Registry)</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Gateways are where you register external MCP servers to federate their tools/resources/prompts into your environment.</p>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -1247,62 +1252,62 @@
             />
             <label
               for="show-inactive-gateways"
-              class="text-sm font-medium text-gray-700"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
               >Show Inactive</label
             >
           </div>
         </div>
-        <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
+              <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     S. No.
                   </th>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Name
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider w-24"
                   >
                     URL
                   </th>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Status
                   </th>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Last Seen
                   </th>
                   <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for gateway in gateways %}
                 <tr>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ loop.index }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
                     {{ gateway.name }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ gateway.url }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -1312,7 +1317,7 @@
                       {{ "Active" if gateway.isActive else "Inactive" }}
                     </span>
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                     gateway.lastSeen else 'Never' }}
                   </td>
@@ -1350,7 +1355,7 @@
                     {% endif %}
                     <button
                       onclick="viewGateway('{{ gateway.id }}')"
-                      class="text-indigo-600 hover:text-indigo-900 mr-2"
+                      class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2"
                     >
                       View
                     </button>
@@ -1381,61 +1386,61 @@
           </div>
         </div>
 
-        <div class="bg-white shadow rounded-lg p-6">
-          <h3 class="text-lg font-bold mb-4">Add New Gateway</h3>
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+          <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Gateway</h3>
           <form id="add-gateway-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >URL</label
                 >
                 <input
                   type="url"
                   name="url"
                   required
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Description</label
                 >
                 <textarea
                   name="description"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-700"
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Transport Type</label
                 >
                 <select
                   name="transport"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 >
                   <option value="SSE" selected>SSE</option>
                   <option value="STREAMABLEHTTP">Streamable HTTP</option>
                 </select>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Authentication Type</label
                 >
                 <select
                   name="auth_type"
                   id="auth-type-gw"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 >
                   <option value="">None</option>
                   <option value="basic">Basic</option>
@@ -1451,7 +1456,7 @@
                   <input
                     type="text"
                     name="auth_username"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
                 <div>
@@ -1461,7 +1466,7 @@
                   <input
                     type="password"
                     name="auth_password"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
               </div>
@@ -1473,7 +1478,7 @@
                   <input
                     type="password"
                     name="auth_token"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
               </div>
@@ -1485,7 +1490,7 @@
                   <input
                     type="text"
                     name="auth_header_key"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
                 <div>
@@ -1495,7 +1500,7 @@
                   <input
                     type="password"
                     name="auth_header_value"
-                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     placeholder="********"
                   />
                 </div>
@@ -1520,10 +1525,10 @@
       <!-- Roots Panel -->
       <div id="roots-panel" class="tab-panel hidden">
         <!-- List of roots ------------------------------------------------------->
-        <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <!-- Consistent header -->
           <div class="flex justify-between items-center mb-4">
-            <h2 class="text-2xl font-bold">Root Directories</h2>
+            <h2 class="text-2xl font-bold dark:text-gray-200">Root Directories</h2>
             <div class="flex items-center">
               <input
                 type="checkbox"
@@ -1533,7 +1538,7 @@
               />
               <label
                 for="show-inactive-roots"
-                class="text-sm font-medium text-gray-700"
+                class="text-sm font-medium text-gray-700 dark:text-gray-300"
               >
                 Show Inactive
               </label>
@@ -1541,7 +1546,7 @@
           </div>
 
           <!-- Description -->
-          <p class="text-sm text-gray-600 mb-4">
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
             Roots define the base folders accessible for file-based Resources.
             They enable MCP servers to browse local content.
           </p>
@@ -1549,32 +1554,32 @@
           <!-- Roots table -->
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
+              <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     ID
                   </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     URI
                   </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Name
                   </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
+              <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {% for root in roots %}
                 <tr>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                     {{ root.id }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100s">
                     {{ root.uri }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ root.name }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -1597,8 +1602,8 @@
         </div>
 
         <!-- Add new root -------------------------------------------------------->
-        <div class="bg-white shadow rounded-lg p-6">
-          <h3 class="text-lg font-bold mb-4">Add New Root</h3>
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+          <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Root</h3>
           <form method="POST" action="{{ root_path }}/admin/roots" id="add-root-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
@@ -1607,7 +1612,7 @@
                   type="text"
                   name="uri"
                   required
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="file:///path/to/directory"
                 />
               </div>
@@ -1616,7 +1621,7 @@
                 <input
                   type="text"
                   name="name"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="My Project"
                 />
               </div>
@@ -1637,9 +1642,9 @@
 
     <!-- Metrics Panel -->
     <div id="metrics-panel" class="tab-panel hidden">
-      <div class="bg-white shadow rounded-lg p-6">
-        <h2 class="text-2xl font-bold mb-4">Aggregated Metrics</h2>
-        <p class="text-sm text-gray-600 mt-1">Metrics provide visibility into Tool, Resource, Prompt, and Server usage across your Gateway—helpful for debugging and optimization.</p>
+      <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+        <h2 class="text-2xl font-bold dark:text-gray-200 mb-4">Aggregated Metrics</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Metrics provide visibility into Tool, Resource, Prompt, and Server usage across your Gateway—helpful for debugging and optimization.</p>
 
         <!-- Refresh button (also auto-refreshes when the tab is selected) -->
         <button
@@ -1650,37 +1655,37 @@
         </button>
 
         <!-- Aggregated Metrics Table -->
-        <div id="aggregated-metrics-content" class="overflow-auto mb-6"></div>
+        <div id="aggregated-metrics-content" class="overflow-auto mb-6 bg-gray-100"></div>
 
         <!-- Overall Bar Chart for Total Executions -->
-        <canvas id="metricsChart" width="400" height="200"></canvas>
+        <canvas id="metricsChart" width="400" height="200" class="bg-white"></canvas>
 
         <hr class="my-6" />
 
         <!-- Expandable sections for top items -->
         <details id="top-tools-details" class="mb-4">
-          <summary class="text-xl font-semibold cursor-pointer">
+          <summary class="text-xl font-semibold cursor-pointer dark:text-gray-200">
             Top Tools by Executions
           </summary>
           <div id="top-tools-content" class="mt-4"></div>
         </details>
 
         <details id="top-resources-details" class="mb-4">
-          <summary class="text-xl font-semibold cursor-pointer">
+          <summary class="text-xl font-semibold cursor-pointer dark:text-gray-200">
             Top Resources by Executions
           </summary>
           <div id="top-resources-content" class="mt-4"></div>
         </details>
 
         <details id="top-servers-details" class="mb-4">
-          <summary class="text-xl font-semibold cursor-pointer">
+          <summary class="text-xl font-semibold cursor-pointer dark:text-gray-200">
             Top Servers by Executions
           </summary>
           <div id="top-servers-content" class="mt-4"></div>
         </details>
 
         <details id="top-prompts-details" class="mb-4">
-          <summary class="text-xl font-semibold cursor-pointer">
+          <summary class="text-xl font-semibold cursor-pointer dark:text-gray-200">
             Top Prompts by Executions
           </summary>
           <div id="top-prompts-content" class="mt-4"></div>
@@ -1701,15 +1706,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Tool Details</h3>
-            <div class="mt-4 space-y-4" id="tool-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Tool Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="tool-details"></div>
           </div>
-          <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+          <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('tool-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -1730,10 +1735,10 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
             <h3
               id="tool-test-modal-title"
-              class="text-lg font-medium text-gray-900"
+              class="text-lg font-medium text-gray-900 dark:text-gray-100"
             >
               Test Tool
             </h3>
@@ -1763,15 +1768,15 @@
             <!-- The result area now uses a fixed height for a larger view -->
             <div
               id="tool-test-result"
-              class="mt-4 bg-gray-100 p-2 rounded overflow-auto"
+              class="mt-4 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300"
               style="height: 400px"
             ></div>
           </div>
-          <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+          <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('tool-test-modal', 'tool-test-result')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -1794,8 +1799,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Tool</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Tool</h3>
             <div class="mt-4">
               <form id="edit-tool-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -1808,7 +1813,7 @@
                       name="name"
                       required
                       id="edit-tool-name"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -1820,7 +1825,7 @@
                       name="url"
                       required
                       id="edit-tool-url"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -1830,7 +1835,7 @@
                     <textarea
                       name="description"
                       id="edit-tool-description"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
                   </div>
                   <div>
@@ -1840,7 +1845,7 @@
                     <select
                       name="integrationType"
                       id="edit-tool-type"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     >
                       <option value="MCP">MCP</option>
                       <option value="REST">REST</option>
@@ -1853,7 +1858,7 @@
                     <select
                       name="requestType"
                       id="edit-tool-request-type"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     >
                       <!-- Will be populated dynamically -->
                     </select>
@@ -1865,7 +1870,7 @@
                     <textarea
                       name="headers"
                       id="edit-tool-headers"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
                   </div>
                   <div>
@@ -1875,7 +1880,7 @@
                     <textarea
                       name="input_schema"
                       id="edit-tool-schema"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
                   </div>
                   <!-- Authentication Section -->
@@ -1886,7 +1891,7 @@
                     <select
                       name="auth_type"
                       id="edit-auth-type"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     >
                       <option value="">None</option>
                       <option value="basic">Basic</option>
@@ -1903,7 +1908,7 @@
                         type="text"
                         name="auth_username"
                         id="edit-auth-username"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>
                     <div>
@@ -1914,7 +1919,7 @@
                         type="password"
                         name="auth_password"
                         id="edit-auth-password"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         placeholder="********"
                       />
                     </div>
@@ -1928,7 +1933,7 @@
                         type="password"
                         name="auth_token"
                         id="edit-auth-token"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         placeholder="********"
                       />
                     </div>
@@ -1943,7 +1948,7 @@
                       type="text"
                       name="auth_header_key"
                       id="edit-auth-key"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -1954,16 +1959,16 @@
                       type="password"
                       name="auth_header_value"
                       id="edit-auth-value"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="********"
                     />
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('tool-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
@@ -1992,15 +1997,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Resource Details</h3>
-            <div class="mt-4 space-y-4" id="resource-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Resource Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="resource-details"></div>
           </div>
-          <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+          <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('resource-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -2023,8 +2028,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Resource</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Resource</h3>
             <div class="mt-4">
               <form id="edit-resource-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -2039,7 +2044,7 @@
                       required
                       id="edit-resource-uri"
                       readonly
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -2051,7 +2056,7 @@
                       name="name"
                       required
                       id="edit-resource-name"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -2061,7 +2066,7 @@
                     <textarea
                       name="description"
                       id="edit-resource-description"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
                   </div>
                   <div>
@@ -2072,7 +2077,7 @@
                       type="text"
                       name="mimeType"
                       id="edit-resource-mime-type"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -2087,11 +2092,11 @@
                     ></textarea>
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('resource-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
@@ -2120,15 +2125,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Prompt Details</h3>
-            <div class="mt-4 space-y-4" id="prompt-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Prompt Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="prompt-details"></div>
           </div>
-          <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+          <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('prompt-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -2151,8 +2156,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Prompt</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Prompt</h3>
             <div class="mt-4">
               <form id="edit-prompt-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -2165,7 +2170,7 @@
                       name="name"
                       required
                       id="edit-prompt-name"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -2175,7 +2180,7 @@
                     <textarea
                       name="description"
                       id="edit-prompt-description"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
                   </div>
                   <div>
@@ -2196,15 +2201,15 @@
                     <textarea
                       name="arguments"
                       id="edit-prompt-arguments"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('prompt-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
@@ -2233,15 +2238,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Gateway Details</h3>
-            <div class="mt-4 space-y-4" id="gateway-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Gateway Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="gateway-details"></div>
           </div>
-          <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+          <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('gateway-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -2264,8 +2269,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Gateway</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Gateway</h3>
             <div class="mt-4">
               <form id="edit-gateway-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -2278,7 +2283,7 @@
                       name="name"
                       required
                       id="edit-gateway-name"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -2290,7 +2295,7 @@
                       name="url"
                       required
                       id="edit-gateway-url"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -2300,7 +2305,7 @@
                     <textarea
                       name="description"
                       id="edit-gateway-description"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
                   </div>
                   <div>
@@ -2310,7 +2315,7 @@
                     <select
                       name="transport"
                       id="edit-gateway-transport"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     >
                       <option value="SSE" selected>SSE</option>
                       <option value="STREAMABLEHTTP">Streamable HTTP</option>
@@ -2323,7 +2328,7 @@
                     <select
                       name="auth_type"
                       id="auth-type-gw-edit"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     >
                       <option value="">None</option>
                       <option value="basic">Basic</option>
@@ -2339,7 +2344,7 @@
                       <input
                         type="text"
                         name="auth_username"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>
                     <div>
@@ -2349,7 +2354,7 @@
                       <input
                         type="password"
                         name="auth_password"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>
                   </div>
@@ -2361,7 +2366,7 @@
                       <input
                         type="password"
                         name="auth_token"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>
                   </div>
@@ -2373,7 +2378,7 @@
                       <input
                         type="text"
                         name="auth_header_key"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>
                     <div>
@@ -2383,17 +2388,17 @@
                       <input
                         type="password"
                         name="auth_header_value"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         placeholder="********"
                       />
                     </div>
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('gateway-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
@@ -2422,15 +2427,15 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Server Details</h3>
-            <div class="mt-4 space-y-4" id="server-details"></div>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Server Details</h3>
+            <div class="mt-4 space-y-4 bg-white dark:bg-gray-900" id="server-details"></div>
           </div>
-          <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+          <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
             <button
               type="button"
               onclick="closeModal('server-modal')"
-              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
             >
               Close
             </button>
@@ -2453,8 +2458,8 @@
         <div
           class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
         >
-          <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <h3 class="text-lg font-medium text-gray-900">Edit Server</h3>
+          <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Edit Server</h3>
             <div class="mt-4">
               <form id="edit-server-form" method="POST">
                 <div class="grid grid-cols-1 gap-6">
@@ -2468,7 +2473,7 @@
                       name="name"
                       required
                       id="edit-server-name"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
@@ -2478,7 +2483,7 @@
                     <textarea
                       name="description"
                       id="edit-server-description"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
                   </div>
                   <div>
@@ -2489,20 +2494,17 @@
                       type="url"
                       name="icon"
                       id="edit-server-icon"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
                   </div>
                   <div>
-                    <label for="edit-server-tools" class="block text-sm font-medium text-gray-700">
+                    <label for="edit-server-tools" class="block text-sm font-medium text-gray-700 dark:text-grey-300">
                       Associated Tools
                     </label>
                     <select id="edit-server-tools"
                             name="associatedTools"        {# same field name #}
                             multiple
-                            class="mt-1 block w-full rounded-md border border-gray-300
-                            bg-white text-sm px-3 py-2 shadow-sm
-                            h-32 overflow-y-auto         /* consistent height & scroll */
-                            focus:border-indigo-500 focus:ring-indigo-500"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   >
                       {% for tool in tools %}
                         <option value="{{ tool.id }}">{{ tool.name }}</option>
@@ -2521,7 +2523,7 @@
                       type="text"
                       name="associatedResources"
                       id="edit-server-resources"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="e.g., 3,4"
                     />
                   </div>
@@ -2533,16 +2535,16 @@
                       type="text"
                       name="associatedPrompts"
                       id="edit-server-prompts"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="e.g., 5,6"
                     />
                   </div>
                 </div>
-                <div class="mt-6 flex justify-end space-x-3">
+                <div class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100">
                   <button
                     type="button"
                     onclick="closeModal('server-edit-modal')"
-                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                   >
                     Cancel
                   </button>
@@ -2581,5 +2583,6 @@
       window.ROOT_PATH = {{ root_path | tojson }};
       window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
   </body>
 </html>

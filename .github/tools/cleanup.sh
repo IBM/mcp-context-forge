@@ -92,7 +92,7 @@ fi
 ##############################################################################
 ORG="ibm"
 PKG="mcp-context-forge"
-KEEP_TAGS=( "0.1.0" "v0.1.0" "0.1.1" "v0.1.1" "latest" )
+KEEP_TAGS=( "0.1.0" "v0.1.0" "0.1.1" "v0.1.1" "0.2.0" "v0.2.0" "latest" )
 PER_PAGE=100
 
 DRY_RUN=${DRY_RUN:-true}          # default safe
