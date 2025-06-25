@@ -275,6 +275,35 @@ redis:
     type: ClusterIP
     port: 6379
 
+  # ─── Resource limits & requests ───
+  resources:
+    limits:
+      cpu: 100m          # cap at 0.1 core, 256 MiB
+      memory: 256Mi
+    requests:
+      cpu: 50m           # reserve 0.05 core, 128 MiB
+      memory: 16Mi
+
+  # ─── Health & readiness probes ───
+  probes:
+    readiness:
+      type: exec
+      command: ["redis-cli", "PING"]
+      initialDelaySeconds: 3
+      periodSeconds: 10
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 3
+
+    liveness:
+      type: exec
+      command: ["redis-cli", "PING"]
+      initialDelaySeconds: 5
+      periodSeconds: 15
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 5
+
 ########################################################################
 # PGADMIN — Web UI for Postgres
 ########################################################################
