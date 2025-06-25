@@ -223,6 +223,13 @@ oci://ghcr.io/ibm/mcp-context-forge
 | Env vars missing         | Secret/ConfigMap not mounted          | Confirm `envFrom` refs and resource existence      |
 | RBAC access denied       | Roles/Bindings not created            | Set `rbac.create=true` or add roles manually       |
 
+You can use the `helm template` and `yq` and check your templates. Example:
+
+```bash
+helm lint .
+helm template . | yq '.spec.template.spec.containers[0] | {readinessProbe,livenessProbe}'
+```
+
 ---
 
 ## Common Values Reference

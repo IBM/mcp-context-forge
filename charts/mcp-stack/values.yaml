@@ -25,6 +25,28 @@ mcpContextForge:
 
   containerPort: 4444           # port the app listens on inside the pod
 
+  # Health & readiness probes
+  probes:
+    readiness:
+      type: http
+      path: /ready
+      port: 4444
+      initialDelaySeconds: 5 # wait 5 s after container start
+      periodSeconds: 10      # check every 10 s
+      timeoutSeconds: 2      # fail if no response in 2 s
+      successThreshold: 1    # one success flips it back to healthy
+      failureThreshold: 3    # three failures mark pod un-ready
+
+    liveness:
+      type: http
+      path: /health
+      port: 4444
+      initialDelaySeconds: 5
+      periodSeconds: 15
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 3
+
   # Kubernetes resource requests / limits
   resources:
     limits:
