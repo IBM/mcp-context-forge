@@ -250,3 +250,21 @@ redisCommander:
   service:
     type: ClusterIP
     port: 8081
+
+########################################################################
+# MCP-FAST-TIME-SERVER — optional high-performance time server for MCP (go)
+# Provides a fast implementation including SSE and Streamable HTTP
+########################################################################
+mcpFastTimeServer:
+  enabled: false
+  image:
+    repository: ghcr.io/ibm/fast-time-server
+    tag: "0.2.0"
+    pullPolicy: IfNotPresent
+  port: 8080
+  replicaCount: 2
+  ingress:
+    enabled: true
+    path: /fast-time
+    pathType: Prefix
+    servicePort: 80

@@ -1,0 +1,22 @@
+{{- if .Values.mcpFastTimeServer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-fast-time-server
+spec:
+  replicas: {{ .Values.mcpFastTimeServer.replicaCount }}
+  selector:
+    matchLabels:
+      app: mcp-fast-time-server
+  template:
+    metadata:
+      labels:
+        app: mcp-fast-time-server
+    spec:
+      containers:
+        - name: mcp-fast-time-server
+          image: "{{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}"
+          imagePullPolicy: {{ .Values.mcpFastTimeServer.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.mcpFastTimeServer.port }}
+{{- end }}
