@@ -244,7 +244,7 @@ class ResourceService:
 
         Args:
             db (Session): The SQLAlchemy database session.
-            server_id (int): Server ID
+            server_id (str): Server ID
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
 

@@ -566,7 +566,7 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user: str = 
     Retrieves a server by its ID.
 
     Args:
-        server_id (int): The ID of the server to retrieve.
+        server_id (str): The ID of the server to retrieve.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -624,7 +624,7 @@ async def update_server(
     Updates the information of an existing server.
 
     Args:
-        server_id (int): The ID of the server to update.
+        server_id (str): The ID of the server to update.
         server (ServerUpdate): The updated server data.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -657,7 +657,7 @@ async def toggle_server_status(
     Toggles the status of a server (activate or deactivate).
 
     Args:
-        server_id (int): The ID of the server to toggle.
+        server_id (str): The ID of the server to toggle.
         activate (bool): Whether to activate or deactivate the server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -683,7 +683,7 @@ async def delete_server(server_id: str, db: Session = Depends(get_db), user: str
     Deletes a server by its ID.
 
     Args:
-        server_id (int): The ID of the server to delete.
+        server_id (str): The ID of the server to delete.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -799,7 +799,7 @@ async def server_get_tools(
     that have been deactivated but not deleted from the system.
 
     Args:
-        server_id (int): ID of the server
+        server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive tools in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -827,7 +827,7 @@ async def server_get_resources(
     to view or manage resources that have been deactivated but not deleted.
 
     Args:
-        server_id (int): ID of the server
+        server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive resources in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -855,7 +855,7 @@ async def server_get_prompts(
     prompts that have been deactivated but not deleted from the system.
 
     Args:
-        server_id (int): ID of the server
+        server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive prompts in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -982,7 +982,7 @@ async def update_tool(
     Updates an existing tool with new data.
 
     Args:
-        tool_id (int): The ID of the tool to update.
+        tool_id (str): The ID of the tool to update.
         tool (ToolUpdate): The updated tool information.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
@@ -1006,7 +1006,7 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user: str = D
     Permanently deletes a tool by ID.
 
     Args:
-        tool_id (int): The ID of the tool to delete.
+        tool_id (str): The ID of the tool to delete.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -1035,7 +1035,7 @@ async def toggle_tool_status(
     Activates or deactivates a tool.
 
     Args:
-        tool_id (int): The ID of the tool to toggle.
+        tool_id (str): The ID of the tool to toggle.
         activate (bool): Whether to activate (`True`) or deactivate (`False`) the tool.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
@@ -1489,7 +1489,7 @@ async def toggle_gateway_status(
     Toggle the activation status of a gateway.
 
     Args:
-        gateway_id (int): Numeric ID of the gateway to toggle.
+        gateway_id (str): String ID of the gateway to toggle.
         activate (bool): ``True`` to activate, ``False`` to deactivate.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.

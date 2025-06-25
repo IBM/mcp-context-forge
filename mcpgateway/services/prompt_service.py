@@ -258,7 +258,7 @@ class PromptService:
 
         Args:
             db (Session): The SQLAlchemy database session.
-            server_id (int): Server ID
+            server_id (str): Server ID
             include_inactive (bool): If True, include inactive prompts in the result.
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
