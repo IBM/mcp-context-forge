@@ -227,10 +227,10 @@ class GatewayService:
             db.refresh(db_gateway)
 
             # # Update tracking
-            # self._active_gateways.add(db_gateway.url)
+            self._active_gateways.add(db_gateway.url)
 
             # # Notify subscribers
-            # await self._notify_gateway_added(db_gateway)
+            await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(gateway)
         except* GatewayConnectionError as ge:
