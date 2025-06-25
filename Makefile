@@ -1427,6 +1427,7 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # help: minikube-stop           - Stop the cluster
 # help: minikube-delete         - Delete the cluster completely
 # help: minikube-tunnel         - Run "minikube tunnel" (LoadBalancer) in foreground
+# help: minikube-port-forward   - Run kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
 # help: minikube-dashboard      - Print & (best‑effort) open the Kubernetes dashboard URL
 # help: minikube-image-load     - Load $(IMAGE) into Minikube container runtime
 # help: minikube-k8s-apply      - Apply manifests from k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
@@ -1438,7 +1439,8 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 
 .PHONY: minikube-install helm-install minikube-start minikube-stop minikube-delete \
         minikube-tunnel minikube-dashboard minikube-image-load minikube-k8s-apply \
-        minikube-status minikube-context minikube-ssh minikube-reset minikube-registry-url
+        minikube-status minikube-context minikube-ssh minikube-reset minikube-registry-url \
+        minikube-port-forward
 
 # -----------------------------------------------------------------------------
 # 🚀  INSTALLATION HELPERS
@@ -1485,6 +1487,10 @@ minikube-delete:
 minikube-tunnel:
 	@echo "🌐 Starting minikube tunnel (Ctrl+C to quit) …"
 	minikube -p $(MINIKUBE_PROFILE) tunnel
+
+minikube-port-forward:
+	@echo "🔌 Forwarding http://localhost:8080 → svc/mcp-stack-mcpgateway:80 in namespace mcp-private  (Ctrl+C to stop)…"
+	kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
 
 minikube-dashboard:
 	@echo "📊 Fetching dashboard URL …"
