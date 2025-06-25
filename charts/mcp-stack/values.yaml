@@ -245,7 +245,7 @@ postgres:
     readiness:
       type: exec
       command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
-      initialDelaySeconds: 5
+      initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 3
       successThreshold: 1
@@ -368,6 +368,37 @@ redisCommander:
   service:
     type: ClusterIP
     port: 8081
+
+  # ─── Resource limits & requests ───
+  resources:
+    limits:
+      cpu: 100m          # cap at 0.1 core, 256 MiB
+      memory: 256Mi
+    requests:
+      cpu: 50m           # reserve 0.05 core, 128 MiB
+      memory: 128Mi
+
+  # ─── Health & readiness probes ───
+  probes:
+    readiness:
+      type: http
+      path: /              # root returns 200 OK
+      port: 8081
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 3
+
+    liveness:
+      type: http
+      path: /
+      port: 8081
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 5
 
 ########################################################################
 # MCP-FAST-TIME-SERVER — optional high-performance time server for MCP (go)
