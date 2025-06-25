@@ -17,6 +17,24 @@ spec:
         - name: mcp-fast-time-server
           image: "{{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}"
           imagePullPolicy: {{ .Values.mcpFastTimeServer.image.pullPolicy }}
+
+          # ─── Service port exposed inside the pod ───
           ports:
             - containerPort: {{ .Values.mcpFastTimeServer.port }}
+
+          # ─── Readiness probe ───
+          {{- with .Values.mcpFastTimeServer.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Liveness probe ───
+          {{- with .Values.mcpFastTimeServer.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Resource limits & requests ───
+          resources:
+{{- toYaml .Values.mcpFastTimeServer.resources | nindent 12 }}
 {{- end }}

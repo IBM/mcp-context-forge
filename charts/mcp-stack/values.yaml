@@ -92,6 +92,13 @@ mcpContextForge:
   # Rendered into a ConfigMap; readable by anyone with GET access.
   ####################################################################
   config:
+    # - Gunicorn settings ─
+    GUNICORN_WORKERS: "3"               # number of worker processes
+    GUNICORN_TIMEOUT: "600"             # worker timeout in seconds
+    GUNICORN_MAX_REQUESTS: "10000"      # max requests per worker before restart
+    GUNICORN_MAX_REQUESTS_JITTER: "100" # random jitter to avoid thundering herd
+    GUNICORN_PRELOAD_APP: "true"        # preload app code before forking workers (TODO: not implemented yet)
+
     # ─ Basic application info ─
     APP_NAME: MCP_Gateway
     HOST: 0.0.0.0
@@ -224,6 +231,35 @@ postgres:
     user: admin
     password: test123           # CHANGE ME in production!
 
+  # ─── Resource limits & requests ───
+  resources:
+    limits:
+      cpu: 1000m          # 1 core hard cap
+      memory: 1Gi
+    requests:
+      cpu: 500m           # guaranteed half-core
+      memory: 500Mi
+
+  # ─── Health & readiness probes ───
+  probes:
+    readiness:
+      type: exec
+      command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      successThreshold: 1
+      failureThreshold: 3
+
+    liveness:
+      type: exec
+      command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 3
+      successThreshold: 1
+      failureThreshold: 5
+
 ########################################################################
 # REDIS CACHE
 ########################################################################
@@ -278,15 +314,48 @@ redisCommander:
 # Provides a fast implementation including SSE and Streamable HTTP
 ########################################################################
 mcpFastTimeServer:
-  enabled: false
+  enabled: true            # switch to true to deploy
+  replicaCount: 2
   image:
     repository: ghcr.io/ibm/fast-time-server
     tag: "0.2.0"
     pullPolicy: IfNotPresent
   port: 8080
-  replicaCount: 2
+
+  # Ingress example (leave as-is if you already have it)
   ingress:
     enabled: true
     path: /fast-time
     pathType: Prefix
     servicePort: 80
+
+  # ─── Health & readiness probes ───
+  probes:
+    readiness:
+      type: http
+      path: /health
+      port: 8080
+      initialDelaySeconds: 3
+      periodSeconds: 10
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 3
+
+    liveness:
+      type: http
+      path: /health
+      port: 8080
+      initialDelaySeconds: 3
+      periodSeconds: 15
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 3
+
+  # Tiny Go process: ~10 MB runtime footprint
+  resources:
+    limits:
+      cpu: 50m           # ~5 % of a core
+      memory: 64Mi
+    requests:
+      cpu: 25m
+      memory: 32Mi

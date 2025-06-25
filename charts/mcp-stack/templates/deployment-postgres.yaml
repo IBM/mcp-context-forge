@@ -3,6 +3,8 @@
      -------------------------------------------------------------------
      • Pods are labelled <release>-mcp-stack-postgres so the Service
        selector (also templated) matches correctly.
+     • Adds exec-based readiness & liveness probes (pg_isready).
+     • Adds resource requests / limits pulled from values.yaml.
      ------------------------------------------------------------------- */}}
 
 {{- if .Values.postgres.enabled }}
@@ -28,8 +30,22 @@ spec:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
           imagePullPolicy: "{{ .Values.postgres.image.pullPolicy }}"
+
+          # Expose Postgres TCP port inside the pod
           ports:
             - containerPort: {{ .Values.postgres.service.port }}
+
+          # ─── Readiness probe ───
+          {{- with .Values.postgres.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Liveness probe ───
+          {{- with .Values.postgres.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
 
           # ConfigMap holds non-secret tuning (postgresql.conf, etc.)
           # Secret stores POSTGRES_USER / POSTGRES_PASSWORD.
@@ -43,6 +59,10 @@ spec:
           volumeMounts:
             - name: postgredb
               mountPath: /var/lib/postgresql/data
+
+          # ─── Resource limits & requests ───
+          resources:
+{{- toYaml .Values.postgres.resources | nindent 12 }}
 
       volumes:
         - name: postgredb
