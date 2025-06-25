@@ -54,7 +54,7 @@ mcpContextForge:
       memory: 1024Mi
     requests:
       cpu: 100m
-      memory: 512Mi
+      memory: 256Mi
 
   # Optional ingress for HTTP traffic
   ingress:
@@ -93,7 +93,7 @@ mcpContextForge:
   ####################################################################
   config:
     # - Gunicorn settings ─
-    GUNICORN_WORKERS: "3"               # number of worker processes
+    GUNICORN_WORKERS: "2"               # number of worker processes
     GUNICORN_TIMEOUT: "600"             # worker timeout in seconds
     GUNICORN_MAX_REQUESTS: "10000"      # max requests per worker before restart
     GUNICORN_MAX_REQUESTS_JITTER: "100" # random jitter to avoid thundering herd
@@ -238,7 +238,7 @@ postgres:
       memory: 1Gi
     requests:
       cpu: 500m           # guaranteed half-core
-      memory: 500Mi
+      memory: 64Mi
 
   # ─── Health & readiness probes ───
   probes:
@@ -358,4 +358,4 @@ mcpFastTimeServer:
       memory: 64Mi
     requests:
       cpu: 25m
-      memory: 32Mi
+      memory: 10Mi
