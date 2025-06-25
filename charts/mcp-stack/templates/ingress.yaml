@@ -17,7 +17,7 @@ spec:
             pathType: {{ .Values.mcpContextForge.ingress.pathType }}
             backend:
               service:
-                name: {{ include "mcp-stack.fullname" . }}-app
+                name: {{ include "mcp-stack.fullname" . }}-mcpgateway
                 port:
                   number: {{ .Values.mcpContextForge.service.port }}
 {{- end }}

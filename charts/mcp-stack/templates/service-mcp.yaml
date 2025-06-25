@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "mcp-stack.fullname" . }}-app
+  name: {{ include "mcp-stack.fullname" . }}-mcpgateway
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.mcpContextForge.service.type }}
   selector:
-    app: {{ include "mcp-stack.fullname" . }}-app
+    app: {{ include "mcp-stack.fullname" . }}-mcpgateway
   ports:
     - port: {{ .Values.mcpContextForge.service.port }}
       targetPort: {{ .Values.mcpContextForge.containerPort }}
