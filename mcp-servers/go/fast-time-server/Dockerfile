@@ -31,6 +31,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # 📦  STAGE 2 – MINIMAL RUNTIME (scratch + tzdata + binary)
 # =============================================================================
 FROM scratch
+LABEL org.opencontainers.image.source https://github.com/IBM/mcp-context-forge
 
 # copy tzdata so time.LoadLocation works
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
