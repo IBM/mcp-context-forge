@@ -323,6 +323,37 @@ pgadmin:
     email: admin@example.com
     password: admin123           # CHANGE ME in production!
 
+  # ─── Resource limits & requests ───
+  resources:
+    limits:
+      cpu: 200m          # cap at 0.2 core, 256 MiB
+      memory: 256Mi
+    requests:
+      cpu: 100m          # reserve 0.1 core, 128 MiB
+      memory: 128Mi
+
+  # ─── Health & readiness probes ───
+  probes:
+    readiness:
+      type: http
+      path: /misc/ping      # lightweight endpoint
+      port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 3
+
+    liveness:
+      type: http
+      path: /misc/ping
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 5
+
 ########################################################################
 # REDIS-COMMANDER — Web UI for Redis
 ########################################################################
