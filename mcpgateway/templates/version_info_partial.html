@@ -1,4 +1,4 @@
-<div class="max-w-2xl mx-auto bg-white rounded-xl shadow-md overflow-hidden p-6">
+<div class="max-w-4xl overflow-hidden mx-auto bg-white rounded-xl shadow-md p-6 dark:bg-gray-800">
   <div class="md:flex md:space-x-6">
     <!-- Icon -->
     <div class="flex-shrink-0">
@@ -17,13 +17,13 @@
 
       <!-- App section -->
       <div class="mt-2">
-        <p class="text-lg font-medium text-black">App: {{ payload.app.name }}</p>
+        <p class="text-lg font-medium text-black dark:text-gray-200">App: {{ payload.app.name }}</p>
         <p class="text-gray-500">Git rev: {{ payload.app.git_revision or 'N/A' }}</p>
         <p class="text-gray-500">Protocol: {{ payload.app.mcp_protocol_version }}</p>
       </div>
 
       <!-- Host & runtime -->
-      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-x-4 text-gray-700 text-sm">
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-x-4 text-gray-700 text-sm dark:text-gray-300">
         <div>
           <p><span class="font-semibold">Host:</span> {{ payload.host }}</p>
           <p><span class="font-semibold">Uptime:</span> {{ payload.uptime_seconds }} s</p>
@@ -37,7 +37,7 @@
       </div>
 
       <!-- DB / Redis health -->
-      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-x-4 text-gray-700 text-sm">
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-x-4 text-gray-700 text-sm dark:text-gray-300">
         <div>
           <p class="font-semibold">Database</p>
           <p>Dialect: {{ payload.database.dialect }}</p>
@@ -62,7 +62,7 @@
       </div>
 
       <!-- System snapshot -->
-      <div class="mt-4 text-gray-700 text-sm">
+      <div class="mt-4 text-gray-700 text-sm dark:text-gray-300">
         <p class="font-semibold">System</p>
         <p>CPU: {{ payload.system.cpu_count }} × {{ payload.system.cpu_freq_mhz }} MHz</p>
         <p>Memory: {{ "{:.1f}".format(payload.system.mem_used_mb) }} / {{ payload.system.mem_total_mb }} MB</p>
@@ -77,9 +77,11 @@
       </button>
 
       <!-- Collapsible raw JSON (small & scrollable) -->
+      <div class="mt-2 bg-gray-100 dark:bg-gray-900 rounded overflow-auto" style="max-height: 220px;">
       <pre id="json-data"
-           class="mt-2 p-2 bg-gray-100 rounded text-xs overflow-auto"
-           style="max-height: 220px;">{{ payload | tojson(indent=2) }}</pre>
+           class="p-2 text-xs text-gray-800 dark:text-gray-300 whitespace-pre-wrap break-words"
+           >{{ payload | tojson(indent=2) }}</pre>
+      </div>
     </div>
   </div>
 </div>

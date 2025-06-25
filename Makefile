@@ -463,10 +463,38 @@ sbom:								## 🛡️  Generate SBOM & security report
 	@python3 -m venv "$(VENV_DIR).sbom"
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv && python3 -m uv pip install .[dev]"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install cyclonedx-bom sbom2doc"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m cyclonedx_py environment --validate '$(VENV_DIR).sbom' --pyproject pyproject.toml --gather-license-texts > $(PROJECT_NAME).sbom.json"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && sbom2doc -i $(PROJECT_NAME).sbom.json -f markdown -o $(DOCS_DIR)/docs/test/sbom.md"
-	@trivy sbom $(PROJECT_NAME).sbom.json | tee -a $(DOCS_DIR)/docs/test/sbom.md
-	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pdm outdated | tee -a $(DOCS_DIR)/docs/test/sbom.md"
+	@echo "🔍  Generating SBOM from environment..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m cyclonedx_py environment \
+			--output-format XML \
+			--output-file $(PROJECT_NAME).sbom.xml \
+			--no-validate \
+			'$(VENV_DIR).sbom/bin/python'"
+	@echo "📁  Creating docs directory structure..."
+	@mkdir -p $(DOCS_DIR)/docs/test
+	@echo "📋  Converting SBOM to markdown..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		sbom2doc -i $(PROJECT_NAME).sbom.xml -f markdown -o $(DOCS_DIR)/docs/test/sbom.md"
+	@echo "🔒  Running security scans..."
+	@/bin/bash -c "if command -v trivy >/dev/null 2>&1; then \
+		echo '## Trivy Vulnerability Scan' >> $(DOCS_DIR)/docs/test/sbom.md; \
+		echo '' >> $(DOCS_DIR)/docs/test/sbom.md; \
+		trivy sbom $(PROJECT_NAME).sbom.xml | tee -a $(DOCS_DIR)/docs/test/sbom.md; \
+	else \
+		echo '⚠️  trivy not found, skipping vulnerability scan'; \
+		echo '## Security Scan' >> $(DOCS_DIR)/docs/test/sbom.md; \
+		echo '' >> $(DOCS_DIR)/docs/test/sbom.md; \
+		echo 'Trivy not available - install with: brew install trivy' >> $(DOCS_DIR)/docs/test/sbom.md; \
+	fi"
+	@echo "📊  Checking for outdated packages..."
+	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && \
+		echo '## Outdated Packages' >> $(DOCS_DIR)/docs/test/sbom.md && \
+		echo '' >> $(DOCS_DIR)/docs/test/sbom.md && \
+		(python3 -m pdm outdated || echo 'PDM outdated check failed') | tee -a $(DOCS_DIR)/docs/test/sbom.md"
+	@echo "✅  SBOM generation complete"
+	@echo "📄  Files generated:"
+	@echo "    - $(PROJECT_NAME).sbom.xml (CycloneDX XML format)"
+	@echo "    - $(DOCS_DIR)/docs/test/sbom.md (Markdown report)"
 
 pytype:								## 🧠  Pytype static type analysis
 	@echo "🧠  Pytype analysis…"
@@ -1386,7 +1414,7 @@ MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry regist
 # OCI image tag to preload into the cluster.
 # • By default we point to the *local* image built via `make docker-prod`, e.g.
 #   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
-#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.1.1).
+#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.2.0).
 TAG              ?= latest         # override with TAG=<ver>
 IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
 

@@ -115,7 +115,7 @@ MCP Gateway serves:
 
 > **PyPI Package**: [`mcp-contextforge-gateway`](https://pypi.org/project/mcp-contextforge-gateway/)
 
-> **OCI Image**: [`ghcr.io/ibm/mcp-context-forge:0.1.1`](https://github.com/IBM/mcp-context-forge/pkgs/container/mcp-context-forge)
+> **OCI Image**: [`ghcr.io/ibm/mcp-context-forge:0.2.0`](https://github.com/IBM/mcp-context-forge/pkgs/container/mcp-context-forge)
 
 ---
 
@@ -131,6 +131,7 @@ Jump straight to:
 
 !!! note
     Source → [https://github.com/IBM/mcp-context-forge](https://github.com/IBM/mcp-context-forge)
+
     Docs → [https://ibm.github.io/mcp-context-forge/](https://ibm.github.io/mcp-context-forge/)
 
 ---

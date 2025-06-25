@@ -734,7 +734,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/gateways")
-async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
+async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
     Expects form fields:
@@ -764,19 +764,21 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         auth_header_key=form.get("auth_header_key", ""),
         auth_header_value=form.get("auth_header_value", ""),
     )
-    root_path = request.scope.get("root_path", "")
     try:
         await gateway_service.register_gateway(db, gateway)
-        return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+        return JSONResponse(
+            content={"message": "Gateway registered successfully!", "success": True},
+            status_code=200,
+        )
+
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
-            return RedirectResponse(f"{root_path}/admin#gateways", status_code=502)
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
         if isinstance(ex, ValueError):
-            return RedirectResponse(f"{root_path}/admin#gateways", status_code=400)
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         if isinstance(ex, RuntimeError):
-            return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
-
-        return RedirectResponse(f"{root_path}/admin#gateways", status_code=500)
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/edit")

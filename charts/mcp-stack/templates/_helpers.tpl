@@ -1,3 +1,6 @@
+{{- /* --------------------------------------------------------------------
+     Helper: mcp-stack.fullname
+     -------------------------------------------------------------------- */}}
 {{- define "mcp-stack.fullname" -}}
 {{- if .Values.global.fullnameOverride }}
 {{ .Values.global.fullnameOverride }}
@@ -11,8 +14,25 @@
 {{- end }}
 {{- end }}
 
+{{- /* --------------------------------------------------------------------
+     Helper: mcp-stack.labels
+     -------------------------------------------------------------------- */}}
 {{- define "mcp-stack.labels" -}}
 app.kubernetes.io/name: {{ include "mcp-stack.fullname" . }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- /* --------------------------------------------------------------------
+     Helper: mcp-stack.postgresSecretName
+     Returns the Secret name that the Postgres deployment should mount.
+     If users set `postgres.existingSecret`, that name is used.
+     Otherwise the chart-managed default "postgres-secret" is returned.
+     -------------------------------------------------------------------- */}}
+{{- define "mcp-stack.postgresSecretName" -}}
+{{- if .Values.postgres.existingSecret }}
+{{- .Values.postgres.existingSecret }}
+{{- else }}
+postgres-secret
+{{- end }}
 {{- end }}
