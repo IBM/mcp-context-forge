@@ -26,7 +26,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import delete, func, not_, select
+from sqlalchemy import delete, func, not_, select, case, literal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -40,6 +40,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.types import TextContent, ToolResult
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth
 
 from ..config import extract_using_jq
@@ -149,7 +150,7 @@ class ToolService:
             tool_dict["auth"] = None
 
         tool_dict["name"] = tool.name
-        tool_dict["gateway_slug"] = tool.gateway_slug
+        tool_dict["gateway_slug"] = tool.gateway_slug if tool.gateway_slug else ""
         tool_dict["original_name_slug"] = tool.original_name_slug
 
         return ToolRead.model_validate(tool_dict)
@@ -195,7 +196,10 @@ class ToolService:
             ToolError: For other tool registration errors.
         """
         try:
-            existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name).where(DbTool.gateway_id == tool.gateway_id)).scalar_one_or_none()
+            if not tool.gateway_id:
+                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name)).scalar_one_or_none()
+            else:
+                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name).where(DbTool.gateway_id == tool.gateway_id)).scalar_one_or_none()
             if existing_tool:
                 raise ToolNameConflictError(
                     existing_tool.name,
@@ -212,6 +216,7 @@ class ToolService:
 
             db_tool = DbTool(
                 original_name=tool.name,
+                original_name_slug=slugify(tool.name),
                 url=str(tool.url),
                 description=tool.description,
                 integration_type=tool.integration_type,
@@ -223,16 +228,19 @@ class ToolService:
                 auth_value=auth_value,
                 gateway_id=tool.gateway_id,
             )
+            logger.info(f'{db_tool.__dict__=}')
             db.add(db_tool)
             db.commit()
             db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
             logger.info(f"Registered tool: {db_tool.name}")
             return self._convert_tool_to_read(db_tool)
-        except IntegrityError:
+        except IntegrityError as ex:
+            logger.error(f'{ex}')
             db.rollback()
             raise ToolError(f"Tool already exists: {tool.name}")
         except Exception as e:
+            logger.error(f'{e}')
             db.rollback()
             raise ToolError(f"Failed to register tool: {str(e)}")
 
@@ -373,10 +381,15 @@ class ToolService:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
         """
-        tool = db.execute(select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name_slug == name).where(DbTool.is_active)).scalar_one_or_none()
+        separator = literal(settings.gateway_tool_name_separator)
+        slug_expr = case(
+            (DbTool.gateway_slug.is_(None), DbTool.original_name_slug),                 # WHEN gateway_slug IS NULL
+            else_=DbTool.gateway_slug + separator + DbTool.original_name_slug           # ELSE gateway_slug||sep||original
+        )
+        tool = db.execute(select(DbTool).where(slug_expr == name).where(DbTool.is_active)).scalar_one_or_none()
         if not tool:
             inactive_tool = db.execute(
-                select(DbTool).where(DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name_slug == name).where(not_(DbTool.is_active))
+                select(DbTool).where(slug_expr == name).where(not_(DbTool.is_active))
             ).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
