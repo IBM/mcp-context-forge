@@ -154,7 +154,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
         server = ServerCreate(
-            name=form["name"],
+            name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
             associated_tools=",".join(form.getlist("associatedTools")),
