@@ -1,17 +1,27 @@
+{{- /* -------------------------------------------------------------------
+     DEPLOYMENT — mcp-fast-time-server
+     • Uses helper so the name follows <release>-mcp-stack-* convention.
+     • Includes probes and resource limits already defined in values.yaml.
+     ------------------------------------------------------------------- */}}
+
 {{- if .Values.mcpFastTimeServer.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-fast-time-server
+  # <release>-mcp-stack-mcp-fast-time-server
+  name: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
 spec:
   replicas: {{ .Values.mcpFastTimeServer.replicaCount }}
   selector:
     matchLabels:
-      app: mcp-fast-time-server
+      app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
   template:
     metadata:
       labels:
-        app: mcp-fast-time-server
+        app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
     spec:
       containers:
         - name: mcp-fast-time-server

@@ -88,6 +88,11 @@ spec:
           ################################################################
           # HEALTH & READINESS PROBES
           ################################################################
+          {{- with .Values.mcpContextForge.probes.startup }}
+          startupProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
           {{- with .Values.mcpContextForge.probes.readiness }}
           readinessProbe:
 {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}

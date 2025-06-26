@@ -25,13 +25,32 @@ spec:
         - name: redis-commander
           image: "{{ .Values.redisCommander.image.repository }}:{{ .Values.redisCommander.image.tag }}"
           imagePullPolicy: {{ .Values.redisCommander.image.pullPolicy }}
+
+          # Expose HTTP port inside the pod
           ports:
             - name: http
               containerPort: {{ .Values.redisCommander.service.port }}
+
+          # ─── Readiness probe ───
+          {{- with .Values.redisCommander.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Liveness probe ───
+          {{- with .Values.redisCommander.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # Point Redis-Commander at the in-cluster Redis service
           env:
-            # Format: alias:host:port
-            - name: REDIS_HOSTS
-              value: "local:{{ .Values.mcpContextForge.env.redis.host }}:{{ .Values.mcpContextForge.env.redis.port }}"
+            - name: REDIS_HOST
+              value: {{ printf "%s-redis" (include "mcp-stack.fullname" .) }}
+            - name: REDIS_PORT
+              value: "{{ .Values.redis.service.port }}"
+
+          # ─── Resource limits & requests ───
           {{- with .Values.redisCommander.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
