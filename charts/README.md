@@ -228,6 +228,7 @@ You can use the `helm template` and `yq` and check your templates. Example:
 ```bash
 helm lint .
 helm template . | yq '.spec.template.spec.containers[0] | {readinessProbe,livenessProbe}'
+helm template mcp-stack . -f my-values.yaml > /tmp/all.yaml
 ```
 
 ---
