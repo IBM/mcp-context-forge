@@ -98,8 +98,9 @@ def _install_fake_mcp(monkeypatch) -> None:
 
     # ––– ultra-thin DTOs referenced by wrapper's handlers –––––––––––––––– #
     class _Tool:
-        def __init__(self, name: str, description: str, inputSchema: dict):
+        def __init__(self, name: str, description: str, inputSchema: dict, annotations: dict = None):
             self.name, self.description, self.inputSchema = name, description, inputSchema
+            self.annotations = annotations or {}
 
     class _Resource:
         def __init__(self, uri: str, name: str, description: str, mimeType: str):

@@ -389,6 +389,7 @@ class Tool(BaseModel):
         requestType (str): The HTTP method used to invoke the tool (GET, POST, PUT, DELETE, SSE, STDIO).
         headers (Dict[str, Any]): A JSON object representing HTTP headers.
         input_schema (Dict[str, Any]): A JSON Schema for validating the tool's input.
+        annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints.
         auth_type (Optional[str]): The type of authentication used ("basic", "bearer", or None).
         auth_username (Optional[str]): The username for basic authentication.
         auth_password (Optional[str]): The password for basic authentication.
@@ -402,6 +403,7 @@ class Tool(BaseModel):
     requestType: str = "SSE"
     headers: Dict[str, Any] = Field(default_factory=dict)
     input_schema: Dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    annotations: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Tool annotations for behavior hints")
     auth_type: Optional[str] = None
     auth_username: Optional[str] = None
     auth_password: Optional[str] = None
