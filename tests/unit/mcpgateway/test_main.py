@@ -130,14 +130,14 @@ class TestAPIEndpoints:
     def test_list_servers_endpoint(self, mock_list_servers, test_client, auth_headers):
         mock_list_servers.return_value = [
             ServerRead(
-                id="e02526987d214b7986be57a82516854e",
+                id="1",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
-                associated_tools=["295dbf9fd18f4f4e95e3d290207f6fdd"],
+                associated_tools=["1"],
                 associated_resources=[201],
                 associated_prompts=[301],
                 metrics={
