@@ -335,17 +335,36 @@ class Tool(Base):
 
     @hybrid_property
     def name(self):
-        if self.gateway_id:
-            return self._computed_name or f"{(slugify(self.gateway.name))}{settings.gateway_tool_name_separator}{slugify(self.original_name)}"
-        else:
-            return self._computed_name or f"{slugify(self.original_name)}"
+        """Return the display/lookup name.
+
+        Returns:
+            str: Name to display
+        """
+        if self._computed_name:  # pylint: disable=no-member
+            return self._computed_name  # orm column, resolved at runtime
+
+        original_slug = slugify(self.original_name)  # pylint: disable=no-member
+
+        # Gateway present → prepend its slug and the configured separator
+        if self.gateway_id:  # pylint: disable=no-member
+            gateway_slug = slugify(self.gateway.name)  # pylint: disable=no-member
+            return f"{gateway_slug}{settings.gateway_tool_name_separator}{original_slug}"
+
+        # No gateway → only the original name slug
+        return original_slug
 
     @name.setter
     def name(self, value):
+        """Store an explicit value that overrides the calculated one."""
         self._computed_name = value
 
     @name.expression
-    def name(cls):
+    def name(cls):  # pylint: disable=no-self-argument
+        """
+        SQL expression used when the hybrid appears in a filter/order_by.
+        Simply forwards to the ``_computed_name`` column; the Python-side
+        reconstruction above is not needed on the SQL side.
+        """
         return cls._computed_name
 
     # @property
@@ -364,16 +383,13 @@ class Tool(Base):
         return self.gateway.slug if self.gateway else None
 
     @gateway_slug.expression
-    def gateway_slug(cls):
+    def gateway_slug(cls):  # pylint: disable=no-self-argument
         """For database queries - auto-joins to get current slug
 
         Returns:
             str: slug for SQL use
         """
-        if cls.gateway_id:
-            return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
-        else:
-            return ""
+        return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
 
     @hybrid_property
     def execution_count(self) -> int:

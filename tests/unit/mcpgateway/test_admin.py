@@ -68,7 +68,8 @@ class FakeForm(dict):
     def getlist(self, key):
         value = self.get(key, [])
         return value if isinstance(value, list) else [value]
-    
+
+
 @pytest.fixture
 def mock_db():
     """Create a mock database session."""
