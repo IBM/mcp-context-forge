@@ -226,10 +226,10 @@ class GatewayService:
             db.commit()
             db.refresh(db_gateway)
 
-            # # Update tracking
+            # Update tracking
             self._active_gateways.add(db_gateway.url)
 
-            # # Notify subscribers
+            # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(gateway)
@@ -621,7 +621,7 @@ class GatewayService:
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                     elif (gateway.transport).lower() == "streamablehttp":
-                        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, get_session_id):
+                        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
                             async with ClientSession(read_stream, write_stream) as session:
                                 # Initialize the session
                                 response = await session.initialize()
@@ -745,7 +745,7 @@ class GatewayService:
                 decoded_auth = decode_auth(authentication)
 
                 # Use async with for both streamablehttp_client and ClientSession
-                async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, get_session_id):
+                async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         # Initialize the session
                         response = await session.initialize()
@@ -763,6 +763,8 @@ class GatewayService:
 
                 return capabilities, tools
 
+            capabilities = {}
+            tools = []
             if transport.lower() == "sse":
                 capabilities, tools = await connect_to_sse_server(url, authentication)
             elif transport.lower() == "streamablehttp":

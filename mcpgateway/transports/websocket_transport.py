@@ -59,16 +59,12 @@ class WebSocketTransport(Transport):
 
         ping_task = getattr(self, "_ping_task", None)
 
-        should_cancel = (
-            ping_task                                    # task exists
-            and not ping_task.done()                     # still running
-            and ping_task is not asyncio.current_task()  # not *this* coroutine
-        )
+        should_cancel = ping_task and not ping_task.done() and ping_task is not asyncio.current_task()  # task exists  # still running  # not *this* coroutine
 
         if should_cancel:
             ping_task.cancel()
             try:
-                await ping_task         # allow it to exit gracefully
+                await ping_task  # allow it to exit gracefully
             except asyncio.CancelledError:
                 pass
 

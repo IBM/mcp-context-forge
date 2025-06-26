@@ -640,7 +640,7 @@ async def admin_edit_tool(
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
     }
-    logger.info(f"Tool update data built: {tool_data}")
+    logger.debug(f"Tool update data built: {tool_data}")
     tool = ToolUpdate(**tool_data)
     try:
         await tool_service.update_tool(db, tool_id, tool)

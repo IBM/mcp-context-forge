@@ -13,8 +13,8 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     ToolError,
@@ -31,6 +31,7 @@ def tool_service():
     service._http_client = AsyncMock()
     return service
 
+
 @pytest.fixture
 def mock_gateway():
     """Create a mock gateway model."""
@@ -46,6 +47,7 @@ def mock_gateway():
     gw.is_active = True
 
     return gw
+
 
 @pytest.fixture
 def mock_tool():

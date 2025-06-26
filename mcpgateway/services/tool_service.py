@@ -18,6 +18,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -26,7 +27,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import delete, func, not_, select, case, literal
+from sqlalchemy import case, delete, func, literal, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -228,19 +229,16 @@ class ToolService:
                 auth_value=auth_value,
                 gateway_id=tool.gateway_id,
             )
-            logger.info(f'{db_tool.__dict__=}')
             db.add(db_tool)
             db.commit()
             db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
             logger.info(f"Registered tool: {db_tool.name}")
             return self._convert_tool_to_read(db_tool)
-        except IntegrityError as ex:
-            logger.error(f'{ex}')
+        except IntegrityError:
             db.rollback()
             raise ToolError(f"Tool already exists: {tool.name}")
         except Exception as e:
-            logger.error(f'{e}')
             db.rollback()
             raise ToolError(f"Failed to register tool: {str(e)}")
 
@@ -383,14 +381,15 @@ class ToolService:
         """
         separator = literal(settings.gateway_tool_name_separator)
         slug_expr = case(
-            (DbTool.gateway_slug.is_(None), DbTool.original_name_slug),                 # WHEN gateway_slug IS NULL
-            else_=DbTool.gateway_slug + separator + DbTool.original_name_slug           # ELSE gateway_slug||sep||original
+            (
+                DbTool.gateway_slug.is_(None),  # pylint: disable=no-member
+                DbTool.original_name_slug,
+            ),  # WHEN gateway_slug IS NULL
+            else_=DbTool.gateway_slug + separator + DbTool.original_name_slug,  # ELSE gateway_slug||sep||original
         )
         tool = db.execute(select(DbTool).where(slug_expr == name).where(DbTool.is_active)).scalar_one_or_none()
         if not tool:
-            inactive_tool = db.execute(
-                select(DbTool).where(slug_expr == name).where(not_(DbTool.is_active))
-            ).scalar_one_or_none()
+            inactive_tool = db.execute(select(DbTool).where(slug_expr == name).where(not_(DbTool.is_active))).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")
@@ -412,8 +411,6 @@ class ToolService:
                 final_url = tool.url
                 if "{" in tool.url and "}" in tool.url:
                     # Extract path parameters from URL template and arguments
-                    import re
-
                     url_params = re.findall(r"\{(\w+)\}", tool.url)
                     url_substitutions = {}
 
@@ -484,7 +481,7 @@ class ToolService:
                         str: Result of tool call
                     """
                     # Use async with directly to manage the context
-                    async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, get_session_id):
+                    async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, _get_session_id):
                         async with ClientSession(read_stream, write_stream) as session:
                             # Initialize the session
                             await session.initialize()
@@ -494,6 +491,7 @@ class ToolService:
                 tool_gateway_id = tool.gateway_id
                 tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
 
+                tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
                 if transport == "sse":
                     tool_call_result = await connect_to_sse_server(tool_gateway.url)
                 elif transport == "streamablehttp":
