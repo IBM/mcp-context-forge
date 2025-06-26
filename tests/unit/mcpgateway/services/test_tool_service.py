@@ -165,7 +165,7 @@ class TestToolService:
         test_db.refresh.assert_called_once()
 
         # Verify result
-        assert result.name == "test_tool"
+        assert result.name == "test-gateway-test-tool"
         assert result.url == "http://example.com/tools/test"
         assert result.integration_type == "MCP"
         assert result.is_active is True
