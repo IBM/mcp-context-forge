@@ -38,6 +38,7 @@ import time
 from collections import deque
 from types import SimpleNamespace
 from typing import Callable, List, Tuple
+from mcpgateway.config import settings
 
 # ───────────────────────── Ports / constants ────────────────────────────
 PORT_GATEWAY = 4444  # HTTPS container
@@ -316,7 +317,7 @@ def step_6_register_gateway() -> int:
 
 def step_7_verify_tools():
     names = [t["name"] for t in request("GET", "/tools").json()]
-    assert "get_current_time" in names, "get_current_time absent"
+    assert f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time" in names, f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time absent"
     logging.info("✅ Tool visible in /tools")
 
 
