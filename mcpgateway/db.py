@@ -34,6 +34,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    event,
     func,
     make_url,
     select,
@@ -48,6 +49,7 @@ from sqlalchemy.orm import (
     relationship,
     sessionmaker,
 )
+from sqlalchemy.orm.attributes import get_history
 
 from mcpgateway.config import settings
 from mcpgateway.types import ResourceContent
@@ -373,10 +375,6 @@ class Tool(Base):
             str: computed name for SQL use
         """
         return cls._computed_name
-
-    # @property
-    # def name(self) -> str:
-    #     return f"{slugify(self.gateway.name)}{settings.gateway_tool_name_separator}{self.original_name}"
 
     __table_args__ = (UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"),)
 
@@ -1038,6 +1036,44 @@ class Gateway(Base):
     # Authorizations
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", "headers" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+
+
+@event.listens_for(Gateway, "after_update")
+def update_tool_names_on_gateway_update(_mapper, connection, target):
+    """
+    If a Gateway's name is updated, efficiently update all of its
+    child Tools' names with a single SQL statement.
+
+    Args:
+        _mapper: Mapper
+        connection: Connection
+        target: Target
+    """
+    # 1. Check if the 'name' field was actually part of the update.
+    #    This is a concise way to see if the value has changed.
+    if not get_history(target, "name").has_changes():
+        return
+
+    print(f"Gateway name changed for ID {target.id}. Issuing bulk update for tools.")
+
+    # 2. Get a reference to the underlying database table for Tools
+    tools_table = Tool.__table__
+
+    # 3. Prepare the new values
+    new_gateway_slug = slugify(target.name)
+    separator = settings.gateway_tool_name_separator
+
+    # 4. Construct a single, powerful UPDATE statement using SQLAlchemy Core.
+    #    This is highly efficient as it all happens in the database.
+    stmt = (
+        tools_table.update()
+        .where(tools_table.c.gateway_id == target.id)
+        .values(name=new_gateway_slug + separator + tools_table.c.original_name_slug)
+        .execution_options(synchronize_session=False)  # Important for bulk updates
+    )
+
+    # 5. Execute the statement using the connection from the ongoing transaction.
+    connection.execute(stmt)
 
 
 class SessionRecord(Base):

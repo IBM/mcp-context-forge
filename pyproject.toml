@@ -81,6 +81,10 @@ postgres = [
     "psycopg2-binary>=2.9.10",
 ]
 
+alembic = [
+    "alembic>=1.16.2",
+]
+
 # Async SQLite Driver (optional)
 aiosqlite = [
     "aiosqlite>=0.21.0",

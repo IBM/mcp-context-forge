@@ -578,11 +578,11 @@ async function viewTool(toolId) {
         ${authHTML}
         <div>
           <strong>Headers:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Input Schema:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Metrics:</strong>
