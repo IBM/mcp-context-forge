@@ -27,21 +27,29 @@ mcpContextForge:
 
   # Health & readiness probes
   probes:
+    startup:
+      # Uncomment to enable sleep startup probe; useful for long-running initializations
+      type: exec
+      command: ["sh", "-c", "sleep 10"]
+      timeoutSeconds: 15      # must exceed the 10-second sleep
+      periodSeconds: 5
+      failureThreshold: 1
+
     readiness:
       type: http
       path: /ready
       port: 4444
-      initialDelaySeconds: 5 # wait 5 s after container start
-      periodSeconds: 10      # check every 10 s
-      timeoutSeconds: 2      # fail if no response in 2 s
-      successThreshold: 1    # one success flips it back to healthy
-      failureThreshold: 3    # three failures mark pod un-ready
+      initialDelaySeconds: 15 # wait 15 s after container start
+      periodSeconds: 10       # check every 10 s
+      timeoutSeconds: 2       # fail if no response in 2 s
+      successThreshold: 1     # one success flips it back to healthy
+      failureThreshold: 3     # three failures mark pod un-ready
 
     liveness:
       type: http
       path: /health
       port: 4444
-      initialDelaySeconds: 5
+      initialDelaySeconds: 10 # wait 10 s after container start
       periodSeconds: 15
       timeoutSeconds: 2
       successThreshold: 1
@@ -289,7 +297,7 @@ redis:
     readiness:
       type: exec
       command: ["redis-cli", "PING"]
-      initialDelaySeconds: 3
+      initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 2
       successThreshold: 1
@@ -338,7 +346,7 @@ pgadmin:
       type: http
       path: /misc/ping      # lightweight endpoint
       port: 80
-      initialDelaySeconds: 5
+      initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 2
       successThreshold: 1
@@ -384,7 +392,7 @@ redisCommander:
       type: http
       path: /              # root returns 200 OK
       port: 8081
-      initialDelaySeconds: 5
+      initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 2
       successThreshold: 1

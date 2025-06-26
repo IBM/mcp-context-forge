@@ -1,57 +1,22 @@
 {{- /*
-Redis-Commander Deployment
+Redis-Commander Service
 */ -}}
 {{- if .Values.redisCommander.enabled }}
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: v1
+kind: Service
 metadata:
+  # <release>-mcp-stack-redis-commander
   name: {{ include "mcp-stack.fullname" . }}-redis-commander
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app: redis-commander
 spec:
-  replicas: 1
+  type: {{ .Values.redisCommander.service.type }}  # ClusterIP / NodePort / LoadBalancer
   selector:
-    matchLabels:
-      app: redis-commander
-      release: {{ .Release.Name }}
-  template:
-    metadata:
-      labels:
-        app: redis-commander
-        release: {{ .Release.Name }}
-    spec:
-      containers:
-        - name: redis-commander
-          image: "{{ .Values.redisCommander.image.repository }}:{{ .Values.redisCommander.image.tag }}"
-          imagePullPolicy: {{ .Values.redisCommander.image.pullPolicy }}
-
-          # Expose HTTP port inside the pod
-          ports:
-            - name: http
-              containerPort: {{ .Values.redisCommander.service.port }}
-
-          # ─── Readiness probe ───
-          {{- with .Values.redisCommander.probes.readiness }}
-          readinessProbe:
-{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
-          {{- end }}
-
-          # ─── Liveness probe ───
-          {{- with .Values.redisCommander.probes.liveness }}
-          livenessProbe:
-{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
-          {{- end }}
-
-          # Point Redis-Commander at the in-cluster Redis service
-          env:
-            - name: REDIS_HOST
-              value: {{ printf "%s-redis" (include "mcp-stack.fullname" .) }}
-            - name: REDIS_PORT
-              value: "{{ .Values.redis.service.port }}"
-
-          # ─── Resource limits & requests ───
-          {{- with .Values.redisCommander.resources }}
-          resources: {{- toYaml . | nindent 12 }}
-          {{- end }}
+    app: redis-commander
+    release: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.redisCommander.service.port }}   # external service port (8081 by default)
+      targetPort: http                                  # containerPort named "http" in the Deployment
 {{- end }}
