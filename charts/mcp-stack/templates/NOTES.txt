@@ -1,0 +1,119 @@
+{{- /*
+   NOTES.txt for the "mcp-stack" Helm chart
+   • Rendered after every install/upgrade.
+   • Surfaces endpoints, credentials and helper commands so you can
+     start interacting with the stack right away.
+   • Set showSecrets to show secrets.
+*/ -}}
+
+{{- $ns       := .Release.Namespace }}
+{{- $fullName := include "mcp-stack.fullname" . }}
+
+{{- /* ─── show / hide secrets ───────────────────────────── */}}
+{{- $showSecrets := false }}   {{/* set to true to reveal passwords & keys */}}
+
+{{- /* ─── Resource names (keep in sync with _helpers.tpl) ─ */}}
+{{- $gatewaySvc  := printf "%s-mcpgateway"            $fullName }}
+{{- $ftSvc       := printf "%s-mcp-fast-time-server"  $fullName }}
+{{- $postgresSvc := printf "%s-postgres"              $fullName }}
+{{- $redisSvc    := printf "%s-redis"                 $fullName }}
+{{- $pgadminSvc  := printf "%s-pgadmin"               $fullName }}
+
+{{- $gwSecret := printf "%s-gateway-secret" $fullName }}
+{{- $pgSecret := include "mcp-stack.postgresSecretName" . }}
+
+{{- /* ─── Secret look-ups (only used when $showSecrets=true) */}}
+{{- $basicAuthPass := "" }}
+{{- $jwtKey        := "" }}
+{{- $pgPass        := "" }}
+{{- if $showSecrets }}
+  {{- with (lookup "v1" "Secret" $ns $gwSecret) }}
+    {{- $basicAuthPass = index .data "BASIC_AUTH_PASSWORD" | b64dec }}
+    {{- $jwtKey        = index .data "JWT_SECRET_KEY"      | b64dec }}
+  {{- end }}
+  {{- with (lookup "v1" "Secret" $ns $pgSecret) }}
+    {{- $pgPass = index .data "POSTGRES_PASSWORD" | b64dec }}
+  {{- end }}
+{{- end }}
+
+{{- /* ─── Convenience ports ─────────────────────────────── */}}
+{{- $gwPort      := .Values.mcpContextForge.service.port | default 80 }}
+{{- $pgPort      := .Values.postgres.service.port        | default 5432 }}
+{{- $redisPort   := .Values.redis.service.port           | default 6379 }}
+{{- $pgAdminPort := .Values.pgadmin.service.port         | default 80 }}
+
+🎉  **{{ .Chart.Name }}** has been successfully deployed to namespace **{{ $ns }}**!
+
+{{- /* ════════════  MCP Gateway  ════════════ */}}
+🔗 **MCP Gateway**
+{{- if .Values.mcpContextForge.ingress.enabled }}
+  • Ingress URL  : https://{{ .Values.mcpContextForge.ingress.host }}{{ .Values.mcpContextForge.ingress.path | default "/" }}
+{{- else }}
+  • Service URL  : http://{{ $gatewaySvc }}.{{ $ns }}.svc.cluster.local:{{ $gwPort }}
+{{- end }}
+  • Basic-Auth :
+      user      = {{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}
+{{- if $showSecrets }}
+      password  = {{ $basicAuthPass }}
+{{- else }}
+      password  : <hidden>
+{{- end }}
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.BASIC_AUTH_PASSWORD}" | base64 -d`)
+{{- if $showSecrets }}
+  • JWT signing key (JWT_SECRET_KEY) = {{ $jwtKey }}
+{{- else }}
+  • JWT signing key (JWT_SECRET_KEY) : <hidden>
+{{- end }}
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.JWT_SECRET_KEY}" | base64 -d`)
+  • Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }}`
+
+{{- /* ════════════  Fast-Time-Server  ════════════ */}}
+🔗 **Fast-Time-Server (SSE)**
+  • Cluster URL  : http://{{ $ftSvc }}.{{ $ns }}.svc.cluster.local
+  • Via Gateway  : {{- if .Values.mcpContextForge.ingress.enabled }} https://{{ .Values.mcpContextForge.ingress.host }}/fast-time {{- else }} http://localhost:4444/fast-time {{- end }}
+
+{{- /* ════════════  Datastores  ════════════ */}}
+💾 **Postgres**
+  • Host / Port  : {{ $postgresSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgPort }}
+  • DB           : {{ .Values.postgres.credentials.database }}
+  • User         : {{ .Values.postgres.credentials.user }}
+{{- if $showSecrets }}
+  • Password     : {{ $pgPass | default "<secret-not-yet-created>" }}
+{{- else }}
+  • Password     : <hidden>
+{{- end }}
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ $pgSecret }} -o jsonpath="{.data.POSTGRES_PASSWORD}" | base64 -d`)
+
+🔑 **Redis**
+  • Host / Port  : {{ $redisSvc }}.{{ $ns }}.svc.cluster.local:{{ $redisPort }}
+
+📊 **PGAdmin**
+  • URL          : http://{{ $pgadminSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgAdminPort }}
+  • Login        : {{ .Values.pgadmin.env.email }} / (same Postgres password)
+
+{{- /* ════════════  Quick-start  ════════════ */}}
+🚀 **Quick-start**
+
+```bash
+# 1) Forward the Gateway locally (skip if using ingress):
+kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }} &
+
+# 2) Obtain a JWT via Basic-Auth (requires 'jq'):
+{{- if $showSecrets }}
+export GW_TOKEN=$(curl -s -u '{{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}:{{ $basicAuthPass }}' \
+  -X POST http://localhost:4444/auth/login | jq -r '.access_token')
+{{- else }}
+# export GW_TOKEN=(fetch after you retrieve the password with kubectl)
+{{- end }}
+
+# 3) Register the Fast-Time-Server with the Gateway:
+curl -s -X POST \
+     -H "Authorization: Bearer $GW_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"local_time","url":"http://{{ $ftSvc }}.{{ $ns }}.svc.cluster.local/sse"}' \
+     http://localhost:4444/gateways
+```
+
+📚 **Further reading**
+* [https://ibm.github.io/mcp-context-forge/deployment/helm/](https://ibm.github.io/mcp-context-forge/deployment/helm/)
+* [https://ibm.github.io/mcp-context-forge/testing/basic/](https://ibm.github.io/mcp-context-forge/testing/basic/)
