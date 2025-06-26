@@ -35,7 +35,7 @@ def server_service() -> ServerService:
 @pytest.fixture
 def mock_tool():
     tool = MagicMock(spec=DbTool)
-    tool.id = 101
+    tool.id = "101"
     tool.name = "test_tool"
     tool._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return tool
@@ -101,7 +101,7 @@ class TestServerService:
 
         # Mock the created server instance
         mock_db_server = MagicMock(spec=DbServer)
-        mock_db_server.id = 1
+        mock_db_server.id = "1"
         mock_db_server.name = "test_server"
         mock_db_server.description = "A test server"
         mock_db_server.icon = "server-icon"
@@ -153,7 +153,7 @@ class TestServerService:
         # Resolve associated objects
         test_db.get = Mock(
             side_effect=lambda cls, _id: {
-                (DbTool, 101): mock_tool,
+                (DbTool, "101"): mock_tool,
                 (DbResource, 201): mock_resource,
                 (DbPrompt, 301): mock_prompt,
             }.get((cls, _id))
@@ -163,14 +163,14 @@ class TestServerService:
         server_service._notify_server_added = AsyncMock()
         server_service._convert_server_to_read = Mock(
             return_value=ServerRead(
-                id=1,
+                id="1",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
-                associated_tools=[101],
+                associated_tools=["101"],
                 associated_resources=[201],
                 associated_prompts=[301],
                 metrics={
@@ -205,7 +205,7 @@ class TestServerService:
         server_service._notify_server_added.assert_called_once()
 
         assert result.name == "test_server"
-        assert 101 in result.associated_tools
+        assert "101" in result.associated_tools
         assert 201 in result.associated_resources
         assert 301 in result.associated_prompts
 
@@ -266,14 +266,14 @@ class TestServerService:
         test_db.execute = Mock(return_value=exec_result)
 
         server_read = ServerRead(
-            id=1,
+            id="1",
             name="test_server",
             description="A test server",
             icon="server-icon",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             is_active=True,
-            associated_tools=[101],
+            associated_tools=["101"],
             associated_resources=[201],
             associated_prompts=[301],
             metrics={
@@ -300,14 +300,14 @@ class TestServerService:
         test_db.get = Mock(return_value=mock_server)
 
         server_read = ServerRead(
-            id=1,
+            id="1",
             name="test_server",
             description="A test server",
             icon="server-icon",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             is_active=True,
-            associated_tools=[101],
+            associated_tools=["101"],
             associated_resources=[201],
             associated_prompts=[301],
             metrics={
@@ -397,14 +397,14 @@ class TestServerService:
         server_service._notify_server_updated = AsyncMock()
         server_service._convert_server_to_read = Mock(
             return_value=ServerRead(
-                id=1,
+                id="1",
                 name="updated_server",
                 description="An updated server",
                 icon="updated-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
-                associated_tools=[102],
+                associated_tools=["102"],
                 associated_resources=[202],
                 associated_prompts=[302],
                 metrics={
@@ -477,14 +477,14 @@ class TestServerService:
         server_service._notify_server_deactivated = AsyncMock()
         server_service._convert_server_to_read = Mock(
             return_value=ServerRead(
-                id=1,
+                id="1",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=False,
-                associated_tools=[101],
+                associated_tools=["101"],
                 associated_resources=[201],
                 associated_prompts=[301],
                 metrics={

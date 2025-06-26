@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     ToolError,
@@ -30,13 +31,29 @@ def tool_service():
     service._http_client = AsyncMock()
     return service
 
+@pytest.fixture
+def mock_gateway():
+    """Create a mock gateway model."""
+    gw = MagicMock(spec=DbGateway)
+    gw.id = 1
+    gw.name = "test_gateway"
+    gw.slug = "test-gateway"
+    gw.url = "http://example.com/gateway"
+    gw.description = "A test tool"
+    gw.transport = "SSE"
+    gw.capabilities = {"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}}
+    gw.created_at = gw.updated_at = gw.last_seen = "2025-01-01T00:00:00Z"
+    gw.is_active = True
+
+    return gw
 
 @pytest.fixture
 def mock_tool():
     """Create a mock tool model."""
     tool = MagicMock(spec=DbTool)
     tool.id = 1
-    tool.name = "test_tool"
+    tool.original_name = "test_tool"
+    tool.original_name_slug = "test-tool"
     tool.url = "http://example.com/tools/test"
     tool.description = "A test tool"
     tool.integration_type = "MCP"
@@ -52,7 +69,8 @@ def mock_tool():
     tool.auth_password = None
     tool.auth_token = None
     tool.auth_value = None  # Add this field
-    tool.gateway_id = None
+    tool.gateway_id = "1"
+    tool.gateway = mock_gateway
 
     # Set up metrics
     tool.metrics = []
@@ -96,8 +114,11 @@ class TestToolService:
         tool_service._notify_tool_added = AsyncMock()
         tool_service._convert_tool_to_read = Mock(
             return_value=ToolRead(
-                id=1,
-                name="test_tool",
+                id="1",
+                original_name="test_tool",
+                gateway_slug="test-gateway",
+                originalNameSlug="test-tool",
+                name="test-gateway-test-tool",
                 url="http://example.com/tools/test",
                 description="A test tool",
                 integration_type="MCP",
@@ -126,11 +147,11 @@ class TestToolService:
 
         # Create tool request
         tool_create = ToolCreate(
-            name="test_tool",
+            name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
             headers={"Content-Type": "application/json"},
             input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         )
@@ -216,8 +237,11 @@ class TestToolService:
 
         # Mock conversion
         tool_read = ToolRead(
-            id=1,
-            name="test_tool",
+            id="1",
+            original_name="test_tool",
+            original_name_slug="test-tool",
+            gateway_slug="test-gateway",
+            name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
             integration_type="MCP",
@@ -263,8 +287,11 @@ class TestToolService:
 
         # Mock conversion
         tool_read = ToolRead(
-            id=1,
-            name="test_tool",
+            id="1",
+            original_name="test_tool",
+            original_name_slug="test-tool",
+            gateway_slug="test-gateway",
+            name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
             integration_type="MCP",
@@ -361,8 +388,11 @@ class TestToolService:
 
         # Mock conversion
         tool_read = ToolRead(
-            id=1,
-            name="test_tool",
+            id="1",
+            original_name="test_tool",
+            original_name_slug="test-tool",
+            gateway_slug="test-gateway",
+            name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
             integration_type="MCP",
@@ -426,8 +456,11 @@ class TestToolService:
 
         # Mock conversion
         tool_read = ToolRead(
-            id=1,
-            name="updated_tool",  # Updated name
+            id="1",
+            original_name="test_tool",
+            original_name_slug="test-tool",
+            gateway_slug="test-gateway",
+            name="test-gateway-test-tool",
             url="http://example.com/tools/updated",  # Updated URL
             description="An updated test tool",  # Updated description
             integration_type="MCP",
