@@ -2126,3 +2126,50 @@ shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 	@echo "🎨  Formatting shell scripts with shfmt -w…"
 	@shfmt -w -i 4 -ci $(SHELL_SCRIPTS)
 	@echo "✅  shfmt formatting done."
+
+
+# 🛢️  ALEMBIC DATABASE MIGRATIONS
+# =============================================================================
+# help: 🛢️  ALEMBIC DATABASE MIGRATIONS
+# help: alembic-install   - Install Alembic CLI (and SQLAlchemy) in the current env
+# help: db-new            - Create a new migration  (override with MSG="your title")
+# help: db-up             - Upgrade DB to the latest revision (head)
+# help: db-down           - Downgrade one revision       (override with REV=<id|steps>)
+# help: db-current        - Show the current head revision for the database
+# help: db-history        - Show the full migration graph / history
+# help: db-revision-id    - Echo just the current revision id (handy for scripting)
+# -----------------------------------------------------------------------------
+
+# ──────────────────────────
+# Internals & defaults
+# ──────────────────────────
+ALEMBIC ?= alembic        # Override to e.g. `poetry run alembic`
+MSG     ?= "auto migration"
+REV     ?= -1             # Default: one step down; can be hash, -n, +n, etc.
+
+.PHONY: alembic-install db-new db-up db-down db-current db-history db-revision-id
+
+alembic-install:
+	@echo "➜ Installing Alembic …"
+	pip install --quiet alembic sqlalchemy
+
+db-new:
+	@echo "➜ Generating revision: $(MSG)"
+	$(ALEMBIC) revision --autogenerate -m $(MSG)
+
+db-up:
+	@echo "➜ Upgrading database to head …"
+	$(ALEMBIC) upgrade head
+
+db-down:
+	@echo "➜ Downgrading database → $(REV) …"
+	$(ALEMBIC) downgrade $(REV)
+
+db-current:
+	$(ALEMBIC) current
+
+db-history:
+	$(ALEMBIC) history --verbose
+
+db-revision-id:
+	@$(ALEMBIC) current --verbose | awk '/Current revision/ {print $$3}'
