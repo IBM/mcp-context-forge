@@ -355,7 +355,11 @@ class Tool(Base):
 
     @name.setter
     def name(self, value):
-        """Store an explicit value that overrides the calculated one."""
+        """Store an explicit value that overrides the calculated one.
+
+        Args:
+            value (str): Value to set to _computed_name
+        """
         self._computed_name = value
 
     @name.expression
@@ -364,6 +368,9 @@ class Tool(Base):
         SQL expression used when the hybrid appears in a filter/order_by.
         Simply forwards to the ``_computed_name`` column; the Python-side
         reconstruction above is not needed on the SQL side.
+
+        Returns:
+            str: computed name for SQL use
         """
         return cls._computed_name
 
