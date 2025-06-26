@@ -269,3 +269,71 @@ For every setting see the [full annotated `values.yaml`](https://github.com/IBM/
 2. Update templates or `values.yaml`.
 3. Test with `helm lint` and `helm template`.
 4. Open a pull request-thank you!
+
+## Features
+
+* 🗂️ Multi-service stack – Deploys MCP Gateway (`n` replicas), Fast-Time-Server (`n` replicas), Postgres 17, Redis, PGAdmin 4 and Redis-Commander out of the box.
+* 🎛️ Idiomatic naming – All objects use helper templates (`mcp-stack.fullname`, chart labels) so release names and overrides stay collision-free.
+* 🔐 Secrets & credentials – `mcp-stack-gateway-secret` (Basic-Auth creds, JWT signing key, encryption salt, …) and `postgres-secret` (DB user / password / database name), both injected via `envFrom`.
+* ⚙️ Config as code – `mcp-stack-gateway-config` (\~40 tunables) and `postgres-config` for the DB name.
+* 🔗 Derived URLs – Pods build `DATABASE_URL` and `REDIS_URL` from explicit host/port/user/pass variables—no hard-coding.
+* ❤️‍🩹 Health management – Readiness and liveness probes on every deployment; the Gateway also has a startupProbe.
+* 🚦 Resource safeguards – CPU and memory requests/limits set for all containers.
+* 💾 Stateful storage – PV + PVC for Postgres (`/var/lib/postgresql/data`), storage class selectable.
+* 🌐 Networking & access – ClusterIP services, optional NGINX Ingress, and `NOTES.txt` with port-forward plus safe secret-fetch commands (password, bearer token, `JWT_SECRET_KEY`).
+* 📈 Replicas & availability – Gateway (3) and Fast-Time-Server (2) provide basic HA; stateful components run single-instance.
+* 📦 Helm best-practice layout – Clear separation of Deployments, Services, ConfigMaps, Secrets, PVC/PV and Ingress; chart version 0.2.0.
+
+---
+
+## TODO / Future roadmap
+
+1. 🔄 Post-deploy hook to register MCP Servers with MCP Gateway
+2. ⏳ Add startup probes for slow-booting services
+3. 🛡️ Implement Kubernetes NetworkPolicies to restrict internal traffic
+4. ⚙️ Add Horizontal Pod Autoscaler (HPA) support
+5. 📊 Expose Prometheus metrics and add scrape annotations
+6. 📈 Bundle Grafana dashboards via ConfigMaps (optional)
+7. 🔐 Integrate External Secrets support (e.g., AWS Secrets Manager)
+8. 🧪 Add Helm test hooks to validate deployments
+9. 🔍 Add `values.schema.json` for values validation and better UX
+10. 🧰 Move static configuration to templated `ConfigMaps` where possible
+11. 📁 Include persistent storage toggle in `values.yaml` for easier local/dev setup
+12. 🧼 Add Helm pre-delete hook for cleanup tasks (e.g., deregistering from external systems)
+13. 🧩 Package optional CRDs if needed in the future (e.g., for custom integrations)
+
+## Debug / start fresh (delete namespace)
+
+```bash
+# 0. Create and customize the values
+cp values.yaml my-values.yaml
+
+# 1. Verify the release name and namespace
+helm list -A | grep mcp-stack
+
+# 2. Uninstall the Helm release (removes Deployments, Services, Secrets created by the chart)
+helm uninstall mcp-stack -n mcp-private
+
+# 3. Delete any leftover PersistentVolumeClaims *if* you don't need the data
+kubectl delete pvc --all -n mcp-private
+
+# 4. Remove the namespace itself (skips if you want to keep it)
+kubectl delete namespace mcp-private
+
+# 5. Optional: confirm nothing is left
+helm list -A | grep mcp-stack   # should return nothing
+kubectl get ns | grep mcp-private  # should return nothing
+
+# 6. Re-create the namespace (if you deleted it)
+kubectl create namespace mcp-private
+
+# 7. Re-install the chart with your values file
+helm upgrade --install mcp-stack . \
+  --namespace mcp-private \
+  -f my-values.yaml \
+  --wait --timeout 15m --debug
+
+# 8. Check status
+kubectl get all -n mcp-private
+helm status mcp-stack -n mcp-private --show-desc
+```
