@@ -335,7 +335,10 @@ class Tool(Base):
 
     @hybrid_property
     def name(self):
-        return self._computed_name or f"{(slugify(self.gateway.name))}{settings.gateway_tool_name_separator}{slugify(self.original_name)}"
+        if self.gateway_id:
+            return self._computed_name or f"{(slugify(self.gateway.name))}{settings.gateway_tool_name_separator}{slugify(self.original_name)}"
+        else:
+            return self._computed_name or f"{slugify(self.original_name)}"
 
     @name.setter
     def name(self, value):
@@ -367,7 +370,10 @@ class Tool(Base):
         Returns:
             str: slug for SQL use
         """
-        return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
+        if cls.gateway_id:
+            return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
+        else:
+            return ""
 
     @hybrid_property
     def execution_count(self) -> int:
