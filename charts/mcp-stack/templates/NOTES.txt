@@ -5,7 +5,7 @@
      start interacting with the stack right away.
 */ -}}
 
-{{- $ns := .Release.Namespace }}
+{{- $ns       := .Release.Namespace }}
 {{- $fullName := include "mcp-stack.fullname" . }}
 
 {{- /* -----------------------------------------------------------------
@@ -19,6 +19,26 @@
 
 {{- $gwSecret := printf "%s-gateway-secret" $fullName }}
 {{- $pgSecret := include "mcp-stack.postgresSecretName" . }}
+
+{{- /* -----------------------------------------------------------------
+      Pull secret values so we can display them
+------------------------------------------------------------------*/ -}}
+{{- $gwSecObj := lookup "v1" "Secret" $ns $gwSecret }}
+{{- $pgSecObj := lookup "v1" "Secret" $ns $pgSecret }}
+
+{{- $basicAuthPass := "" }}
+{{- $jwtKey        := "" }}
+{{- if $gwSecObj }}
+  {{- $basicAuthPass = index $gwSecObj.data "BASIC_AUTH_PASSWORD" | b64dec }}
+  {{- $jwtKey        = index $gwSecObj.data "JWT_SECRET_KEY"      | b64dec }}
+{{- end }}
+
+{{- /* ── Postgres password ─────────────────────────────── */}}
+{{- $pgSec := lookup "v1" "Secret" $ns $pgSecret }}
+{{- $pgPass := "<secret-not-yet-created>" }}
+{{- if $pgSec }}
+  {{- $pgPass = (index $pgSec.data "POSTGRES_PASSWORD" | b64dec) }}
+{{- end }}
 
 {{- /* -----------------------------------------------------------------
       Convenience shorthands
@@ -39,10 +59,10 @@
 {{- end }}
   • Basic-Auth :
       user      = {{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}
-      password  = ⬇️
-        `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.BASIC_AUTH_PASSWORD}" | base64 -d`
-  • JWT signing key (JWT_SECRET_KEY) = ⬇️
-        `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.JWT_SECRET_KEY}" | base64 -d`
+      password  = {{ $basicAuthPass }}
+      `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.BASIC_AUTH_PASSWORD}" | base64 -d`
+  • JWT signing key (JWT_SECRET_KEY) = {{ $jwtKey }}
+      `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.JWT_SECRET_KEY}" | base64 -d`
   • Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }}`
 
 {{- /* ════════════  Fast-Time-Server  ════════════ */}}
@@ -55,7 +75,8 @@
   • Host / Port  : {{ $postgresSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgPort }}
   • DB           : {{ .Values.postgres.credentials.database }}
   • User         : {{ .Values.postgres.credentials.user }}
-  • Password     : `kubectl -n {{ $ns }} get secret {{ $pgSecret }} -o jsonpath="{.data.POSTGRES_PASSWORD}" | base64 -d`
+  • Password     : {{ $pgPass }}
+      `kubectl -n {{ $ns }} get secret {{ $pgSecret }} -o jsonpath="{.data.POSTGRES_PASSWORD}" | base64 -d`
 
 🔑 **Redis**
   • Host / Port  : {{ $redisSvc }}.{{ $ns }}.svc.cluster.local:{{ $redisPort }}
@@ -71,9 +92,8 @@
 # 1) Forward the Gateway locally (skip if using ingress):
 kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }} &
 
-# 2) Obtain a JWT via Basic-Auth (requires 'jq'):
-# TODO: this is not yet implemented use jwt tool locally instead
-export GW_TOKEN=$(curl -s -u '{{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}:{{ .Values.mcpContextForge.secret.BASIC_AUTH_PASSWORD }}' \
+# 2) Obtain a JWT via Basic-Auth (requires 'jq'): # TODO not yet implemented use jwt tool manually
+export GW_TOKEN=$(curl -s -u '{{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}:{{ $basicAuthPass }}' \
   -X POST http://localhost:4444/auth/login | jq -r '.access_token')
 
 # 3) Register the Fast-Time-Server with the Gateway:
@@ -85,5 +105,5 @@ curl -s -X POST \
 ```
 
 📚 **Further reading**
-• [https://ibm.github.io/mcp-context-forge/deployment/helm/](https://ibm.github.io/mcp-context-forge/deployment/helm/)
-• [https://ibm.github.io/mcp-context-forge/testing/basic/](https://ibm.github.io/mcp-context-forge/testing/basic/)
+* [https://ibm.github.io/mcp-context-forge/deployment/helm/](https://ibm.github.io/mcp-context-forge/deployment/helm/)
+* [https://ibm.github.io/mcp-context-forge/testing/basic/](https://ibm.github.io/mcp-context-forge/testing/basic/)

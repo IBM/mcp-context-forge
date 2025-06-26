@@ -301,3 +301,39 @@ For every setting see the [full annotated `values.yaml`](https://github.com/IBM/
 11. 📁 Include persistent storage toggle in `values.yaml` for easier local/dev setup
 12. 🧼 Add Helm pre-delete hook for cleanup tasks (e.g., deregistering from external systems)
 13. 🧩 Package optional CRDs if needed in the future (e.g., for custom integrations)
+
+## Debug / start fresh (delete namespace)
+
+```bash
+# 0. Create and customize the values
+cp values.yaml my-values.yaml
+
+# 1. Verify the release name and namespace
+helm list -A | grep mcp-stack
+
+# 2. Uninstall the Helm release (removes Deployments, Services, Secrets created by the chart)
+helm uninstall mcp-stack -n mcp-private
+
+# 3. Delete any leftover PersistentVolumeClaims *if* you don't need the data
+kubectl delete pvc --all -n mcp-private
+
+# 4. Remove the namespace itself (skips if you want to keep it)
+kubectl delete namespace mcp-private
+
+# 5. Optional: confirm nothing is left
+helm list -A | grep mcp-stack   # should return nothing
+kubectl get ns | grep mcp-private  # should return nothing
+
+# 6. Re-create the namespace (if you deleted it)
+kubectl create namespace mcp-private
+
+# 7. Re-install the chart with your values file
+helm upgrade --install mcp-stack . \
+  --namespace mcp-private \
+  -f my-values.yaml \
+  --wait --timeout 15m --debug
+
+# 8. Check status
+kubectl get all -n mcp-private
+helm status mcp-stack -n mcp-private --show-desc
+```
