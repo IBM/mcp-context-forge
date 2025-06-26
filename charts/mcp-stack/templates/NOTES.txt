@@ -59,7 +59,7 @@
 {{- end }}
   • Basic-Auth :
       user      = {{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}
-      password  = {{ $basicAuthPass }}
+      password  = {{ .Values.mcpContextForge.secret.BASIC_AUTH_PASSWORD | default "<set-in-values>" }}
       `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.BASIC_AUTH_PASSWORD}" | base64 -d`
   • JWT signing key (JWT_SECRET_KEY) = {{ $jwtKey }}
       `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.JWT_SECRET_KEY}" | base64 -d`
@@ -75,7 +75,7 @@
   • Host / Port  : {{ $postgresSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgPort }}
   • DB           : {{ .Values.postgres.credentials.database }}
   • User         : {{ .Values.postgres.credentials.user }}
-  • Password     : {{ $pgPass }}
+  • Password     : {{ .Values.postgres.credentials.password | default "<set-in-values>" }}
       `kubectl -n {{ $ns }} get secret {{ $pgSecret }} -o jsonpath="{.data.POSTGRES_PASSWORD}" | base64 -d`
 
 🔑 **Redis**
