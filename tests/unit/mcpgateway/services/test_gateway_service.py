@@ -317,7 +317,8 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=conflicting))
         test_db.rollback = Mock()
 
-        gateway_update = MagicMock(spec=GatewayUpdate, name="existing_gateway")
+        # gateway_update = MagicMock(spec=GatewayUpdate, name="existing_gateway")
+        gateway_update = GatewayUpdate(name="existing_gateway")
 
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.update_gateway(test_db, 1, gateway_update)
