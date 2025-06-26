@@ -419,8 +419,17 @@
       <!-- Tools Panel -->
       <div id="tools-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-2xl font-bold dark:text-gray-200">Registered Tools</h2>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">This is the global catalog of Tools available. Create a Virtual Server using one of these tools.</p>
+          <div>
+            <h2 class="text-2xl font-bold dark:text-gray-200">Registered Tools</h2>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">This is the global catalog of Tools available. Create a Virtual Server using one of these tools.</p>
+            <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              <strong>Annotation badges:</strong>
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 ml-1">📖 Read-Only</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 ml-1">⚠️ Destructive</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 ml-1">🔄 Idempotent</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 ml-1">🌐 External Access</span>
+            </div>
+          </div>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -471,6 +480,11 @@
                     Description
                   </th>
                   <th
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24"
+                  >
+                    Annotations
+                  </th>
+                  <th
                     class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12"
                   >
                     Status
@@ -514,6 +528,27 @@
                     class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {{ tool.description }}
+                  </td>
+                  <td class="px-2 py-4 whitespace-nowrap">
+                    {% if tool.annotations %}
+                      {% if tool.annotations.title %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{{ tool.annotations.title }}</span>
+                      {% endif %}
+                      {% if tool.annotations.readOnlyHint %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1">📖</span>
+                      {% endif %}
+                      {% if tool.annotations.destructiveHint %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1">⚠️</span>
+                      {% endif %}
+                      {% if tool.annotations.idempotentHint %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1">🔄</span>
+                      {% endif %}
+                      {% if tool.annotations.openWorldHint %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐</span>
+                      {% endif %}
+                    {% else %}
+                      <span class="text-gray-400 text-xs">None</span>
+                    {% endif %}
                   </td>
                   <td class="px-3 py-4 whitespace-nowrap">
                     <span
@@ -1881,6 +1916,19 @@
                       id="edit-tool-schema"
                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     ></textarea>
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700"
+                      >Annotations (JSON) - Read Only</label
+                    >
+                    <textarea
+                      name="annotations"
+                      id="edit-tool-annotations"
+                      readonly
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm bg-gray-50 text-gray-600"
+                      placeholder="Annotations are automatically provided by MCP servers"
+                    ></textarea>
+                    <p class="mt-1 text-xs text-gray-500">Annotations like readOnlyHint, destructiveHint are provided by the MCP server and cannot be manually edited.</p>
                   </div>
                   <!-- Authentication Section -->
                   <div>

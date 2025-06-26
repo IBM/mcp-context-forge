@@ -126,6 +126,7 @@ class ToolService:
         tool_dict["execution_count"] = tool.execution_count
         tool_dict["metrics"] = tool.metrics_summary
         tool_dict["request_type"] = tool.request_type
+        tool_dict["annotations"] = tool.annotations or {}
 
         decoded_auth_value = decode_auth(tool.auth_value)
         if tool.auth_type == "basic":
@@ -224,6 +225,7 @@ class ToolService:
                 request_type=tool.request_type,
                 headers=tool.headers,
                 input_schema=tool.input_schema,
+                annotations=tool.annotations,
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
                 auth_value=auth_value,
@@ -554,6 +556,8 @@ class ToolService:
                 tool.headers = tool_update.headers
             if tool_update.input_schema is not None:
                 tool.input_schema = tool_update.input_schema
+            if tool_update.annotations is not None:
+                tool.annotations = tool_update.annotations
             if tool_update.jsonpath_filter is not None:
                 tool.jsonpath_filter = tool_update.jsonpath_filter
 

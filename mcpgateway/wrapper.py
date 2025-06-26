@@ -330,6 +330,7 @@ async def handle_list_tools() -> List[types.Tool]:
                         name=str(tool_name),
                         description=tool.get("description", ""),
                         inputSchema=tool.get("inputSchema", {}),
+                        annotations=tool.get("annotations", {}),
                     )
                 )
         return tools

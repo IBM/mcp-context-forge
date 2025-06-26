@@ -7,6 +7,7 @@ Authors: Mihai Criveti
 
 """
 
+import os
 from unittest.mock import MagicMock, patch
 
 from mcpgateway.config import Settings, get_settings
@@ -18,15 +19,16 @@ def test_settings_default_values():
     developer's local .env file. Passing ``_env_file=None`` tells
     Pydantic not to load any environment file.
     """
-    settings = Settings(_env_file=None)
+    with patch.dict(os.environ, {}, clear=True):
+        settings = Settings(_env_file=None)
 
-    assert settings.app_name == "MCP_Gateway"
-    assert settings.host == "127.0.0.1"
-    assert settings.port == 4444
-    assert settings.database_url == "sqlite:///./mcp.db"
-    assert settings.basic_auth_user == "admin"
-    assert settings.basic_auth_password == "changeme"
-    assert settings.auth_required is True
+        assert settings.app_name == "MCP_Gateway"
+        assert settings.host == "127.0.0.1"
+        assert settings.port == 4444
+        assert settings.database_url == "sqlite:///./mcp.db"
+        assert settings.basic_auth_user == "admin"
+        assert settings.basic_auth_password == "changeme"
+        assert settings.auth_required is True
 
 
 def test_api_key_property():
