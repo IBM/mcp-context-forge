@@ -16,7 +16,6 @@ import pytest
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
-from starlette.datastructures import FormData
 
 from mcpgateway.admin import (
     admin_add_gateway,

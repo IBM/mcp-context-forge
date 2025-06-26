@@ -1228,7 +1228,7 @@ wheels = [
 
 [[package]]
 name = "mcp-contextforge-gateway"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -1246,7 +1246,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
-    { name = "slugify" },
     { name = "sqlalchemy" },
     { name = "sse-starlette" },
     { name = "starlette" },
@@ -1402,8 +1401,8 @@ requires-dist = [
     { name = "jsonpath-ng", specifier = ">=1.7.0" },
     { name = "jsonschema", specifier = ">=4.24.0" },
     { name = "mcp", specifier = ">=1.9.4" },
-    { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=0.1.1" },
-    { name = "mcp-contextforge-gateway", extras = ["redis", "dev"], marker = "extra == 'dev-all'", specifier = ">=0.1.1" },
+    { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=0.2.0" },
+    { name = "mcp-contextforge-gateway", extras = ["redis", "dev"], marker = "extra == 'dev-all'", specifier = ">=0.2.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.16.1" },
     { name = "parse", specifier = ">=1.20.2" },
     { name = "pexpect", marker = "extra == 'dev'", specifier = ">=4.9.0" },
@@ -1434,7 +1433,6 @@ requires-dist = [
     { name = "redis", marker = "extra == 'redis'", specifier = ">=6.2.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.0" },
     { name = "settings-doc", marker = "extra == 'dev'", specifier = ">=4.3.2" },
-    { name = "slugify", specifier = "==0.0.1" },
     { name = "snakeviz", marker = "extra == 'dev'", specifier = ">=2.2.2" },
     { name = "sqlalchemy", specifier = ">=2.0.41" },
     { name = "sse-starlette", specifier = ">=2.3.6" },
@@ -2638,12 +2636,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
 ]
-
-[[package]]
-name = "slugify"
-version = "0.0.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/7b/89/fbb7391d777b60c82d4e1376bb181b98e75adf506b3f7ffe837eca64570b/slugify-0.0.1.tar.gz", hash = "sha256:c5703cc11c1a6947536f3ce8bb306766b8bb5a84a53717f5a703ce0f18235e4c", size = 1156, upload-time = "2010-12-07T16:36:05.53Z" }
 
 [[package]]
 name = "snakeviz"

@@ -23,7 +23,7 @@ COPY . /app
 # Create virtual environment, upgrade pip and install dependencies using uv for speed
 RUN python3 -m venv /app/.venv && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres]"
+    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,alembic]"
 
 # update the user permissions
 RUN chown -R 1001:0 /app && \
