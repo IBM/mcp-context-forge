@@ -203,6 +203,7 @@ class GatewayService:
                     request_type=tool.request_type,
                     headers=tool.headers,
                     input_schema=tool.input_schema,
+                    annotations=tool.annotations,
                     jsonpath_filter=tool.jsonpath_filter,
                     auth_type=auth_type,
                     auth_value=auth_value,

@@ -286,6 +286,10 @@ class ToolCreate(BaseModelWithConfig):
         default_factory=lambda: {"type": "object", "properties": {}},
         description="JSON Schema for validating tool parameters",
     )
+    annotations: Optional[Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Tool annotations for behavior hints (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint)",
+    )
     jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[int] = Field(None, description="id of gateway for the tool")
@@ -344,6 +348,7 @@ class ToolUpdate(BaseModelWithConfig):
     integration_type: Optional[Literal["MCP", "REST"]] = Field(None, description="Tool integration type")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
+    annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
     jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[int] = Field(None, description="id of gateway for the tool")
@@ -411,6 +416,7 @@ class ToolRead(BaseModelWithConfig):
     integration_type: str
     headers: Optional[Dict[str, str]]
     input_schema: Dict[str, Any]
+    annotations: Optional[Dict[str, Any]]
     jsonpath_filter: Optional[str]
     auth: Optional[AuthenticationValues]
     created_at: datetime

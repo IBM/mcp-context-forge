@@ -568,6 +568,54 @@ async function viewTool(toolId) {
       authHTML = `<p><strong>Authentication Type:</strong> None</p>`;
     }
 
+    // Helper function to create annotation badges
+    const renderAnnotations = (annotations) => {
+      if (!annotations || Object.keys(annotations).length === 0) {
+        return '<p><strong>Annotations:</strong> <span class="text-gray-500">None</span></p>';
+      }
+
+      const badges = [];
+
+      // Show title if present
+      if (annotations.title) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">${annotations.title}</span>`);
+      }
+
+      // Show behavior hints with appropriate colors
+      if (annotations.readOnlyHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1">📖 Read-Only</span>`);
+      }
+
+      if (annotations.destructiveHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1">⚠️ Destructive</span>`);
+      }
+
+      if (annotations.idempotentHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1">🔄 Idempotent</span>`);
+      }
+
+      if (annotations.openWorldHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐 External Access</span>`);
+      }
+
+      // Show any other custom annotations
+      Object.keys(annotations).forEach(key => {
+        if (!['title', 'readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'].includes(key)) {
+          const value = annotations[key];
+          badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mr-1 mb-1">${key}: ${value}</span>`);
+        }
+      });
+
+      return `
+        <div>
+          <strong>Annotations:</strong>
+          <div class="mt-1 flex flex-wrap">
+            ${badges.join('')}
+          </div>
+        </div>
+      `;
+    };
+
     document.getElementById("tool-details").innerHTML = `
       <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
         <p><strong>Name:</strong> ${tool.name}</p>
@@ -576,6 +624,7 @@ async function viewTool(toolId) {
         <p><strong>Description:</strong> ${tool.description || "N/A"}</p>
         <p><strong>Request Type:</strong> ${tool.requestType || "N/A"}</p>
         ${authHTML}
+        ${renderAnnotations(tool.annotations)}
         <div>
           <strong>Headers:</strong>
           <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
@@ -664,10 +713,12 @@ async function editTool(toolId) {
 
     const headersJson = JSON.stringify(tool.headers || {}, null, 2);
     const schemaJson = JSON.stringify(tool.inputSchema || {}, null, 2);
+    const annotationsJson = JSON.stringify(tool.annotations || {}, null, 2);
 
     // Update the code editor textareas.
     document.getElementById("edit-tool-headers").value = headersJson;
     document.getElementById("edit-tool-schema").value = schemaJson;
+    document.getElementById("edit-tool-annotations").value = annotationsJson;
     if (window.editToolHeadersEditor) {
       window.editToolHeadersEditor.setValue(headersJson);
       window.editToolHeadersEditor.refresh();

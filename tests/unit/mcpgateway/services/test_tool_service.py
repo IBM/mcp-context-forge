@@ -111,6 +111,7 @@ class TestToolService:
                 gateway_id=None,
                 execution_count=0,
                 auth=None,  # Add auth field
+                annotations={},  # Add annotations field
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -231,6 +232,7 @@ class TestToolService:
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
+            annotations={},  # Add annotations field
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -278,6 +280,7 @@ class TestToolService:
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
+            annotations={},  # Add annotations field
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -376,6 +379,7 @@ class TestToolService:
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
+            annotations={},  # Add annotations field
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -441,6 +445,7 @@ class TestToolService:
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
+            annotations={},  # Add annotations field
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
