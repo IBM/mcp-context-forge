@@ -1,0 +1,33 @@
+{{- /*  templates/hpa-mcpgateway.yaml  */ -}}
+{{- if .Values.mcpContextForge.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-mcpgateway
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "mcp-stack.fullname" . }}-mcpgateway
+  minReplicas: {{ .Values.mcpContextForge.hpa.minReplicas }}
+  maxReplicas: {{ .Values.mcpContextForge.hpa.maxReplicas }}
+
+  # ─── Metrics ───
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.mcpContextForge.hpa.targetCPUUtilizationPercentage }}
+    {{- if .Values.mcpContextForge.hpa.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.mcpContextForge.hpa.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
