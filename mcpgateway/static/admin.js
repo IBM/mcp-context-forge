@@ -1475,6 +1475,7 @@ async function loadAggregatedMetrics() {
     if (window.metricsChartInstance) {
       window.metricsChartInstance.destroy();
     }
+    // cma
     const ctx = document.getElementById("metricsChart").getContext("2d");
     window.metricsChartInstance = new window.Chart(ctx, {
       type: "bar",
@@ -1543,9 +1544,9 @@ async function loadTopTools() {
     topTools.forEach((tool) => {
       const count = tool.metrics?.totalExecutions ?? tool.executionCount ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${tool.id}</td>
-          <td class="py-1 px-2 border">${tool.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${tool.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${tool.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1580,10 +1581,10 @@ async function loadTopResources() {
     topResources.forEach((resource) => {
       const count = resource.metrics?.totalExecutions ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${resource.id}</td>
-          <td class="py-1 px-2 border">${resource.uri}</td>
-          <td class="py-1 px-2 border">${resource.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${resource.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${resource.uri}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${resource.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1617,9 +1618,9 @@ async function loadTopServers() {
     topServers.forEach((server) => {
       const count = server.metrics?.totalExecutions ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${server.id}</td>
-          <td class="py-1 px-2 border">${server.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${server.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${server.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1653,9 +1654,9 @@ async function loadTopPrompts() {
     topPrompts.forEach((prompt) => {
       const count = prompt.metrics?.totalExecutions ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${prompt.id}</td>
-          <td class="py-1 px-2 border">${prompt.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${prompt.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${prompt.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
