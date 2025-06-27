@@ -168,13 +168,13 @@ helm lint .
 
 ```bash
 # Upgrade only the gateway image
-ahelm upgrade mcp-stack . -n mcp \
+ahelm upgrade mcp-stack . -n mcp-private\
   --set mcpContextForge.image.tag=v1.2.3 \
   --wait
 
 # Preview changes (requires helm‑diff plugin)
 helm plugin install https://github.com/databus23/helm-diff
-helm diff upgrade mcp-stack . -n mcp -f my-values.yaml
+helm diff upgrade mcp-stack . -n mcp-private-f my-values.yaml
 
 # Roll back to revision 1
 helm rollback mcp-stack 1 -n mcp
@@ -376,7 +376,7 @@ helm upgrade --install mcp-stack charts/mcp-stack \
 
 # Later: raise the ceiling & make scaling more aggressive
 helm upgrade mcp-stack charts/mcp-stack \
-  -n mcp \
+  -n mcp-private\
   --reuse-values \
   --set mcpContextForge.hpa.maxReplicas=20 \
   --set mcpContextForge.hpa.targetCPUUtilizationPercentage=60 \
@@ -391,12 +391,12 @@ Useful in emergencies or during load tests.
 
 ```bash
 # Bump minReplicas from 3 → 5
-kubectl patch hpa mcp-stack-mcpgateway -n mcp \
+kubectl patch hpa mcp-stack-mcpgateway -n mcp-private\
   --type merge \
   -p '{"spec":{"minReplicas":5}}'
 
 # Drop the CPU target from 80 % → 65 % (scale up sooner)
-kubectl patch hpa mcp-stack-mcpgateway -n mcp \
+kubectl patch hpa mcp-stack-mcpgateway -n mcp-private\
   --type json \
   -p '[{"op":"replace","path":"/spec/metrics/0/resource/target/averageUtilization","value":65}]'
 ```
@@ -419,6 +419,25 @@ A healthy HPA shows something like:
 ```text
 NAME                   TARGETS          MINPODS   MAXPODS   REPLICAS
 mcp-stack-mcpgateway   55%/70%          2         15        4
+```
+
+### Check scaling events
+
+```bash
+# 1. Show the last few scale-up / scale-down events
+kubectl describe hpa mcp-stack-mcpgateway -n mcp-private | tail -n 20
+
+# 2. Stream HPA events as they happen
+kubectl get events -n mcp-private \
+  --field-selector involvedObject.kind=HorizontalPodAutoscaler,\
+involvedObject.name=mcp-stack-mcpgateway \
+  --watch
+
+# 3. Watch target utilisation & replica count refresh every 2 s
+watch -n2 kubectl get hpa mcp-stack-mcpgateway -n mcp-private
+
+# 4. Live pod-level CPU / memory (confirm the numbers the HPA sees)
+kubectl top pods -l app=mcp-stack-mcpgateway -n mcp-private --sort-by=cpu
 ```
 
 ---
