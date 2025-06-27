@@ -323,7 +323,7 @@ def step_7_verify_tools():
 
 
 def step_8_invoke_tool():
-    body = {"jsonrpc": "2.0", "id": 1, "method": "get_current_time", "params": {"timezone": "Europe/Dublin"}}
+    body = {"jsonrpc": "2.0", "id": 1, "method": "smoketest-time-server-get-current-time", "params": {"timezone": "Europe/Dublin"}}
     j = request("POST", "/rpc", json_data=body).json()
 
     if "error" in j:
