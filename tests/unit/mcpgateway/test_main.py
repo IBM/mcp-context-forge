@@ -130,14 +130,14 @@ class TestAPIEndpoints:
     def test_list_servers_endpoint(self, mock_list_servers, test_client, auth_headers):
         mock_list_servers.return_value = [
             ServerRead(
-                id=1,
+                id="1",
                 name="test_server",
                 description="A test server",
                 icon="server-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
-                associated_tools=[101],
+                associated_tools=["101"],
                 associated_resources=[201],
                 associated_prompts=[301],
                 metrics={
@@ -250,7 +250,7 @@ class TestAPIEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["content"][0]["text"] == "Tool response"
-        mock_invoke_tool.assert_called_once_with(ANY, "test_tool", {"param": "value"})
+        mock_invoke_tool.assert_called_once_with(db=ANY, name="test_tool", arguments={"param": "value"})
 
     # RPC: prompt --------------------------------------------------------- #
     @patch("mcpgateway.main.prompt_service.get_prompt")

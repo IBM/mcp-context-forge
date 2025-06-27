@@ -233,7 +233,7 @@ class ResourceService:
         resources = db.execute(query).scalars().all()
         return [self._convert_resource_to_read(r) for r in resources]
 
-    async def list_server_resources(self, db: Session, server_id: int, include_inactive: bool = False) -> List[ResourceRead]:
+    async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
         """
         Retrieve a list of registered resources from the database.
 
@@ -244,7 +244,7 @@ class ResourceService:
 
         Args:
             db (Session): The SQLAlchemy database session.
-            server_id (int): Server ID
+            server_id (str): Server ID
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
 

@@ -30,6 +30,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
 from mcpgateway.config import settings
@@ -394,8 +395,6 @@ async def version_endpoint(
     payload = _build_payload(redis_version, redis_ok)
     if partial:
         # Return partial HTML fragment for HTMX embedding
-        from fastapi.templating import Jinja2Templates
-
         templates = Jinja2Templates(directory=str(settings.templates_dir))
         return templates.TemplateResponse("version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")

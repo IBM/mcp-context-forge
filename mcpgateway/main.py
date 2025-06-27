@@ -561,12 +561,12 @@ async def list_servers(
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
-async def get_server(server_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
+async def get_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
     Args:
-        server_id (int): The ID of the server to retrieve.
+        server_id (str): The ID of the server to retrieve.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -615,7 +615,7 @@ async def create_server(
 
 @server_router.put("/{server_id}", response_model=ServerRead)
 async def update_server(
-    server_id: int,
+    server_id: str,
     server: ServerUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -624,7 +624,7 @@ async def update_server(
     Updates the information of an existing server.
 
     Args:
-        server_id (int): The ID of the server to update.
+        server_id (str): The ID of the server to update.
         server (ServerUpdate): The updated server data.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -648,7 +648,7 @@ async def update_server(
 
 @server_router.post("/{server_id}/toggle", response_model=ServerRead)
 async def toggle_server_status(
-    server_id: int,
+    server_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -657,7 +657,7 @@ async def toggle_server_status(
     Toggles the status of a server (activate or deactivate).
 
     Args:
-        server_id (int): The ID of the server to toggle.
+        server_id (str): The ID of the server to toggle.
         activate (bool): Whether to activate or deactivate the server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -678,12 +678,12 @@ async def toggle_server_status(
 
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
-async def delete_server(server_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
     Args:
-        server_id (int): The ID of the server to delete.
+        server_id (str): The ID of the server to delete.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -707,13 +707,13 @@ async def delete_server(server_id: int, db: Session = Depends(get_db), user: str
 
 
 @server_router.get("/{server_id}/sse")
-async def sse_endpoint(request: Request, server_id: int, user: str = Depends(require_auth)):
+async def sse_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
     """
     Establishes a Server-Sent Events (SSE) connection for real-time updates about a server.
 
     Args:
         request (Request): The incoming request.
-        server_id (int): The ID of the server for which updates are received.
+        server_id (str): The ID of the server for which updates are received.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -744,13 +744,13 @@ async def sse_endpoint(request: Request, server_id: int, user: str = Depends(req
 
 
 @server_router.post("/{server_id}/message")
-async def message_endpoint(request: Request, server_id: int, user: str = Depends(require_auth)):
+async def message_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
     """
     Handles incoming messages for a specific server.
 
     Args:
         request (Request): The incoming message request.
-        server_id (int): The ID of the server receiving the message.
+        server_id (str): The ID of the server receiving the message.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -786,7 +786,7 @@ async def message_endpoint(request: Request, server_id: int, user: str = Depends
 
 @server_router.get("/{server_id}/tools", response_model=List[ToolRead])
 async def server_get_tools(
-    server_id: int,
+    server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -799,7 +799,7 @@ async def server_get_tools(
     that have been deactivated but not deleted from the system.
 
     Args:
-        server_id (int): ID of the server
+        server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive tools in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -814,7 +814,7 @@ async def server_get_tools(
 
 @server_router.get("/{server_id}/resources", response_model=List[ResourceRead])
 async def server_get_resources(
-    server_id: int,
+    server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -827,7 +827,7 @@ async def server_get_resources(
     to view or manage resources that have been deactivated but not deleted.
 
     Args:
-        server_id (int): ID of the server
+        server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive resources in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -842,7 +842,7 @@ async def server_get_resources(
 
 @server_router.get("/{server_id}/prompts", response_model=List[PromptRead])
 async def server_get_prompts(
-    server_id: int,
+    server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -855,7 +855,7 @@ async def server_get_prompts(
     prompts that have been deactivated but not deleted from the system.
 
     Args:
-        server_id (int): ID of the server
+        server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive prompts in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -937,7 +937,7 @@ async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
 async def get_tool(
-    tool_id: int,
+    tool_id: str,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
     apijsonpath: JsonPathModifier = Body(None),
@@ -973,7 +973,7 @@ async def get_tool(
 
 @tool_router.put("/{tool_id}", response_model=ToolRead)
 async def update_tool(
-    tool_id: int,
+    tool_id: str,
     tool: ToolUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -982,7 +982,7 @@ async def update_tool(
     Updates an existing tool with new data.
 
     Args:
-        tool_id (int): The ID of the tool to update.
+        tool_id (str): The ID of the tool to update.
         tool (ToolUpdate): The updated tool information.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
@@ -1001,12 +1001,12 @@ async def update_tool(
 
 
 @tool_router.delete("/{tool_id}")
-async def delete_tool(tool_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_tool(tool_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
     Args:
-        tool_id (int): The ID of the tool to delete.
+        tool_id (str): The ID of the tool to delete.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -1026,7 +1026,7 @@ async def delete_tool(tool_id: int, db: Session = Depends(get_db), user: str = D
 
 @tool_router.post("/{tool_id}/toggle")
 async def toggle_tool_status(
-    tool_id: int,
+    tool_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1035,7 +1035,7 @@ async def toggle_tool_status(
     Activates or deactivates a tool.
 
     Args:
-        tool_id (int): The ID of the tool to toggle.
+        tool_id (str): The ID of the tool to toggle.
         activate (bool): Whether to activate (`True`) or deactivate (`False`) the tool.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
@@ -1480,7 +1480,7 @@ async def delete_prompt(name: str, db: Session = Depends(get_db), user: str = De
 ################
 @gateway_router.post("/{gateway_id}/toggle")
 async def toggle_gateway_status(
-    gateway_id: int,
+    gateway_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1489,7 +1489,7 @@ async def toggle_gateway_status(
     Toggle the activation status of a gateway.
 
     Args:
-        gateway_id (int): Numeric ID of the gateway to toggle.
+        gateway_id (str): String ID of the gateway to toggle.
         activate (bool): ``True`` to activate, ``False`` to deactivate.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
@@ -1562,16 +1562,15 @@ async def register_gateway(
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=502)
-        elif isinstance(ex, ValueError):
+        if isinstance(ex, ValueError):
             return JSONResponse(content={"message": "Unable to process input"}, status_code=400)
-        elif isinstance(ex, RuntimeError):
+        if isinstance(ex, RuntimeError):
             return JSONResponse(content={"message": "Error during execution"}, status_code=500)
-        else:
-            return JSONResponse(content={"message": "Unexpected error"}, status_code=500)
+        return JSONResponse(content={"message": "Unexpected error"}, status_code=500)
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
-async def get_gateway(gateway_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
+async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
     """
     Retrieve a gateway by ID.
 
@@ -1589,7 +1588,7 @@ async def get_gateway(gateway_id: int, db: Session = Depends(get_db), user: str 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
 async def update_gateway(
-    gateway_id: int,
+    gateway_id: str,
     gateway: GatewayUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1611,7 +1610,7 @@ async def update_gateway(
 
 
 @gateway_router.delete("/{gateway_id}")
-async def delete_gateway(gateway_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
@@ -1771,7 +1770,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
             result = {}
         else:
             try:
-                result = await tool_service.invoke_tool(db, method, params)
+                result = await tool_service.invoke_tool(db=db, name=method, arguments=params)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:

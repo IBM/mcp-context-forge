@@ -288,7 +288,7 @@ class ToolCreate(BaseModelWithConfig):
     )
     jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
-    gateway_id: Optional[int] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
     @root_validator(pre=True)
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -346,7 +346,7 @@ class ToolUpdate(BaseModelWithConfig):
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
     jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
-    gateway_id: Optional[int] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
     @root_validator(pre=True)
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -403,8 +403,8 @@ class ToolRead(BaseModelWithConfig):
     - Request type and authentication settings.
     """
 
-    id: int
-    name: str
+    id: str
+    original_name: str
     url: Optional[str]
     description: Optional[str]
     request_type: str
@@ -416,9 +416,12 @@ class ToolRead(BaseModelWithConfig):
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    gateway_id: Optional[int]
+    gateway_id: Optional[str]
     execution_count: int
     metrics: ToolMetrics
+    name: str
+    gateway_slug: str
+    original_name_slug: str
 
     class Config(BaseModelWithConfig.Config):
         """
@@ -875,7 +878,7 @@ class GatewayRead(BaseModelWithConfig):
     - Authentication header value: for headers auth
     """
 
-    id: int = Field(None, description="Unique ID of the gateway")
+    id: str = Field(None, description="Unique ID of the gateway")
     name: str = Field(..., description="Unique name for the gateway")
     url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
@@ -896,6 +899,8 @@ class GatewayRead(BaseModelWithConfig):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
+
+    slug: str = Field(None, description="Slug for gateway endpoint URL")
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
@@ -1175,14 +1180,14 @@ class ServerRead(BaseModelWithConfig):
     - Metrics: Aggregated metrics for the server invocations.
     """
 
-    id: int
+    id: str
     name: str
     description: Optional[str]
     icon: Optional[str]
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    associated_tools: List[int] = []
+    associated_tools: List[str] = []
     associated_resources: List[int] = []
     associated_prompts: List[int] = []
     metrics: ServerMetrics

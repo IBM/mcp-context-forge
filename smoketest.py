@@ -39,6 +39,8 @@ from collections import deque
 from types import SimpleNamespace
 from typing import Callable, List, Tuple
 
+from mcpgateway.config import settings
+
 # ───────────────────────── Ports / constants ────────────────────────────
 PORT_GATEWAY = 4444  # HTTPS container
 PORT_TIME_SERVER = 8002  # supergateway
@@ -316,12 +318,12 @@ def step_6_register_gateway() -> int:
 
 def step_7_verify_tools():
     names = [t["name"] for t in request("GET", "/tools").json()]
-    assert "get_current_time" in names, "get_current_time absent"
+    assert f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time" in names, f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time absent"
     logging.info("✅ Tool visible in /tools")
 
 
 def step_8_invoke_tool():
-    body = {"jsonrpc": "2.0", "id": 1, "method": "get_current_time", "params": {"timezone": "Europe/Dublin"}}
+    body = {"jsonrpc": "2.0", "id": 1, "method": "smoketest-time-server-get-current-time", "params": {"timezone": "Europe/Dublin"}}
     j = request("POST", "/rpc", json_data=body).json()
 
     if "error" in j:

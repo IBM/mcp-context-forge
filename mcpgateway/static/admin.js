@@ -578,11 +578,11 @@ async function viewTool(toolId) {
         ${authHTML}
         <div>
           <strong>Headers:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Input Schema:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Metrics:</strong>
@@ -607,6 +607,54 @@ async function viewTool(toolId) {
   }
 }
 
+function protectInputPrefix(inputElement, protectedText) {
+    let lastValidValue = protectedText;
+
+    // Set initial value
+    inputElement.value = protectedText;
+
+    // Listen for input events
+    inputElement.addEventListener('input', function(e) {
+        const currentValue = e.target.value;
+
+        // Check if protected text is still intact
+        if (!currentValue.startsWith(protectedText)) {
+            // Restore the protected text
+            e.target.value = lastValidValue;
+            // Move cursor to end of protected text
+            e.target.setSelectionRange(protectedText.length, protectedText.length);
+        } else {
+            // Save valid state
+            lastValidValue = currentValue;
+        }
+    });
+
+    // Prevent selection/editing of protected portion
+    inputElement.addEventListener('keydown', function(e) {
+        const start = e.target.selectionStart;
+        const end = e.target.selectionEnd;
+
+        // Block edits that would affect protected text
+        if (start < protectedText.length) {
+            // Allow navigation keys
+            const allowedKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab'];
+            if (!allowedKeys.includes(e.key)) {
+                e.preventDefault();
+                // Move cursor to end of protected text
+                e.target.setSelectionRange(protectedText.length, protectedText.length);
+            }
+        }
+    });
+
+    // Handle paste events
+    inputElement.addEventListener('paste', function(e) {
+        const start = e.target.selectionStart;
+        if (start < protectedText.length) {
+            e.preventDefault();
+        }
+    });
+}
+
 /**
  * Fetches tool details from the backend and populates the edit modal form,
  * including Request Type and Authentication fields, so that they are pre-filled for editing.
@@ -621,6 +669,11 @@ async function editTool(toolId) {
     // Set form action and populate basic fields.
     document.getElementById("edit-tool-form").action =
       `${window.ROOT_PATH}/admin/tools/${toolId}/edit`;
+    // const toolNameInput = document.getElementById("edit-tool-name");
+    // const protectedPrefix = tool.gatewaySlug + `${window.GATEWAY_TOOL_NAME_SEPARATOR}`;
+    // protectInputPrefix(toolNameInput, protectedPrefix);
+    // toolNameInput.value = protectedPrefix + (tool.name.startsWith(protectedPrefix) ?
+    // tool.name.substring(protectedPrefix.length) : tool.name);
     document.getElementById("edit-tool-name").value = tool.name;
     document.getElementById("edit-tool-url").value = tool.url;
     document.getElementById("edit-tool-description").value =
@@ -968,7 +1021,7 @@ async function viewServer(serverId) {
         // Otherwise, lookup the name using the mapping (fallback to the id itself)
         const name = mapping[item] || item;
         return `<span class="inline-block px-2 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded">
-                      ${item}:${name}
+                      ${name}
                     </span>`;
       }
     };
@@ -1063,11 +1116,38 @@ async function editServer(serverId) {
       server.description || "";
     document.getElementById("edit-server-icon").value = server.icon || "";
     // Fill in the associated tools field (already working)
-    document.getElementById("edit-server-tools").value = Array.isArray(
-      server.associatedTools,
-    )
-      ? server.associatedTools.join(", ")
-      : "";
+    const select = document.getElementById('edit-server-tools');
+    const pillsBox = document.getElementById('selectedEditToolsPills');
+    const warnBox  = document.getElementById('selectedEditToolsWarning');
+
+    // mark every matching <option> as selected
+    for (const opt of select.options) {
+      if (server.associatedTools.includes(opt.innerText)) {
+        opt.selected = true;
+      }
+    }
+
+    const chosen = Array.from(select.selectedOptions);
+    const count  = chosen.length;
+    const max = 6;
+
+    const pillClasses =
+    "inline-block px-2 py-1 text-xs font-medium " +
+    "text-blue-800 bg-blue-100 rounded";
+
+    // ─── 1. rebuild pills  ───────────────────────────────────
+    pillsBox.innerHTML = "";                       // clear previous badges
+    chosen.forEach(opt => {
+      const span       = document.createElement("span");
+      span.className   = pillClasses;
+      span.textContent = opt.text;
+      pillsBox.appendChild(span);
+    });
+
+    // ─── 2. warning when > max  ─────────────────────────────
+    warnBox.textContent =
+      count > max ? `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.` : "";
+
     // Fill in the associated resources field (new)
     const resourcesField = document.getElementById("edit-server-resources");
     if (resourcesField) {
@@ -1395,6 +1475,7 @@ async function loadAggregatedMetrics() {
     if (window.metricsChartInstance) {
       window.metricsChartInstance.destroy();
     }
+    // cma
     const ctx = document.getElementById("metricsChart").getContext("2d");
     window.metricsChartInstance = new window.Chart(ctx, {
       type: "bar",
@@ -1463,9 +1544,9 @@ async function loadTopTools() {
     topTools.forEach((tool) => {
       const count = tool.metrics?.totalExecutions ?? tool.executionCount ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${tool.id}</td>
-          <td class="py-1 px-2 border">${tool.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${tool.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${tool.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1500,10 +1581,10 @@ async function loadTopResources() {
     topResources.forEach((resource) => {
       const count = resource.metrics?.totalExecutions ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${resource.id}</td>
-          <td class="py-1 px-2 border">${resource.uri}</td>
-          <td class="py-1 px-2 border">${resource.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${resource.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${resource.uri}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${resource.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1537,9 +1618,9 @@ async function loadTopServers() {
     topServers.forEach((server) => {
       const count = server.metrics?.totalExecutions ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${server.id}</td>
-          <td class="py-1 px-2 border">${server.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${server.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${server.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1573,9 +1654,9 @@ async function loadTopPrompts() {
     topPrompts.forEach((prompt) => {
       const count = prompt.metrics?.totalExecutions ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${prompt.id}</td>
-          <td class="py-1 px-2 border">${prompt.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${prompt.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${prompt.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1797,6 +1878,64 @@ function updateRequestTypeOptions(preselectedValue = null) {
     requestTypeSelect.value = preselectedValue;
   }
 }
+
+/**
+ * Initialise a multi-select so it displays the chosen items
+ * and warns when the count exceeds a limit.
+ *
+ * @param {string} selectId   – id of the <select multiple>
+ * @param {string} infoId     – id of the div that lists selected names
+ * @param {string} warnId     – id of the warning div
+ * @param {number} max        – maximum allowed items before warning
+ */
+function initToolSelect(selectId,
+                        pillsId,
+                        warnId,
+                        max = 6) {
+
+  const select   = document.getElementById(selectId);
+  const pillsBox = document.getElementById(pillsId);
+  const warnBox  = document.getElementById(warnId);
+
+  const pillClasses =
+    "inline-block px-2 py-1 text-xs font-medium " +
+    "text-blue-800 bg-blue-100 rounded";
+
+  function update() {
+    const chosen = Array.from(select.selectedOptions);
+    const count  = chosen.length;
+
+    // ─── 1. rebuild pills  ───────────────────────────────────
+    pillsBox.innerHTML = "";                       // clear previous badges
+    chosen.forEach(opt => {
+      const span       = document.createElement("span");
+      span.className   = pillClasses;
+      span.textContent = opt.text;
+      pillsBox.appendChild(span);
+    });
+
+    // ─── 2. warning when > max  ─────────────────────────────
+    warnBox.textContent =
+      count > max ? `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.` : "";
+  }
+
+  update();                       // initial render
+  select.addEventListener("change", update);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  initToolSelect("associatedTools",
+                 "selectedToolsPills",
+                 "selectedToolsWarning",
+                 6);
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  initToolSelect("edit-server-tools",
+                 "selectedEditToolsPills",
+                 "selectedEditToolsWarning",
+                 6);
+});
 
 window.toggleInactiveItems = toggleInactiveItems;
 window.viewTool = viewTool;
