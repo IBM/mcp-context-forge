@@ -609,14 +609,14 @@ async function viewTool(toolId) {
 
 function protectInputPrefix(inputElement, protectedText) {
     let lastValidValue = protectedText;
-    
+
     // Set initial value
     inputElement.value = protectedText;
-    
+
     // Listen for input events
     inputElement.addEventListener('input', function(e) {
         const currentValue = e.target.value;
-        
+
         // Check if protected text is still intact
         if (!currentValue.startsWith(protectedText)) {
             // Restore the protected text
@@ -628,12 +628,12 @@ function protectInputPrefix(inputElement, protectedText) {
             lastValidValue = currentValue;
         }
     });
-    
+
     // Prevent selection/editing of protected portion
     inputElement.addEventListener('keydown', function(e) {
         const start = e.target.selectionStart;
         const end = e.target.selectionEnd;
-        
+
         // Block edits that would affect protected text
         if (start < protectedText.length) {
             // Allow navigation keys
@@ -645,7 +645,7 @@ function protectInputPrefix(inputElement, protectedText) {
             }
         }
     });
-    
+
     // Handle paste events
     inputElement.addEventListener('paste', function(e) {
         const start = e.target.selectionStart;
@@ -672,7 +672,7 @@ async function editTool(toolId) {
     // const toolNameInput = document.getElementById("edit-tool-name");
     // const protectedPrefix = tool.gatewaySlug + `${window.GATEWAY_TOOL_NAME_SEPARATOR}`;
     // protectInputPrefix(toolNameInput, protectedPrefix);
-    // toolNameInput.value = protectedPrefix + (tool.name.startsWith(protectedPrefix) ? 
+    // toolNameInput.value = protectedPrefix + (tool.name.startsWith(protectedPrefix) ?
     // tool.name.substring(protectedPrefix.length) : tool.name);
     document.getElementById("edit-tool-name").value = tool.name;
     document.getElementById("edit-tool-url").value = tool.url;

@@ -1,8 +1,9 @@
+# -*- coding: utf-8 -*-
 import re
 from unicodedata import normalize
 
 # Helper regex patterns
-CONTRACTION_PATTERN = re.compile(r"(\w)['’](\w)")
+CONTRACTION_PATTERN = re.compile(r"(\w)[''](\w)")
 NON_ALPHANUMERIC_PATTERN = re.compile(r"[\W_]+")
 
 # Special character replacements that normalize() doesn't handle well
