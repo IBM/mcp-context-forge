@@ -19,6 +19,20 @@ wheels = [
 ]
 
 [[package]]
+name = "alembic"
+version = "1.16.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mako" },
+    { name = "sqlalchemy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9c/35/116797ff14635e496bbda0c168987f5326a6555b09312e9b817e360d1f56/alembic-1.16.2.tar.gz", hash = "sha256:e53c38ff88dadb92eb22f8b150708367db731d58ad7e9d417c9168ab516cbed8", size = 1963563, upload-time = "2025-06-16T18:05:08.566Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/e2/88e425adac5ad887a087c38d04fe2030010572a3e0e627f8a6e8c33eeda8/alembic-1.16.2-py3-none-any.whl", hash = "sha256:5f42e9bd0afdbd1d5e3ad856c01754530367debdebf21ed6894e34af52b3bb03", size = 242717, upload-time = "2025-06-16T18:05:10.27Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1101,6 +1115,18 @@ wheels = [
 ]
 
 [[package]]
+name = "mako"
+version = "1.3.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/38/bd5b78a920a64d708fe6bc8e0a2c075e1389d53bef8413725c63ba041535/mako-1.3.10.tar.gz", hash = "sha256:99579a6f39583fa7e5630a28c3c1f440e4e97a414b80372649c0ce338da2ea28", size = 392474, upload-time = "2025-04-10T12:44:31.16Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/87/fb/99f81ac72ae23375f22b7afdb7642aba97c00a713c217124420147681a2f/mako-1.3.10-py3-none-any.whl", hash = "sha256:baef24a52fc4fc514a0887ac600f9f1cff3d82c61d4d700a1fa84d597b88db59", size = 78509, upload-time = "2025-04-10T12:50:53.297Z" },
+]
+
+[[package]]
 name = "mando"
 version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1231,6 +1257,7 @@ name = "mcp-contextforge-gateway"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
+    { name = "alembic" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "filelock" },
@@ -1256,6 +1283,9 @@ dependencies = [
 [package.optional-dependencies]
 aiosqlite = [
     { name = "aiosqlite" },
+]
+alembic = [
+    { name = "alembic" },
 ]
 all = [
     { name = "redis" },
@@ -1374,6 +1404,8 @@ redis = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", marker = "extra == 'aiosqlite'", specifier = ">=0.21.0" },
+    { name = "alembic", specifier = ">=1.16.2" },
+    { name = "alembic", marker = "extra == 'alembic'", specifier = ">=1.16.2" },
     { name = "argparse-manpage", marker = "extra == 'dev'", specifier = ">=4.6" },
     { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.30.0" },
     { name = "autoflake", marker = "extra == 'dev'", specifier = ">=2.3.1" },
@@ -1448,7 +1480,7 @@ requires-dist = [
     { name = "yamllint", marker = "extra == 'dev'", specifier = ">=1.37.1" },
     { name = "zeroconf", specifier = ">=0.147.0" },
 ]
-provides-extras = ["redis", "postgres", "aiosqlite", "asyncpg", "dev", "all", "dev-all"]
+provides-extras = ["redis", "postgres", "alembic", "aiosqlite", "asyncpg", "dev", "all", "dev-all"]
 
 [[package]]
 name = "mdurl"
