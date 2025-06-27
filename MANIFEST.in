@@ -10,6 +10,8 @@ include gunicorn.config.py
 include Containerfile
 include Containerfile.lite
 include __init__
+include alembic.ini
+include tox.ini
 
 # 2️⃣  Top-level config, examples and helper scripts
 include *.py
@@ -43,6 +45,11 @@ recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
 recursive-include mcpgateway *.pyi py.typed
 recursive-include mcpgateway *.ico
+recursive-include alembic *.mako
+recursive-include alembic *.md
+recursive-include alembic *.py
+recursive-include deployment *
+recursive-include mcp-servers *
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 graft docs
