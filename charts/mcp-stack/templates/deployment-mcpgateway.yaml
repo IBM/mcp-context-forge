@@ -85,6 +85,24 @@ spec:
             - configMapRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-config
 
+          ################################################################
+          # HEALTH & READINESS PROBES
+          ################################################################
+          {{- with .Values.mcpContextForge.probes.startup }}
+          startupProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          {{- with .Values.mcpContextForge.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          {{- with .Values.mcpContextForge.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
           # Resource requests / limits
           resources:
 {{- toYaml .Values.mcpContextForge.resources | nindent 12 }}

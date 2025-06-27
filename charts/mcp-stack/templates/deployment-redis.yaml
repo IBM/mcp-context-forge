@@ -2,8 +2,8 @@
      DEPLOYMENT — Redis
      -------------------------------------------------------------------
      • Name + labels templated with <release>-mcp-stack-redis.
-     • Keeps a single replica; if you need HA, swap for a StatefulSet
-       or an external Redis cluster.
+     • Adds exec-based readiness & liveness probes (redis-cli PING).
+     • Adds resource requests / limits pulled from values.yaml.
      ------------------------------------------------------------------- */}}
 
 {{- if .Values.redis.enabled }}
@@ -15,7 +15,7 @@ metadata:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app: {{ include "mcp-stack.fullname" . }}-redis
 spec:
-  replicas: 1
+  replicas: 1                   # single instance; swap for StatefulSet if HA
   selector:
     matchLabels:
       app: {{ include "mcp-stack.fullname" . }}-redis
@@ -28,9 +28,25 @@ spec:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+
+          # Expose Redis TCP port inside the pod
           ports:
             - name: redis
               containerPort: {{ .Values.redis.service.port }}
+
+          # ─── Readiness probe ───
+          {{- with .Values.redis.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Liveness probe ───
+          {{- with .Values.redis.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Resource limits & requests ───
           {{- with .Values.redis.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}

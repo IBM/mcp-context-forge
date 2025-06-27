@@ -45,6 +45,7 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
+    "alembic>=1.16.2",
     "cryptography>=45.0.4",
     "fastapi>=0.115.13",
     "filelock>=3.18.0",
