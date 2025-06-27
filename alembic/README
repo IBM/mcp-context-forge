@@ -30,7 +30,7 @@ Run the following command from the project's root directory. Use a short but des
 ```bash
 alembic revision --autogenerate -m "Add slug and url to gateways table"
 ```
-**Step 3: Review and Edit the Script (CRITICAL STEP).**  
+**Step 3: Review and Edit the Script (CRITICAL STEP).**
 A new file will be created in alembic/versions/. Always open and review this file.
 
 Autogenerate is a starting point, not a final answer. It is good at detecting new columns and tables.
