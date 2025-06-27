@@ -254,7 +254,6 @@ document.addEventListener("DOMContentLoaded", function () {
     </div>
     `;
     parametersContainer.appendChild(paramDiv);
-    attachListeners(paramDiv);
     updateSchemaPreview();
 
     // Delete parameter functionality
