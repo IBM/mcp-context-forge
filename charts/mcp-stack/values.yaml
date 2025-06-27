@@ -11,7 +11,13 @@ global:
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################
 mcpContextForge:
-  replicaCount: 3               # horizontal scaling for the gateway
+  replicaCount: 2                           # horizontal scaling for the gateway
+  hpa:                                      # Horizontal pod autoscaler
+    enabled: true                           # default on; switch to false to disable HPA
+    minReplicas: 2                          # must be >= 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80      # average CPU utilisation target
+    targetMemoryUtilizationPercentage: 80   # uncomment to add memory metric
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge

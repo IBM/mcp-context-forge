@@ -283,6 +283,7 @@ For every setting see the [full annotated `values.yaml`](https://github.com/IBM/
 * 🌐 Networking & access – ClusterIP services, optional NGINX Ingress, and `NOTES.txt` with port-forward plus safe secret-fetch commands (password, bearer token, `JWT_SECRET_KEY`).
 * 📈 Replicas & availability – Gateway (3) and Fast-Time-Server (2) provide basic HA; stateful components run single-instance.
 * 📦 Helm best-practice layout – Clear separation of Deployments, Services, ConfigMaps, Secrets, PVC/PV and Ingress; chart version 0.2.0.
+* ⚙️ Horizontal Pod Autoscaler (HPA) support for mcpgateway
 
 ---
 
@@ -291,16 +292,15 @@ For every setting see the [full annotated `values.yaml`](https://github.com/IBM/
 1. 🔄 Post-deploy hook to register MCP Servers with MCP Gateway
 2. ⏳ Add startup probes for slow-booting services
 3. 🛡️ Implement Kubernetes NetworkPolicies to restrict internal traffic
-4. ⚙️ Add Horizontal Pod Autoscaler (HPA) support
-5. 📊 Expose Prometheus metrics and add scrape annotations
-6. 📈 Bundle Grafana dashboards via ConfigMaps (optional)
-7. 🔐 Integrate External Secrets support (e.g., AWS Secrets Manager)
-8. 🧪 Add Helm test hooks to validate deployments
-9. 🔍 Add `values.schema.json` for values validation and better UX
-10. 🧰 Move static configuration to templated `ConfigMaps` where possible
-11. 📁 Include persistent storage toggle in `values.yaml` for easier local/dev setup
-12. 🧼 Add Helm pre-delete hook for cleanup tasks (e.g., deregistering from external systems)
-13. 🧩 Package optional CRDs if needed in the future (e.g., for custom integrations)
+4. 📊 Expose Prometheus metrics and add scrape annotations
+5. 📈 Bundle Grafana dashboards via ConfigMaps (optional)
+6. 🔐 Integrate External Secrets support (e.g., AWS Secrets Manager)
+7. 🧪 Add Helm test hooks to validate deployments
+8. 🔍 Add `values.schema.json` for values validation and better UX
+9. 🧰 Move static configuration to templated `ConfigMaps` where possible
+10. 📁 Include persistent storage toggle in `values.yaml` for easier local/dev setup
+11. 🧼 Add Helm pre-delete hook for cleanup tasks (e.g., deregistering from external systems)
+12. 🧩 Package optional CRDs if needed in the future (e.g., for custom integrations)
 
 ## Debug / start fresh (delete namespace)
 
@@ -337,3 +337,109 @@ helm upgrade --install mcp-stack . \
 kubectl get all -n mcp-private
 helm status mcp-stack -n mcp-private --show-desc
 ```
+
+---
+
+## Horizontal Pod Autoscaler (HPA) Guide
+
+Because MCP Gateway traffic could spike unpredictably, the chart lets you turn on a **Horizontal Pod Autoscaler** that automatically adds or removes gateway pods based on CPU / memory load.
+
+The feature is **off by default**. Switch `hpa` to `enabled: true` in the `mcpContextForge` section of `values.yaml` to enable.
+
+| Key                                                     | Default | What happens when you change it                                                                                                            |
+| ------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mcpContextForge.hpa.enabled`                           | `false` | `true` renders an `autoscaling/v2` HPA that targets **Deployment/mcpgateway**.                                                             |
+| `mcpContextForge.hpa.minReplicas`                       | `3`     | ***Floor.*** Pods never drop below this even during quiet periods. Increase if you need more baseline capacity or faster cold-start times. |
+| `mcpContextForge.hpa.maxReplicas`                       | `10`    | ***Ceiling.*** Upper safety-limit so runaway load cannot bankrupt the cluster.                                                             |
+| `mcpContextForge.hpa.targetCPUUtilizationPercentage`    | `80`    | Lower the value to scale **up sooner** (more replicas at lower CPU); raise it to run hotter before adding pods.                            |
+| `mcpContextForge.hpa.targetMemoryUtilizationPercentage` | *unset* | Optional second metric. If set, **either** CPU *or* memory breaching its threshold triggers scaling.                                       |
+
+> **Tip** The starting replica count still comes from `mcpContextForge.replicaCount`, which also acts as a fallback if you later disable the HPA.
+
+---
+
+### Enabling or Tuning the HPA
+
+#### 1 - Declaratively with Helm (recommended)
+
+Make the change permanent by editing *values.yaml* or passing `--set` flags:
+
+```bash
+# First time enabling
+helm upgrade --install mcp-stack charts/mcp-stack \
+  --namespace mcp \
+  --set mcpContextForge.hpa.enabled=true \
+  --set mcpContextForge.hpa.minReplicas=2 \
+  --set mcpContextForge.hpa.maxReplicas=15 \
+  --set mcpContextForge.hpa.targetCPUUtilizationPercentage=70 \
+  --wait
+
+# Later: raise the ceiling & make scaling more aggressive
+helm upgrade mcp-stack charts/mcp-stack \
+  -n mcp \
+  --reuse-values \
+  --set mcpContextForge.hpa.maxReplicas=20 \
+  --set mcpContextForge.hpa.targetCPUUtilizationPercentage=60 \
+  --wait
+```
+
+*Helm edits the HPA in-place; no pod restarts are needed.*
+
+#### 2 - Ad-hoc with kubectl (one-off tweaks)
+
+Useful in emergencies or during load tests.
+
+```bash
+# Bump minReplicas from 3 → 5
+kubectl patch hpa mcp-stack-mcpgateway -n mcp \
+  --type merge \
+  -p '{"spec":{"minReplicas":5}}'
+
+# Drop the CPU target from 80 % → 65 % (scale up sooner)
+kubectl patch hpa mcp-stack-mcpgateway -n mcp \
+  --type json \
+  -p '[{"op":"replace","path":"/spec/metrics/0/resource/target/averageUtilization","value":65}]'
+```
+
+> **Heads-up** Manual patches are overridden the next time you run `helm upgrade` unless you also update *values.yaml*.
+
+---
+
+### Verifying & Monitoring
+
+| Task                   | Command                                               |
+| ---------------------- | ----------------------------------------------------- |
+| List all HPAs          | `kubectl get hpa -n mcp`                              |
+| Watch live utilisation | `watch kubectl get hpa -n mcp`                        |
+| Full details & events  | `kubectl describe hpa mcp-stack-mcpgateway -n mcp`    |
+| Raw pod metrics        | `kubectl top pods -l app=mcp-stack-mcpgateway -n mcp` |
+
+A healthy HPA shows something like:
+
+```text
+NAME                   TARGETS          MINPODS   MAXPODS   REPLICAS
+mcp-stack-mcpgateway   55%/70%          2         15        4
+```
+
+---
+
+### Prerequisites & Gotchas
+
+* **Metrics API** – The cluster **must** run the Kubernetes *metrics-server* (or a Prometheus Adapter) so the control-plane can read CPU / memory stats.
+
+  ```bash
+  kubectl get deployment metrics-server -n kube-system
+  ```
+* **Resource requests** – The gateway deployment already sets `resources.requests.cpu` & `.memory`.
+  Percentage-based HPAs need these values to compute utilisation.
+* **RBAC** – Most distributions grant HPAs read-only access to metrics. Hardened clusters may require an additional `RoleBinding`.
+
+---
+
+### Troubleshooting
+
+| Symptom                                | Checks                                                                                                                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cpu: <unknown>` / `memory: <unknown>` | *metrics-server* missing or failing → `kubectl logs deployment/metrics-server -n kube-system`                                                                            |
+| HPA exists but never scales            | • Is the workload actually under load? See `kubectl top pods …`.<br>• Are limits **lower** than requests? Requests should reflect the typical baseline, not the ceiling. |
+| No HPA rendered                        | Was the chart installed with `--set mcpContextForge.hpa.enabled=true`? Use `helm template` to confirm the YAML renders.                                                  |
