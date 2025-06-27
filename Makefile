@@ -1427,6 +1427,7 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # help: minikube-stop           - Stop the cluster
 # help: minikube-delete         - Delete the cluster completely
 # help: minikube-tunnel         - Run "minikube tunnel" (LoadBalancer) in foreground
+# help: minikube-port-forward   - Run kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
 # help: minikube-dashboard      - Print & (best‑effort) open the Kubernetes dashboard URL
 # help: minikube-image-load     - Load $(IMAGE) into Minikube container runtime
 # help: minikube-k8s-apply      - Apply manifests from k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
@@ -1438,7 +1439,8 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 
 .PHONY: minikube-install helm-install minikube-start minikube-stop minikube-delete \
         minikube-tunnel minikube-dashboard minikube-image-load minikube-k8s-apply \
-        minikube-status minikube-context minikube-ssh minikube-reset minikube-registry-url
+        minikube-status minikube-context minikube-ssh minikube-reset minikube-registry-url \
+        minikube-port-forward
 
 # -----------------------------------------------------------------------------
 # 🚀  INSTALLATION HELPERS
@@ -1485,6 +1487,10 @@ minikube-delete:
 minikube-tunnel:
 	@echo "🌐 Starting minikube tunnel (Ctrl+C to quit) …"
 	minikube -p $(MINIKUBE_PROFILE) tunnel
+
+minikube-port-forward:
+	@echo "🔌 Forwarding http://localhost:8080 → svc/mcp-stack-mcpgateway:80 in namespace mcp-private  (Ctrl+C to stop)…"
+	kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
 
 minikube-dashboard:
 	@echo "📊 Fetching dashboard URL …"
@@ -2120,3 +2126,50 @@ shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 	@echo "🎨  Formatting shell scripts with shfmt -w…"
 	@shfmt -w -i 4 -ci $(SHELL_SCRIPTS)
 	@echo "✅  shfmt formatting done."
+
+
+# 🛢️  ALEMBIC DATABASE MIGRATIONS
+# =============================================================================
+# help: 🛢️  ALEMBIC DATABASE MIGRATIONS
+# help: alembic-install   - Install Alembic CLI (and SQLAlchemy) in the current env
+# help: db-new            - Create a new migration  (override with MSG="your title")
+# help: db-up             - Upgrade DB to the latest revision (head)
+# help: db-down           - Downgrade one revision       (override with REV=<id|steps>)
+# help: db-current        - Show the current head revision for the database
+# help: db-history        - Show the full migration graph / history
+# help: db-revision-id    - Echo just the current revision id (handy for scripting)
+# -----------------------------------------------------------------------------
+
+# ──────────────────────────
+# Internals & defaults
+# ──────────────────────────
+ALEMBIC ?= alembic        # Override to e.g. `poetry run alembic`
+MSG     ?= "auto migration"
+REV     ?= -1             # Default: one step down; can be hash, -n, +n, etc.
+
+.PHONY: alembic-install db-new db-up db-down db-current db-history db-revision-id
+
+alembic-install:
+	@echo "➜ Installing Alembic …"
+	pip install --quiet alembic sqlalchemy
+
+db-new:
+	@echo "➜ Generating revision: $(MSG)"
+	$(ALEMBIC) revision --autogenerate -m $(MSG)
+
+db-up:
+	@echo "➜ Upgrading database to head …"
+	$(ALEMBIC) upgrade head
+
+db-down:
+	@echo "➜ Downgrading database → $(REV) …"
+	$(ALEMBIC) downgrade $(REV)
+
+db-current:
+	$(ALEMBIC) current
+
+db-history:
+	$(ALEMBIC) history --verbose
+
+db-revision-id:
+	@$(ALEMBIC) current --verbose | awk '/Current revision/ {print $$3}'

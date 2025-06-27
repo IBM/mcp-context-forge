@@ -1,3 +1,11 @@
+{{- /*
+Ingress
+• Routes:
+   - /           → mcp-context-forge (Gateway)
+   - /fast-time  → mcp-fast-time-server   (optional)
+• All service names use the same helper so they follow the
+  <release>-mcp-stack-* naming convention.
+*/ -}}
 {{- if .Values.mcpContextForge.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -13,6 +21,7 @@ spec:
     - host: {{ .Values.mcpContextForge.ingress.host }}
       http:
         paths:
+          # ─── Gateway root ───
           - path: {{ .Values.mcpContextForge.ingress.path }}
             pathType: {{ .Values.mcpContextForge.ingress.pathType }}
             backend:
@@ -20,12 +29,14 @@ spec:
                 name: {{ include "mcp-stack.fullname" . }}-mcpgateway
                 port:
                   number: {{ .Values.mcpContextForge.service.port }}
+
+          # ─── Fast-Time-Server (optional) ───
           {{- if and .Values.mcpFastTimeServer.enabled .Values.mcpFastTimeServer.ingress.enabled }}
           - path: {{ .Values.mcpFastTimeServer.ingress.path }}
             pathType: {{ .Values.mcpFastTimeServer.ingress.pathType }}
             backend:
               service:
-                name: mcp-fast-time-server
+                name: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
                 port:
                   number: {{ .Values.mcpFastTimeServer.ingress.servicePort }}
           {{- end }}

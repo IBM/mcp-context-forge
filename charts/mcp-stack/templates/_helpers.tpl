@@ -36,3 +36,29 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 postgres-secret
 {{- end }}
 {{- end }}
+
+{{- /* --------------------------------------------------------------------
+     Helper: helpers.renderProbe
+     Renders a readiness or liveness probe from a shorthand values block.
+     Supports "http", "tcp", and "exec".
+     -------------------------------------------------------------------- */}}
+{{- define "helpers.renderProbe" -}}
+{{- $p := .probe -}}
+{{- if eq $p.type "http" }}
+httpGet:
+  path: {{ $p.path }}
+  port: {{ $p.port }}
+  {{- if $p.scheme }}scheme: {{ $p.scheme }}{{ end }}
+{{- else if eq $p.type "tcp" }}
+tcpSocket:
+  port: {{ $p.port }}
+{{- else if eq $p.type "exec" }}
+exec:
+  command: {{ toYaml $p.command | nindent 4 }}
+{{- end }}
+initialDelaySeconds: {{ $p.initialDelaySeconds | default 0 }}
+periodSeconds:       {{ $p.periodSeconds       | default 10 }}
+timeoutSeconds:      {{ $p.timeoutSeconds      | default 1 }}
+successThreshold:    {{ $p.successThreshold    | default 1 }}
+failureThreshold:    {{ $p.failureThreshold    | default 3 }}
+{{- end }}
