@@ -745,14 +745,14 @@ class TestServerSchemas:
         one_hour_ago = now - timedelta(hours=1)
 
         server = ServerRead(
-            id=1,
+            id="1",
             name="Test Server",
             description="Test server instance",
             icon="http://example.com/server.png",
             created_at=one_hour_ago,
             updated_at=now,
             is_active=True,
-            associated_tools=[1, 2, 3],
+            associated_tools=["1", "2", "3"],
             associated_resources=[4, 5],
             associated_prompts=[6],
             metrics=ServerMetrics(
@@ -767,14 +767,14 @@ class TestServerSchemas:
             ),
         )
 
-        assert server.id == 1
+        assert server.id == "1"
         assert server.name == "Test Server"
         assert server.description == "Test server instance"
         assert server.icon == "http://example.com/server.png"
         assert server.created_at == one_hour_ago
         assert server.updated_at == now
         assert server.is_active is True
-        assert server.associated_tools == [1, 2, 3]
+        assert server.associated_tools == ["1", "2", "3"]
         assert server.associated_resources == [4, 5]
         assert server.associated_prompts == [6]
         assert server.metrics.total_executions == 100
@@ -782,14 +782,14 @@ class TestServerSchemas:
 
         # Test root validator for associated IDs
         server_with_objects = ServerRead(
-            id=2,
+            id="f1548803b0ff4bf7833b762b0a8c5c34",
             name="Object Server",
             description="Server with object associations",
             icon="http://example.com/object_server.png",
             created_at=one_hour_ago,
             updated_at=now,
             is_active=True,
-            associated_tools=[Mock(id=10), Mock(id=11)],
+            associated_tools=[Mock(id="10"), Mock(id="11")],
             associated_resources=[Mock(id=12)],
             associated_prompts=[Mock(id=13)],
             metrics=ServerMetrics(
@@ -800,7 +800,7 @@ class TestServerSchemas:
             ),
         )
 
-        assert server_with_objects.associated_tools == [10, 11]
+        assert server_with_objects.associated_tools == ["10", "11"]
         assert server_with_objects.associated_resources == [12]
         assert server_with_objects.associated_prompts == [13]
 

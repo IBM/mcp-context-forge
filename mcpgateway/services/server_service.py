@@ -107,7 +107,7 @@ class ServerService:
             "last_execution_time": last_time,
         }
         # Also update associated IDs (if not already done)
-        server_dict["associated_tools"] = [tool.id for tool in server.tools] if server.tools else []
+        server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
         return ServerRead.model_validate(server_dict)
@@ -182,7 +182,7 @@ class ServerService:
                 for tool_id in server_in.associated_tools:
                     if tool_id.strip() == "":
                         continue
-                    tool_obj = db.get(DbTool, int(tool_id))
+                    tool_obj = db.get(DbTool, tool_id)
                     if not tool_obj:
                         raise ServerError(f"Tool with id {tool_id} does not exist.")
                     db_server.tools.append(tool_obj)
@@ -253,7 +253,7 @@ class ServerService:
         servers = db.execute(query).scalars().all()
         return [self._convert_server_to_read(s) for s in servers]
 
-    async def get_server(self, db: Session, server_id: int) -> ServerRead:
+    async def get_server(self, db: Session, server_id: str) -> ServerRead:
         """Retrieve server details by ID.
 
         Args:
@@ -277,14 +277,14 @@ class ServerService:
             "created_at": server.created_at,
             "updated_at": server.updated_at,
             "is_active": server.is_active,
-            "associated_tools": [tool.id for tool in server.tools],
+            "associated_tools": [tool.name for tool in server.tools],
             "associated_resources": [res.id for res in server.resources],
             "associated_prompts": [prompt.id for prompt in server.prompts],
         }
         logger.debug(f"Server Data: {server_data}")
         return self._convert_server_to_read(server)
 
-    async def update_server(self, db: Session, server_id: int, server_update: ServerUpdate) -> ServerRead:
+    async def update_server(self, db: Session, server_id: str, server_update: ServerUpdate) -> ServerRead:
         """Update an existing server.
 
         Args:
@@ -327,7 +327,7 @@ class ServerService:
             if server_update.associated_tools is not None:
                 server.tools = []
                 for tool_id in server_update.associated_tools:
-                    tool_obj = db.get(DbTool, int(tool_id))
+                    tool_obj = db.get(DbTool, tool_id)
                     if tool_obj:
                         server.tools.append(tool_obj)
 
@@ -375,7 +375,7 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to update server: {str(e)}")
 
-    async def toggle_server_status(self, db: Session, server_id: int, activate: bool) -> ServerRead:
+    async def toggle_server_status(self, db: Session, server_id: str, activate: bool) -> ServerRead:
         """Toggle the activation status of a server.
 
         Args:
@@ -424,7 +424,7 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to toggle server status: {str(e)}")
 
-    async def delete_server(self, db: Session, server_id: int) -> None:
+    async def delete_server(self, db: Session, server_id: str) -> None:
         """Permanently delete a server.
 
         Args:

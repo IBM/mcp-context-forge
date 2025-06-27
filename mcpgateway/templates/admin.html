@@ -168,6 +168,11 @@
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
+                    S. No.
+                  </th>
+                  <th
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                  >
                     ID
                   </th>
                   <th
@@ -219,6 +224,11 @@
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
+                    {{ loop.index }}
+                  </td>
+                  <td
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
+                  >
                     {{ server.id }}
                   </td>
                   <td
@@ -231,14 +241,14 @@
                   >
                     {{ server.description }}
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
+                  <td class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-500">
                     {% if server.associatedTools %} {{ server.associatedTools |
                     map('string') | join(', ') }} {% else %}
                     <span class="text-gray-500 dark:text-gray-300">N/A</span>
                     {% endif %}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
+                    class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {% if server.associatedResources %} {{
                     server.associatedResources | join(', ') }} {% else %}
@@ -246,7 +256,7 @@
                     {% endif %}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500"
+                    class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-500"
                   >
                     {% if server.associatedPrompts %} {{
                     server.associatedPrompts | join(', ') }} {% else %}
@@ -317,10 +327,9 @@
             </table>
           </div>
         </div>
-
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Server</h3>
-          <form method="POST" action="{{ root_path }}/admin/servers" id="add-server-form">
+          <form method="POST" action="{{ root_path }}/admin/servers" id="add-server-form" onreset="document.getElementById('associatedTools').selectedIndex = -1;">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -353,15 +362,24 @@
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Associated Tools (comma-separated IDs)</label
-                >
-                <input
-                  type="text"
-                  name="associatedTools"
+                <label for="associatedTools" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Associated Tools
+                </label>
+                <select
+                  name="associatedTools"                 {# same name as before (minus camelCase) #}
+                  id="associatedTools"
+                  multiple                                {# remove if you want single-select #}
                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                  placeholder="e.g., tool1, tool2"
-                />
+                >
+                  {% for tool in tools %}
+                    {# value can be tool.id, tool.slug, or any key you use later #}
+                    <option value="{{ tool.id }}">{{ tool.name }}</option>
+                  {% endfor %}
+                </select>
+                <span id="selectedToolsPills"
+                      class="inline-flex flex-wrap gap-1 mt-2"></span>   <!-- container -->
+                <span id="selectedToolsWarning"
+                      class="block text-sm font-semibold text-red-600 mt-1"></span>
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -425,7 +443,7 @@
                   <th
                     class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12"
                   >
-                    ID
+                    S. No.
                   </th>
                   <th
                     class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24"
@@ -470,7 +488,7 @@
                   <td
                     class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12 dark:text-gray-100"
                   >
-                    {{ tool.id }}
+                    {{ loop.index }}
                   </td>
                   <td
                     class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24 dark:text-gray-100"
@@ -1246,7 +1264,7 @@
                   <th
                     class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
                   >
-                    ID
+                    S. No.
                   </th>
                   <th
                     class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider"
@@ -1281,7 +1299,7 @@
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
-                    {{ gateway.id }}
+                    {{ loop.index }}
                   </td>
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
@@ -2479,16 +2497,22 @@
                     />
                   </div>
                   <div>
-                    <label class="block text-sm font-medium text-gray-700"
-                      >Associated Tools (comma-separated IDs)</label
-                    >
-                    <input
-                      type="text"
-                      name="associatedTools"
-                      id="edit-server-tools"
-                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      placeholder="e.g., 1,2"
-                    />
+                    <label for="edit-server-tools" class="block text-sm font-medium text-gray-700 dark:text-grey-300">
+                      Associated Tools
+                    </label>
+                    <select id="edit-server-tools"
+                            name="associatedTools"        {# same field name #}
+                            multiple
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  >
+                      {% for tool in tools %}
+                        <option value="{{ tool.id }}">{{ tool.name }}</option>
+                      {% endfor %}
+                    </select>
+                    <span id="selectedEditToolsPills"
+                          class="inline-flex flex-wrap gap-1 mt-2"></span>   <!-- container -->
+                    <span id="selectedEditToolsWarning"
+                          class="block text-sm font-semibold text-red-600 mt-1"></span>
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-gray-700"
@@ -2556,6 +2580,7 @@
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};
+      window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
     </script>
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
   </body>

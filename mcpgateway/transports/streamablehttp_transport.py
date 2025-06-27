@@ -190,7 +190,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     """
     try:
         async with get_db() as db:
-            result = await tool_service.invoke_tool(db, name, arguments)
+            result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments)
             if not result or not result.content:
                 logger.warning(f"No content returned by tool: {name}")
                 return []

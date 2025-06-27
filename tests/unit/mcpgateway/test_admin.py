@@ -63,6 +63,12 @@ from mcpgateway.services.tool_service import (
 )
 
 
+class FakeForm(dict):
+    def getlist(self, key):
+        value = self.get(key, [])
+        return value if isinstance(value, list) else [value]
+
+
 @pytest.fixture
 def mock_db():
     """Create a mock database session."""
@@ -79,32 +85,34 @@ def mock_request():
 
     # Pretend form() returns the full set of fields our admin helpers expect
     request.form = AsyncMock(
-        return_value={
-            "name": "test-name",
-            "url": "http://example.com",
-            "description": "Test description",
-            "icon": "http://example.com/icon.png",
-            "uri": "/test/resource",
-            "mimeType": "text/plain",
-            "template": "Template content",
-            "content": "Test content",
-            "associatedTools": "1,2,3",
-            "associatedResources": "4,5",
-            "associatedPrompts": "6",
-            "requestType": "POST",
-            "integrationType": "MCP",
-            "headers": "{}",
-            "input_schema": "{}",
-            "jsonpath_filter": "$.",
-            "auth_type": "",
-            "auth_username": "",
-            "auth_password": "",
-            "auth_token": "",
-            "auth_header_key": "",
-            "auth_header_value": "",
-            "arguments": "[]",
-            "activate": "true",
-        }
+        return_value=FakeForm(
+            {
+                "name": "test-name",
+                "url": "http://example.com",
+                "description": "Test description",
+                "icon": "http://example.com/icon.png",
+                "uri": "/test/resource",
+                "mimeType": "text/plain",
+                "template": "Template content",
+                "content": "Test content",
+                "associatedTools": ["1", "2", "3"],
+                "associatedResources": "4,5",
+                "associatedPrompts": "6",
+                "requestType": "POST",
+                "integrationType": "MCP",
+                "headers": "{}",
+                "input_schema": "{}",
+                "jsonpath_filter": "$.",
+                "auth_type": "",
+                "auth_username": "",
+                "auth_password": "",
+                "auth_token": "",
+                "auth_header_key": "",
+                "auth_header_value": "",
+                "arguments": "[]",
+                "activate": "true",
+            }
+        )
     )
 
     # Basic template rendering stub
@@ -144,15 +152,15 @@ class TestAdminServerRoutes:
         """Test getting a single server through admin UI."""
         # Setup
         mock_server = MagicMock()
-        mock_server.dict.return_value = {"id": 1, "name": "Server 1"}
+        mock_server.model_dump.return_value = {"id": "1", "name": "Server 1"}
         mock_get_server.return_value = mock_server
 
         # Execute
-        result = await admin_get_server(1, mock_db, "test-user")
+        result = await admin_get_server("1", mock_db, "test-user")
 
         # Assert
-        mock_get_server.assert_called_once_with(mock_db, 1)
-        assert result == {"id": 1, "name": "Server 1"}
+        mock_get_server.assert_called_once_with(mock_db, "1")
+        assert result == {"id": "1", "name": "Server 1"}
 
     @patch.object(ServerService, "get_server")
     async def test_admin_get_server_not_found(self, mock_get_server, mock_db):
@@ -171,6 +179,8 @@ class TestAdminServerRoutes:
     async def test_admin_add_server(self, mock_register_server, mock_request, mock_db):
         """Test adding a server through admin UI."""
         # Execute
+        form = await mock_request.form()
+        print(f'{form.getlist("associatedTools")=}')
         result = await admin_add_server(mock_request, mock_db, "test-user")
 
         # Assert
@@ -241,15 +251,15 @@ class TestAdminToolRoutes:
         """Test getting a single tool through admin UI."""
         # Setup
         mock_tool = MagicMock()
-        mock_tool.dict.return_value = {"id": 1, "name": "Tool 1"}
+        mock_tool.model_dump.return_value = {"id": "1", "name": "Tool 1"}
         mock_get_tool.return_value = mock_tool
 
         # Execute
-        result = await admin_get_tool(1, mock_db, "test-user")
+        result = await admin_get_tool("1", mock_db, "test-user")
 
         # Assert
-        mock_get_tool.assert_called_once_with(mock_db, 1)
-        assert result == {"id": 1, "name": "Tool 1"}
+        mock_get_tool.assert_called_once_with(mock_db, "1")
+        assert result == {"id": "1", "name": "Tool 1"}
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool(self, mock_register_tool, mock_request, mock_db):

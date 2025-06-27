@@ -1,0 +1,71 @@
+# Database Migrations (Alembic)
+
+This directory contains database migration scripts managed by Alembic. These scripts track and apply changes to the application's database schema over time.
+
+The migration history for this project lives in the `alembic/versions/` directory.
+
+---
+
+## Common Workflow
+
+The standard workflow involves creating, reviewing, and applying migrations.
+
+- **To create a new migration:** `alembic revision --autogenerate -m "Your description"`
+- **To apply migrations:** `alembic upgrade head`
+- **To see migration history:** `alembic history`
+- **To see the current version:** `alembic current`
+
+---
+
+### 1. Creating a New Migration
+
+When you change a SQLAlchemy model (e.g., in `db.py`), follow these steps to generate a migration script:
+
+**Step 1: Make your model changes.**
+Add, remove, or alter columns and tables in your SQLAlchemy model definitions.
+
+**Step 2: Autogenerate the script.**
+Run the following command from the project's root directory. Use a short but descriptive message.
+
+```bash
+alembic revision --autogenerate -m "Add slug and url to gateways table"
+```
+**Step 3: Review and Edit the Script (CRITICAL STEP).**
+A new file will be created in alembic/versions/. Always open and review this file.
+
+Autogenerate is a starting point, not a final answer. It is good at detecting new columns and tables.
+
+It often requires significant manual editing for complex changes like:
+
+- Data migrations (populating new columns).
+
+- Renaming columns or tables.
+
+- Changes that require multi-stage operations (adding a column as nullable, populating it, then making it not-nullable).
+
+- Ensure the upgrade() and downgrade() functions are correct and logical.
+
+### 2. Applying Migrations
+
+To upgrade your database to the latest version:
+This command applies all pending migrations. This is the command used by developers locally and by the CI/CD pipeline during deployment.
+```bash
+alembic upgrade head
+```
+
+To test your downgrade path (local development only):
+It's good practice to ensure your migrations are reversible.
+#### Revert the very last migration
+```bash
+alembic downgrade -1
+```
+#### You can then re-apply it
+```bash
+alembic upgrade +1
+```
+
+### 3. Deployment Notes
+
+**CI/CD:** During deployment, the alembic upgrade head command is run automatically to synchronize the database schema with the new application code before the server starts.
+
+**Configuration:** The sqlalchemy.url in alembic.ini is replaced by the value set for DATABASE_URL environment variable, which env.py is configured to read.
