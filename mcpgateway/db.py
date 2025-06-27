@@ -308,6 +308,7 @@ class Tool(Base):
     request_type: Mapped[str] = mapped_column(default="SSE")
     headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active: Mapped[bool] = mapped_column(default=True)
