@@ -12,12 +12,19 @@ global:
 ########################################################################
 mcpContextForge:
   replicaCount: 2                           # horizontal scaling for the gateway
-  hpa:                                      # Horizontal pod autoscaler
-    enabled: true                           # default on; switch to false to disable HPA
-    minReplicas: 2                          # must be >= 1
-    maxReplicas: 10
-    targetCPUUtilizationPercentage: 80      # average CPU utilisation target
-    targetMemoryUtilizationPercentage: 80   # uncomment to add memory metric
+
+  # --- HORIZONTAL POD AUTOSCALER --------------------------------------
+  # * Percentages compare live usage with the container *request* values
+  #   (limits are ignored by the HPA).
+  # * If both CPU and memory targets are set, crossing either threshold
+  #   triggers a scale event.
+  # --------------------------------------------------------------------
+  hpa:
+    enabled: true                           # Set to false to keep a fixed replica count
+    minReplicas: 2                          # Never scale below this
+    maxReplicas: 10                         # Never scale above this
+    targetCPUUtilizationPercentage: 90      # Scale up when avg CPU > 90 % of *request*
+    targetMemoryUtilizationPercentage: 90   # Scale up when avg memory > 90 % of *request*
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
@@ -68,7 +75,7 @@ mcpContextForge:
       memory: 1024Mi
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 512Mi
 
   # Optional ingress for HTTP traffic
   ingress:
