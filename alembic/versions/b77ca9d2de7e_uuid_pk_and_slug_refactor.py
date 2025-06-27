@@ -169,7 +169,7 @@ def upgrade() -> None:
         batch_op.drop_column("gateway_id")
         batch_op.alter_column("gateway_id_new", new_column_name="gateway_id", nullable=True)
         batch_op.drop_column("name")
-        batch_op.alter_column("name_new", new_column_name="name", nullable=False)
+        batch_op.alter_column("name_new", new_column_name="name", nullable=True)
         batch_op.alter_column("original_name", nullable=False)
         batch_op.alter_column("original_name_slug", nullable=False)
         batch_op.create_unique_constraint("uq_tools_name", ["name"])
