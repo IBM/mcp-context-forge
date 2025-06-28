@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 # --------------------------------------------------------------------------- #
 def _make_fake_psutil() -> types.ModuleType:  # noqa: D401
     """Return an in-memory *psutil* stub implementing just what we need."""
+
     class _MemInfo:
         def __init__(self, total: int, used: int) -> None:
             self.total, self.used = total, used
@@ -198,6 +199,7 @@ def test_database_version_success(monkeypatch: pytest.MonkeyPatch) -> None:
         def execute(self, stmt):  # noqa: D401
             class _Res:
                 scalar = lambda self: "15.0"  # noqa: D401
+
             return _Res()
 
     class _Engine:
