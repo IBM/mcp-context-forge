@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Add annotations to tables
 
 Revision ID: e4fc04d1a442
