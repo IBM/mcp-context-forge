@@ -17,14 +17,12 @@ various services to perform the actual business logic operations on the
 underlying data.
 """
 
+# Standard
 import json
 import logging
 from typing import Any, Dict, List, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.schemas import (
@@ -60,6 +58,11 @@ from mcpgateway.services.tool_service import (
 )
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
+
+# Third-Party
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from sqlalchemy.orm import Session
 
 # Initialize services
 server_service = ServerService()

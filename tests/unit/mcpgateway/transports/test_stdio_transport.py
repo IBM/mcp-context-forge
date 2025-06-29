@@ -14,15 +14,19 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
 import json
 from typing import List
 
-import pytest
-
+# First-Party
 from mcpgateway.transports.stdio_transport import StdioTransport
+
+# Third-Party
+import pytest
 
 # ---------------------------------------------------------------------------
 # Simple in-memory stand-ins for asyncio streams

@@ -9,14 +9,11 @@ This module tests the admin UI routes for the MCP Gateway, ensuring
 they properly handle server, tool, resource, prompt, gateway and root management.
 """
 
+# Standard
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.admin import (
     admin_add_gateway,
     admin_add_prompt,
@@ -61,6 +58,12 @@ from mcpgateway.services.tool_service import (
     ToolNameConflictError,
     ToolService,
 )
+
+# Third-Party
+from fastapi import HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+import pytest
+from sqlalchemy.orm import Session
 
 
 class FakeForm(dict):

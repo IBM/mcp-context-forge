@@ -19,12 +19,22 @@ The schemas ensure proper validation according to the MCP specification while ad
 gateway-specific extensions for federation support.
 """
 
+# Standard
 import base64
+from datetime import datetime
 import json
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
 
+# First-Party
+from mcpgateway.types import ImageContent
+from mcpgateway.types import Prompt as MCPPrompt
+from mcpgateway.types import Resource as MCPResource
+from mcpgateway.types import ResourceContent, TextContent
+from mcpgateway.types import Tool as MCPTool
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
+
+# Third-Party
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
@@ -33,13 +43,6 @@ from pydantic import (
     root_validator,
     validator,
 )
-
-from mcpgateway.types import ImageContent
-from mcpgateway.types import Prompt as MCPPrompt
-from mcpgateway.types import Resource as MCPResource
-from mcpgateway.types import ResourceContent, TextContent
-from mcpgateway.types import Tool as MCPTool
-from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 logger = logging.getLogger(__name__)
 

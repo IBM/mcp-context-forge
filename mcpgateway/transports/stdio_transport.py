@@ -9,12 +9,14 @@ This module implements stdio transport for MCP, handling
 communication over standard input/output streams.
 """
 
+# Standard
 import asyncio
 import json
 import logging
 import sys
 from typing import Any, AsyncGenerator, Dict, Optional
 
+# First-Party
 from mcpgateway.transports.base import Transport
 
 logger = logging.getLogger(__name__)

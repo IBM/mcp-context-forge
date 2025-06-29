@@ -8,12 +8,15 @@ Authors: Mihai Criveti
 Tests for the MCP Gateway WebSocket transport implementation.
 """
 
+# Standard
 from unittest.mock import AsyncMock
 
-import pytest
-from fastapi import WebSocket, WebSocketDisconnect
-
+# First-Party
 from mcpgateway.transports.websocket_transport import WebSocketTransport
+
+# Third-Party
+from fastapi import WebSocket, WebSocketDisconnect
+import pytest
 
 
 @pytest.fixture

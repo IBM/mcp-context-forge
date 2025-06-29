@@ -16,16 +16,14 @@ The federation manager serves as the central point for all federation-related
 operations, coordinating with discovery, sync and forwarding components.
 """
 
+# Standard
 import asyncio
+from datetime import datetime, timedelta
 import logging
 import os
-from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set
 
-import httpx
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
@@ -40,6 +38,11 @@ from mcpgateway.types import (
     ServerCapabilities,
     Tool,
 )
+
+# Third-Party
+import httpx
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

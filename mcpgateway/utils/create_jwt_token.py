@@ -24,8 +24,10 @@ jwt = await create_jwt_token({"username": "alice"})
 ```
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
 import asyncio
 import datetime as _dt
@@ -33,9 +35,11 @@ import json
 import sys
 from typing import Any, Dict, List, Sequence
 
-import jwt  # PyJWT
-
+# First-Party
 from mcpgateway.config import settings
+
+# Third-Party
+import jwt  # PyJWT
 
 __all__: Sequence[str] = (
     "create_jwt_token",

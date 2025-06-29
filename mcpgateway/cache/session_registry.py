@@ -9,20 +9,23 @@ This module provides a registry for SSE sessions with support for distributed de
 using Redis or SQLAlchemy as optional backends for shared state between workers.
 """
 
+# Standard
 import asyncio
 import json
 import logging
 import time
 from typing import Any, Dict, Optional
 
-import httpx
-from fastapi import HTTPException, status
-
+# First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import SessionMessageRecord, SessionRecord, get_db
+from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.transports import SSETransport
 from mcpgateway.types import Implementation, InitializeResult, ServerCapabilities
+
+# Third-Party
+from fastapi import HTTPException, status
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,7 @@ resource_service = ResourceService()
 prompt_service = PromptService()
 
 try:
+    # Third-Party
     from redis.asyncio import Redis
 
     REDIS_AVAILABLE = True
@@ -38,6 +42,7 @@ except ImportError:
     REDIS_AVAILABLE = False
 
 try:
+    # Third-Party
     from sqlalchemy import func
 
     SQLALCHEMY_AVAILABLE = True

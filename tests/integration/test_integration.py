@@ -18,18 +18,22 @@ All external service calls are patched out with AsyncMocks so the FastAPI app
 under test never touches a real database or network.
 """
 
+# Future
 from __future__ import annotations
 
-import urllib.parse
+# Standard
 from datetime import datetime
 from unittest.mock import ANY, AsyncMock, patch
+import urllib.parse
 
-import pytest
-from fastapi.testclient import TestClient
-
+# First-Party
 from mcpgateway.main import app, require_auth
 from mcpgateway.schemas import ResourceRead, ServerRead, ToolMetrics, ToolRead
 from mcpgateway.types import InitializeResult, ResourceContent, ServerCapabilities
+
+# Third-Party
+from fastapi.testclient import TestClient
+import pytest
 
 
 # -----------------------------------------------------------------------------
