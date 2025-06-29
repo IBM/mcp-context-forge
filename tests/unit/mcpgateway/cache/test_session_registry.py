@@ -18,7 +18,8 @@ Covered behaviours
   • tools/list (with stubbed service + DB)
 * handle_initialize_logic success, and both error branches
 
-Now includes comprehensive backend testing, error scenarios, and cleanup tasks.
+
+Includes comprehensive backend testing, error scenarios, and cleanup tasks.
 """
 
 # Future
@@ -570,13 +571,17 @@ async def test_redis_session_operations(monkeypatch):
     """Test Redis backend session operations."""
     mock_redis = MockRedis()
 
-    # Patch Redis imports
+    # Patch Redis imports before creating the registry
     monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
 
-    # We need to patch the Redis class that gets imported in the module
-    with patch("redis.asyncio.Redis") as mock_redis_class:
-        mock_redis_class.from_url.return_value = mock_redis
+    # Create a mock Redis class that returns our specific mock instance
+    class MockRedisClass:
+        @classmethod
+        def from_url(cls, url):
+            return mock_redis
 
+    # Patch the Redis class import
+    with patch("mcpgateway.cache.session_registry.Redis", MockRedisClass):
         registry = SessionRegistry(backend="redis", redis_url="redis://localhost:6379")
         await registry.initialize()
 
@@ -615,9 +620,13 @@ async def test_redis_error_handling(monkeypatch):
 
     monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
 
-    with patch("redis.asyncio.Redis") as mock_redis_class:
-        mock_redis_class.from_url.return_value = mock_redis
+    # Create a mock Redis class that returns our specific mock instance
+    class MockRedisClass:
+        @classmethod
+        def from_url(cls, url):
+            return mock_redis
 
+    with patch("mcpgateway.cache.session_registry.Redis", MockRedisClass):
         registry = SessionRegistry(backend="redis", redis_url="redis://localhost:6379")
         await registry.initialize()
 
