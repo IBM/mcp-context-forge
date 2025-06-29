@@ -9,16 +9,24 @@ Comprehensive tests for the main API endpoints with full coverage.
 
 import json
 import os
+from copy import deepcopy
+from datetime import datetime
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from mcpgateway.schemas import ResourceRead, ServerRead
+from mcpgateway.schemas import (
+    PromptRead,
+    ResourceRead,
+    ServerRead,
+    ToolMetrics,
+    ToolRead,
+)
 from mcpgateway.types import InitializeResult, ResourceContent, ServerCapabilities
 
 # --------------------------------------------------------------------------- #
-# Constants                                                                    #
+# Constants                                                                   #
 # --------------------------------------------------------------------------- #
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
 
@@ -70,6 +78,35 @@ MOCK_TOOL_READ = {
     "gatewaySlug": "gateway-1",
     "originalNameSlug": "test-tool",
 }
+
+# camelCase → snake_case key map for the fields that differ
+_TOOL_KEY_MAP = {
+    "originalName": "original_name",
+    "requestType": "request_type",
+    "integrationType": "integration_type",
+    "inputSchema": "input_schema",
+    "jsonpathFilter": "jsonpath_filter",
+    "createdAt": "created_at",
+    "updatedAt": "updated_at",
+    "isActive": "is_active",
+    "gatewayId": "gateway_id",
+    "gatewaySlug": "gateway_slug",
+    "originalNameSlug": "original_name_slug",
+}
+
+
+def camel_to_snake_tool(d: dict) -> dict:
+    out = deepcopy(d)
+    # id must be str
+    out["id"] = str(out["id"])
+    for camel, snake in _TOOL_KEY_MAP.items():
+        if camel in out:
+            out[snake] = out.pop(camel)
+    return out
+
+
+MOCK_TOOL_READ_SNAKE = camel_to_snake_tool(MOCK_TOOL_READ)
+
 
 MOCK_RESOURCE_READ = {
     "id": 1,
@@ -183,7 +220,7 @@ class TestHealthAndInfrastructure:
 
 
 # ----------------------------------------------------- #
-# Protocol & MCP Core Tests                           #
+# Protocol & MCP Core Tests                             #
 # ----------------------------------------------------- #
 class TestProtocolEndpoints:
     """Tests for MCP protocol operations: initialize, ping, notifications, etc."""
@@ -402,36 +439,29 @@ class TestToolEndpoints:
         assert len(data) == 1 and data[0]["name"] == "test_tool"
         mock_list_tools.assert_called_once()
 
-    # @patch("mcpgateway.main.tool_service.register_tool")
-    # def test_create_tool_endpoint(self, mock_create, test_client, auth_headers):
-    #     """Test registering a new tool."""
-    #     mock_create.return_value = MagicMock()
-    #     mock_create.return_value.model_dump.return_value = MOCK_TOOL_READ
-    #     req = {"name": "test_tool", "url": "http://example.com", "description": "A test tool"}
-    #     response = test_client.post("/tools/", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_create.assert_called_once()
+    @patch("mcpgateway.main.tool_service.register_tool")
+    def test_create_tool_endpoint(self, mock_create, test_client, auth_headers):
+        mock_create.return_value = MOCK_TOOL_READ_SNAKE
+        req = {"name": "test_tool", "url": "http://example.com", "description": "A test tool"}
+        response = test_client.post("/tools/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_create.assert_called_once()
 
-    # @patch("mcpgateway.main.tool_service.get_tool")
-    # def test_get_tool_endpoint(self, mock_get, test_client, auth_headers):
-    #     """Test retrieving a specific tool."""
-    #     mock_tool = MagicMock()
-    #     mock_tool.to_dict.return_value = MOCK_TOOL_READ
-    #     mock_get.return_value = mock_tool
+    @patch("mcpgateway.main.tool_service.get_tool")
+    def test_get_tool_endpoint(self, mock_get, test_client, auth_headers):
+        mock_get.return_value = MOCK_TOOL_READ_SNAKE
+        response = test_client.get("/tools/1", headers=auth_headers)
+        assert response.status_code == 200
+        mock_get.assert_called_once()
 
-    #     response = test_client.get("/tools/1", headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_get.assert_called_once()
-
-    # @patch("mcpgateway.main.tool_service.update_tool")
-    # def test_update_tool_endpoint(self, mock_update, test_client, auth_headers):
-    #     """Test updating an existing tool."""
-    #     mock_update.return_value = MagicMock()
-    #     mock_update.return_value.model_dump.return_value = MOCK_TOOL_READ
-    #     req = {"description": "Updated description"}
-    #     response = test_client.put("/tools/1", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_update.assert_called_once()
+    @patch("mcpgateway.main.tool_service.update_tool")
+    def test_update_tool_endpoint(self, mock_update, test_client, auth_headers):
+        updated = {**MOCK_TOOL_READ_SNAKE, "description": "Updated description"}
+        mock_update.return_value = updated
+        req = {"description": "Updated description"}
+        response = test_client.put("/tools/1", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_update.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.toggle_tool_status")
     def test_toggle_tool_status(self, mock_toggle, test_client, auth_headers):
@@ -554,15 +584,17 @@ class TestPromptEndpoints:
         assert len(data) == 1
         mock_list_prompts.assert_called_once()
 
-    # @patch("mcpgateway.main.prompt_service.register_prompt")
-    # def test_create_prompt_endpoint(self, mock_create, test_client, auth_headers):
-    #     """Test creating a new prompt template."""
-    #     mock_create.return_value = MagicMock()
-    #     mock_create.return_value.model_dump.return_value = MOCK_PROMPT_READ
-    #     req = {"name": "test_prompt", "template": "Hello {name}", "description": "A test prompt"}
-    #     response = test_client.post("/prompts/", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_create.assert_called_once()
+    @patch("mcpgateway.main.prompt_service.register_prompt")
+    def test_create_prompt_endpoint(self, mock_create, test_client, auth_headers):
+        """Test creating a new prompt template."""
+        # Return an actual model instance
+        mock_create.return_value = PromptRead(**MOCK_PROMPT_READ)
+
+        req = {"name": "test_prompt", "template": "Hello {name}", "description": "A test prompt"}
+        response = test_client.post("/prompts/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_create.assert_called_once()
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_with_args(self, mock_get, test_client, auth_headers):
@@ -586,15 +618,17 @@ class TestPromptEndpoints:
         assert response.status_code == 200
         mock_get.assert_called_once_with(ANY, "test", {})
 
-    # @patch("mcpgateway.main.prompt_service.update_prompt")
-    # def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
-    #     """Test updating an existing prompt."""
-    #     mock_update.return_value = MagicMock()
-    #     mock_update.return_value.model_dump.return_value = MOCK_PROMPT_READ
-    #     req = {"description": "Updated description"}
-    #     response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_update.assert_called_once()
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
+        """Test updating an existing prompt."""
+        updated = {**MOCK_PROMPT_READ, "description": "Updated description"}
+        mock_update.return_value = PromptRead(**updated)  # <- real model
+
+        req = {"description": "Updated description"}
+        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_update.assert_called_once()
 
     @patch("mcpgateway.main.prompt_service.delete_prompt")
     def test_delete_prompt_endpoint(self, mock_delete, test_client, auth_headers):
