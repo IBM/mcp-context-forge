@@ -220,9 +220,10 @@ line-length = 200
 target-version = ["py310", "py311", "py312"]
 include = "\\.pyi?$"
 
-[tool.isort]
-profile = "black"
-multi_line_output = 3
+# Configured in .isort.cfg instead
+# [tool.isort]
+# profile = "black"
+# multi_line_output = 3
 
 [tool.mypy]
 # Target Python version
