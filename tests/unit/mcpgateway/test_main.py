@@ -9,16 +9,24 @@ Comprehensive tests for the main API endpoints with full coverage.
 
 import json
 import os
+from copy import deepcopy
+from datetime import datetime
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from mcpgateway.schemas import ResourceRead, ServerRead
+from mcpgateway.schemas import (
+    PromptRead,
+    ResourceRead,
+    ServerRead,
+    ToolMetrics,
+    ToolRead,
+)
 from mcpgateway.types import InitializeResult, ResourceContent, ServerCapabilities
 
 # --------------------------------------------------------------------------- #
-# Constants                                                                    #
+# Constants                                                                   #
 # --------------------------------------------------------------------------- #
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
 
@@ -71,6 +79,35 @@ MOCK_TOOL_READ = {
     "originalNameSlug": "test-tool",
 }
 
+# camelCase → snake_case key map for the fields that differ
+_TOOL_KEY_MAP = {
+    "originalName": "original_name",
+    "requestType": "request_type",
+    "integrationType": "integration_type",
+    "inputSchema": "input_schema",
+    "jsonpathFilter": "jsonpath_filter",
+    "createdAt": "created_at",
+    "updatedAt": "updated_at",
+    "isActive": "is_active",
+    "gatewayId": "gateway_id",
+    "gatewaySlug": "gateway_slug",
+    "originalNameSlug": "original_name_slug",
+}
+
+
+def camel_to_snake_tool(d: dict) -> dict:
+    out = deepcopy(d)
+    # id must be str
+    out["id"] = str(out["id"])
+    for camel, snake in _TOOL_KEY_MAP.items():
+        if camel in out:
+            out[snake] = out.pop(camel)
+    return out
+
+
+MOCK_TOOL_READ_SNAKE = camel_to_snake_tool(MOCK_TOOL_READ)
+
+
 MOCK_RESOURCE_READ = {
     "id": 1,
     "uri": "test/resource",
@@ -115,7 +152,7 @@ MOCK_ROOT = {
 
 
 # --------------------------------------------------------------------------- #
-# Fixtures                                                                     #
+# Fixtures                                                                    #
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def test_client(app):
@@ -147,12 +184,12 @@ def auth_headers(mock_jwt_token):
 
 
 # ========================================================================== #
-#                                  TEST CLASSES                            #
+#                                  TEST CLASSES                              #
 # ========================================================================== #
 
 
 # ----------------------------------------------------- #
-# Health & Infrastructure Tests                        #
+# Health & Infrastructure Tests                         #
 # ----------------------------------------------------- #
 class TestHealthAndInfrastructure:
     """Tests for health checks, readiness, and basic infrastructure endpoints."""
@@ -183,7 +220,7 @@ class TestHealthAndInfrastructure:
 
 
 # ----------------------------------------------------- #
-# Protocol & MCP Core Tests                           #
+# Protocol & MCP Core Tests                             #
 # ----------------------------------------------------- #
 class TestProtocolEndpoints:
     """Tests for MCP protocol operations: initialize, ping, notifications, etc."""
@@ -371,18 +408,18 @@ class TestServerEndpoints:
         assert len(data) == 1
         mock_list_resources.assert_called_once()
 
-    # @patch("mcpgateway.main.resource_service.list_server_prompts")
-    # def test_server_get_prompts(self, mock_list_prompts, test_client, auth_headers):
-    #     """Test listing prompts associated with a server."""
-    #     from mcpgateway.schemas import PromptRead
+    @patch("mcpgateway.main.prompt_service.list_server_prompts")
+    def test_server_get_prompts(self, mock_list_prompts, test_client, auth_headers):
+        """Test listing prompts associated with a server."""
+        from mcpgateway.schemas import PromptRead
 
-    #     mock_list_prompts.return_value = [PromptRead(**MOCK_PROMPT_READ)]
+        mock_list_prompts.return_value = [PromptRead(**MOCK_PROMPT_READ)]
 
-    #     response = test_client.get("/servers/1/prompts", headers=auth_headers)
-    #     assert response.status_code == 200
-    #     data = response.json()
-    #     assert len(data) == 1
-    #     mock_list_prompts.assert_called_once()
+        response = test_client.get("/servers/1/prompts", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        mock_list_prompts.assert_called_once()
 
 
 # ----------------------------------------------------- #
@@ -402,36 +439,29 @@ class TestToolEndpoints:
         assert len(data) == 1 and data[0]["name"] == "test_tool"
         mock_list_tools.assert_called_once()
 
-    # @patch("mcpgateway.main.tool_service.register_tool")
-    # def test_create_tool_endpoint(self, mock_create, test_client, auth_headers):
-    #     """Test registering a new tool."""
-    #     mock_create.return_value = MagicMock()
-    #     mock_create.return_value.model_dump.return_value = MOCK_TOOL_READ
-    #     req = {"name": "test_tool", "url": "http://example.com", "description": "A test tool"}
-    #     response = test_client.post("/tools/", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_create.assert_called_once()
+    @patch("mcpgateway.main.tool_service.register_tool")
+    def test_create_tool_endpoint(self, mock_create, test_client, auth_headers):
+        mock_create.return_value = MOCK_TOOL_READ_SNAKE
+        req = {"name": "test_tool", "url": "http://example.com", "description": "A test tool"}
+        response = test_client.post("/tools/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_create.assert_called_once()
 
-    # @patch("mcpgateway.main.tool_service.get_tool")
-    # def test_get_tool_endpoint(self, mock_get, test_client, auth_headers):
-    #     """Test retrieving a specific tool."""
-    #     mock_tool = MagicMock()
-    #     mock_tool.to_dict.return_value = MOCK_TOOL_READ
-    #     mock_get.return_value = mock_tool
+    @patch("mcpgateway.main.tool_service.get_tool")
+    def test_get_tool_endpoint(self, mock_get, test_client, auth_headers):
+        mock_get.return_value = MOCK_TOOL_READ_SNAKE
+        response = test_client.get("/tools/1", headers=auth_headers)
+        assert response.status_code == 200
+        mock_get.assert_called_once()
 
-    #     response = test_client.get("/tools/1", headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_get.assert_called_once()
-
-    # @patch("mcpgateway.main.tool_service.update_tool")
-    # def test_update_tool_endpoint(self, mock_update, test_client, auth_headers):
-    #     """Test updating an existing tool."""
-    #     mock_update.return_value = MagicMock()
-    #     mock_update.return_value.model_dump.return_value = MOCK_TOOL_READ
-    #     req = {"description": "Updated description"}
-    #     response = test_client.put("/tools/1", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_update.assert_called_once()
+    @patch("mcpgateway.main.tool_service.update_tool")
+    def test_update_tool_endpoint(self, mock_update, test_client, auth_headers):
+        updated = {**MOCK_TOOL_READ_SNAKE, "description": "Updated description"}
+        mock_update.return_value = updated
+        req = {"description": "Updated description"}
+        response = test_client.put("/tools/1", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_update.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.toggle_tool_status")
     def test_toggle_tool_status(self, mock_toggle, test_client, auth_headers):
@@ -469,14 +499,16 @@ class TestResourceEndpoints:
         assert len(data) == 1 and data[0]["name"] == "Test Resource"
         mock_list_resources.assert_called_once()
 
-    # @patch("mcpgateway.main.resource_service.register_resource")
-    # def test_create_resource_endpoint(self, mock_create, test_client, auth_headers):
-    #     """Test registering a new resource."""
-    #     mock_create.return_value = ResourceRead(**MOCK_RESOURCE_READ)
-    #     req = {"uri": "test/resource", "name": "Test Resource", "description": "A test resource"}
-    #     response = test_client.post("/resources/", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_create.assert_called_once()
+    @patch("mcpgateway.main.resource_service.register_resource")
+    def test_create_resource_endpoint(self, mock_create, test_client, auth_headers):
+        """Test registering a new resource."""
+        mock_create.return_value = ResourceRead(**MOCK_RESOURCE_READ)
+
+        req = {"uri": "test/resource", "name": "Test Resource", "description": "A test resource", "content": "Hello world"}  # ← required field
+        response = test_client.post("/resources/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200  # route returns 200 on success
+        mock_create.assert_called_once()
 
     @patch("mcpgateway.main.resource_service.read_resource")
     def test_read_resource_endpoint(self, mock_read_resource, test_client, auth_headers):
@@ -554,15 +586,17 @@ class TestPromptEndpoints:
         assert len(data) == 1
         mock_list_prompts.assert_called_once()
 
-    # @patch("mcpgateway.main.prompt_service.register_prompt")
-    # def test_create_prompt_endpoint(self, mock_create, test_client, auth_headers):
-    #     """Test creating a new prompt template."""
-    #     mock_create.return_value = MagicMock()
-    #     mock_create.return_value.model_dump.return_value = MOCK_PROMPT_READ
-    #     req = {"name": "test_prompt", "template": "Hello {name}", "description": "A test prompt"}
-    #     response = test_client.post("/prompts/", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_create.assert_called_once()
+    @patch("mcpgateway.main.prompt_service.register_prompt")
+    def test_create_prompt_endpoint(self, mock_create, test_client, auth_headers):
+        """Test creating a new prompt template."""
+        # Return an actual model instance
+        mock_create.return_value = PromptRead(**MOCK_PROMPT_READ)
+
+        req = {"name": "test_prompt", "template": "Hello {name}", "description": "A test prompt"}
+        response = test_client.post("/prompts/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_create.assert_called_once()
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_with_args(self, mock_get, test_client, auth_headers):
@@ -586,15 +620,17 @@ class TestPromptEndpoints:
         assert response.status_code == 200
         mock_get.assert_called_once_with(ANY, "test", {})
 
-    # @patch("mcpgateway.main.prompt_service.update_prompt")
-    # def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
-    #     """Test updating an existing prompt."""
-    #     mock_update.return_value = MagicMock()
-    #     mock_update.return_value.model_dump.return_value = MOCK_PROMPT_READ
-    #     req = {"description": "Updated description"}
-    #     response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_update.assert_called_once()
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
+        """Test updating an existing prompt."""
+        updated = {**MOCK_PROMPT_READ, "description": "Updated description"}
+        mock_update.return_value = PromptRead(**updated)  # <- real model
+
+        req = {"description": "Updated description"}
+        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_update.assert_called_once()
 
     @patch("mcpgateway.main.prompt_service.delete_prompt")
     def test_delete_prompt_endpoint(self, mock_delete, test_client, auth_headers):
@@ -683,28 +719,31 @@ class TestGatewayEndpoints:
 class TestRootEndpoints:
     """Tests for root directory management: registration, listing, changes, etc."""
 
-    # @patch("mcpgateway.main.root_service.list_roots")
-    # def test_list_roots_endpoint(self, mock_list, test_client, auth_headers):
-    #     """Test listing all registered roots."""
-    #     from mcpgateway.types import Root
+    @patch("mcpgateway.main.root_service.list_roots")
+    def test_list_roots_endpoint(self, mock_list, test_client, auth_headers):
+        """Test listing all registered roots."""
+        from mcpgateway.types import Root
 
-    #     mock_list.return_value = [Root(uri="/test", name="Test Root")]
-    #     response = test_client.get("/roots/", headers=auth_headers)
-    #     assert response.status_code == 200
-    #     data = response.json()
-    #     assert len(data) == 1
-    #     mock_list.assert_called_once()
+        mock_list.return_value = [Root(uri="file:///test", name="Test Root")]  # valid URI
+        response = test_client.get("/roots/", headers=auth_headers)
 
-    # @patch("mcpgateway.main.root_service.add_root")
-    # def test_add_root_endpoint(self, mock_add, test_client, auth_headers):
-    #     """Test adding a new root directory."""
-    #     from mcpgateway.types import Root
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        mock_list.assert_called_once()
 
-    #     mock_add.return_value = Root(uri="/test", name="Test Root")
-    #     req = {"uri": "/test", "name": "Test Root"}
-    #     response = test_client.post("/roots/", json=req, headers=auth_headers)
-    #     assert response.status_code == 200
-    #     mock_add.assert_called_once()
+    @patch("mcpgateway.main.root_service.add_root")
+    def test_add_root_endpoint(self, mock_add, test_client, auth_headers):
+        """Test adding a new root directory."""
+        from mcpgateway.types import Root
+
+        mock_add.return_value = Root(uri="file:///test", name="Test Root")  # valid URI
+
+        req = {"uri": "file:///test", "name": "Test Root"}  # valid body
+        response = test_client.post("/roots/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_add.assert_called_once()
 
     @patch("mcpgateway.main.root_service.remove_root")
     def test_remove_root_endpoint(self, mock_remove, test_client, auth_headers):
@@ -827,13 +866,28 @@ class TestRPCEndpoints:
 class TestRealtimeEndpoints:
     """Tests for real-time communication: WebSocket, SSE, message handling, etc."""
 
-    # def test_websocket_endpoint(self, test_client):
-    #     """Test WebSocket connection and message handling."""
-    #     with test_client.websocket_connect("/ws") as websocket:
-    #         websocket.send_text('{"jsonrpc":"2.0","method":"ping","id":1}')
-    #         data = websocket.receive_text()
-    #         response = json.loads(data)
-    #         assert "result" in response or "error" in response
+    @patch("mcpgateway.main.httpx.AsyncClient")  # stub network calls
+    def test_websocket_endpoint(self, mock_client, test_client):
+        from types import SimpleNamespace
+
+        """Test WebSocket connection and message handling."""
+        # ----- set up async context-manager dummy -----
+        mock_instance = mock_client.return_value
+        mock_instance.__aenter__.return_value = mock_instance
+        mock_instance.__aexit__.return_value = False
+
+        async def dummy_post(*_args, **_kwargs):
+            # minimal object that looks like an httpx.Response
+            return SimpleNamespace(text='{"jsonrpc":"2.0","id":1,"result":{}}')
+
+        mock_instance.post = dummy_post
+        # ---------------------------------------------
+
+        with test_client.websocket_connect("/ws") as websocket:
+            websocket.send_text('{"jsonrpc":"2.0","method":"ping","id":1}')
+            data = websocket.receive_text()
+            response = json.loads(data)
+            assert response == {"jsonrpc": "2.0", "id": 1, "result": {}}
 
     @patch("mcpgateway.main.session_registry.add_session")
     @patch("mcpgateway.main.session_registry.respond")
@@ -950,10 +1004,10 @@ class TestMiddlewareAndSecurity:
 class TestErrorHandling:
     """Tests for error scenarios, validation failures, and edge cases."""
 
-    # def test_invalid_json_body(self, test_client, auth_headers):
-    #     """Test handling of malformed JSON in request bodies."""
-    #     response = test_client.post("/protocol/initialize", data="invalid json", headers=auth_headers)
-    #     assert response.status_code == 422  # FastAPI validation error
+    def test_invalid_json_body(self, test_client, auth_headers):
+        """Test handling of malformed JSON in request bodies."""
+        response = test_client.post("/protocol/initialize", data="invalid json", headers=auth_headers)
+        assert response.status_code == 400  # body cannot be parsed, so 400
 
     @patch("mcpgateway.main.server_service.get_server")
     def test_server_not_found(self, mock_get, test_client, auth_headers):
@@ -998,61 +1052,3 @@ class TestErrorHandling:
         response = test_client.post("/tools/", json=req, headers=auth_headers)
         # This may pass or fail depending on URL validation implementation
         assert response.status_code in [200, 201, 422]
-
-
-# ----------------------------------------------------- #
-# Integration & Coverage Tests                          #
-# ----------------------------------------------------- #
-# class TestIntegrationScenarios:
-#     """Tests for complex integration scenarios and workflow combinations."""
-
-# @patch("mcpgateway.main.server_service.register_server")
-# @patch("mcpgateway.main.tool_service.register_tool")
-# def test_server_with_tools_workflow(self, mock_register_tool, mock_register_server, test_client, auth_headers):
-#     """Test the complete workflow of creating a server and associating tools."""
-#     # First create tools
-#     mock_register_tool.return_value = MagicMock()
-#     mock_register_tool.return_value.model_dump.return_value = MOCK_TOOL_READ
-
-#     tool_req = {"name": "test_tool", "url": "http://example.com"}
-#     tool_response = test_client.post("/tools/", json=tool_req, headers=auth_headers)
-#     assert tool_response.status_code == 200
-
-#     # Then create server with associated tools
-#     mock_register_server.return_value = ServerRead(**MOCK_SERVER_READ)
-#     server_req = {"name": "test_server", "description": "A test server", "associated_tools": ["1"]}
-#     server_response = test_client.post("/servers/", json=server_req, headers=auth_headers)
-#     assert server_response.status_code == 201
-
-# def test_initialize_and_ping_workflow(self, test_client, auth_headers):
-#     """Test the standard MCP client initialization flow."""
-#     # First initialize
-#     with patch("mcpgateway.main.session_registry.handle_initialize_logic") as mock_init:
-#         mock_init.return_value = MagicMock()
-#         init_req = {
-#             "protocol_version": PROTOCOL_VERSION,
-#             "capabilities": {},
-#             "client_info": {"name": "Test Client", "version": "1.0.0"},
-#         }
-#         init_response = test_client.post("/protocol/initialize", json=init_req, headers=auth_headers)
-#         assert init_response.status_code == 200
-
-#     # Then ping
-#     ping_req = {"jsonrpc": "2.0", "method": "ping", "id": "test-id"}
-#     ping_response = test_client.post("/protocol/ping", json=ping_req, headers=auth_headers)
-#     assert ping_response.status_code == 200
-
-# @patch("mcpgateway.main.resource_service.register_resource")
-# @patch("mcpgateway.main.resource_service.read_resource")
-# def test_resource_lifecycle(self, mock_read, mock_register, test_client, auth_headers):
-#     """Test complete resource lifecycle: create, read, update, delete."""
-#     # Create resource
-#     mock_register.return_value = ResourceRead(**MOCK_RESOURCE_READ)
-#     create_req = {"uri": "test/resource", "name": "Test Resource", "description": "A test"}
-#     create_response = test_client.post("/resources/", json=create_req, headers=auth_headers)
-#     assert create_response.status_code == 200
-
-#     # Read resource content
-#     mock_read.return_value = ResourceContent(type="resource", uri="test/resource", mime_type="text/plain", text="content")
-#     read_response = test_client.get("/resources/test/resource", headers=auth_headers)
-#     assert read_response.status_code == 200
