@@ -19,16 +19,20 @@ target module).  FastAPI `HTTPException` objects are asserted for status code
 and detail.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import datetime as _dt
 
-import jwt
-import pytest
+# First-Party
+from mcpgateway.utils import verify_credentials as vc  # module under test
+
+# Third-Party
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
-
-from mcpgateway.utils import verify_credentials as vc  # module under test
+import jwt
+import pytest
 
 # ---------------------------------------------------------------------------
 # Shared constants / helpers

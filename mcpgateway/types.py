@@ -16,10 +16,12 @@ It includes:
   - Capability definitions
 """
 
+# Standard
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
+# Third-Party
 from pydantic import AnyHttpUrl, AnyUrl, BaseModel, Field
 
 

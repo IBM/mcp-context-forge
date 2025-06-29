@@ -12,13 +12,14 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock
 
-import pytest
-
+# First-Party
 # ---------------------------------------------------------------------------
 # Application imports
 # ---------------------------------------------------------------------------
@@ -32,6 +33,9 @@ from mcpgateway.services.gateway_service import (
     GatewayNotFoundError,
     GatewayService,
 )
+
+# Third-Party
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers & global monkey-patches
@@ -65,6 +69,7 @@ def _bypass_gatewayread_validation(monkeypatch):
     Pydantic hates that.  We therefore stub out `GatewayRead.model_validate`
     so it simply returns what it was given.
     """
+    # First-Party
     from mcpgateway.schemas import GatewayRead
 
     monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: x))

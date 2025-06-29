@@ -14,6 +14,7 @@ will have to wait a long time for queries
 Reference: https://stackoverflow.com/questions/10855197/frequent-worker-timeout
 """
 
+# First-Party
 # Import Pydantic Settings singleton
 from mcpgateway.config import settings
 

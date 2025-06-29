@@ -35,23 +35,26 @@ clients never time out.  Each client receives a unique *session-id* that is
 appended as a query parameter to the back-channel `/message` URL.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
 import asyncio
+from contextlib import suppress
 import json
 import logging
 import shlex
 import signal
 import sys
-import uuid
-from contextlib import suppress
 from typing import AsyncIterator, List, Optional, Sequence
+import uuid
 
-import uvicorn
+# Third-Party
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from sse_starlette.sse import EventSourceResponse
+import uvicorn
 
 LOGGER = logging.getLogger("mcpgateway.translate")
 KEEP_ALIVE_INTERVAL = 30  # seconds ── matches the reference implementation

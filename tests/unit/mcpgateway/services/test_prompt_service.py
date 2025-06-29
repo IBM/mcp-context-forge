@@ -12,14 +12,15 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock
 
-import pytest
-
+# First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
@@ -29,6 +30,9 @@ from mcpgateway.services.prompt_service import (
     PromptService,
 )
 from mcpgateway.types import Message, PromptResult, Role
+
+# Third-Party
+import pytest
 
 # ---------------------------------------------------------------------------
 # helpers

@@ -15,29 +15,36 @@ Updated to record server associations independently using many-to-many relations
 and to record tool execution metrics.
 """
 
-import re
-import uuid
+# Standard
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict, List, Optional
+import uuid
 
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.types import ResourceContent
+from mcpgateway.utils.create_slug import slugify
+
+# Third-Party
 import jsonschema
 from sqlalchemy import (
-    JSON,
     Boolean,
     Column,
+    create_engine,
     DateTime,
+    event,
     Float,
     ForeignKey,
+    func,
     Integer,
+    JSON,
+    make_url,
+    select,
     String,
     Table,
     Text,
     UniqueConstraint,
-    create_engine,
-    event,
-    func,
-    make_url,
-    select,
 )
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
@@ -50,10 +57,6 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 from sqlalchemy.orm.attributes import get_history
-
-from mcpgateway.config import settings
-from mcpgateway.types import ResourceContent
-from mcpgateway.utils.create_slug import slugify
 
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", …)

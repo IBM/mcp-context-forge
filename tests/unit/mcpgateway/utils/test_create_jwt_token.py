@@ -23,17 +23,21 @@ SPDX-License-Identifier: Apache-2.0
 Author: Your Name
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import json
 import sys
 from types import SimpleNamespace
 from typing import Any, Dict
 
+# First-Party
+from mcpgateway.utils import create_jwt_token as jwt_util  # noqa: E402
+
+# Third-Party
 import jwt
 import pytest
-
-from mcpgateway.utils import create_jwt_token as jwt_util  # noqa: E402
 
 # --------------------------------------------------------------------------- #
 # Patch module-level constants **before** we start calling helpers            #

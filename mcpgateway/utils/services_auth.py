@@ -7,14 +7,17 @@ Authors: Mihai Criveti
 
 """
 
+# Standard
 import base64
 import hashlib
 import json
 import os
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
+# First-Party
 from mcpgateway.config import settings
+
+# Third-Party
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 def get_key() -> bytes:
