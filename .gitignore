@@ -1,3 +1,17 @@
+*.db
+*.bak
+*.backup
+mcpgateway.sbom.xml
+gateway_service_leader.lock
+docs/docs/test/
+tmp
+*.tgz
+*.gz
+*.bz
+*.bz2
+*.tar
+TODO.md
+minikube-*
 .htpasswd
 .env.gcr
 packages-lock.json

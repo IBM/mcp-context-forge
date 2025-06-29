@@ -14,19 +14,16 @@ It handles:
 - Active/inactive resource management
 """
 
+# Standard
 import asyncio
+from datetime import datetime
 import logging
 import mimetypes
 import re
-from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
-import parse
-from sqlalchemy import delete, func, not_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
@@ -39,6 +36,12 @@ from mcpgateway.schemas import (
     ResourceUpdate,
 )
 from mcpgateway.types import ResourceContent, ResourceTemplate, TextContent
+
+# Third-Party
+import parse
+from sqlalchemy import delete, func, not_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +236,7 @@ class ResourceService:
         resources = db.execute(query).scalars().all()
         return [self._convert_resource_to_read(r) for r in resources]
 
-    async def list_server_resources(self, db: Session, server_id: int, include_inactive: bool = False) -> List[ResourceRead]:
+    async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
         """
         Retrieve a list of registered resources from the database.
 
@@ -244,7 +247,7 @@ class ResourceService:
 
         Args:
             db (Session): The SQLAlchemy database session.
-            server_id (int): Server ID
+            server_id (str): Server ID
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
 

@@ -1,0 +1,15 @@
+# IBM Cloud
+region: eu-gb
+prefix: mcpgw
+k8s_workers: 1
+cluster_flavor: bx2.4x16
+kube_version: "1.29"
+
+# Databases
+postgres_version: "14"
+redis_version: "7"
+
+# Application
+gateway_image: "ghcr.io/ibm/mcp-context-forge:v0.2.0"
+gateway_replicas: 2
+ingress_class: public-iks-k8s-nginx

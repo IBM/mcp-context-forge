@@ -16,10 +16,12 @@ It includes:
   - Capability definitions
 """
 
+# Standard
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
+# Third-Party
 from pydantic import AnyHttpUrl, AnyUrl, BaseModel, Field
 
 
@@ -389,6 +391,7 @@ class Tool(BaseModel):
         requestType (str): The HTTP method used to invoke the tool (GET, POST, PUT, DELETE, SSE, STDIO).
         headers (Dict[str, Any]): A JSON object representing HTTP headers.
         input_schema (Dict[str, Any]): A JSON Schema for validating the tool's input.
+        annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints.
         auth_type (Optional[str]): The type of authentication used ("basic", "bearer", or None).
         auth_username (Optional[str]): The username for basic authentication.
         auth_password (Optional[str]): The password for basic authentication.
@@ -402,6 +405,7 @@ class Tool(BaseModel):
     requestType: str = "SSE"
     headers: Dict[str, Any] = Field(default_factory=dict)
     input_schema: Dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    annotations: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Tool annotations for behavior hints")
     auth_type: Optional[str] = None
     auth_username: Optional[str] = None
     auth_password: Optional[str] = None
@@ -479,13 +483,60 @@ class ListResourceTemplatesResult(BaseModel):
 
 # Root types
 class FileUrl(AnyUrl):
-    """A specialized URL for file resources.
+    """A specialized URL type for local file-scheme resources.
 
-    This URL accepts only the "file" scheme and does not require a host.
+    Key characteristics
+    -------------------
+    * Scheme restricted – only the "file" scheme is permitted
+      (e.g. file:///path/to/file.txt).
+    * No host required – "file" URLs typically omit a network host;
+      therefore, the host component is not mandatory.
+    * String-friendly equality – developers naturally expect
+      FileUrl("file:///data") == "file:///data" to evaluate True.
+      AnyUrl (Pydantic) does not implement that, so we override
+      __eq__ to compare against plain strings transparently.
+      Hash semantics are kept consistent by delegating to the parent class.
+
+    Examples
+    --------
+    >>> url = FileUrl("file:///etc/hosts")
+    >>> url.scheme
+    'file'
+    >>> url == "file:///etc/hosts"
+    True
+    >>> {"path": url}  # hashable
+    {'path': FileUrl('file:///etc/hosts')}
+
+    Notes
+    -----
+    The override does not interfere with comparisons to other
+    AnyUrl/FileUrl instances; those still use the superclass
+    implementation.
     """
 
+    # Restrict to the "file" scheme and omit host requirement
     allowed_schemes = {"file"}
     host_required = False
+
+    def __eq__(self, other):  # type: ignore[override]
+        """Return True when other is an equivalent URL or string.
+
+        If other is a str it is coerced with str(self) for comparison;
+        otherwise defer to AnyUrl's comparison.
+
+        Args:
+            other (Any): The object to compare against. May be a str, FileUrl, or AnyUrl.
+
+        Returns:
+            bool: True if the other value is equal to this URL, either as a string
+            or as another URL object. False otherwise.
+        """
+        if isinstance(other, str):
+            return str(self) == other
+        return super().__eq__(other)
+
+    # Keep hashing behaviour aligned with equality
+    __hash__ = AnyUrl.__hash__
 
 
 class Root(BaseModel):

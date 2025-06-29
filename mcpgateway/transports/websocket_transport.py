@@ -9,14 +9,17 @@ This module implements WebSocket transport for MCP, providing
 full-duplex communication between client and server.
 """
 
+# Standard
 import asyncio
 import logging
 from typing import Any, AsyncGenerator, Dict, Optional
 
-from fastapi import WebSocket, WebSocketDisconnect
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.transports.base import Transport
+
+# Third-Party
+from fastapi import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
@@ -47,17 +50,36 @@ class WebSocketTransport(Transport):
 
     async def disconnect(self) -> None:
         """Clean up WebSocket connection."""
-        if self._ping_task:
-            self._ping_task.cancel()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop (interpreter shutdown, for example)
+            return
+
+        if loop.is_closed():
+            # The loop is already closed – further asyncio calls are illegal
+            return
+
+        ping_task = getattr(self, "_ping_task", None)
+
+        should_cancel = ping_task and not ping_task.done() and ping_task is not asyncio.current_task()  # task exists  # still running  # not *this* coroutine
+
+        if should_cancel:
+            ping_task.cancel()
             try:
-                await self._ping_task
+                await ping_task  # allow it to exit gracefully
             except asyncio.CancelledError:
                 pass
 
-        if self._connected:
-            await self._websocket.close()
-            self._connected = False
-            logger.info("WebSocket transport disconnected")
+        # ────────────────────────────────────────────────────────────────
+        # 3.  Close the WebSocket connection (if still open)
+        # ────────────────────────────────────────────────────────────────
+        if getattr(self, "_connected", False):
+            try:
+                await self._websocket.close()
+            finally:
+                self._connected = False
+                logger.info("WebSocket transport disconnected")
 
     async def send_message(self, message: Dict[str, Any]) -> None:
         """Send a message over WebSocket.

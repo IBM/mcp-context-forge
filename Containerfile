@@ -1,7 +1,7 @@
-FROM registry.access.redhat.com/ubi9-minimal:9.6-1747218906
+FROM registry.access.redhat.com/ubi9-minimal:9.6-1749489516
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
-      version="0.1.0" \
+      version="0.2.0" \
       description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.11
@@ -23,7 +23,7 @@ COPY . /app
 # Create virtual environment, upgrade pip and install dependencies using uv for speed
 RUN python3 -m venv /app/.venv && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres]"
+    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,alembic]"
 
 # update the user permissions
 RUN chown -R 1001:0 /app && \

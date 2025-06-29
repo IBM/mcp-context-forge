@@ -9,14 +9,11 @@ This module tests the admin UI routes for the MCP Gateway, ensuring
 they properly handle server, tool, resource, prompt, gateway and root management.
 """
 
+# Standard
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.admin import (
     admin_add_gateway,
     admin_add_prompt,
@@ -56,12 +53,23 @@ from mcpgateway.admin import (
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
-from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerNotFoundError, ServerService
 from mcpgateway.services.tool_service import (
     ToolNameConflictError,
     ToolService,
 )
+
+# Third-Party
+from fastapi import HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+import pytest
+from sqlalchemy.orm import Session
+
+
+class FakeForm(dict):
+    def getlist(self, key):
+        value = self.get(key, [])
+        return value if isinstance(value, list) else [value]
 
 
 @pytest.fixture
@@ -74,36 +82,48 @@ def mock_db():
 def mock_request():
     """Create a mock FastAPI request."""
     request = MagicMock(spec=Request)
+
+    # FastAPI's Request always has a .scope dict; many admin helpers read "root_path".
+    request.scope = {"root_path": ""}
+
+    # Pretend form() returns the full set of fields our admin helpers expect
     request.form = AsyncMock(
-        return_value={
-            "name": "test-name",
-            "url": "http://example.com",
-            "description": "Test description",
-            "icon": "http://example.com/icon.png",
-            "uri": "/test/resource",
-            "mimeType": "text/plain",
-            "template": "Template content",
-            "content": "Test content",
-            "associatedTools": "1,2,3",
-            "associatedResources": "4,5",
-            "associatedPrompts": "6",
-            "requestType": "POST",
-            "integrationType": "MCP",
-            "headers": "{}",
-            "input_schema": "{}",
-            "jsonpath_filter": "$.",
-            "auth_type": "",
-            "auth_username": "",
-            "auth_password": "",
-            "auth_token": "",
-            "auth_header_key": "",
-            "auth_header_value": "",
-            "arguments": "[]",
-            "activate": "true",
-        }
+        return_value=FakeForm(
+            {
+                "name": "test-name",
+                "url": "http://example.com",
+                "description": "Test description",
+                "icon": "http://example.com/icon.png",
+                "uri": "/test/resource",
+                "mimeType": "text/plain",
+                "template": "Template content",
+                "content": "Test content",
+                "associatedTools": ["1", "2", "3"],
+                "associatedResources": "4,5",
+                "associatedPrompts": "6",
+                "requestType": "POST",
+                "integrationType": "MCP",
+                "headers": "{}",
+                "input_schema": "{}",
+                "jsonpath_filter": "$.",
+                "auth_type": "",
+                "auth_username": "",
+                "auth_password": "",
+                "auth_token": "",
+                "auth_header_key": "",
+                "auth_header_value": "",
+                "arguments": "[]",
+                "activate": "true",
+            }
+        )
     )
+
+    # Basic template rendering stub
+    request.app = MagicMock()  # ensure .app exists
+    request.app.state = MagicMock()  # ensure .app.state exists
     request.app.state.templates = MagicMock()
     request.app.state.templates.TemplateResponse.return_value = HTMLResponse(content="<html></html>")
+
     request.query_params = {"include_inactive": "false"}
     return request
 
@@ -135,15 +155,15 @@ class TestAdminServerRoutes:
         """Test getting a single server through admin UI."""
         # Setup
         mock_server = MagicMock()
-        mock_server.dict.return_value = {"id": 1, "name": "Server 1"}
+        mock_server.model_dump.return_value = {"id": "1", "name": "Server 1"}
         mock_get_server.return_value = mock_server
 
         # Execute
-        result = await admin_get_server(1, mock_db, "test-user")
+        result = await admin_get_server("1", mock_db, "test-user")
 
         # Assert
-        mock_get_server.assert_called_once_with(mock_db, 1)
-        assert result == {"id": 1, "name": "Server 1"}
+        mock_get_server.assert_called_once_with(mock_db, "1")
+        assert result == {"id": "1", "name": "Server 1"}
 
     @patch.object(ServerService, "get_server")
     async def test_admin_get_server_not_found(self, mock_get_server, mock_db):
@@ -162,6 +182,8 @@ class TestAdminServerRoutes:
     async def test_admin_add_server(self, mock_register_server, mock_request, mock_db):
         """Test adding a server through admin UI."""
         # Execute
+        form = await mock_request.form()
+        print(f'{form.getlist("associatedTools")=}')
         result = await admin_add_server(mock_request, mock_db, "test-user")
 
         # Assert
@@ -195,12 +217,10 @@ class TestAdminServerRoutes:
         assert "/admin#catalog" in result.headers["location"]
 
     @patch.object(ServerService, "delete_server")
-    async def test_admin_delete_server(self, mock_delete_server, mock_db):
+    async def test_admin_delete_server(self, mock_delete_server, mock_request, mock_db):
         """Test deleting a server through admin UI."""
-        # Execute
-        result = await admin_delete_server(1, mock_db, "test-user")
+        result = await admin_delete_server(1, mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_server.assert_called_once_with(mock_db, 1)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -234,15 +254,15 @@ class TestAdminToolRoutes:
         """Test getting a single tool through admin UI."""
         # Setup
         mock_tool = MagicMock()
-        mock_tool.dict.return_value = {"id": 1, "name": "Tool 1"}
+        mock_tool.model_dump.return_value = {"id": "1", "name": "Tool 1"}
         mock_get_tool.return_value = mock_tool
 
         # Execute
-        result = await admin_get_tool(1, mock_db, "test-user")
+        result = await admin_get_tool("1", mock_db, "test-user")
 
         # Assert
-        mock_get_tool.assert_called_once_with(mock_db, 1)
-        assert result == {"id": 1, "name": "Tool 1"}
+        mock_get_tool.assert_called_once_with(mock_db, "1")
+        assert result == {"id": "1", "name": "Tool 1"}
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool(self, mock_register_tool, mock_request, mock_db):
@@ -309,12 +329,10 @@ class TestAdminToolRoutes:
         assert "/admin#tools" in result.headers["location"]
 
     @patch.object(ToolService, "delete_tool")
-    async def test_admin_delete_tool(self, mock_delete_tool, mock_db):
+    async def test_admin_delete_tool(self, mock_delete_tool, mock_request, mock_db):
         """Test deleting a tool through admin UI."""
-        # Execute
-        result = await admin_delete_tool(1, mock_db, "test-user")
+        result = await admin_delete_tool(1, mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_tool.assert_called_once_with(mock_db, 1)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -399,12 +417,10 @@ class TestAdminResourceRoutes:
         assert "/admin#resources" in result.headers["location"]
 
     @patch.object(ResourceService, "delete_resource")
-    async def test_admin_delete_resource(self, mock_delete_resource, mock_db):
+    async def test_admin_delete_resource(self, mock_delete_resource, mock_request, mock_db):
         """Test deleting a resource through admin UI."""
-        # Execute
-        result = await admin_delete_resource("/test/resource", mock_db, "test-user")
+        result = await admin_delete_resource("/test/resource", mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_resource.assert_called_once_with(mock_db, "/test/resource")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -503,12 +519,10 @@ class TestAdminPromptRoutes:
         assert "/admin#prompts" in result.headers["location"]
 
     @patch.object(PromptService, "delete_prompt")
-    async def test_admin_delete_prompt(self, mock_delete_prompt, mock_db):
+    async def test_admin_delete_prompt(self, mock_delete_prompt, mock_request, mock_db):
         """Test deleting a prompt through admin UI."""
-        # Execute
-        result = await admin_delete_prompt("test-prompt", mock_db, "test-user")
+        result = await admin_delete_prompt("test-prompt", mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_prompt.assert_called_once_with(mock_db, "test-prompt")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -560,9 +574,8 @@ class TestAdminGatewayRoutes:
 
         # Assert
         mock_register_gateway.assert_called_once()
-        assert isinstance(result, RedirectResponse)
-        assert result.status_code == 303
-        assert "/admin#gateways" in result.headers["location"]
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway(self, mock_update_gateway, mock_request, mock_db):
@@ -589,12 +602,10 @@ class TestAdminGatewayRoutes:
         assert "/admin#gateways" in result.headers["location"]
 
     @patch.object(GatewayService, "delete_gateway")
-    async def test_admin_delete_gateway(self, mock_delete_gateway, mock_db):
+    async def test_admin_delete_gateway(self, mock_delete_gateway, mock_request, mock_db):
         """Test deleting a gateway through admin UI."""
-        # Execute
-        result = await admin_delete_gateway(1, mock_db, "test-user")
+        result = await admin_delete_gateway(1, mock_request, mock_db, "test-user")
 
-        # Assert
         mock_delete_gateway.assert_called_once_with(mock_db, 1)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -604,25 +615,22 @@ class TestAdminGatewayRoutes:
 class TestAdminRootRoutes:
     """Test admin routes for root management."""
 
-    @patch.object(RootService, "add_root")
-    async def test_admin_add_root(self, mock_add_root, mock_request, mock_db):
+    @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
+    async def test_admin_add_root(self, mock_add_root, mock_request):
         """Test adding a root through admin UI."""
-        # Execute
-        result = await admin_add_root(mock_request, mock_db, "test-user")
+        result = await admin_add_root(mock_request, "test-user")
 
-        # Assert
-        mock_add_root.assert_called_once_with("/test/resource", None)
+        # expect ("uri", "name") → "test-name" comes from the form fixture
+        mock_add_root.assert_called_once_with("/test/resource", "test-name")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "/admin#roots" in result.headers["location"]
 
-    @patch.object(RootService, "remove_root")
-    async def test_admin_delete_root(self, mock_remove_root, mock_db):
+    @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
+    async def test_admin_delete_root(self, mock_remove_root, mock_request):
         """Test deleting a root through admin UI."""
-        # Execute
-        result = await admin_delete_root("/test/root", mock_db, "test-user")
+        result = await admin_delete_root("/test/root", mock_request, "test-user")
 
-        # Assert
         mock_remove_root.assert_called_once_with("/test/root")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303

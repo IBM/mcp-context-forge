@@ -3,6 +3,21 @@
 > Coverage from industry publications, press, and news media about MCP Gateway, ACP, and IBM's agentic AI initiatives.
 
 ## Articles
+!!! details "IBM's MCP Gateway: A Unified FastAPI-Based Model Context Protocol Gateway for Next-Gen AI Toolchains (MarkTechPost)"
+    **Author:** Nikhil | **Publication:** MarkTechPost | **Date:** June 21, 2025
+    [Read the article](https://www.marktechpost.com/2025/06/21/ibms-mcp-gateway-a-unified-fastapi-based-model-context-protocol-gateway-for-next-gen-ai-toolchains/)
+
+    !!! quote
+        IBM's MCP Gateway offers a robust orchestration layer for agentic and GenAI applications, enabling API wrapping, multi-protocol support, centralized schema management, and real-time observability through a modern admin UI. It serves as a scalable foundation for unifying diverse AI tools and resources under the Model Context Protocol.
+
+!!! details "IBM MCP Gateway: Revolutionizing GenAI Integration for Startups and Enterprises (Pitangent)"
+    **Author:** Miltan Chaudhury | **Publication:** Pitangent | **Date:** June 11, 2025
+    [Read the article](https://pitangent.com/ai-ml-development-services/ibm-mcp-gateway-revolutionizing-genai-integration-for-startups-and-enterprises/)
+
+    !!! quote
+        "IBM's MCP Gateway is more than a bridge—it's a platform for accelerating GenAI transformation with agility and confidence. For startups and enterprises navigating the complex AI tool landscape, this innovation brings a modular, future-proof path to build smarter, scalable, and context-aware applications."
+
+        The article breaks down the technical benefits of the MCP Gateway and positions it as a game-changer for reducing integration overhead, improving developer productivity, and democratizing AI access for early-stage companies.
 
 !!! details "IBM Introduces MCP Gateway to Simplify GenAI Tool Integration (Analytics India Magazine)"
     **Author:** Ankush Das | **Publication:** Analytics India Magazine | **Date:** June 10, 2025

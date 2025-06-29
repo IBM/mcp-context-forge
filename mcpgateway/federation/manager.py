@@ -16,16 +16,14 @@ The federation manager serves as the central point for all federation-related
 operations, coordinating with discovery, sync and forwarding components.
 """
 
+# Standard
 import asyncio
+from datetime import datetime, timedelta
 import logging
 import os
-from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set
 
-import httpx
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
@@ -40,6 +38,11 @@ from mcpgateway.types import (
     ServerCapabilities,
     Tool,
 )
+
+# Third-Party
+import httpx
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +177,7 @@ class FederationManager:
             db.rollback()
             raise FederationError(f"Failed to register gateway: {str(e)}")
 
-    async def unregister_gateway(self, db: Session, gateway_id: int) -> None:
+    async def unregister_gateway(self, db: Session, gateway_id: str) -> None:
         """Unregister a gateway.
 
         Args:
@@ -211,7 +214,7 @@ class FederationManager:
             db.rollback()
             raise FederationError(f"Failed to unregister gateway: {str(e)}")
 
-    async def get_gateway_tools(self, db: Session, gateway_id: int) -> List[Tool]:
+    async def get_gateway_tools(self, db: Session, gateway_id: str) -> List[Tool]:
         """Get tools provided by a gateway.
 
         Args:
@@ -236,7 +239,7 @@ class FederationManager:
         except Exception as e:
             raise FederationError(f"Failed to get tools from {gateway.name}: {str(e)}")
 
-    async def get_gateway_resources(self, db: Session, gateway_id: int) -> List[Resource]:
+    async def get_gateway_resources(self, db: Session, gateway_id: str) -> List[Resource]:
         """Get resources provided by a gateway.
 
         Args:
@@ -261,7 +264,7 @@ class FederationManager:
         except Exception as e:
             raise FederationError(f"Failed to get resources from {gateway.name}: {str(e)}")
 
-    async def get_gateway_prompts(self, db: Session, gateway_id: int) -> List[Prompt]:
+    async def get_gateway_prompts(self, db: Session, gateway_id: str) -> List[Prompt]:
         """Get prompts provided by a gateway.
 
         Args:

@@ -1,0 +1,27 @@
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  tox:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13-dev"]
+    steps:
+      - uses: actions/checkout@v4
+
+      # ① Install the runner interpreter for this job
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # ② Install tox + plugin with uv
+      - name: Install tox (uv)
+        run: |
+          curl -Ls https://astral.sh/uv/install.sh | sh   # or `pipx install uv`
+          uv pip install tox tox-uv
+
+      # ③ Run the whole envlist (pyXY env will match the current job interpreter)
+      - name: Run tox matrix
+        run: tox -p auto

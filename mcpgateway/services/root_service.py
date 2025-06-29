@@ -9,12 +9,14 @@ This module implements root directory management according to the MCP specificat
 It handles root registration, validation, and change notifications.
 """
 
+# Standard
 import asyncio
 import logging
 import os
 from typing import AsyncGenerator, Dict, List, Optional
 from urllib.parse import urlparse
 
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.types import Root
 

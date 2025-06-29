@@ -33,12 +33,18 @@ $ mcpgateway mypkg.other:app          # run a different ASGI callable
 ```
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import os
 import sys
 from typing import List
 
+# First-Party
+from mcpgateway import __version__
+
+# Third-Party
 import uvicorn
 
 # ---------------------------------------------------------------------------
@@ -104,6 +110,11 @@ def _insert_defaults(raw_args: List[str]) -> List[str]:
 
 def main() -> None:  # noqa: D401 – imperative mood is fine here
     """Entry point for the *mcpgateway* console script (delegates to Uvicorn)."""
+
+    # Check for version flag
+    if "--version" in sys.argv or "-V" in sys.argv:
+        print(f"mcpgateway {__version__}")
+        return
 
     # Discard the program name and inspect the rest.
     user_args = sys.argv[1:]

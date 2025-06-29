@@ -13,19 +13,22 @@ It handles:
 - Request/response transformation
 """
 
+# Standard
 import asyncio
-import logging
 from datetime import datetime
+import logging
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-import httpx
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.types import ToolResult
+
+# Third-Party
+import httpx
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +187,7 @@ class ForwardingService:
     async def _forward_to_gateway(
         self,
         db: Session,
-        gateway_id: int,
+        gateway_id: str,
         method: str,
         params: Optional[Dict[str, Any]] = None,
     ) -> Any:

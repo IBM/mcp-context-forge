@@ -62,7 +62,7 @@ You can bump the version manually or automate it via Git tags or CI/CD.
 If you need to ship ZIPs, wheels, or a full binary:
 
 ```bash
-python -m build
+python3 -m build
 ```
 
 Outputs will be under `dist/`. You can then:
