@@ -175,6 +175,7 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 # --------------------------------------------------------------------
 [project.scripts]
 mcpgateway = "mcpgateway.cli:main"
+mcpgateway-translate = "mcpgateway.translate.cli:main"
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration

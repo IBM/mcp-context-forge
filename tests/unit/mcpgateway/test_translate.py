@@ -212,9 +212,10 @@ def test_parse_args_ok(translate):
     assert ns.stdio == "echo hi" and ns.port == 9001
 
 
-def test_parse_args_not_implemented(translate):
-    with pytest.raises(NotImplementedError):
-        translate._parse_args(["--sse", "x"])
+def test_parse_args_sse_ok(translate):
+    ns = translate._parse_args(["--sse", "http://upstream.example/sse"])
+    assert ns.sse == "http://upstream.example/sse"
+    assert ns.stdio is None
 
 
 @pytest.mark.asyncio

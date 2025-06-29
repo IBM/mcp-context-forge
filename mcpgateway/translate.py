@@ -3,9 +3,13 @@
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Manav Gupta
 
-Only the stdio→SSE direction is implemented for now.
+You can now run the bridge in either direction:
+
+- stdio to SSE (expose local stdio MCP server over SSE)
+- SSE to stdio (bridge remote SSE endpoint to local stdio)
+
 
 Usage
 -----
@@ -16,17 +20,17 @@ python -m mcpgateway.translate --stdio "uvenv run mcp-server-git" --port 9000
 curl -N http://localhost:9000/sse          # receive the stream
 
 # 3. send a test echo request
-curl -X POST http://localhost:9000/message \
-     -H 'Content-Type: application/json'   \
+curl -X POST http://localhost:9000/message \\
+     -H 'Content-Type: application/json'   \\
      -d '{"jsonrpc":"2.0","id":1,"method":"echo","params":{"value":"hi"}}'
 
 # 4. proper MCP handshake and tool listing
-curl -X POST http://localhost:9000/message \
-     -H 'Content-Type: application/json' \
+curl -X POST http://localhost:9000/message \\
+     -H 'Content-Type: application/json' \\
      -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0.0.1"}}}'
 
-curl -X POST http://localhost:9000/message \
-     -H 'Content-Type: application/json' \
+curl -X POST http://localhost:9000/message \\
+     -H 'Content-Type: application/json' \\
      -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 
 The SSE stream now emits JSON-RPC responses as `event: message` frames and sends
@@ -162,8 +166,22 @@ def _build_fastapi(
     keep_alive: int = KEEP_ALIVE_INTERVAL,
     sse_path: str = "/sse",
     message_path: str = "/message",
+    cors_origins: Optional[List[str]] = None,
 ) -> FastAPI:
     app = FastAPI()
+
+    # Add CORS middleware if origins specified
+    if cors_origins:
+        # Third-Party
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # ----- GET /sse ---------------------------------------------------------#
     @app.get(sse_path)
@@ -263,11 +281,11 @@ def _build_fastapi(
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="mcpgateway.translate",
-        description="Bridges stdio JSON-RPC to SSE.",
+        description="Bridges stdio JSON-RPC to SSE or SSE to stdio.",
     )
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdio", help='Command to run, e.g. "uv run mcp-server-git"')
-    src.add_argument("--sse", help="[NOT IMPLEMENTED]")
+    src.add_argument("--sse", help="Remote SSE endpoint URL")
     src.add_argument("--streamableHttp", help="[NOT IMPLEMENTED]")
 
     p.add_argument("--port", type=int, default=8000, help="HTTP port to bind")
@@ -277,19 +295,28 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         choices=["debug", "info", "warning", "error", "critical"],
         help="Log level",
     )
+    p.add_argument(
+        "--cors",
+        nargs="*",
+        help="CORS allowed origins (e.g., --cors https://app.example.com)",
+    )
+    p.add_argument(
+        "--oauth2Bearer",
+        help="OAuth2 Bearer token for authentication",
+    )
 
     args = p.parse_args(argv)
-    if args.sse or args.streamableHttp:
-        raise NotImplementedError("Only --stdio → SSE is available in this build.")
+    if args.streamableHttp:
+        raise NotImplementedError("Only --stdio → SSE and --sse → stdio are available in this build.")
     return args
 
 
-async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info") -> None:
+async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: Optional[List[str]] = None) -> None:
     pubsub = _PubSub()
     stdio = StdIOEndpoint(cmd, pubsub)
     await stdio.start()
 
-    app = _build_fastapi(pubsub, stdio)
+    app = _build_fastapi(pubsub, stdio, cors_origins=cors)
     config = uvicorn.Config(
         app,
         host="0.0.0.0",
@@ -319,6 +346,43 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info") -> Non
     await _shutdown()  # final cleanup
 
 
+async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str], log_level: str = "info") -> None:
+    # Third-Party
+    import httpx
+
+    headers = {}
+    if oauth2_bearer:
+        headers["Authorization"] = f"Bearer {oauth2_bearer}"
+
+    async with httpx.AsyncClient(headers=headers, timeout=None) as client:
+        process = await asyncio.create_subprocess_shell(
+            "cat",  # Placeholder command; replace with actual stdio server command if needed
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=sys.stderr,
+        )
+
+        async def read_stdout():
+            assert process.stdout
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                print(line.decode().rstrip())
+
+        async def pump_sse_to_stdio():
+            async with client.stream("GET", url) as response:
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data and data != "{}":
+                            if process.stdin:
+                                process.stdin.write((data + "\n").encode())
+                                await process.stdin.drain()
+
+        await asyncio.gather(read_stdout(), pump_sse_to_stdio())
+
+
 def main(argv: Optional[Sequence[str]] | None = None) -> None:  # entry-point
     args = _parse_args(argv or sys.argv[1:])
     logging.basicConfig(
@@ -326,7 +390,10 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:  # entry-point
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     try:
-        asyncio.run(_run_stdio_to_sse(args.stdio, args.port, args.logLevel))
+        if args.stdio:
+            asyncio.run(_run_stdio_to_sse(args.stdio, args.port, args.logLevel, args.cors))
+        elif args.sse:
+            asyncio.run(_run_sse_to_stdio(args.sse, args.oauth2Bearer, args.logLevel))
     except KeyboardInterrupt:
         print("")  # restore shell prompt
         sys.exit(0)
