@@ -18,22 +18,15 @@ This suite provides complete test coverage for:
 # Standard
 import asyncio
 from datetime import datetime
-from typing import Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # First-Party
-from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric
-from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.resource_service import (
     ResourceError,
     ResourceNotFoundError,
     ResourceService,
-    ResourceURIConflictError,
-    ResourceValidationError,
 )
-from mcpgateway.types import TextContent
 
 # Third-Party
 import pytest
