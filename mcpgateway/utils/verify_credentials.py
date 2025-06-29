@@ -7,9 +7,13 @@ Authors: Mihai Criveti
 
 """
 
+# Standard
 from typing import Optional
 
-import jwt
+# First-Party
+from mcpgateway.config import settings
+
+# Third-Party
 from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import (
     HTTPAuthorizationCredentials,
@@ -18,9 +22,8 @@ from fastapi.security import (
     HTTPBearer,
 )
 from fastapi.security.utils import get_authorization_scheme_param
+import jwt
 from jwt import PyJWTError
-
-from mcpgateway.config import settings
 
 basic_security = HTTPBasic(auto_error=False)
 security = HTTPBearer(auto_error=False)

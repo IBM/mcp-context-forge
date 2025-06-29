@@ -7,23 +7,23 @@ Authors: Mihai Criveti
 Comprehensive tests for the main API endpoints with full coverage.
 """
 
+# Standard
+from copy import deepcopy
 import json
 import os
-from copy import deepcopy
-from datetime import datetime
 from unittest.mock import ANY, MagicMock, patch
 
-import pytest
-from fastapi.testclient import TestClient
-
+# First-Party
 from mcpgateway.schemas import (
     PromptRead,
     ResourceRead,
     ServerRead,
-    ToolMetrics,
-    ToolRead,
 )
 from mcpgateway.types import InitializeResult, ResourceContent, ServerCapabilities
+
+# Third-Party
+from fastapi.testclient import TestClient
+import pytest
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -163,6 +163,7 @@ def test_client(app):
     static user name ``"test_user"``.  This keeps the protected endpoints
     accessible without needing to furnish JWTs in every request.
     """
+    # First-Party
     from mcpgateway.main import require_auth
 
     app.dependency_overrides[require_auth] = lambda: "test_user"
@@ -411,6 +412,7 @@ class TestServerEndpoints:
     @patch("mcpgateway.main.prompt_service.list_server_prompts")
     def test_server_get_prompts(self, mock_list_prompts, test_client, auth_headers):
         """Test listing prompts associated with a server."""
+        # First-Party
         from mcpgateway.schemas import PromptRead
 
         mock_list_prompts.return_value = [PromptRead(**MOCK_PROMPT_READ)]
@@ -722,6 +724,7 @@ class TestRootEndpoints:
     @patch("mcpgateway.main.root_service.list_roots")
     def test_list_roots_endpoint(self, mock_list, test_client, auth_headers):
         """Test listing all registered roots."""
+        # First-Party
         from mcpgateway.types import Root
 
         mock_list.return_value = [Root(uri="file:///test", name="Test Root")]  # valid URI
@@ -735,6 +738,7 @@ class TestRootEndpoints:
     @patch("mcpgateway.main.root_service.add_root")
     def test_add_root_endpoint(self, mock_add, test_client, auth_headers):
         """Test adding a new root directory."""
+        # First-Party
         from mcpgateway.types import Root
 
         mock_add.return_value = Root(uri="file:///test", name="Test Root")  # valid URI
@@ -868,6 +872,7 @@ class TestRealtimeEndpoints:
 
     @patch("mcpgateway.main.httpx.AsyncClient")  # stub network calls
     def test_websocket_endpoint(self, mock_client, test_client):
+        # Standard
         from types import SimpleNamespace
 
         """Test WebSocket connection and message handling."""
@@ -1012,6 +1017,7 @@ class TestErrorHandling:
     @patch("mcpgateway.main.server_service.get_server")
     def test_server_not_found(self, mock_get, test_client, auth_headers):
         """Test proper error response when server is not found."""
+        # First-Party
         from mcpgateway.services.server_service import ServerNotFoundError
 
         mock_get.side_effect = ServerNotFoundError("Server not found")
@@ -1022,6 +1028,7 @@ class TestErrorHandling:
     @patch("mcpgateway.main.resource_service.read_resource")
     def test_resource_not_found(self, mock_read, test_client, auth_headers):
         """Test proper error response when resource is not found."""
+        # First-Party
         from mcpgateway.services.resource_service import ResourceNotFoundError
 
         mock_read.side_effect = ResourceNotFoundError("Resource not found")
@@ -1032,6 +1039,7 @@ class TestErrorHandling:
     @patch("mcpgateway.main.tool_service.register_tool")
     def test_tool_name_conflict(self, mock_register, test_client, auth_headers):
         """Test handling of tool name conflicts during registration."""
+        # First-Party
         from mcpgateway.services.tool_service import ToolNameConflictError
 
         mock_register.side_effect = ToolNameConflictError("Tool name already exists")

@@ -14,14 +14,18 @@ mcpgateway.cli.  It exercises **every** decision point:
   actually calls Uvicorn with a patched ``sys.argv``.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import sys
 from typing import Any, Dict, List
 
-import pytest
-
+# First-Party
 import mcpgateway.cli as cli
+
+# Third-Party
+import pytest
 
 # ---------------------------------------------------------------------------
 # helpers / fixtures

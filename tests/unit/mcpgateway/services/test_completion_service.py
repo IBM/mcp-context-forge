@@ -7,8 +7,7 @@ Authors: Mihai Criveti
 
 """
 
-import pytest
-
+# First-Party
 from mcpgateway.services.completion_service import (
     CompletionError,
     CompletionService,
@@ -16,6 +15,9 @@ from mcpgateway.services.completion_service import (
 from mcpgateway.types import (
     CompleteResult,
 )
+
+# Third-Party
+import pytest
 
 
 class FakeScalarOneResult:

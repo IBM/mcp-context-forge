@@ -21,9 +21,12 @@ Usage:
   ./smoketest.py -v               Verbose (shows full logs)
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
+from collections import deque
 import itertools
 import json
 import logging
@@ -35,10 +38,10 @@ import subprocess
 import sys
 import threading
 import time
-from collections import deque
 from types import SimpleNamespace
 from typing import Callable, List, Tuple
 
+# First-Party
 from mcpgateway.config import settings
 
 # ───────────────────────── Ports / constants ────────────────────────────
@@ -155,6 +158,7 @@ def port_open(port: int, host="127.0.0.1", timeout=1.0) -> bool:
 
 
 def wait_http_ok(url: str, timeout: int = 30, *, headers: dict | None = None) -> bool:
+    # Third-Party
     import requests
 
     end = time.time() + timeout
@@ -168,6 +172,7 @@ def wait_http_ok(url: str, timeout: int = 30, *, headers: dict | None = None) ->
     return False
 
 
+# Third-Party
 # ───────────────────────────── Requests wrapper ──────────────────────────
 import urllib3
 
@@ -201,6 +206,7 @@ def generate_jwt() -> str:
 
 
 def request(method: str, path: str, *, json_data=None, **kw):
+    # Third-Party
     import requests
 
     token = generate_jwt()

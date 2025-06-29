@@ -7,14 +7,16 @@ Authors: Mihai Criveti
 
 """
 
-import pytest
-
+# First-Party
 from mcpgateway.validation.jsonrpc import (
     INVALID_REQUEST,
     JSONRPCError,
     validate_request,
     validate_response,
 )
+
+# Third-Party
+import pytest
 
 
 class TestJSONRPCValidation:

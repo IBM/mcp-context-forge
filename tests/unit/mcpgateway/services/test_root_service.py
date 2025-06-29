@@ -7,14 +7,17 @@ Authors: Mihai Criveti
 
 """
 
+# Standard
 import asyncio
 import os
 from urllib.parse import urlparse
 
-import pytest
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.root_service import RootService, RootServiceError
+
+# Third-Party
+import pytest
 
 
 @pytest.mark.asyncio

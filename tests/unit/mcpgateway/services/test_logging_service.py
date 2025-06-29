@@ -18,14 +18,17 @@ The fix is a single `await asyncio.sleep(0)` (one event-loop tick) after
 the subscriber is fully set up before we emit the first log event.
 """
 
+# Standard
 import asyncio
-import logging
 from datetime import datetime
+import logging
 
-import pytest
-
+# First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.types import LogLevel
+
+# Third-Party
+import pytest
 
 # ---------------------------------------------------------------------------
 # Basic behaviour

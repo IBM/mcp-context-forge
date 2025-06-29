@@ -7,16 +7,20 @@ SPDX-License-Identifier: Apache-2.0
 Author: Mihai Criveti
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import base64
 from typing import Dict
 
-import pytest
-from starlette.testclient import TestClient
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.main import app
+
+# Third-Party
+import pytest
+from starlette.testclient import TestClient
 
 
 # --------------------------------------------------------------------------- #

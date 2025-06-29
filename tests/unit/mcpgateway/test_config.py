@@ -7,10 +7,12 @@ Authors: Mihai Criveti
 
 """
 
+# Standard
 import os
 from unittest.mock import MagicMock, patch
 
-from mcpgateway.config import Settings, get_settings
+# First-Party
+from mcpgateway.config import get_settings, Settings
 
 
 def test_settings_default_values():

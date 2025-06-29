@@ -7,10 +7,10 @@ Authors: Mihai Criveti
 Tests for server service implementation.
 """
 
+# Standard
 from unittest.mock import AsyncMock, MagicMock, Mock
 
-import pytest
-
+# First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
@@ -21,6 +21,9 @@ from mcpgateway.services.server_service import (
     ServerNotFoundError,
     ServerService,
 )
+
+# Third-Party
+import pytest
 
 
 # --------------------------------------------------------------------------- #

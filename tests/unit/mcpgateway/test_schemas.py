@@ -9,14 +9,13 @@ This module contains tests for the various MCP protocol type definitions
 defined in the types.py module.
 """
 
+# Standard
+from datetime import datetime, timedelta
 import json
 import os
-from datetime import datetime, timedelta
 from unittest.mock import Mock
 
-import pytest
-from pydantic import ValidationError
-
+# First-Party
 from mcpgateway.schemas import (
     AdminGatewayCreate,
     AdminToolCreate,
@@ -56,6 +55,10 @@ from mcpgateway.types import (
     Tool,
     ToolResult,
 )
+
+# Third-Party
+from pydantic import ValidationError
+import pytest
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
 

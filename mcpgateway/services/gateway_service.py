@@ -14,20 +14,14 @@ It handles:
 - Active/inactive gateway management
 """
 
+# Standard
 import asyncio
-import logging
-import uuid
 from datetime import datetime, timezone
+import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
+import uuid
 
-import httpx
-from filelock import FileLock, Timeout
-from mcp import ClientSession
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import SessionLocal
@@ -37,7 +31,17 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth
 
+# Third-Party
+from filelock import FileLock, Timeout
+import httpx
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 try:
+    # Third-Party
     import redis
 
     REDIS_AVAILABLE = True

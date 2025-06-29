@@ -7,16 +7,19 @@ Authors: Mihai Criveti
 
 """
 
+# Standard
 from unittest.mock import AsyncMock, MagicMock, Mock
 
-import pytest
-
+# First-Party
 from mcpgateway.schemas import ResourceCreate, ResourceRead
 from mcpgateway.services.resource_service import (
     ResourceError,
     ResourceNotFoundError,
     ResourceService,
 )
+
+# Third-Party
+import pytest
 
 
 @pytest.fixture

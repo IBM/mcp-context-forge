@@ -10,14 +10,17 @@ pydantic models are required and exercises almost every branch inside
 *mcpgateway.wrapper*.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
 import importlib
 import sys
 from types import ModuleType
 from typing import Any, Dict, List
 
+# Third-Party
 import pytest
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -185,6 +188,7 @@ class _Resp:
 
     def raise_for_status(self):
         if self.status_code >= 400:
+            # Third-Party
             import httpx
 
             req = httpx.Request("GET", "x")
@@ -281,6 +285,7 @@ async def test_fetch_url_ok(monkeypatch, wrapper):
 
 @pytest.mark.asyncio
 async def test_fetch_url_request_error(monkeypatch, wrapper):
+    # Third-Party
     import httpx
 
     class _Client:
@@ -317,6 +322,7 @@ async def test_fetch_url_http_status(monkeypatch, wrapper):
             return _Resp(status=500)
 
     monkeypatch.setattr(wrapper.httpx, "AsyncClient", _Client)
+    # Third-Party
     import httpx
 
     with pytest.raises(httpx.HTTPStatusError):
@@ -342,6 +348,7 @@ async def test_handle_call_tool_error(monkeypatch, wrapper):
 
 @pytest.mark.asyncio
 async def test_handle_call_tool_timeout(monkeypatch, wrapper):
+    # Third-Party
     import httpx
 
     _patch_client(monkeypatch, wrapper, exc=httpx.TimeoutException("t"))

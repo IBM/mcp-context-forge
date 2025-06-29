@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
+# Standard
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
-
+# First-Party
 from alembic import context
 from mcpgateway.config import settings
+
+# Third-Party
+from sqlalchemy import engine_from_config, pool
 
 # from mcpgateway.db import get_metadata
 # target_metadata = get_metadata()
@@ -18,6 +21,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# First-Party
 # add your model's MetaData object here
 # for 'autogenerate' support
 # from myapp import mymodel

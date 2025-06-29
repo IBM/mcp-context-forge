@@ -9,14 +9,17 @@ This module implements WebSocket transport for MCP, providing
 full-duplex communication between client and server.
 """
 
+# Standard
 import asyncio
 import logging
 from typing import Any, AsyncGenerator, Dict, Optional
 
-from fastapi import WebSocket, WebSocketDisconnect
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.transports.base import Transport
+
+# Third-Party
+from fastapi import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
