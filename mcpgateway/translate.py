@@ -61,7 +61,7 @@ from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
 LOGGER = logging.getLogger("mcpgateway.translate")
-KEEP_ALIVE_INTERVAL = 30  # seconds ── matches the reference implementation
+KEEP_ALIVE_INTERVAL = 30  # seconds - matches the reference implementation
 __all__ = ["main"]  # for console-script entry-point
 
 
@@ -402,5 +402,5 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:  # entry-point
         sys.exit(1)
 
 
-if __name__ == "__main__":  # python -m mcpgateway.translate …
+if __name__ == "__main__":  # python -m mcpgateway.translate ...
     main()
