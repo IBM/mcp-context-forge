@@ -6,8 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [0.3.0] - 2025-07-08 (pending)
 
-## [0.1.2] - 2025-06-27 (pending)
+
+## [0.2.1] - 2025-07-01 (pending)
 
 * Allow tool federation across gateways by **allowing tools of same names** from different MCP servers to be added.
 * **Fix tool list refresh** from Deactivate/Activate cycles and Edit Gateway screen.
