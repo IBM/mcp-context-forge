@@ -8,11 +8,10 @@ Authors: Mihai Criveti
 Tests for tool service implementation.
 """
 
+# Standard
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
-import pytest
-from sqlalchemy.exc import IntegrityError
-
+# First-Party
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate
@@ -22,6 +21,10 @@ from mcpgateway.services.tool_service import (
     ToolNotFoundError,
     ToolService,
 )
+
+# Third-Party
+import pytest
+from sqlalchemy.exc import IntegrityError
 
 
 @pytest.fixture

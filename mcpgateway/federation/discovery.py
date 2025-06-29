@@ -13,21 +13,24 @@ It supports multiple discovery mechanisms:
 - Manual registration
 """
 
+# Standard
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 import logging
 import os
 import socket
-from dataclasses import dataclass
-from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.types import ServerCapabilities
+
+# Third-Party
 import httpx
 from zeroconf import ServiceInfo, ServiceStateChange
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
-
-from mcpgateway.config import settings
-from mcpgateway.types import ServerCapabilities
 
 logger = logging.getLogger(__name__)
 

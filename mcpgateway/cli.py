@@ -33,15 +33,19 @@ $ mcpgateway mypkg.other:app          # run a different ASGI callable
 ```
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import os
 import sys
 from typing import List
 
-import uvicorn
-
+# First-Party
 from mcpgateway import __version__
+
+# Third-Party
+import uvicorn
 
 # ---------------------------------------------------------------------------
 # Configuration defaults (overridable via environment variables)

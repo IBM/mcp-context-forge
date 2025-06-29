@@ -6,15 +6,18 @@ Revises:
 Create Date: 2025-06-26 21:29:59.117140
 
 """
-import uuid
+# Standard
 from typing import Sequence, Union
+import uuid
 
-import sqlalchemy as sa
-from sqlalchemy.orm import Session
-
+# First-Party
 from alembic import op
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
+
+# Third-Party
+import sqlalchemy as sa
+from sqlalchemy.orm import Session
 
 # revision identifiers, used by Alembic.
 revision: str = 'b77ca9d2de7e'

@@ -8,15 +8,18 @@ Authors: Mihai Criveti
 This suite drives every code path in :pyfile:`mcpgateway/version.py`.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import re
 import types
 from typing import Any, Dict
 
-import pytest
+# Third-Party
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+import pytest
 
 
 # --------------------------------------------------------------------------- #
@@ -73,6 +76,7 @@ def _make_fake_psutil() -> types.ModuleType:  # noqa: D401
 # --------------------------------------------------------------------------- #
 def _build_app(monkeypatch: pytest.MonkeyPatch, auth_ok: bool = True) -> FastAPI:
     """Return an isolated FastAPI app with only the diagnostics router."""
+    # First-Party
     from mcpgateway import version as ver_mod
 
     # Stub heavy helpers
@@ -146,6 +150,7 @@ def test_version_requires_auth(monkeypatch: pytest.MonkeyPatch) -> None:
 # Helper functions                                                            #
 # --------------------------------------------------------------------------- #
 def test_is_secret_and_public_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
     from mcpgateway import version as ver_mod
 
     monkeypatch.setenv("PLAIN", "1")
@@ -155,6 +160,7 @@ def test_is_secret_and_public_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_sanitize_url() -> None:
+    # First-Party
     from mcpgateway import version as ver_mod
 
     url = "postgres://u:p@host:5432/db"
@@ -162,6 +168,7 @@ def test_sanitize_url() -> None:
 
 
 def test_git_revision_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
     from mcpgateway import version as ver_mod
 
     monkeypatch.setenv("GIT_COMMIT", "0123456789abcdef")
@@ -170,6 +177,7 @@ def test_git_revision_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_git_revision_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure subprocess branch returns short hash."""
+    # First-Party
     from mcpgateway import version as ver_mod
 
     # Remove env override
@@ -187,6 +195,7 @@ def test_git_revision_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
 # _database_version branches                                                  #
 # --------------------------------------------------------------------------- #
 def test_database_version_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
     from mcpgateway import version as ver_mod
 
     class _Conn:
@@ -214,6 +223,7 @@ def test_database_version_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_database_version_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
     from mcpgateway import version as ver_mod
 
     class _BrokenEngine:
@@ -231,6 +241,7 @@ def test_database_version_error(monkeypatch: pytest.MonkeyPatch) -> None:
 # _system_metrics with fake psutil                                            #
 # --------------------------------------------------------------------------- #
 def test_system_metrics_full(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
     from mcpgateway import version as ver_mod
 
     monkeypatch.setattr(ver_mod, "psutil", _make_fake_psutil())

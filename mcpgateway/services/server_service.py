@@ -12,16 +12,13 @@ It handles server registration, listing, retrieval, updates, activation toggling
 It also publishes event notifications for server changes.
 """
 
+# Standard
 import asyncio
-import logging
 from datetime import datetime
+import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-import httpx
-from sqlalchemy import delete, func, not_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
@@ -29,6 +26,12 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate
+
+# Third-Party
+import httpx
+from sqlalchemy import delete, func, not_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

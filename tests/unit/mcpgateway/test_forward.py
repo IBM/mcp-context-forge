@@ -8,12 +8,15 @@ Authors: Mihai Criveti
 Comprehensive unit tests for the forwarding service module.
 """
 
+# Standard
 from datetime import datetime
 
-import pytest
-
+# First-Party
 from mcpgateway.federation.forward import ForwardingError, ForwardingService, ToolResult
 from mcpgateway.types import TextContent
+
+# Third-Party
+import pytest
 
 # ---------------------------------------------------------------------------
 # Tiny dummy ORM objects + fake Session
@@ -98,6 +101,7 @@ async def fwd_service(monkeypatch):
 
     monkeypatch.setattr(svc._http_client, "post", fake_post)
 
+    # First-Party
     from mcpgateway.config import settings
 
     monkeypatch.setattr(settings, "max_tool_retries", 1, raising=False)
@@ -143,6 +147,7 @@ async def test_forward_tool_request_parses_result(monkeypatch, fwd_service):
 
 @pytest.mark.anyio
 async def test_rate_limit(monkeypatch):
+    # First-Party
     from mcpgateway.config import settings
 
     monkeypatch.setattr(settings, "tool_rate_limit", 2, raising=False)

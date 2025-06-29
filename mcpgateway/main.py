@@ -25,38 +25,19 @@ Structure:
 - Provides OpenAPI metadata and redirect handling depending on UI feature flags.
 """
 
+# Standard
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import logging
-from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
-import httpx
-from fastapi import (
-    APIRouter,
-    Body,
-    Depends,
-    FastAPI,
-    HTTPException,
-    Request,
-    WebSocket,
-    WebSocketDisconnect,
-    status,
-)
-from fastapi.background import BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from sqlalchemy import text
-from sqlalchemy.orm import Session
-from starlette.middleware.base import BaseHTTPMiddleware
-
+# First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import Base, SessionLocal, engine
+from mcpgateway.db import Base, engine, SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.schemas import (
     GatewayCreate,
@@ -124,6 +105,28 @@ from mcpgateway.validation.jsonrpc import (
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
+
+# Third-Party
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    status,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.background import BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+import httpx
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Initialize logging service first
 logging_service = LoggingService()

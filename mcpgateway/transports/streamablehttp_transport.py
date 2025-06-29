@@ -16,15 +16,23 @@ Key components include:
 
 """
 
+# Standard
+from collections import deque
+from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
+from dataclasses import dataclass
 import logging
 import re
-from collections import deque
-from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
 from typing import List, Union
 from uuid import uuid4
 
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.db import SessionLocal
+from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.verify_credentials import verify_credentials
+
+# Third-Party
 from fastapi.security.utils import get_authorization_scheme_param
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -41,11 +49,6 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.types import Receive, Scope, Send
-
-from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
-from mcpgateway.services.tool_service import ToolService
-from mcpgateway.utils.verify_credentials import verify_credentials
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)

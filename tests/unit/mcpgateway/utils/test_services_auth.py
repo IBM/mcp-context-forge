@@ -12,12 +12,14 @@ Covered behaviour
 * get_key raises ValueError when the encryption secret is unset
 """
 
-import pytest
-
+# First-Party
 # --------------------------------------------------------------------------- #
 # Import the module under test: mcpgateway.utils.services_auth                #
 # --------------------------------------------------------------------------- #
 from mcpgateway.utils import services_auth  # noqa: E402  (import after docstring)
+
+# Third-Party
+import pytest
 
 encode_auth = services_auth.encode_auth
 decode_auth = services_auth.decode_auth

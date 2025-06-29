@@ -5,14 +5,17 @@ Migration script to add the annotations column to the tools table.
 This migration adds support for MCP tool annotations like readOnlyHint, destructiveHint, etc.
 """
 
+# Standard
 import os
 import sys
 
+# Third-Party
 from sqlalchemy import text
 
 # Add the project root to the path so we can import mcpgateway modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# First-Party
 from mcpgateway.db import engine, get_db
 
 

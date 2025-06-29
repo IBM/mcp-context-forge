@@ -12,10 +12,11 @@ resource content in the MCP Gateway. Features:
 - Thread-safe operations
 """
 
+# Standard
 import asyncio
+from dataclasses import dataclass
 import logging
 import time
-from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)

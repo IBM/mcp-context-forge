@@ -16,17 +16,21 @@ No external MCP server is started; we test the isolated utility pieces that
 have no heavy dependencies.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 from typing import List
 
-import pytest
-from starlette.types import Scope
-
+# First-Party
 # ---------------------------------------------------------------------------
 # Import module under test - we only need the specific classes / functions
 # ---------------------------------------------------------------------------
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
+
+# Third-Party
+import pytest
+from starlette.types import Scope
 
 InMemoryEventStore = tr.InMemoryEventStore  # alias
 streamable_http_auth = tr.streamable_http_auth
@@ -148,8 +152,10 @@ async def test_auth_failure(monkeypatch):
 # SamplingHandler tests
 # ---------------------------------------------------------------------------
 
+# Standard
 import types as _t  # local alias for creating simple stubs
 
+# First-Party
 from mcpgateway.handlers import sampling as sp  # noqa: E402
 
 SamplingHandler = sp.SamplingHandler

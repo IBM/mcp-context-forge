@@ -9,18 +9,21 @@ This module implements Server-Sent Events (SSE) transport for MCP,
 providing server-to-client streaming with proper session management.
 """
 
+# Standard
 import asyncio
+from datetime import datetime
 import json
 import logging
-import uuid
-from datetime import datetime
 from typing import Any, AsyncGenerator, Dict
+import uuid
 
-from fastapi import Request
-from sse_starlette.sse import EventSourceResponse
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.transports.base import Transport
+
+# Third-Party
+from fastapi import Request
+from sse_starlette.sse import EventSourceResponse
 
 logger = logging.getLogger(__name__)
 

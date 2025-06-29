@@ -19,22 +19,27 @@ Covered behaviours
 * handle_initialize_logic success, and both error branches
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
 import json
 import re
 from typing import Any, Dict, List
 
-import pytest
+# Third-Party
 from fastapi import HTTPException
+import pytest
 
 # Prefer installed package; otherwise fall back to local file when running
 # outside the project tree (keeps tests developer-friendly).
 try:
+    # First-Party
     from mcpgateway.cache.session_registry import SessionRegistry
     from mcpgateway.config import settings
 except (ModuleNotFoundError, ImportError):  # pragma: no cover
+    # Third-Party
     from session_registry import SessionRegistry  # type: ignore
 
     settings = type(

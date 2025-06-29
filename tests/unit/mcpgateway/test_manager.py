@@ -8,16 +8,20 @@ Authors: Test Suite
 Comprehensive unit tests for the federation manager module.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
 from datetime import datetime
 from itertools import count
 
-import pytest
-
+# First-Party
 from mcpgateway.federation.manager import FederationManager
 from mcpgateway.types import Prompt, Resource, ServerCapabilities, Tool
+
+# Third-Party
+import pytest
 
 # ---------------------------------------------------------------------------
 # In-memory stand-ins for ORM models and SQLAlchemy Session

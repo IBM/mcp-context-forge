@@ -33,6 +33,7 @@ Example:
     $ python3 -m mcpgateway.wrapper
 """
 
+# Standard
 import asyncio
 import logging
 import os
@@ -40,14 +41,16 @@ import sys
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
+# First-Party
+from mcpgateway import __version__
+
+# Third-Party
 import httpx
-import mcp.server.stdio
 from mcp import types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
+import mcp.server.stdio
 from pydantic import AnyUrl
-
-from mcpgateway import __version__
 
 # -----------------------------------------------------------------------------
 # Configuration
