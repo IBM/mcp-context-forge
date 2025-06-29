@@ -7,16 +7,19 @@ Authors: Mihai Criveti
 
 """
 
+# Standard
 import asyncio
 import os
 from unittest.mock import AsyncMock, patch
 
+# First-Party
+from mcpgateway.config import Settings
+from mcpgateway.db import Base
+
+# Third-Party
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
-from mcpgateway.config import Settings
-from mcpgateway.db import Base
 
 
 @pytest.fixture(scope="session")
@@ -70,6 +73,7 @@ def test_settings():
 def app(test_settings):
     """Create a FastAPI test application."""
     with patch("mcpgateway.config.get_settings", return_value=test_settings):
+        # First-Party
         from mcpgateway.main import app
 
         yield app

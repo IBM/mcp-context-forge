@@ -17,7 +17,7 @@ There are two ways clients typically connect:
 
 | Client | Type | Notes |
 |--------|------|-------|
-| [Claude Desktop](claude-desktop.md) | UI | Configure to launch `mcpgateway-wrapper` via JSON |
+| [Claude Desktop](claude-desktop.md) | UI | Configure to launch `mcpgateway.wrapper` via JSON |
 | [Cline](cline.md) | CLI | Supports stdio or direct MCP over HTTP |
 | [Continue](continue.md) | VSCode plugin | MCP plugin support |
 | [MCP Inspector](mcp-inspector.md) | Web debugger | Great for manual testing and exploring protocol features |

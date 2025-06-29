@@ -147,31 +147,43 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
 
-  document
-    .getElementById("add-gateway-form")
-    .addEventListener("submit", (e) => {
-      e.preventDefault();
-      const form = e.target;
-      const formData = new FormData(form);
-      fetch(`${window.ROOT_PATH}/admin/gateways`, {
-        method: "POST",
-        body: formData,
-      })
-        .then((response) => {
-          console.log(response);
-          if (!response.ok) {
-            const status = document.getElementById("status-gateways");
-            status.textContent = "Connection failed!";
-            status.classList.add("error-status");
-          } else {
-            location.reload();
-          console.log(response);
-          }
-        })
-        .catch((error) => {
+    document.getElementById("add-gateway-form")
+      .addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        const form = e.target;
+        const formData = new FormData(form);
+
+        const status = document.getElementById("status-gateways");
+        const loading = document.getElementById("add-gateway-loading");
+
+        // Show loading and clear previous status
+        loading.style.display = "block";
+        status.textContent = "";
+        status.classList.remove("error-status");
+
+        try {
+          const response = await fetch(`${window.ROOT_PATH}/admin/gateways`, {
+            method: "POST",
+            body: formData,
+          });
+
+          let result = await response.json();
+            if (!result.success) {
+              alert(result.message || "An error occurred");
+            } else {
+              window.location.href = `${window.ROOT_PATH}/admin#gateways`; // Redirect on success
+            }
+
+        } catch (error) {
           console.error("Error:", error);
-        });
-    });
+          status.textContent = error.message || "An error occurred!";
+          status.classList.add("error-status");
+        } finally {
+          loading.style.display = "none"; // Hide loading spinner
+        }
+      });
+
 
   document
     .getElementById("add-resource-form")
@@ -242,7 +254,6 @@ document.addEventListener("DOMContentLoaded", function () {
     </div>
     `;
     parametersContainer.appendChild(paramDiv);
-    attachListeners(paramDiv);
     updateSchemaPreview();
 
     // Delete parameter functionality
@@ -292,7 +303,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!result.success) {
           alert(result.message || "An error occurred");
         } else {
-          window.location.href = "/admin#tools"; // Redirect on success
+          window.location.href = `${window.ROOT_PATH}/admin#tools`; // Redirect on success
         }
       } catch (error) {
         console.error("Fetch error:", error);
@@ -318,7 +329,7 @@ document.addEventListener("DOMContentLoaded", function () {
   );
 
   const requestTypeMap = {
-    MCP: ["SSE", "STDIO"],
+    MCP: ["SSE", "STREAMABLE", "STDIO"],
     REST: ["GET", "POST", "PUT", "DELETE"],
   };
 
@@ -377,16 +388,16 @@ function showTab(tabName) {
     panel.classList.add("hidden");
   });
   document.querySelectorAll(".tab-link").forEach((link) => {
-    link.classList.remove("border-indigo-500", "text-indigo-600");
-    link.classList.add("border-transparent", "text-gray-500");
+    link.classList.remove("border-indigo-500", "text-indigo-600", "dark:text-indigo-500", "dark:border-indigo-400");
+    link.classList.add("border-transparent", "text-gray-500", "dark:text-gray-400");
   });
   document.getElementById(`${tabName}-panel`).classList.remove("hidden");
   document
     .querySelector(`[href="#${tabName}"]`)
-    .classList.add("border-indigo-500", "text-indigo-600");
+    .classList.add("border-indigo-500", "text-indigo-600", "dark:text-indigo-500", "dark:border-indigo-400");
   document
     .querySelector(`[href="#${tabName}"]`)
-    .classList.remove("border-transparent", "text-gray-500");
+    .classList.remove("border-transparent", "text-gray-500", "dark:text-gray-400");
 
   if (tabName === "metrics") {
     loadAggregatedMetrics();
@@ -556,21 +567,70 @@ async function viewTool(toolId) {
       authHTML = `<p><strong>Authentication Type:</strong> None</p>`;
     }
 
+    // Helper function to create annotation badges
+    const renderAnnotations = (annotations) => {
+      if (!annotations || Object.keys(annotations).length === 0) {
+        return '<p><strong>Annotations:</strong> <span class="text-gray-500">None</span></p>';
+      }
+
+      const badges = [];
+
+      // Show title if present
+      if (annotations.title) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">${annotations.title}</span>`);
+      }
+
+      // Show behavior hints with appropriate colors
+      if (annotations.readOnlyHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1">📖 Read-Only</span>`);
+      }
+
+      if (annotations.destructiveHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1">⚠️ Destructive</span>`);
+      }
+
+      if (annotations.idempotentHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1">🔄 Idempotent</span>`);
+      }
+
+      if (annotations.openWorldHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐 External Access</span>`);
+      }
+
+      // Show any other custom annotations
+      Object.keys(annotations).forEach(key => {
+        if (!['title', 'readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'].includes(key)) {
+          const value = annotations[key];
+          badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mr-1 mb-1">${key}: ${value}</span>`);
+        }
+      });
+
+      return `
+        <div>
+          <strong>Annotations:</strong>
+          <div class="mt-1 flex flex-wrap">
+            ${badges.join('')}
+          </div>
+        </div>
+      `;
+    };
+
     document.getElementById("tool-details").innerHTML = `
-      <div class="space-y-2">
+      <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
         <p><strong>Name:</strong> ${tool.name}</p>
         <p><strong>URL:</strong> ${tool.url}</p>
         <p><strong>Type:</strong> ${tool.integrationType}</p>
         <p><strong>Description:</strong> ${tool.description || "N/A"}</p>
         <p><strong>Request Type:</strong> ${tool.requestType || "N/A"}</p>
         ${authHTML}
+        ${renderAnnotations(tool.annotations)}
         <div>
           <strong>Headers:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Input Schema:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
         </div>
         <div>
           <strong>Metrics:</strong>
@@ -595,6 +655,54 @@ async function viewTool(toolId) {
   }
 }
 
+function protectInputPrefix(inputElement, protectedText) {
+    let lastValidValue = protectedText;
+
+    // Set initial value
+    inputElement.value = protectedText;
+
+    // Listen for input events
+    inputElement.addEventListener('input', function(e) {
+        const currentValue = e.target.value;
+
+        // Check if protected text is still intact
+        if (!currentValue.startsWith(protectedText)) {
+            // Restore the protected text
+            e.target.value = lastValidValue;
+            // Move cursor to end of protected text
+            e.target.setSelectionRange(protectedText.length, protectedText.length);
+        } else {
+            // Save valid state
+            lastValidValue = currentValue;
+        }
+    });
+
+    // Prevent selection/editing of protected portion
+    inputElement.addEventListener('keydown', function(e) {
+        const start = e.target.selectionStart;
+        const end = e.target.selectionEnd;
+
+        // Block edits that would affect protected text
+        if (start < protectedText.length) {
+            // Allow navigation keys
+            const allowedKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Tab'];
+            if (!allowedKeys.includes(e.key)) {
+                e.preventDefault();
+                // Move cursor to end of protected text
+                e.target.setSelectionRange(protectedText.length, protectedText.length);
+            }
+        }
+    });
+
+    // Handle paste events
+    inputElement.addEventListener('paste', function(e) {
+        const start = e.target.selectionStart;
+        if (start < protectedText.length) {
+            e.preventDefault();
+        }
+    });
+}
+
 /**
  * Fetches tool details from the backend and populates the edit modal form,
  * including Request Type and Authentication fields, so that they are pre-filled for editing.
@@ -609,6 +717,11 @@ async function editTool(toolId) {
     // Set form action and populate basic fields.
     document.getElementById("edit-tool-form").action =
       `${window.ROOT_PATH}/admin/tools/${toolId}/edit`;
+    // const toolNameInput = document.getElementById("edit-tool-name");
+    // const protectedPrefix = tool.gatewaySlug + `${window.GATEWAY_TOOL_NAME_SEPARATOR}`;
+    // protectInputPrefix(toolNameInput, protectedPrefix);
+    // toolNameInput.value = protectedPrefix + (tool.name.startsWith(protectedPrefix) ?
+    // tool.name.substring(protectedPrefix.length) : tool.name);
     document.getElementById("edit-tool-name").value = tool.name;
     document.getElementById("edit-tool-url").value = tool.url;
     document.getElementById("edit-tool-description").value =
@@ -652,10 +765,12 @@ async function editTool(toolId) {
 
     const headersJson = JSON.stringify(tool.headers || {}, null, 2);
     const schemaJson = JSON.stringify(tool.inputSchema || {}, null, 2);
+    const annotationsJson = JSON.stringify(tool.annotations || {}, null, 2);
 
     // Update the code editor textareas.
     document.getElementById("edit-tool-headers").value = headersJson;
     document.getElementById("edit-tool-schema").value = schemaJson;
+    document.getElementById("edit-tool-annotations").value = annotationsJson;
     if (window.editToolHeadersEditor) {
       window.editToolHeadersEditor.setValue(headersJson);
       window.editToolHeadersEditor.refresh();
@@ -695,7 +810,7 @@ async function viewResource(resourceUri) {
     const resource = data.resource;
     const content = data.content;
     document.getElementById("resource-details").innerHTML = `
-          <div class="space-y-2">
+          <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
             <p><strong>URI:</strong> ${resource.uri}</p>
             <p><strong>Name:</strong> ${resource.name}</p>
             <p><strong>Type:</strong> ${resource.mimeType || "N/A"}</p>
@@ -787,7 +902,7 @@ async function viewPrompt(promptName) {
     );
     const prompt = await response.json();
     document.getElementById("prompt-details").innerHTML = `
-          <div class="space-y-2">
+          <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
             <p><strong>Name:</strong> ${prompt.name}</p>
             <p><strong>Description:</strong> ${prompt.description || "N/A"}</p>
             <p><strong>Status:</strong>
@@ -807,7 +922,7 @@ async function viewPrompt(promptName) {
             </div>
             <div>
               <strong>Arguments:</strong>
-              <pre class="mt-1 bg-gray-100 p-2 rounded">${JSON.stringify(prompt.arguments || [], null, 2)}</pre>
+              <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(prompt.arguments || [], null, 2)}</pre>
             </div>
             <!-- ADD THIS: Metrics section -->
             <div>
@@ -892,10 +1007,14 @@ async function viewGateway(gatewayId) {
     }
 
     document.getElementById("gateway-details").innerHTML = `
-        <div class="space-y-2">
+        <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
           <p><strong>Name:</strong> ${gateway.name}</p>
           <p><strong>URL:</strong> ${gateway.url}</p>
           <p><strong>Description:</strong> ${gateway.description || "N/A"}</p>
+          <p><strong>Transport:</strong>
+            ${gateway.transport === "STREAMABLEHTTP" ? "Streamable HTTP" :
+              gateway.transport === "SSE" ? "SSE" : "N/A"}
+          </p>
           <p><strong>Status:</strong>
             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${gateway.isActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}">
               ${gateway.isActive ? "Active" : "Inactive"}
@@ -905,7 +1024,7 @@ async function viewGateway(gatewayId) {
           ${authHTML}
           <div>
             <strong>Capabilities:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded">${JSON.stringify(gateway.capabilities || {}, null, 2)}</pre>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(gateway.capabilities || {}, null, 2)}</pre>
           </div>
         </div>
       `;
@@ -927,6 +1046,7 @@ async function editGateway(gatewayId) {
     document.getElementById("edit-gateway-url").value = gateway.url;
     document.getElementById("edit-gateway-description").value =
       gateway.description || "";
+    document.getElementById("edit-gateway-transport").value = gateway.transport;
     openModal("gateway-edit-modal");
   } catch (error) {
     console.error("Error fetching gateway details:", error);
@@ -951,7 +1071,7 @@ async function viewServer(serverId) {
         // Otherwise, lookup the name using the mapping (fallback to the id itself)
         const name = mapping[item] || item;
         return `<span class="inline-block px-2 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded">
-                      ${item}:${name}
+                      ${name}
                     </span>`;
       }
     };
@@ -980,7 +1100,7 @@ async function viewServer(serverId) {
         : "N/A";
 
     document.getElementById("server-details").innerHTML = `
-          <div class="space-y-2">
+          <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
             <p><strong>Name:</strong> ${server.name}</p>
             <p><strong>Description:</strong> ${server.description || "N/A"}</p>
             <p><strong>Status:</strong>
@@ -1046,11 +1166,38 @@ async function editServer(serverId) {
       server.description || "";
     document.getElementById("edit-server-icon").value = server.icon || "";
     // Fill in the associated tools field (already working)
-    document.getElementById("edit-server-tools").value = Array.isArray(
-      server.associatedTools,
-    )
-      ? server.associatedTools.join(", ")
-      : "";
+    const select = document.getElementById('edit-server-tools');
+    const pillsBox = document.getElementById('selectedEditToolsPills');
+    const warnBox  = document.getElementById('selectedEditToolsWarning');
+
+    // mark every matching <option> as selected
+    for (const opt of select.options) {
+      if (server.associatedTools.includes(opt.innerText)) {
+        opt.selected = true;
+      }
+    }
+
+    const chosen = Array.from(select.selectedOptions);
+    const count  = chosen.length;
+    const max = 6;
+
+    const pillClasses =
+    "inline-block px-2 py-1 text-xs font-medium " +
+    "text-blue-800 bg-blue-100 rounded";
+
+    // ─── 1. rebuild pills  ───────────────────────────────────
+    pillsBox.innerHTML = "";                       // clear previous badges
+    chosen.forEach(opt => {
+      const span       = document.createElement("span");
+      span.className   = pillClasses;
+      span.textContent = opt.text;
+      pillsBox.appendChild(span);
+    });
+
+    // ─── 2. warning when > max  ─────────────────────────────
+    warnBox.textContent =
+      count > max ? `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.` : "";
+
     // Fill in the associated resources field (new)
     const resourcesField = document.getElementById("edit-server-resources");
     if (resourcesField) {
@@ -1310,64 +1457,64 @@ async function loadAggregatedMetrics() {
 
     // Build an aggregated metrics table
     const tableHTML = `
-        <table class="min-w-full bg-white border">
+        <table class="min-w-full bg-white border dark:bg-gray-900 dark:text-gray-100">
           <thead>
             <tr>
-              <th class="py-2 px-4 border">Entity</th>
-              <th class="py-2 px-4 border">Total</th>
-              <th class="py-2 px-4 border">Successful</th>
-              <th class="py-2 px-4 border">Failed</th>
-              <th class="py-2 px-4 border">Failure Rate</th>
-              <th class="py-2 px-4 border">Min RT</th>
-              <th class="py-2 px-4 border">Max RT</th>
-              <th class="py-2 px-4 border">Avg RT</th>
-              <th class="py-2 px-4 border">Last Exec</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Entity</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Total</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Successful</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Failed</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Failure Rate</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Min RT</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Max RT</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Avg RT</th>
+              <th class="py-2 px-4 border dark:text-gray-200">Last Exec</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Tools</td>
-              <td class="py-2 px-4 border">${toolsTotal}</td>
-              <td class="py-2 px-4 border">${toolsSuccess}</td>
-              <td class="py-2 px-4 border">${toolsFailed}</td>
-              <td class="py-2 px-4 border">${toolsFailureRate}</td>
-              <td class="py-2 px-4 border">${toolsMin}</td>
-              <td class="py-2 px-4 border">${toolsMax}</td>
-              <td class="py-2 px-4 border">${toolsAvg}</td>
-              <td class="py-2 px-4 border">${toolsLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Tools</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${toolsLast}</td>
             </tr>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Resources</td>
-              <td class="py-2 px-4 border">${resourcesTotal}</td>
-              <td class="py-2 px-4 border">${resourcesSuccess}</td>
-              <td class="py-2 px-4 border">${resourcesFailed}</td>
-              <td class="py-2 px-4 border">${resourcesFailureRate}</td>
-              <td class="py-2 px-4 border">${resourcesMin}</td>
-              <td class="py-2 px-4 border">${resourcesMax}</td>
-              <td class="py-2 px-4 border">${resourcesAvg}</td>
-              <td class="py-2 px-4 border">${resourcesLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Resources</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${resourcesLast}</td>
             </tr>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Servers</td>
-              <td class="py-2 px-4 border">${serversTotal}</td>
-              <td class="py-2 px-4 border">${serversSuccess}</td>
-              <td class="py-2 px-4 border">${serversFailed}</td>
-              <td class="py-2 px-4 border">${serversFailureRate}</td>
-              <td class="py-2 px-4 border">${serversMin}</td>
-              <td class="py-2 px-4 border">${serversMax}</td>
-              <td class="py-2 px-4 border">${serversAvg}</td>
-              <td class="py-2 px-4 border">${serversLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Servers</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${serversLast}</td>
             </tr>
             <tr>
-              <td class="py-2 px-4 border font-semibold">Prompts</td>
-              <td class="py-2 px-4 border">${promptsTotal}</td>
-              <td class="py-2 px-4 border">${promptsSuccess}</td>
-              <td class="py-2 px-4 border">${promptsFailed}</td>
-              <td class="py-2 px-4 border">${promptsFailureRate}</td>
-              <td class="py-2 px-4 border">${promptsMin}</td>
-              <td class="py-2 px-4 border">${promptsMax}</td>
-              <td class="py-2 px-4 border">${promptsAvg}</td>
-              <td class="py-2 px-4 border">${promptsLast}</td>
+              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Prompts</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsTotal}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsSuccess}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsFailed}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsFailureRate}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsMin}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsMax}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsAvg}</td>
+              <td class="py-2 px-4 border dark:text-gray-300">${promptsLast}</td>
             </tr>
           </tbody>
         </table>
@@ -1378,6 +1525,7 @@ async function loadAggregatedMetrics() {
     if (window.metricsChartInstance) {
       window.metricsChartInstance.destroy();
     }
+    // cma
     const ctx = document.getElementById("metricsChart").getContext("2d");
     window.metricsChartInstance = new window.Chart(ctx, {
       type: "bar",
@@ -1437,18 +1585,18 @@ async function loadTopTools() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
     topTools.forEach((tool) => {
       const count = tool.metrics?.totalExecutions ?? tool.executionCount ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${tool.id}</td>
-          <td class="py-1 px-2 border">${tool.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${tool.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${tool.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1473,20 +1621,20 @@ async function loadTopResources() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">URI</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">URI</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
     topResources.forEach((resource) => {
       const count = resource.metrics?.totalExecutions ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${resource.id}</td>
-          <td class="py-1 px-2 border">${resource.uri}</td>
-          <td class="py-1 px-2 border">${resource.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${resource.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${resource.uri}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${resource.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1511,18 +1659,18 @@ async function loadTopServers() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
     topServers.forEach((server) => {
       const count = server.metrics?.totalExecutions ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${server.id}</td>
-          <td class="py-1 px-2 border">${server.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${server.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${server.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1547,18 +1695,18 @@ async function loadTopPrompts() {
     let html = `<table class="min-w-full border">
         <thead>
           <tr>
-            <th class="py-1 px-2 border">ID</th>
-            <th class="py-1 px-2 border">Name</th>
-            <th class="py-1 px-2 border">Executions</th>
+            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
+            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
           </tr>
         </thead>
         <tbody>`;
     topPrompts.forEach((prompt) => {
       const count = prompt.metrics?.totalExecutions ?? 0;
       html += `<tr>
-          <td class="py-1 px-2 border">${prompt.id}</td>
-          <td class="py-1 px-2 border">${prompt.name}</td>
-          <td class="py-1 px-2 border">${count}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${prompt.id}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${prompt.name}</td>
+          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
         </tr>`;
     });
     html += `</tbody></table>`;
@@ -1626,7 +1774,7 @@ function testTool(toolId) {
           input.type = "text";
           input.required = schema.required && schema.required.includes(key);
           input.className =
-            "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500";
+            "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
           fieldDiv.appendChild(input);
 
           container.appendChild(fieldDiv);
@@ -1645,9 +1793,9 @@ async function runToolTest() {
   const formData = new FormData(form);
   const params = {};
   for (const [key, value] of formData.entries()) {
-    if(isNaN(value)) {
-      if(value.toLowerCase() ===  "true" || value.toLowerCase() === "false") {
-        params[key] = Boolean(value.toLowerCase() ===  "true");
+    if (isNaN(value)) {
+      if (value.toLowerCase() === "true" || value.toLowerCase() === "false") {
+        params[key] = value.toLowerCase() === "true";
       } else {
         params[key] = value;
       }
@@ -1656,7 +1804,6 @@ async function runToolTest() {
     }
   }
 
-  // Build the JSON-RPC payload using the tool's name as the method
   const payload = {
     jsonrpc: "2.0",
     id: Date.now(),
@@ -1664,37 +1811,39 @@ async function runToolTest() {
     params: params,
   };
 
-  // Send the request to your /rpc endpoint
-  fetch(`${window.ROOT_PATH}/rpc`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json", // ← make sure we include this
-    },
-    body: JSON.stringify(payload),
-    credentials: "include",
-  })
-    .then((response) => response.json())
-    .then((result) => {
-      const resultStr = JSON.stringify(result, null, 2);
+  // Show loading
+  const loadingElement = document.getElementById("tool-test-loading");
+  loadingElement.style.display = "block";
+  const resultContainer = document.getElementById("tool-test-result");
+  resultContainer.innerHTML = "";
 
-      const container = document.getElementById("tool-test-result");
-      container.innerHTML = '';        // clear any old editor
-
-      toolTestResultEditor = window.CodeMirror(
-        document.getElementById("tool-test-result"),
-        {
-          value: resultStr,
-          mode: "application/json",
-          theme: "monokai",
-          readOnly: true,
-          lineNumbers: true,
-        },
-      );
-    })
-    .catch((error) => {
-      document.getElementById("tool-test-result").innerText = "Error: " + error;
+  try {
+    const response = await fetch(`${window.ROOT_PATH}/rpc`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      credentials: "include",
     });
+
+    const result = await response.json();
+    const resultStr = JSON.stringify(result, null, 2);
+
+    toolTestResultEditor = window.CodeMirror(resultContainer, {
+      value: resultStr,
+      mode: "application/json",
+      theme: "monokai",
+      readOnly: true,
+      lineNumbers: true,
+    });
+  } catch (error) {
+    resultContainer.innerText = "Error: " + error;
+  } finally {
+    loadingElement.style.display = "none"; // Hide loading after fetch or error
+  }
 }
+
 
 /* ---------------------------------------------------------------
  * Utility: copy a JSON string (or any text) to the system clipboard
@@ -1753,7 +1902,7 @@ function closeModal(modalId, clearId=null) {
 }
 
 const integrationRequestMap = {
-  MCP: ["SSE", "STDIO"],
+  MCP: ["SSE", "STREAMABLE", "STDIO"],
   REST: ["GET", "POST", "PUT", "DELETE"],
 };
 
@@ -1779,6 +1928,64 @@ function updateRequestTypeOptions(preselectedValue = null) {
     requestTypeSelect.value = preselectedValue;
   }
 }
+
+/**
+ * Initialise a multi-select so it displays the chosen items
+ * and warns when the count exceeds a limit.
+ *
+ * @param {string} selectId   – id of the <select multiple>
+ * @param {string} infoId     – id of the div that lists selected names
+ * @param {string} warnId     – id of the warning div
+ * @param {number} max        – maximum allowed items before warning
+ */
+function initToolSelect(selectId,
+                        pillsId,
+                        warnId,
+                        max = 6) {
+
+  const select   = document.getElementById(selectId);
+  const pillsBox = document.getElementById(pillsId);
+  const warnBox  = document.getElementById(warnId);
+
+  const pillClasses =
+    "inline-block px-2 py-1 text-xs font-medium " +
+    "text-blue-800 bg-blue-100 rounded";
+
+  function update() {
+    const chosen = Array.from(select.selectedOptions);
+    const count  = chosen.length;
+
+    // ─── 1. rebuild pills  ───────────────────────────────────
+    pillsBox.innerHTML = "";                       // clear previous badges
+    chosen.forEach(opt => {
+      const span       = document.createElement("span");
+      span.className   = pillClasses;
+      span.textContent = opt.text;
+      pillsBox.appendChild(span);
+    });
+
+    // ─── 2. warning when > max  ─────────────────────────────
+    warnBox.textContent =
+      count > max ? `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.` : "";
+  }
+
+  update();                       // initial render
+  select.addEventListener("change", update);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  initToolSelect("associatedTools",
+                 "selectedToolsPills",
+                 "selectedToolsWarning",
+                 6);
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  initToolSelect("edit-server-tools",
+                 "selectedEditToolsPills",
+                 "selectedEditToolsWarning",
+                 6);
+});
 
 window.toggleInactiveItems = toggleInactiveItems;
 window.viewTool = viewTool;

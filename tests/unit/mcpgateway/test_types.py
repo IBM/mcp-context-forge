@@ -9,12 +9,11 @@ This module contains tests for the various MCP protocol type definitions
 defined in the types.py module.
 """
 
+# Standard
 import json
 import os
 
-import pytest
-from pydantic import ValidationError
-
+# First-Party
 from mcpgateway.types import (
     ClientCapabilities,
     CreateMessageResult,
@@ -42,6 +41,10 @@ from mcpgateway.types import (
     Tool,
     ToolResult,
 )
+
+# Third-Party
+from pydantic import ValidationError
+import pytest
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
 

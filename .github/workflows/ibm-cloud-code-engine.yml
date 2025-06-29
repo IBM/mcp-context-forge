@@ -35,6 +35,10 @@
 #         not the secret value.
 # Triggers:
 #   • Every push to `main`
+#   • Expects a secret called `mcpgateway-dev` in Code Engine. Ex:
+#      ibmcloud ce secret create \
+#        --name mcpgateway-dev \
+#        --from-env-file .env
 # ---------------------------------------------------------------
 
 name: Deploy to IBM Code Engine
@@ -156,6 +160,7 @@ jobs:
               --name  "$CODE_ENGINE_APP_NAME" \
               --image "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
               --registry-secret "$CODE_ENGINE_REGISTRY_SECRET" \
+              --env-from-secret mcpgateway-dev \
               --cpu 1 --memory 2G
           else
             echo "🆕 Creating new application…"
@@ -164,6 +169,7 @@ jobs:
               --image "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
               --registry-secret "$CODE_ENGINE_REGISTRY_SECRET" \
               --port  "$PORT" \
+              --env-from-secret mcpgateway-dev \
               --cpu 1 --memory 2G
           fi
 

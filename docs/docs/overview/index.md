@@ -15,7 +15,7 @@ This section introduces what the Gateway is, how it fits into the MCP ecosystem,
 - Protocol enforcement, health monitoring, and registry centralization
 - A visual Admin UI to manage everything in real time
 
-Whether you're integrating REST APIs, local functions, or full LLM agents, MCP Gateway standardizes access and transport — over HTTP, WebSockets, SSE, or stdio.
+Whether you're integrating REST APIs, local functions, or full LLM agents, MCP Gateway standardizes access and transport — over HTTP, WebSockets, SSE, StreamableHttp or stdio.
 
 ---
 

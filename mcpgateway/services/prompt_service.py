@@ -14,21 +14,24 @@ It handles:
 - Active/inactive prompt management
 """
 
+# Standard
 import asyncio
-import logging
 from datetime import datetime
+import logging
 from string import Formatter
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
-from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import delete, func, not_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
 from mcpgateway.types import Message, PromptResult, Role, TextContent
+
+# Third-Party
+from jinja2 import Environment, meta, select_autoescape
+from sqlalchemy import delete, func, not_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +250,7 @@ class PromptService:
         prompts = db.execute(query).scalars().all()
         return [PromptRead.model_validate(self._convert_db_prompt(p)) for p in prompts]
 
-    async def list_server_prompts(self, db: Session, server_id: int, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
+    async def list_server_prompts(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
         """
         Retrieve a list of prompt templates from the database.
 
@@ -258,7 +261,7 @@ class PromptService:
 
         Args:
             db (Session): The SQLAlchemy database session.
-            server_id (int): Server ID
+            server_id (str): Server ID
             include_inactive (bool): If True, include inactive prompts in the result.
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,

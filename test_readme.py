@@ -10,9 +10,10 @@ Test README examples.
 This module uses pytest-examples to test code examples from README.md.
 """
 
+# Standard
 import os
-import sys
 from pathlib import Path
+import sys
 
 # Add the parent directory to the path so that we can import the module
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))

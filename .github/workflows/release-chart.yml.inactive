@@ -1,0 +1,22 @@
+# .github/workflows/release-chart.yml
+name: Release Helm Chart
+on:
+  release:
+    types: [published]            # tag repo, ex: v0.2.0 to trigger
+permissions:
+  contents: read
+  packages: write
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Login to GHCR
+        run: echo "${{ secrets.CR_PAT }}" | \
+             helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Package & push chart
+        run: |
+          helm package charts/mcp-stack
+          helm push mcp-context-forge-chart-*.tgz \
+            oci://ghcr.io/ibm/mcp-context-forge

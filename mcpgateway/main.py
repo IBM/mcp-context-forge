@@ -25,39 +25,19 @@ Structure:
 - Provides OpenAPI metadata and redirect handling depending on UI feature flags.
 """
 
+# Standard
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import logging
-import os
-from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
-import httpx
-from fastapi import (
-    APIRouter,
-    Body,
-    Depends,
-    FastAPI,
-    HTTPException,
-    Request,
-    WebSocket,
-    WebSocketDisconnect,
-    status,
-)
-from fastapi.background import BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from sqlalchemy import text
-from sqlalchemy.orm import Session
-from starlette.middleware.base import BaseHTTPMiddleware
-
+# First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import Base, SessionLocal, engine
+from mcpgateway.db import Base, engine, SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.schemas import (
     GatewayCreate,
@@ -78,7 +58,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import (
     PromptError,
@@ -105,6 +85,10 @@ from mcpgateway.services.tool_service import (
     ToolService,
 )
 from mcpgateway.transports.sse_transport import SSETransport
+from mcpgateway.transports.streamablehttp_transport import (
+    SessionManagerWrapper,
+    streamable_http_auth,
+)
 from mcpgateway.types import (
     InitializeRequest,
     InitializeResult,
@@ -121,6 +105,28 @@ from mcpgateway.validation.jsonrpc import (
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
+
+# Third-Party
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    status,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.background import BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+import httpx
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -144,6 +150,9 @@ root_service = RootService()
 completion_service = CompletionService()
 sampling_handler = SamplingHandler()
 server_service = ServerService()
+
+# Initialize session manager for Streamable HTTP transport
+streamable_http_session = SessionManagerWrapper()
 
 
 # Initialize session registry
@@ -191,6 +200,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await logging_service.initialize()
         await sampling_handler.initialize()
         await resource_cache.initialize()
+        await streamable_http_session.initialize()
+
         logger.info("All services initialized successfully")
         yield
     except Exception as e:
@@ -198,17 +209,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise
     finally:
         logger.info("Shutting down MCP Gateway services")
-        for service in [
-            resource_cache,
-            sampling_handler,
-            logging_service,
-            completion_service,
-            root_service,
-            gateway_service,
-            prompt_service,
-            resource_service,
-            tool_service,
-        ]:
+        # await stop_streamablehttp()
+        for service in [resource_cache, sampling_handler, logging_service, completion_service, root_service, gateway_service, prompt_service, resource_service, tool_service, streamable_http_session]:
             try:
                 await service.shutdown()
             except Exception as e:
@@ -263,6 +265,54 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class MCPPathRewriteMiddleware:
+    """
+    Supports requests like '/servers/<server_id>/mcp' by rewriting the path to '/mcp'.
+
+    - Only rewrites paths ending with '/mcp' but not exactly '/mcp'.
+    - Performs authentication before rewriting.
+    - Passes rewritten requests to `streamable_http_session`.
+    - All other requests are passed through without change.
+    """
+
+    def __init__(self, app):
+        """
+        Initialize the middleware with the ASGI application.
+
+        Args:
+            app (Callable): The next ASGI application in the middleware stack.
+        """
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        """
+        Intercept and potentially rewrite the incoming HTTP request path.
+
+        Args:
+            scope (dict): The ASGI connection scope.
+            receive (Callable): Awaitable that yields events from the client.
+            send (Callable): Awaitable used to send events to the client.
+        """
+        # Only handle HTTP requests, HTTPS uses scope["type"] == "http" in ASGI
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Call auth check first
+        auth_ok = await streamable_http_auth(scope, receive, send)
+        if not auth_ok:
+            return
+
+        original_path = scope.get("path", "")
+        scope["modified_path"] = original_path
+        if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+            # Rewrite path so mounted app at /mcp handles it
+            scope["path"] = "/mcp"
+            await streamable_http_session.handle_streamable_http(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -276,6 +326,10 @@ app.add_middleware(
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
+
+# Add streamable HTTP middleware for /mcp routes
+app.add_middleware(MCPPathRewriteMiddleware)
+
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -510,12 +564,12 @@ async def list_servers(
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
-async def get_server(server_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
+async def get_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
     Args:
-        server_id (int): The ID of the server to retrieve.
+        server_id (str): The ID of the server to retrieve.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -564,7 +618,7 @@ async def create_server(
 
 @server_router.put("/{server_id}", response_model=ServerRead)
 async def update_server(
-    server_id: int,
+    server_id: str,
     server: ServerUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -573,7 +627,7 @@ async def update_server(
     Updates the information of an existing server.
 
     Args:
-        server_id (int): The ID of the server to update.
+        server_id (str): The ID of the server to update.
         server (ServerUpdate): The updated server data.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -597,7 +651,7 @@ async def update_server(
 
 @server_router.post("/{server_id}/toggle", response_model=ServerRead)
 async def toggle_server_status(
-    server_id: int,
+    server_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -606,7 +660,7 @@ async def toggle_server_status(
     Toggles the status of a server (activate or deactivate).
 
     Args:
-        server_id (int): The ID of the server to toggle.
+        server_id (str): The ID of the server to toggle.
         activate (bool): Whether to activate or deactivate the server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -627,12 +681,12 @@ async def toggle_server_status(
 
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
-async def delete_server(server_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
     Args:
-        server_id (int): The ID of the server to delete.
+        server_id (str): The ID of the server to delete.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -656,13 +710,13 @@ async def delete_server(server_id: int, db: Session = Depends(get_db), user: str
 
 
 @server_router.get("/{server_id}/sse")
-async def sse_endpoint(request: Request, server_id: int, user: str = Depends(require_auth)):
+async def sse_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
     """
     Establishes a Server-Sent Events (SSE) connection for real-time updates about a server.
 
     Args:
         request (Request): The incoming request.
-        server_id (int): The ID of the server for which updates are received.
+        server_id (str): The ID of the server for which updates are received.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -693,13 +747,13 @@ async def sse_endpoint(request: Request, server_id: int, user: str = Depends(req
 
 
 @server_router.post("/{server_id}/message")
-async def message_endpoint(request: Request, server_id: int, user: str = Depends(require_auth)):
+async def message_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
     """
     Handles incoming messages for a specific server.
 
     Args:
         request (Request): The incoming message request.
-        server_id (int): The ID of the server receiving the message.
+        server_id (str): The ID of the server receiving the message.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -735,7 +789,7 @@ async def message_endpoint(request: Request, server_id: int, user: str = Depends
 
 @server_router.get("/{server_id}/tools", response_model=List[ToolRead])
 async def server_get_tools(
-    server_id: int,
+    server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -748,7 +802,7 @@ async def server_get_tools(
     that have been deactivated but not deleted from the system.
 
     Args:
-        server_id (int): ID of the server
+        server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive tools in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -763,7 +817,7 @@ async def server_get_tools(
 
 @server_router.get("/{server_id}/resources", response_model=List[ResourceRead])
 async def server_get_resources(
-    server_id: int,
+    server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -776,7 +830,7 @@ async def server_get_resources(
     to view or manage resources that have been deactivated but not deleted.
 
     Args:
-        server_id (int): ID of the server
+        server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive resources in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -791,7 +845,7 @@ async def server_get_resources(
 
 @server_router.get("/{server_id}/prompts", response_model=List[PromptRead])
 async def server_get_prompts(
-    server_id: int,
+    server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -804,7 +858,7 @@ async def server_get_prompts(
     prompts that have been deactivated but not deleted from the system.
 
     Args:
-        server_id (int): ID of the server
+        server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive prompts in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -886,7 +940,7 @@ async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
 async def get_tool(
-    tool_id: int,
+    tool_id: str,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
     apijsonpath: JsonPathModifier = Body(None),
@@ -922,7 +976,7 @@ async def get_tool(
 
 @tool_router.put("/{tool_id}", response_model=ToolRead)
 async def update_tool(
-    tool_id: int,
+    tool_id: str,
     tool: ToolUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -931,7 +985,7 @@ async def update_tool(
     Updates an existing tool with new data.
 
     Args:
-        tool_id (int): The ID of the tool to update.
+        tool_id (str): The ID of the tool to update.
         tool (ToolUpdate): The updated tool information.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
@@ -950,12 +1004,12 @@ async def update_tool(
 
 
 @tool_router.delete("/{tool_id}")
-async def delete_tool(tool_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_tool(tool_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
     Args:
-        tool_id (int): The ID of the tool to delete.
+        tool_id (str): The ID of the tool to delete.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -975,7 +1029,7 @@ async def delete_tool(tool_id: int, db: Session = Depends(get_db), user: str = D
 
 @tool_router.post("/{tool_id}/toggle")
 async def toggle_tool_status(
-    tool_id: int,
+    tool_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -984,7 +1038,7 @@ async def toggle_tool_status(
     Activates or deactivates a tool.
 
     Args:
-        tool_id (int): The ID of the tool to toggle.
+        tool_id (str): The ID of the tool to toggle.
         activate (bool): Whether to activate (`True`) or deactivate (`False`) the tool.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
@@ -1429,7 +1483,7 @@ async def delete_prompt(name: str, db: Session = Depends(get_db), user: str = De
 ################
 @gateway_router.post("/{gateway_id}/toggle")
 async def toggle_gateway_status(
-    gateway_id: int,
+    gateway_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1438,7 +1492,7 @@ async def toggle_gateway_status(
     Toggle the activation status of a gateway.
 
     Args:
-        gateway_id (int): Numeric ID of the gateway to toggle.
+        gateway_id (str): String ID of the gateway to toggle.
         activate (bool): ``True`` to activate, ``False`` to deactivate.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
@@ -1506,11 +1560,20 @@ async def register_gateway(
         Created gateway.
     """
     logger.debug(f"User '{user}' requested to register gateway: {gateway}")
-    return await gateway_service.register_gateway(db, gateway)
+    try:
+        return await gateway_service.register_gateway(db, gateway)
+    except Exception as ex:
+        if isinstance(ex, GatewayConnectionError):
+            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=502)
+        if isinstance(ex, ValueError):
+            return JSONResponse(content={"message": "Unable to process input"}, status_code=400)
+        if isinstance(ex, RuntimeError):
+            return JSONResponse(content={"message": "Error during execution"}, status_code=500)
+        return JSONResponse(content={"message": "Unexpected error"}, status_code=500)
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
-async def get_gateway(gateway_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
+async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
     """
     Retrieve a gateway by ID.
 
@@ -1528,7 +1591,7 @@ async def get_gateway(gateway_id: int, db: Session = Depends(get_db), user: str 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
 async def update_gateway(
-    gateway_id: int,
+    gateway_id: str,
     gateway: GatewayUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1550,7 +1613,7 @@ async def update_gateway(
 
 
 @gateway_router.delete("/{gateway_id}")
-async def delete_gateway(gateway_id: int, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
@@ -1710,7 +1773,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
             result = {}
         else:
             try:
-                result = await tool_service.invoke_tool(db, method, params)
+                result = await tool_service.invoke_tool(db=db, name=method, arguments=params)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
@@ -2018,6 +2081,9 @@ if ADMIN_API_ENABLED:
     app.include_router(admin_router)  # Admin routes imported from admin.py
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
+
+# Streamable http Mount
+app.mount("/mcp", app=streamable_http_session.handle_streamable_http)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:

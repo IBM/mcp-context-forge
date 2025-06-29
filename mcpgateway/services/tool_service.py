@@ -14,33 +14,41 @@ It handles:
 - Active/inactive tool management
 """
 
+# Standard
 import asyncio
 import base64
+from datetime import datetime
 import json
 import logging
+import re
 import time
-from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-import httpx
-from mcp import ClientSession
-from mcp.client.sse import sse_client
-from sqlalchemy import delete, func, not_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric, server_tool_association
+from mcpgateway.db import ToolMetric
 from mcpgateway.schemas import (
     ToolCreate,
     ToolRead,
     ToolUpdate,
 )
 from mcpgateway.types import TextContent, ToolResult
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth
 
+# Third-Party
+import httpx
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
+from sqlalchemy import case, delete, func, literal, not_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+# Local
 from ..config import extract_using_jq
 
 logger = logging.getLogger(__name__)
@@ -123,6 +131,7 @@ class ToolService:
         tool_dict["execution_count"] = tool.execution_count
         tool_dict["metrics"] = tool.metrics_summary
         tool_dict["request_type"] = tool.request_type
+        tool_dict["annotations"] = tool.annotations or {}
 
         decoded_auth_value = decode_auth(tool.auth_value)
         if tool.auth_type == "basic":
@@ -146,6 +155,11 @@ class ToolService:
             }
         else:
             tool_dict["auth"] = None
+
+        tool_dict["name"] = tool.name
+        tool_dict["gateway_slug"] = tool.gateway_slug if tool.gateway_slug else ""
+        tool_dict["original_name_slug"] = tool.original_name_slug
+
         return ToolRead.model_validate(tool_dict)
 
     async def _record_tool_metric(self, db: Session, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:
@@ -189,10 +203,13 @@ class ToolService:
             ToolError: For other tool registration errors.
         """
         try:
-            existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name)).scalar_one_or_none()
+            if not tool.gateway_id:
+                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name)).scalar_one_or_none()
+            else:
+                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name).where(DbTool.gateway_id == tool.gateway_id)).scalar_one_or_none()
             if existing_tool:
                 raise ToolNameConflictError(
-                    tool.name,
+                    existing_tool.name,
                     is_active=existing_tool.is_active,
                     tool_id=existing_tool.id,
                 )
@@ -205,13 +222,15 @@ class ToolService:
                 auth_value = tool.auth.auth_value
 
             db_tool = DbTool(
-                name=tool.name,
+                original_name=tool.name,
+                original_name_slug=slugify(tool.name),
                 url=str(tool.url),
                 description=tool.description,
                 integration_type=tool.integration_type,
                 request_type=tool.request_type,
                 headers=tool.headers,
                 input_schema=tool.input_schema,
+                annotations=tool.annotations,
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
                 auth_value=auth_value,
@@ -221,7 +240,7 @@ class ToolService:
             db.commit()
             db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
-            logger.info(f"Registered tool: {tool.name}")
+            logger.info(f"Registered tool: {db_tool.name}")
             return self._convert_tool_to_read(db_tool)
         except IntegrityError:
             db.rollback()
@@ -252,13 +271,13 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 
-    async def list_server_tools(self, db: Session, server_id: int, include_inactive: bool = False, cursor: Optional[str] = None) -> List[ToolRead]:
+    async def list_server_tools(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
 
         Args:
             db (Session): The SQLAlchemy database session.
-            server_id (int): Server ID
+            server_id (str): Server ID
             include_inactive (bool): If True, include inactive tools in the result.
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
@@ -275,7 +294,7 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 
-    async def get_tool(self, db: Session, tool_id: int) -> ToolRead:
+    async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
         """Get a specific tool by ID.
 
         Args:
@@ -293,7 +312,7 @@ class ToolService:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
         return self._convert_tool_to_read(tool)
 
-    async def delete_tool(self, db: Session, tool_id: int) -> None:
+    async def delete_tool(self, db: Session, tool_id: str) -> None:
         """Permanently delete a tool from the database.
 
         Args:
@@ -317,7 +336,7 @@ class ToolService:
             db.rollback()
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: int, activate: bool) -> ToolRead:
+    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool) -> ToolRead:
         """Toggle tool active status.
 
         Args:
@@ -351,114 +370,6 @@ class ToolService:
             db.rollback()
             raise ToolError(f"Failed to toggle tool status: {str(e)}")
 
-    # async def invoke_tool(self, db: Session, name: str, arguments: Dict[str, Any]) -> ToolResult:
-    #     """
-    #     Invoke a registered tool and record execution metrics.
-
-    #     Args:
-    #         db: Database session.
-    #         name: Name of tool to invoke.
-    #         arguments: Tool arguments.
-
-    #     Returns:
-    #         Tool invocation result.
-
-    #     Raises:
-    #         ToolNotFoundError: If tool not found.
-    #         ToolInvocationError: If invocation fails.
-    #     """
-
-    #     tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.is_active)).scalar_one_or_none()
-    #     if not tool:
-    #         inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.is_active))).scalar_one_or_none()
-    #         if inactive_tool:
-    #             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-    #         raise ToolNotFoundError(f"Tool not found: {name}")
-    #     start_time = time.monotonic()
-    #     success = False
-    #     error_message = None
-    #     try:
-    #         # tool.validate_arguments(arguments)
-    #         # Build headers with auth if necessary.
-    #         headers = tool.headers or {}
-    #         if tool.integration_type == "REST":
-    #             credentials = decode_auth(tool.auth_value)
-    #             headers.update(credentials)
-
-    #             # Build the payload based on integration type.
-    #             payload = arguments
-
-    #             # Use the tool's request_type rather than defaulting to POST.
-    #             method = tool.request_type.upper()
-    #             if method == "GET":
-    #                 response = await self._http_client.get(tool.url, params=payload, headers=headers)
-    #             else:
-    #                 response = await self._http_client.request(method, tool.url, json=payload, headers=headers)
-    #             response.raise_for_status()
-    #             result = response.json()
-
-    #             if response.status_code not in [200, 201, 202, 204, 206]:
-    #                 tool_result = ToolResult(
-    #                     content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
-    #                     is_error=True,
-    #                 )
-    #             else:
-    #                 filtered_response = extract_using_jq(result, tool.jsonpath_filter)
-    #                 tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
-
-    #             success = True
-    #         elif tool.integration_type == "MCP":
-    #             gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
-    #             if gateway.auth_type == "bearer":
-    #                 headers = decode_auth(gateway.auth_value)
-    #             else:
-    #                 headers = {}
-
-    #             async def connect_to_sse_server(server_url: str):
-    #                 """
-    #                 Connect to an MCP server running with SSE transport
-
-    #                 Args:
-    #                     server_url: Server URL
-
-    #                 Returns:
-    #                     str: Tool call result
-    #                 """
-    #                 # Store the context managers so they stay alive
-    #                 _streams_context = sse_client(url=server_url, headers=headers)
-    #                 streams = await _streams_context.__aenter__()  #line 422
-
-    #                 _session_context = ClientSession(*streams)
-    #                 session: ClientSession = await _session_context.__aenter__()  #line 425
-
-    #                 # Initialize
-    #                 await session.initialize()
-    #                 tool_call_result = await session.call_tool(name, arguments)
-
-    #                 await _session_context.__aexit__(None, None, None)
-    #                 await _streams_context.__aexit__(None, None, None)  #line 432
-
-    #                 return tool_call_result
-
-    #             tool_gateway_id = tool.gateway_id
-    #             tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
-
-    #             tool_call_result = await connect_to_sse_server(tool_gateway.url)
-    #             content = tool_call_result.model_dump(by_alias=True).get("content", [])
-
-    #             success = True
-    #             filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-    #             tool_result = ToolResult(content=filtered_response)
-    #         else:
-    #             return ToolResult(content="Invalid tool type")
-
-    #         return tool_result
-    #     except Exception as e:
-    #         error_message = str(e)
-    #         raise ToolInvocationError(f"Tool invocation failed: {error_message}")
-    #     finally:
-    #         await self._record_tool_metric(db, tool, start_time, success, error_message)
-
     async def invoke_tool(self, db: Session, name: str, arguments: Dict[str, Any]) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -475,9 +386,17 @@ class ToolService:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
         """
-        tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.is_active)).scalar_one_or_none()
+        separator = literal(settings.gateway_tool_name_separator)
+        slug_expr = case(
+            (
+                DbTool.gateway_slug.is_(None),  # pylint: disable=no-member
+                DbTool.original_name_slug,
+            ),  # WHEN gateway_slug IS NULL
+            else_=DbTool.gateway_slug + separator + DbTool.original_name_slug,  # ELSE gateway_slug||sep||original
+        )
+        tool = db.execute(select(DbTool).where(slug_expr == name).where(DbTool.is_active)).scalar_one_or_none()
         if not tool:
-            inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.is_active))).scalar_one_or_none()
+            inactive_tool = db.execute(select(DbTool).where(slug_expr == name).where(not_(DbTool.is_active))).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")
@@ -493,28 +412,47 @@ class ToolService:
                 headers.update(credentials)
 
                 # Build the payload based on integration type.
-                payload = arguments
+                payload = arguments.copy()
+
+                # Handle URL path parameter substitution
+                final_url = tool.url
+                if "{" in tool.url and "}" in tool.url:
+                    # Extract path parameters from URL template and arguments
+                    url_params = re.findall(r"\{(\w+)\}", tool.url)
+                    url_substitutions = {}
+
+                    for param in url_params:
+                        if param in payload:
+                            url_substitutions[param] = payload.pop(param)  # Remove from payload
+                            final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
+                        else:
+                            raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
                 # Use the tool's request_type rather than defaulting to POST.
                 method = tool.request_type.upper()
                 if method == "GET":
-                    response = await self._http_client.get(tool.url, params=payload, headers=headers)
+                    response = await self._http_client.get(final_url, params=payload, headers=headers)
                 else:
-                    response = await self._http_client.request(method, tool.url, json=payload, headers=headers)
+                    response = await self._http_client.request(method, final_url, json=payload, headers=headers)
                 response.raise_for_status()
-                result = response.json()
 
-                if response.status_code not in [200, 201, 202, 204, 206]:
+                # Handle 204 No Content responses that have no body
+                if response.status_code == 204:
+                    tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                elif response.status_code not in [200, 201, 202, 206]:
+                    result = response.json()
                     tool_result = ToolResult(
                         content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
                         is_error=True,
                     )
                 else:
+                    result = response.json()
                     filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                     tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
 
                 success = True
             elif tool.integration_type == "MCP":
+                transport = tool.request_type.lower()
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
                 if gateway.auth_type == "bearer":
                     headers = decode_auth(gateway.auth_value)
@@ -536,13 +474,35 @@ class ToolService:
                         async with ClientSession(*streams) as session:
                             # Initialize the session
                             await session.initialize()
-                            tool_call_result = await session.call_tool(name, arguments)
+                            tool_call_result = await session.call_tool(tool.original_name, arguments)
+                    return tool_call_result
+
+                async def connect_to_streamablehttp_server(server_url: str) -> str:
+                    """
+                    Connect to an MCP server running with Streamable HTTP transport
+
+                    Args:
+                        server_url (str): MCP Server URL
+
+                    Returns:
+                        str: Result of tool call
+                    """
+                    # Use async with directly to manage the context
+                    async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, _get_session_id):
+                        async with ClientSession(read_stream, write_stream) as session:
+                            # Initialize the session
+                            await session.initialize()
+                            tool_call_result = await session.call_tool(tool.original_name, arguments)
                     return tool_call_result
 
                 tool_gateway_id = tool.gateway_id
                 tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.is_active)).scalar_one_or_none()
 
-                tool_call_result = await connect_to_sse_server(tool_gateway.url)
+                tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
+                if transport == "sse":
+                    tool_call_result = await connect_to_sse_server(tool_gateway.url)
+                elif transport == "streamablehttp":
+                    tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url)
                 content = tool_call_result.model_dump(by_alias=True).get("content", [])
 
                 success = True
@@ -558,7 +518,7 @@ class ToolService:
         finally:
             await self._record_tool_metric(db, tool, start_time, success, error_message)
 
-    async def update_tool(self, db: Session, tool_id: int, tool_update: ToolUpdate) -> ToolRead:
+    async def update_tool(self, db: Session, tool_id: str, tool_update: ToolUpdate) -> ToolRead:
         """Update an existing tool.
 
         Args:
@@ -578,8 +538,8 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-            if tool_update.name is not None and tool_update.name != tool.name:
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool_update.name).where(DbTool.id != tool_id)).scalar_one_or_none()
+            if tool_update.name is not None and not (tool_update.name == tool.name and tool_update.gateway_id == tool.gateway_id):
+                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool_update.name).where(DbTool.gateway_id == tool_update.gateway_id).where(DbTool.id != tool_id)).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(
                         tool_update.name,
@@ -601,6 +561,8 @@ class ToolService:
                 tool.headers = tool_update.headers
             if tool_update.input_schema is not None:
                 tool.input_schema = tool_update.input_schema
+            if tool_update.annotations is not None:
+                tool.annotations = tool_update.annotations
             if tool_update.jsonpath_filter is not None:
                 tool.jsonpath_filter = tool_update.jsonpath_filter
 

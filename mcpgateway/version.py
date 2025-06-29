@@ -16,33 +16,40 @@ Features:
 - Redacted environment variables, sanitized DB/Redis URLs, Git commit detection
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
+from datetime import datetime
 import json
 import os
 import platform
 import socket
 import subprocess
 import time
-from datetime import datetime
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
-from sqlalchemy import text
-
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import engine
 from mcpgateway.utils.verify_credentials import require_auth
 
+# Third-Party
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
+
 # Optional runtime dependencies
 try:
+    # Third-Party
     import psutil  # optional for enhanced metrics
 except ImportError:
     psutil = None  # type: ignore
 
 try:
+    # Third-Party
     import redis.asyncio as aioredis  # optional Redis health check
 
     REDIS_AVAILABLE = True
@@ -394,8 +401,7 @@ async def version_endpoint(
     payload = _build_payload(redis_version, redis_ok)
     if partial:
         # Return partial HTML fragment for HTMX embedding
-        from fastapi.templating import Jinja2Templates
-        templates = Jinja2Templates(directory="mcpgateway/templates")
+        templates = Jinja2Templates(directory=str(settings.templates_dir))
         return templates.TemplateResponse("version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")
     if wants_html:

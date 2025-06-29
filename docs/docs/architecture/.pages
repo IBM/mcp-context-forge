@@ -1,3 +1,4 @@
 nav:
   - Overview: index.md
+  - Roadmap: roadmap.md
   - Decision Records: adr

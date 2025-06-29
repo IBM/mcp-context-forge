@@ -7,14 +7,16 @@ Authors: Mihai Criveti
 
 """
 
-import pytest
-
+# First-Party
 from mcpgateway.validation.jsonrpc import (
     INVALID_REQUEST,
     JSONRPCError,
     validate_request,
     validate_response,
 )
+
+# Third-Party
+import pytest
 
 
 class TestJSONRPCValidation:
@@ -140,15 +142,15 @@ class TestJSONRPCValidation:
     def test_jsonrpc_error_to_dict(self):
         """Test conversion of JSONRPCError to dict."""
         # Basic error
-        error = JSONRPCError(code=-32600, message="Test Error", id="test-id")
+        error = JSONRPCError(code=-32600, message="Test Error", request_id="test-id")
         error_dict = error.to_dict()
         assert error_dict["jsonrpc"] == "2.0"
         assert error_dict["error"]["code"] == -32600
         assert error_dict["error"]["message"] == "Test Error"
-        assert error_dict["id"] == "test-id"
+        assert error_dict["request_id"] == "test-id"
         assert "data" not in error_dict["error"]
 
         # Error with data
-        error = JSONRPCError(code=-32600, message="Test Error", data={"detail": "info"}, id=1)
+        error = JSONRPCError(code=-32600, message="Test Error", data={"detail": "info"}, request_id=1)
         error_dict = error.to_dict()
         assert error_dict["error"]["data"] == {"detail": "info"}

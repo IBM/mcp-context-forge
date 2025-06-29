@@ -117,19 +117,16 @@ check-env:
 
 
 # =============================================================================
-# ▶️ SERVE & TESTING
+# ▶️ SERVE
 # =============================================================================
-# help: ▶️ SERVE & TESTING
+# help: ▶️ SERVE
 # help: serve                - Run production Gunicorn server on :4444
 # help: certs                - Generate self-signed TLS cert & key in ./certs (won't overwrite)
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: run                  - Execute helper script ./run.sh
-# help: test                 - Run unit tests with pytest
-# help: test-curl            - Smoke-test API endpoints with curl script
-# help: pytest-examples      - Run README / examples through pytest-examples
 
-.PHONY: serve serve-ssl dev run test test-curl pytest-examples certs clean
+.PHONY: serve serve-ssl dev run certs
 
 ## --- Primary servers ---------------------------------------------------------
 serve:
@@ -158,20 +155,6 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 	fi
 	chmod 640 certs/key.pem
 
-## --- Testing -----------------------------------------------------------------
-test:
-	@echo "🧪 Running tests..."
-	@test -d "$(VENV_DIR)" || make venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install pytest pytest-asyncio pytest-cov -q && python -m pytest --maxfail=0 --disable-warnings -v"
-
-pytest-examples:
-	@echo "🧪 Testing README examples..."
-	@test -d "$(VENV_DIR)" || make venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install pytest pytest-examples -q && pytest -v test_readme.py"
-
-test-curl:
-	./test_endpoints.sh
-
 ## --- House-keeping -----------------------------------------------------------
 # help: clean                - Remove caches, build artefacts, virtualenv, docs, certs, coverage, SBOM, etc.
 .PHONY: clean
@@ -189,16 +172,33 @@ clean:
 
 
 # =============================================================================
-# 📊 COVERAGE & METRICS
+# 🧪 TESTING
 # =============================================================================
-# help: 📊 COVERAGE & METRICS
+# help: 🧪 TESTING
+# help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
+# help: test                 - Run unit tests with pytest
 # help: coverage             - Run tests with coverage, emit md/HTML/XML + badge
-# help: pip-licenses         - Produce dependency license inventory (markdown)
-# help: scc                  - Quick LoC/complexity snapshot with scc
-# help: scc-report           - Generate HTML LoC & per-file metrics with scc
-.PHONY: coverage pip-licenses scc scc-report
+# help: htmlcov              - (re)build just the HTML coverage report into docs
+# help: test-curl            - Smoke-test API endpoints with curl script
+# help: pytest-examples      - Run README / examples through pytest-examples
+
+.PHONY: smoketest test coverage pytest-examples test-curl htmlcov
+
+## --- Automated checks --------------------------------------------------------
+smoketest:
+	@echo "🚀 Running smoketest…"
+	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
+	@echo "✅ Smoketest passed!"
+
+test:
+	@echo "🧪 Running tests…"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pytest pytest-asyncio pytest-cov && \
+		python3 -m pytest --maxfail=0 --disable-warnings -v"
 
 coverage:
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(TEST_DOCS_DIR)
 	@printf "# Unit tests\n\n" > $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
@@ -211,12 +211,41 @@ coverage:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		coverage report --format=markdown -m --no-skip-covered \
 		>> $(DOCS_DIR)/docs/test/unittest.md"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		coverage html -d $(COVERAGE_DIR) --include=app/*"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=app/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@echo "✅  Coverage artefacts: md, HTML in $(COVERAGE_DIR), XML & badge ✔"
+
+htmlcov:
+	@echo "📊  Generating HTML coverage report…"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(COVERAGE_DIR)
+	# If there's no existing coverage data, fall back to the full test-run
+	@if [ ! -f .coverage ]; then \
+		echo "ℹ️  No .coverage file found – running full coverage first…"; \
+		$(MAKE) --no-print-directory coverage; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -i -d $(COVERAGE_DIR)"
+	@echo "✅  HTML coverage report ready → $(COVERAGE_DIR)/index.html"
+
+pytest-examples:
+	@echo "🧪 Testing README examples…"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pytest pytest-examples && \
+		pytest -v test_readme.py"
+
+test-curl:
+	./test_endpoints.sh
+
+# =============================================================================
+# 📊 METRICS
+# =============================================================================
+# help: 📊 METRICS
+# help: pip-licenses         - Produce dependency license inventory (markdown)
+# help: scc                  - Quick LoC/complexity snapshot with scc
+# help: scc-report           - Generate HTML LoC & per-file metrics with scc
+.PHONY: pip-licenses scc scc-report
 
 pip-licenses:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install pip-licenses"
@@ -274,10 +303,10 @@ images:
 	@mkdir -p $(DOCS_DIR)/docs/design/images
 	@code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
-	@python3 -m pip install snakefood3
-	@python3 -m snakefood3 app > snakefood.dot
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install snakefood3"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m snakefood3 . mcpgateway > snakefood.dot"
 	@dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
-	@pyreverse --colorized app || true
+	@pyreverse --colorized mcpgateway || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black classes.dot -o $(DOCS_DIR)/docs/design/images/classes.svg || true
 	@rm -f packages.dot classes.dot snakefood.dot || true
@@ -342,10 +371,10 @@ lint:
 ## --------------------------------------------------------------------------- ##
 autoflake:                          ## 🧹  Strip unused imports / vars
 	@$(VENV_DIR)/bin/autoflake --in-place --remove-all-unused-imports \
-	          --remove-unused-variables -r mcpgateway mcpgateway-wrapper tests
+	          --remove-unused-variables -r mcpgateway tests
 
 black:                              ## 🎨  Reformat code with black
-	@echo "🎨  black …" && $(VENV_DIR)/bin/black -l 200 mcpgateway mcpgateway-wrapper tests
+	@echo "🎨  black …" && $(VENV_DIR)/bin/black -l 200 mcpgateway tests
 
 isort:                              ## 🔀  Sort imports
 	@echo "🔀  isort …" && $(VENV_DIR)/bin/isort .
@@ -375,19 +404,19 @@ pre-commit:                         ## 🪄  Run pre-commit hooks
 	@$(VENV_DIR)/bin/pre-commit run --all-files --show-diff-on-failure
 
 ruff:                               ## ⚡  Ruff lint + format
-	@$(VENV_DIR)/bin/ruff check mcpgateway && $(VENV_DIR)/bin/ruff format mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/ruff check mcpgateway && $(VENV_DIR)/bin/ruff format mcpgateway tests
 
 ty:                                 ## ⚡  Ty type checker
-	@$(VENV_DIR)/bin/ty check mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/ty check mcpgateway tests
 
 pyright:                            ## 🏷️  Pyright type-checking
-	@$(VENV_DIR)/bin/pyright mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/pyright mcpgateway tests
 
 radon:                              ## 📈  Complexity / MI metrics
-	@$(VENV_DIR)/bin/radon mi -s mcpgateway mcpgateway-wrapper tests && \
-	$(VENV_DIR)/bin/radon cc -s mcpgateway mcpgateway-wrapper tests && \
-	$(VENV_DIR)/bin/radon hal mcpgateway mcpgateway-wrapper tests && \
-	$(VENV_DIR)/bin/radon raw -s mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/radon mi -s mcpgateway tests && \
+	$(VENV_DIR)/bin/radon cc -s mcpgateway tests && \
+	$(VENV_DIR)/bin/radon hal mcpgateway tests && \
+	$(VENV_DIR)/bin/radon raw -s mcpgateway tests
 
 pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
@@ -414,22 +443,19 @@ depend:                             ## 📦  List dependencies
 	pdm list --freeze
 
 snakeviz:                           ## 🐍  Interactive profile visualiser
-	@python -m cProfile -o mcp.prof app/server.py && snakeviz mcp.prof --server
+	@python3 -m cProfile -o mcp.prof app/server.py && snakeviz mcp.prof --server
 
 pstats:                             ## 📊  Static call-graph image
-	@python -m cProfile -o mcp.pstats app/server.py && \
+	@python3 -m cProfile -o mcp.pstats app/server.py && \
 	 gprof2dot -w -e 3 -n 3 -s -f pstats mcp.pstats | \
 	 dot -Tpng -o $(DOCS_DIR)/pstats.png
 
 spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 	sort -d -f -o $< $<
 
-tox:                                ## 🧪  Multi-Python tox matrix
-	@echo "🧪  Running tox …"
-	uv pip install tox-travis tox-pdm
-	pdm add -G dev
-	pdm python install 3.11 3.12
-	python -m tox -p 2
+tox:                                ## 🧪  Multi-Python tox matrix (uv)
+	@echo "🧪  Running tox with uv …"
+	python -m tox -p auto $(TOXARGS)
 
 sbom:								## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report…"
@@ -437,14 +463,42 @@ sbom:								## 🛡️  Generate SBOM & security report
 	@python3 -m venv "$(VENV_DIR).sbom"
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv && python3 -m uv pip install .[dev]"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install cyclonedx-bom sbom2doc"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m cyclonedx_py environment --validate '$(VENV_DIR).sbom' --pyproject pyproject.toml --gather-license-texts > $(PROJECT_NAME).sbom.json"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && sbom2doc -i $(PROJECT_NAME).sbom.json -f markdown -o $(DOCS_DIR)/docs/test/sbom.md"
-	@trivy sbom $(PROJECT_NAME).sbom.json | tee -a $(DOCS_DIR)/docs/test/sbom.md
-	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pdm outdated | tee -a $(DOCS_DIR)/docs/test/sbom.md"
+	@echo "🔍  Generating SBOM from environment..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m cyclonedx_py environment \
+			--output-format XML \
+			--output-file $(PROJECT_NAME).sbom.xml \
+			--no-validate \
+			'$(VENV_DIR).sbom/bin/python'"
+	@echo "📁  Creating docs directory structure..."
+	@mkdir -p $(DOCS_DIR)/docs/test
+	@echo "📋  Converting SBOM to markdown..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		sbom2doc -i $(PROJECT_NAME).sbom.xml -f markdown -o $(DOCS_DIR)/docs/test/sbom.md"
+	@echo "🔒  Running security scans..."
+	@/bin/bash -c "if command -v trivy >/dev/null 2>&1; then \
+		echo '## Trivy Vulnerability Scan' >> $(DOCS_DIR)/docs/test/sbom.md; \
+		echo '' >> $(DOCS_DIR)/docs/test/sbom.md; \
+		trivy sbom $(PROJECT_NAME).sbom.xml | tee -a $(DOCS_DIR)/docs/test/sbom.md; \
+	else \
+		echo '⚠️  trivy not found, skipping vulnerability scan'; \
+		echo '## Security Scan' >> $(DOCS_DIR)/docs/test/sbom.md; \
+		echo '' >> $(DOCS_DIR)/docs/test/sbom.md; \
+		echo 'Trivy not available - install with: brew install trivy' >> $(DOCS_DIR)/docs/test/sbom.md; \
+	fi"
+	@echo "📊  Checking for outdated packages..."
+	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && \
+		echo '## Outdated Packages' >> $(DOCS_DIR)/docs/test/sbom.md && \
+		echo '' >> $(DOCS_DIR)/docs/test/sbom.md && \
+		(python3 -m pdm outdated || echo 'PDM outdated check failed') | tee -a $(DOCS_DIR)/docs/test/sbom.md"
+	@echo "✅  SBOM generation complete"
+	@echo "📄  Files generated:"
+	@echo "    - $(PROJECT_NAME).sbom.xml (CycloneDX XML format)"
+	@echo "    - $(DOCS_DIR)/docs/test/sbom.md (Markdown report)"
 
 pytype:								## 🧠  Pytype static type analysis
 	@echo "🧠  Pytype analysis…"
-	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto mcpgateway mcpgateway-wrapper tests
+	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto mcpgateway tests
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness…"
@@ -453,9 +507,9 @@ check-manifest:						## 📦  Verify MANIFEST.in completeness
 # -----------------------------------------------------------------------------
 # 📑 YAML / JSON / TOML LINTERS
 # -----------------------------------------------------------------------------
-# help: yamllint            - Lint YAML files (uses .yamllint)
-# help: jsonlint            - Validate every *.json file with jq (‐‐exit-status)
-# help: tomllint            - Validate *.toml files with tomlcheck
+# help: yamllint             - Lint YAML files (uses .yamllint)
+# help: jsonlint             - Validate every *.json file with jq (‐‐exit-status)
+# help: tomllint             - Validate *.toml files with tomlcheck
 #
 # ➊  Add the new linters to the master list
 LINTERS += yamllint jsonlint tomllint
@@ -641,7 +695,7 @@ pysonar-scanner:
 	@echo "🐍 Scanning code with pysonar-scanner (PyPI) …"
 	@test -f $(SONAR_PROPS) || { echo "❌ $(SONAR_PROPS) not found."; exit 1; }
 	python3 -m pip install --upgrade --quiet pysonar-scanner
-	python -m pysonar_scanner \
+	python3 -m pysonar_scanner \
 		-Dproject.settings=$(SONAR_PROPS) \
 		-Dsonar.host.url=$(SONAR_HOST_URL) \
 		$(if $(SONAR_TOKEN),-Dsonar.login=$(SONAR_TOKEN),)
@@ -697,9 +751,7 @@ dockle:
 
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
-HADOFILES := Containerfile Dockerfile Dockerfile.*
-
-# Which files to check (edit as you like)
+# List of Containerfile/Dockerfile patterns to scan
 HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
@@ -739,7 +791,7 @@ pip-audit:
 	@echo "🔒  pip-audit vulnerability scan…"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python -m pip install --quiet --upgrade pip-audit && \
+		python3 -m pip install --quiet --upgrade pip-audit && \
 		pip-audit --progress-spinner ascii --strict || true"
 
 # =============================================================================
@@ -774,33 +826,46 @@ containerfile-update:
 # help: verify               - Build + twine + check-manifest + pyroma (no upload)
 # help: publish              - Verify, then upload to PyPI (needs TWINE_* creds)
 # =============================================================================
-.PHONY: dist wheel sdist verify publish
+.PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean                ## Build wheel + sdist
-	python -m build
-	@echo "🛠  Wheel & sdist written to ./dist"
+dist: clean                  ## Build wheel + sdist into ./dist
+	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@/bin/bash -eu -c "\
+	    source $(VENV_DIR)/bin/activate && \
+	    python3 -m pip install --quiet --upgrade pip build && \
+	    python3 -m build"
+	@echo '🛠  Wheel & sdist written to ./dist'
 
-wheel:                     ## Build wheel only
-	python -m build -w
-	@echo "🛠  Wheel written to ./dist"
+wheel:                       ## Build wheel only
+	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@/bin/bash -eu -c "\
+	    source $(VENV_DIR)/bin/activate && \
+	    python3 -m pip install --quiet --upgrade pip build && \
+	    python3 -m build -w"
+	@echo '🛠  Wheel written to ./dist'
 
-sdist:                     ## Build source distribution only
-	python -m build -s
-	@echo "🛠  Source distribution written to ./dist"
+sdist:                       ## Build source distribution only
+	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@/bin/bash -eu -c "\
+	    source $(VENV_DIR)/bin/activate && \
+	    python3 -m pip install --quiet --upgrade pip build && \
+	    python3 -m build -s"
+	@echo '🛠  Source distribution written to ./dist'
 
 verify: dist               ## Build, run metadata & manifest checks
-	twine check dist/*                 # metadata sanity
-	check-manifest                     # sdist completeness
-	pyroma -d .                        # metadata quality score
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	twine check dist/* && \
+	check-manifest && \
+	pyroma -d ."
 	@echo "✅  Package verified – ready to publish."
 
 publish: verify            ## Verify, then upload to PyPI
-	twine upload dist/*               # creds via env vars or ~/.pypirc
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload dist/*"
 	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
 
-publish-testpypi: verify            ## Verify, then upload to TestPyPI
-	twine upload --repository testpypi dist/*  # creds via env vars or ~/.pypirc
-	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
+publish-testpypi: verify   ## Verify, then upload to TestPyPI
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload --repository testpypi dist/*"
+	@echo "🚀  Upload finished – check https://test.pypi.org/project/$(PROJECT_NAME)/"
 
 # =============================================================================
 # 🦭 PODMAN CONTAINER BUILD & RUN
@@ -1310,131 +1375,206 @@ ibmcloud-ce-rm:
 # =============================================================================
 # 🧪 MINIKUBE LOCAL CLUSTER
 # =============================================================================
+# A self‑contained block with sensible defaults, overridable via the CLI.
+# App is accessible after: kubectl port-forward svc/mcp-context-forge 8080:80
+# Examples:
+#   make minikube-start MINIKUBE_DRIVER=podman
+#   make minikube-image-load TAG=v0.1.2
+#
+#   # Push via the internal registry (registry addon):
+#   # 1️⃣ Discover the randomized host‑port (docker driver only):
+#   REG_URL=$(shell minikube -p $(MINIKUBE_PROFILE) service registry -n kube-system --url)
+#   # 2️⃣ Tag & push:
+#   docker build -t $${REG_URL}/$(PROJECT_NAME):dev .
+#   docker push $${REG_URL}/$(PROJECT_NAME):dev
+#   # 3️⃣ Reference in manifests:
+#   image: $${REG_URL}/$(PROJECT_NAME):dev
+#
+#   # If you built a prod image via:
+#   #     make docker-prod   # ⇒ mcpgateway/mcpgateway:latest
+#   # Tag & push it into Minikube:
+#   docker tag mcpgateway/mcpgateway:latest $${REG_URL}/mcpgateway:latest
+#   docker push $${REG_URL}/mcpgateway:latest
+#   # Override the Make target variable or patch your Helm values:
+#   make minikube-k8s-apply IMAGE=$${REG_URL}/mcpgateway:latest
+# -----------------------------------------------------------------------------
+
+# ▸ Tunables (export or pass on the command line)
+MINIKUBE_PROFILE ?= mcpgw          # Profile/cluster name
+MINIKUBE_DRIVER  ?= docker         # docker | podman | hyperkit | virtualbox …
+MINIKUBE_CPUS    ?= 4              # vCPUs to allocate
+MINIKUBE_MEMORY  ?= 6g             # RAM (supports m / g suffix)
+# Enabled addons – tweak to suit your workflow (`minikube addons list`).
+# • ingress / ingress-dns      – Ingress controller + CoreDNS wildcard hostnames
+# • metrics-server             – HPA / kubectl top
+# • dashboard                  – Web UI (make minikube-dashboard)
+# • registry                   – Local Docker registry, *dynamic* host-port
+# • registry-aliases           – Adds handy DNS names inside the cluster
+MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry registry-aliases
+# OCI image tag to preload into the cluster.
+# • By default we point to the *local* image built via `make docker-prod`, e.g.
+#   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
+#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.2.0).
+TAG              ?= latest         # override with TAG=<ver>
+IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
+
+# -----------------------------------------------------------------------------
+# 🆘  HELP TARGETS (parsed by `make help`)
+# -----------------------------------------------------------------------------
 # help: 🧪 MINIKUBE LOCAL CLUSTER
-# help: minikube-install      - Install Minikube (macOS, Linux, or Windows via choco)
-# help: helm-install          - Install Helm CLI (macOS, Linux, or Windows)
-# help: minikube-start        - Start local Minikube cluster with Ingress + DNS + metrics-server
-# help: minikube-stop         - Stop the Minikube cluster
-# help: minikube-delete       - Delete the Minikube cluster
-# help: minikube-image-load   - Build and load ghcr.io/ibm/mcp-context-forge:latest into Minikube
-# help: minikube-k8s-apply    - Apply Kubernetes manifests from k8s/
-# help: minikube-status       - Show status of Minikube and ingress pods
+# help: minikube-install        - Install Minikube + kubectl (macOS / Linux / Windows)
+# help: minikube-start          - Start cluster + enable $(MINIKUBE_ADDONS)
+# help: minikube-stop           - Stop the cluster
+# help: minikube-delete         - Delete the cluster completely
+# help: minikube-tunnel         - Run "minikube tunnel" (LoadBalancer) in foreground
+# help: minikube-port-forward   - Run kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
+# help: minikube-dashboard      - Print & (best‑effort) open the Kubernetes dashboard URL
+# help: minikube-image-load     - Load $(IMAGE) into Minikube container runtime
+# help: minikube-k8s-apply      - Apply manifests from k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
+# help: minikube-status         - Cluster + addon health overview
+# help: minikube-context        - Switch kubectl context to Minikube
+# help: minikube-ssh            - SSH into the Minikube VM
+# help: minikube-reset          - 🚨 delete ➜ start ➜ apply ➜ status (idempotent dev helper)
+# help: minikube-registry-url 	- Echo the dynamic registry URL (e.g. http://localhost:32790)
 
 .PHONY: minikube-install helm-install minikube-start minikube-stop minikube-delete \
-        minikube-image-load minikube-k8s-apply minikube-status
+        minikube-tunnel minikube-dashboard minikube-image-load minikube-k8s-apply \
+        minikube-status minikube-context minikube-ssh minikube-reset minikube-registry-url \
+        minikube-port-forward
 
+# -----------------------------------------------------------------------------
+# 🚀  INSTALLATION HELPERS
+# -----------------------------------------------------------------------------
 minikube-install:
 	@echo "💻 Detecting OS and installing Minikube + kubectl…"
-	@if [ "$$(uname)" = "Darwin" ]; then \
-	  echo "🍎 Installing via Homebrew…"; \
+	@if [ "$(shell uname)" = "Darwin" ]; then \
 	  brew install minikube kubernetes-cli; \
-	elif [ "$$(uname)" = "Linux" ]; then \
-	  echo "🐧 Installing via direct download…"; \
-	  curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && \
-	  sudo install minikube-linux-amd64 /usr/local/bin/minikube && \
-	  rm minikube-linux-amd64; \
-	  echo "🔧 Installing kubectl…"; \
-	  curl -LO "https://dl.k8s.io/release/$$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+	elif [ "$(shell uname)" = "Linux" ]; then \
+	  curl -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && \
+	  chmod +x minikube && sudo mv minikube /usr/local/bin/; \
+	  curl -Lo kubectl "https://dl.k8s.io/release/$$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
 	  chmod +x kubectl && sudo mv kubectl /usr/local/bin/; \
 	elif command -v powershell.exe >/dev/null; then \
-	  echo "🪟 Installing via Chocolatey…"; \
-	  powershell.exe -Command "choco install -y minikube kubernetes-cli"; \
+	  powershell.exe -NoProfile -Command "choco install -y minikube kubernetes-cli"; \
 	else \
-	  echo "❌ Unsupported OS. Please install manually."; \
-	  exit 1; \
+	  echo "❌ Unsupported OS. Install manually ↗"; exit 1; \
 	fi
 
-helm-install:
-	@echo "📦 Installing Helm CLI…"
-	@if [ "$$(uname)" = "Darwin" ]; then \
-	  brew install helm; \
-	elif [ "$$(uname)" = "Linux" ]; then \
-	  curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash; \
-	elif command -v powershell.exe >/dev/null; then \
-	  powershell.exe -Command "choco install -y kubernetes-helm"; \
-	else \
-	  echo "❌ Unsupported OS. Please install Helm manually."; \
-	  exit 1; \
-	fi
-
+# -----------------------------------------------------------------------------
+# ⏯  LIFECYCLE COMMANDS
+# -----------------------------------------------------------------------------
 minikube-start:
-	@echo "🚀 Starting Minikube with profile 'mcpgw'..."
-	minikube start \
-	  --driver=docker \
-	  --cpus=4 --memory=6g \
-	  --profile=mcpgw
-	@echo "🔌 (Re)enabling required addons…"
-	minikube addons enable ingress -p mcpgw
-	minikube addons enable ingress-dns -p mcpgw
-	minikube addons enable metrics-server -p mcpgw
+	@echo "🚀 Starting Minikube profile '$(MINIKUBE_PROFILE)' (driver=$(MINIKUBE_DRIVER)) …"
+	minikube start -p $(MINIKUBE_PROFILE) \
+	  --driver=$(MINIKUBE_DRIVER) \
+	  --cpus=$(MINIKUBE_CPUS) --memory=$(MINIKUBE_MEMORY)
+	@echo "🔌 Enabling addons: $(MINIKUBE_ADDONS)"
+	@for addon in $(MINIKUBE_ADDONS); do \
+	  minikube addons enable $$addon -p $(MINIKUBE_PROFILE); \
+	done
 
 minikube-stop:
-	@echo "🛑 Stopping Minikube cluster..."
-	minikube stop -p mcpgw
+	@echo "🛑 Stopping Minikube …"
+	minikube stop -p $(MINIKUBE_PROFILE)
 
 minikube-delete:
-	@echo "🗑 Deleting Minikube cluster..."
-	minikube delete -p mcpgw
+	@echo "🗑 Deleting Minikube profile '$(MINIKUBE_PROFILE)' …"
+	minikube delete -p $(MINIKUBE_PROFILE)
 
+# -----------------------------------------------------------------------------
+# 🛠  UTILITIES
+# -----------------------------------------------------------------------------
+minikube-tunnel:
+	@echo "🌐 Starting minikube tunnel (Ctrl+C to quit) …"
+	minikube -p $(MINIKUBE_PROFILE) tunnel
+
+minikube-port-forward:
+	@echo "🔌 Forwarding http://localhost:8080 → svc/mcp-stack-mcpgateway:80 in namespace mcp-private  (Ctrl+C to stop)…"
+	kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
+
+minikube-dashboard:
+	@echo "📊 Fetching dashboard URL …"
+	@minikube dashboard -p $(MINIKUBE_PROFILE) --url | { \
+	  read url; \
+	  echo "🔗 Dashboard: $$url"; \
+	  ( command -v xdg-open >/dev/null && xdg-open $$url >/dev/null 2>&1 ) || \
+	  ( command -v open     >/dev/null && open $$url     >/dev/null 2>&1 ) || true; \
+	}
+
+minikube-context:
+	@echo "🎯 Switching kubectl context to Minikube …"
+	kubectl config use-context minikube
+
+minikube-ssh:
+	@echo "🔧 Connecting to Minikube VM (exit with Ctrl+D) …"
+	minikube ssh -p $(MINIKUBE_PROFILE)
+
+# -----------------------------------------------------------------------------
+# 📦  IMAGE & MANIFEST HANDLING
+# -----------------------------------------------------------------------------
 minikube-image-load:
-	@echo "📦 Loading image into Minikube (must be pre-built)..."
-	@if ! docker image inspect ghcr.io/ibm/mcp-context-forge:latest >/dev/null 2>&1; then \
-	  echo "❌ Image ghcr.io/ibm/mcp-context-forge:latest not found. Download or build it first."; \
-	  exit 1; \
+	@echo "📦 Loading $(IMAGE) into Minikube …"
+	@if ! docker image inspect $(IMAGE) >/dev/null 2>&1; then \
+	  echo "❌ $(IMAGE) not found locally. Build or pull it first."; exit 1; \
 	fi
-	minikube image load ghcr.io/ibm/mcp-context-forge:latest -p mcpgw
-	@echo "🔍 Verifying image presence inside Minikube..."
-	minikube ssh -p mcpgw "sudo crictl images | grep ghcr.io/ibm/mcp-context-forge || echo '❌ Image not found in Minikube runtime'"
+	minikube image load $(IMAGE) -p $(MINIKUBE_PROFILE)
 
 minikube-k8s-apply:
-	@echo "🧩 Applying Kubernetes manifests..."
-	kubectl apply -f k8s/postgres-config.yaml || true
-	kubectl apply -f k8s/postgres-pv.yaml || true
-	kubectl apply -f k8s/postgres-pvc.yaml || true
-	kubectl apply -f k8s/postgres-deployment.yaml
-	kubectl apply -f k8s/postgres-service.yaml
-	kubectl apply -f k8s/redis-deployment.yaml
-	kubectl apply -f k8s/redis-service.yaml
-	kubectl apply -f k8s/mcp-context-forge-deployment.yaml
-	kubectl apply -f k8s/mcp-context-forge-service.yaml
-	kubectl apply -f k8s/mcp-context-forge-ingress.yaml
-	minikube status -p mcpgw
+	@echo "🧩 Applying k8s manifests in ./k8s …"
+	@kubectl apply -f k8s/ --recursive
 
+# -----------------------------------------------------------------------------
+# 🔍  Utility: print the current registry URL (host‑port) – works after cluster
+#             + registry addon are up.
+# -----------------------------------------------------------------------------
+minikube-registry-url:
+	@echo "📦 Internal registry URL:" && \
+	minikube -p $(MINIKUBE_PROFILE) service registry -n kube-system --url || \
+	echo "⚠️  Registry addon not ready – run make minikube-start first."
+
+# -----------------------------------------------------------------------------
+# 📊  INSPECTION & RESET
+# -----------------------------------------------------------------------------
 minikube-status:
-	@echo "📊 Minikube cluster status:"
-	minikube status -p mcpgw
+	@echo "📊 Minikube cluster status:" && minikube status -p $(MINIKUBE_PROFILE)
+	@echo "\n📦 Addon status:" && minikube addons list | grep -E "$(subst $(space),|,$(MINIKUBE_ADDONS))"
+	@echo "\n🚦 Ingress controller:" && kubectl get pods -n ingress-nginx -o wide || true
+	@echo "\n🔍 Dashboard:" && kubectl get pods -n kubernetes-dashboard -o wide || true
+	@echo "\n🧩 Services:" && kubectl get svc || true
+	@echo "\n🌐 Ingress:" && kubectl get ingress || true
 
-	@echo "\n📦 Addon status (ingress, ingress-dns, metrics-server):"
-	minikube addons list | grep -E 'ingress|ingress-dns|metrics-server'
-
-	@echo "\n🚦 Ingress controller pods:"
-	kubectl get pods -n ingress-nginx -o wide || true
-
-	@echo "\n🧭 Ingress-DNS pods (coredns):"
-	kubectl get pods -n kube-system -l k8s-app=kube-dns -o wide || true
-
-	@echo "\n🧩 Application services:"
-	kubectl get svc || true
-
-	@echo "\n🌐 Application ingress:"
-	kubectl get ingress || true
+minikube-reset: minikube-delete minikube-start minikube-image-load minikube-k8s-apply minikube-status
+	@echo "✅ Minikube reset complete!"
 
 # -----------------------------------------------------------------------------
 # 🛠️ HELM CHART TASKS
 # -----------------------------------------------------------------------------
 # help: 🛠️ HELM CHART TASKS
+# help: helm-install         - Install Helm 3 CLI
 # help: helm-lint            - Lint the Helm chart (static analysis)
 # help: helm-package         - Package the chart into dist/ as mcp-stack-<ver>.tgz
 # help: helm-deploy          - Upgrade/Install chart into Minikube (profile mcpgw)
 # help: helm-delete          - Uninstall the chart release from Minikube
 # -----------------------------------------------------------------------------
 
-.PHONY: helm-lint helm-package helm-deploy helm-delete
+.PHONY: helm-install helm-lint helm-package helm-deploy helm-delete
 
 CHART_DIR      ?= charts/mcp-stack
 RELEASE_NAME   ?= mcp-stack
 NAMESPACE      ?= mcp
 VALUES         ?= $(CHART_DIR)/values.yaml
+
+helm-install:
+	@echo "📦 Installing Helm CLI…"
+	@if [ "$(shell uname)" = "Darwin" ]; then \
+	  brew install helm; \
+	elif [ "$(shell uname)" = "Linux" ]; then \
+	  curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash; \
+	elif command -v powershell.exe >/dev/null; then \
+	  powershell.exe -NoProfile -Command "choco install -y kubernetes-helm"; \
+	else \
+	  echo "❌ Unsupported OS. Install Helm manually ↗"; exit 1; \
+	fi
 
 helm-lint:
 	@echo "🔍 Helm lint..."
@@ -1461,19 +1601,88 @@ helm-delete:
 	@echo "🗑  Deleting $(RELEASE_NAME) release..."
 	helm uninstall $(RELEASE_NAME) -n $(NAMESPACE) || true
 
+
+# =============================================================================
+# 🚢 ARGO CD – GITOPS
+# TODO: change default to custom namespace (e.g. mcp-gitops)
+# =============================================================================
+# help: 🚢 ARGO CD – GITOPS
+# help: argocd-cli-install   - Install Argo CD CLI locally
+# help: argocd-install       - Install Argo CD into Minikube (ns=$(ARGOCD_NS))
+# help: argocd-password      - Echo initial admin password
+# help: argocd-forward       - Port-forward API/UI to http://localhost:$(ARGOCD_PORT)
+# help: argocd-login         - Log in to Argo CD CLI (requires argocd-forward)
+# help: argocd-app-bootstrap - Create & auto-sync $(ARGOCD_APP) from $(GIT_REPO)/$(GIT_PATH)
+# help: argocd-app-sync      - Manual re-sync of the application
+# -----------------------------------------------------------------------------
+
+ARGOCD_NS   ?= argocd
+ARGOCD_PORT ?= 8083
+ARGOCD_APP  ?= mcp-gateway
+GIT_REPO    ?= https://github.com/ibm/mcp-context-forge.git
+GIT_PATH    ?= k8s
+
+.PHONY: argocd-cli-install argocd-install argocd-password argocd-forward \
+        argocd-login argocd-app-bootstrap argocd-app-sync
+
+argocd-cli-install:
+	@echo "🔧 Installing Argo CD CLI…"
+	@if command -v argocd >/dev/null 2>&1; then echo "✅ argocd already present"; \
+	elif [ "$$(uname)" = "Darwin" ];  then brew install argocd; \
+	elif [ "$$(uname)" = "Linux" ];   then curl -sSL -o /tmp/argocd \
+	     https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64 && \
+	     sudo install -m 555 /tmp/argocd /usr/local/bin/argocd; \
+	else echo "❌ Unsupported OS – install argocd manually"; exit 1; fi
+
+argocd-install:
+	@echo "🚀 Installing Argo CD into Minikube…"
+	kubectl create namespace $(ARGOCD_NS) --dry-run=client -o yaml | kubectl apply -f -
+	kubectl apply -n $(ARGOCD_NS) \
+	  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+	@echo "⏳ Waiting for Argo CD server pod…"
+	kubectl -n $(ARGOCD_NS) rollout status deploy/argocd-server
+
+argocd-password:
+	@kubectl -n $(ARGOCD_NS) get secret argocd-initial-admin-secret \
+	  -o jsonpath='{.data.password}' | base64 -d ; echo
+
+argocd-forward:
+	@echo "🌐 Port-forward http://localhost:$(ARGOCD_PORT) → svc/argocd-server:443 (Ctrl-C to stop)…"
+	kubectl -n $(ARGOCD_NS) port-forward svc/argocd-server $(ARGOCD_PORT):443
+
+argocd-login: argocd-cli-install
+	@echo "🔐 Logging into Argo CD CLI…"
+	@PASS=$$(kubectl -n $(ARGOCD_NS) get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d); \
+	argocd login localhost:$(ARGOCD_PORT) --username admin --password $$PASS --insecure
+
+argocd-app-bootstrap:
+	@echo "🚀 Creating Argo CD application $(ARGOCD_APP)…"
+	-argocd app create $(ARGOCD_APP) \
+	    --repo $(GIT_REPO) \
+	    --path $(GIT_PATH) \
+	    --dest-server https://kubernetes.default.svc \
+	    --dest-namespace default \
+	    --sync-policy automated \
+	    --revision HEAD || true
+	argocd app sync $(ARGOCD_APP)
+
+argocd-app-sync:
+	@echo "🔄  Syncing Argo CD application $(ARGOCD_APP)…"
+	argocd app sync $(ARGOCD_APP)
+
 # =============================================================================
 # 🏠 LOCAL PYPI SERVER
 # Currently blocked by: https://github.com/pypiserver/pypiserver/issues/630
 # =============================================================================
 # help: 🏠 LOCAL PYPI SERVER
-# help: local-pypi-install   - Install pypiserver for local testing
-# help: local-pypi-start     - Start local PyPI server on :8084 (no auth)
-# help: local-pypi-start-auth - Start local PyPI server with basic auth (admin/admin)
-# help: local-pypi-stop      - Stop local PyPI server
-# help: local-pypi-upload    - Upload existing package to local PyPI (no auth)
+# help: local-pypi-install     - Install pypiserver for local testing
+# help: local-pypi-start       - Start local PyPI server on :8084 (no auth)
+# help: local-pypi-start-auth  - Start local PyPI server with basic auth (admin/admin)
+# help: local-pypi-stop        - Stop local PyPI server
+# help: local-pypi-upload      - Upload existing package to local PyPI (no auth)
 # help: local-pypi-upload-auth - Upload existing package to local PyPI (with auth)
-# help: local-pypi-test      - Install package from local PyPI
-# help: local-pypi-clean     - Full cycle: build → upload → install locally
+# help: local-pypi-test        - Install package from local PyPI
+# help: local-pypi-clean       - Full cycle: build → upload → install locally
 
 .PHONY: local-pypi-install local-pypi-start local-pypi-start-auth local-pypi-stop local-pypi-upload \
         local-pypi-upload-auth local-pypi-test local-pypi-clean
@@ -1620,7 +1829,7 @@ local-pypi-debug:
 # help: devpi-clean          - Full cycle: build → upload → install locally
 # help: devpi-status         - Show devpi server status
 # help: devpi-web            - Open devpi web interface
-# help: devpi-delete         - Delete mcpgateway==<ver> from devpi index
+# help: devpi-delete         - Delete mcp-contextforge-gateway==<ver> from devpi index
 
 
 .PHONY: devpi-install devpi-init devpi-start devpi-stop devpi-setup-user devpi-upload \
@@ -1738,7 +1947,7 @@ devpi-upload: dist devpi-setup-user		## Build wheel/sdist, then upload
 	@echo "🌐  Browse packages: $(DEVPI_URL)/$(DEVPI_INDEX)"
 
 devpi-test:
-	@echo "📥  Installing package from devpi..."
+	@echo "📥  Installing package mcp-contextforge-gateway from devpi..."
 	@if ! curl -s $(DEVPI_URL) >/dev/null 2>&1; then \
 		echo "❌  DevPi server not running. Run 'make devpi-start' first."; \
 		exit 1; \
@@ -1746,13 +1955,13 @@ devpi-test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 	pip install --index-url $(DEVPI_URL)/$(DEVPI_INDEX)/+simple/ \
 	            --extra-index-url https://pypi.org/simple/ \
-	            --force-reinstall $(PROJECT_NAME)"
-	@echo "✅  Installed $(PROJECT_NAME) from devpi"
+	            --force-reinstall mcp-contextforge-gateway"
+	@echo "✅  Installed mcp-contextforge-gateway from devpi"
 
 devpi-clean: clean dist devpi-upload devpi-test
 	@echo "🎉  Full devpi cycle complete!"
 	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show $(PROJECT_NAME)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip show mcp-contextforge-gateway"
 
 devpi-status:
 	@echo "🔍  DevPi server status:"
@@ -1848,11 +2057,11 @@ VER ?= $(shell python -c "import tomllib, pathlib; \
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
 2>/dev/null || echo 0.0.0)
 
-devpi-delete: devpi-setup-user                 ## Delete mcpgateway==$(VER) from index
-	@echo "🗑️   Removing mcpgateway==$(VER) from $(DEVPI_INDEX)…"
+devpi-delete: devpi-setup-user                 ## Delete mcp-contextforge-gateway==$(VER) from index
+	@echo "🗑️   Removing mcp-contextforge-gateway==$(VER) from $(DEVPI_INDEX)…"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		devpi use $(DEVPI_INDEX) && \
-		devpi remove -y mcpgateway==$(VER) || true"
+		devpi remove -y mcp-contextforge-gateway==$(VER) || true"
 	@echo "✅  Delete complete (if it existed)"
 
 
@@ -1897,7 +2106,7 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
 	  echo "🛠  Installing bashate (into venv)…" ; \
 	  test -d "$(VENV_DIR)" || $(MAKE) venv ; \
-	  /bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install --quiet bashate" ; \
+	  /bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --quiet bashate" ; \
 	fi
 	@echo "✅  Shell linters ready."
 
@@ -1917,3 +2126,50 @@ shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 	@echo "🎨  Formatting shell scripts with shfmt -w…"
 	@shfmt -w -i 4 -ci $(SHELL_SCRIPTS)
 	@echo "✅  shfmt formatting done."
+
+
+# 🛢️  ALEMBIC DATABASE MIGRATIONS
+# =============================================================================
+# help: 🛢️  ALEMBIC DATABASE MIGRATIONS
+# help: alembic-install   - Install Alembic CLI (and SQLAlchemy) in the current env
+# help: db-new            - Create a new migration  (override with MSG="your title")
+# help: db-up             - Upgrade DB to the latest revision (head)
+# help: db-down           - Downgrade one revision       (override with REV=<id|steps>)
+# help: db-current        - Show the current head revision for the database
+# help: db-history        - Show the full migration graph / history
+# help: db-revision-id    - Echo just the current revision id (handy for scripting)
+# -----------------------------------------------------------------------------
+
+# ──────────────────────────
+# Internals & defaults
+# ──────────────────────────
+ALEMBIC ?= alembic        # Override to e.g. `poetry run alembic`
+MSG     ?= "auto migration"
+REV     ?= -1             # Default: one step down; can be hash, -n, +n, etc.
+
+.PHONY: alembic-install db-new db-up db-down db-current db-history db-revision-id
+
+alembic-install:
+	@echo "➜ Installing Alembic …"
+	pip install --quiet alembic sqlalchemy
+
+db-new:
+	@echo "➜ Generating revision: $(MSG)"
+	$(ALEMBIC) revision --autogenerate -m $(MSG)
+
+db-up:
+	@echo "➜ Upgrading database to head …"
+	$(ALEMBIC) upgrade head
+
+db-down:
+	@echo "➜ Downgrading database → $(REV) …"
+	$(ALEMBIC) downgrade $(REV)
+
+db-current:
+	$(ALEMBIC) current
+
+db-history:
+	$(ALEMBIC) history --verbose
+
+db-revision-id:
+	@$(ALEMBIC) current --verbose | awk '/Current revision/ {print $$3}'

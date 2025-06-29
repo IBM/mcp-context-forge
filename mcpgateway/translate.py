@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """ mcpgateway.translate - bridges local JSON-RPC/stdio servers to HTTP/SSE
 
 Copyright 2025
@@ -38,23 +39,26 @@ clients never time out.  Each client receives a unique *session-id* that is
 appended as a query parameter to the back-channel `/message` URL.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
 import asyncio
+from contextlib import suppress
 import json
 import logging
 import shlex
 import signal
 import sys
-import uuid
-from contextlib import suppress
 from typing import AsyncIterator, List, Optional, Sequence
+import uuid
 
-import uvicorn
+# Third-Party
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from sse_starlette.sse import EventSourceResponse
+import uvicorn
 
 LOGGER = logging.getLogger("mcpgateway.translate")
 KEEP_ALIVE_INTERVAL = 30  # seconds ── matches the reference implementation
@@ -168,6 +172,7 @@ def _build_fastapi(
 
     # Add CORS middleware if origins specified
     if cors_origins:
+        # Third-Party
         from fastapi.middleware.cors import CORSMiddleware
 
         app.add_middleware(
@@ -265,7 +270,6 @@ def _build_fastapi(
     async def health() -> Response:  # noqa: D401
         return PlainTextResponse("ok")
 
-
     return app
 
 
@@ -343,6 +347,7 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
 
 
 async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str], log_level: str = "info") -> None:
+    # Third-Party
     import httpx
 
     headers = {}

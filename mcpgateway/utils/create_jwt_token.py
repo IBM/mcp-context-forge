@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""jwt_cli.py – generate, inspect, **and be imported** for token helpers.
+"""jwt_cli.py - generate, inspect, **and be imported** for token helpers.
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-* **Run as a script** – friendly CLI (works with *no* flags).
-* **Import as a library** – drop‑in async functions `create_jwt_token` & `get_jwt_token`
-  kept for backward‑compatibility, now delegating to the shared core helper.
+* **Run as a script** - friendly CLI (works with *no* flags).
+* **Import as a library** - drop-in async functions `create_jwt_token` & `get_jwt_token`
+  kept for backward-compatibility, now delegating to the shared core helper.
 
 Quick usage
 -----------
 CLI (default secret, default payload):
-    $ python jwt_cli.py
+    $ python3 jwt_cli.py
 
-Library (unchanged API):
+Library:
 ```python
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 
@@ -24,8 +24,10 @@ jwt = await create_jwt_token({"username": "alice"})
 ```
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
 import asyncio
 import datetime as _dt
@@ -33,9 +35,11 @@ import json
 import sys
 from typing import Any, Dict, List, Sequence
 
-import jwt  # PyJWT
-
+# First-Party
 from mcpgateway.config import settings
+
+# Third-Party
+import jwt  # PyJWT
 
 __all__: Sequence[str] = (
     "create_jwt_token",
@@ -63,7 +67,7 @@ def _create_jwt_token(
     secret: str = DEFAULT_SECRET,
     algorithm: str = DEFAULT_ALGO,
 ) -> str:
-    """Return a signed JWT string (synchronous, timezone‑aware).
+    """Return a signed JWT string (synchronous, timezone-aware).
 
     Args:
         data: Dictionary containing payload data to encode in the token.
@@ -120,7 +124,7 @@ async def get_jwt_token() -> str:
 
 
 # ---------------------------------------------------------------------------
-# **Decode** helper (non‑verifying) – used by the CLI
+# **Decode** helper (non-verifying) - used by the CLI
 # ---------------------------------------------------------------------------
 
 
@@ -155,7 +159,7 @@ def _parse_args():
 
     group = p.add_mutually_exclusive_group()
     group.add_argument("-u", "--username", help="Add username=<value> to the payload.")
-    group.add_argument("-d", "--data", help="Raw JSON payload or comma‑separated key=value pairs.")
+    group.add_argument("-d", "--data", help="Raw JSON payload or comma-separated key=value pairs.")
     group.add_argument("--decode", metavar="TOKEN", help="Token string to decode (no verification).")
 
     p.add_argument(
@@ -167,7 +171,7 @@ def _parse_args():
     )
     p.add_argument("-s", "--secret", default=DEFAULT_SECRET, help="Secret key for signing.")
     p.add_argument("--algo", default=DEFAULT_ALGO, help="Signing algorithm to use.")
-    p.add_argument("--pretty", action="store_true", help="Pretty‑print payload before encoding.")
+    p.add_argument("--pretty", action="store_true", help="Pretty-print payload before encoding.")
 
     return p.parse_args()
 
@@ -221,14 +225,14 @@ def main() -> None:  # pragma: no cover
 
 
 if __name__ == "__main__":
-    # Support being run via ``python -m mcpgateway.utils.create_jwt_token`` too
+    # Support being run via ``python3 -m mcpgateway.utils.create_jwt_token`` too
     try:
         # Respect existing asyncio loop if present (e.g. inside uvicorn dev server)
         loop = asyncio.get_running_loop()
-        loop.run_until_complete(asyncio.sleep(0))  # no‑op to ensure loop alive
+        loop.run_until_complete(asyncio.sleep(0))  # no-op to ensure loop alive
     except RuntimeError:
-        # No loop; we're just a simple CLI call – run main synchronously
+        # No loop; we're just a simple CLI call - run main synchronously
         main()
     else:
-        # We're inside an active asyncio program – delegate to executor to avoid blocking
+        # We're inside an active asyncio program - delegate to executor to avoid blocking
         loop.run_in_executor(None, main)

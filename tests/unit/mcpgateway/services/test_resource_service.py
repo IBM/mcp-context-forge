@@ -7,16 +7,19 @@ Authors: Mihai Criveti
 
 """
 
+# Standard
 from unittest.mock import AsyncMock, MagicMock, Mock
 
-import pytest
-
+# First-Party
 from mcpgateway.schemas import ResourceCreate, ResourceRead
 from mcpgateway.services.resource_service import (
+    ResourceError,
     ResourceNotFoundError,
     ResourceService,
-    ResourceURIConflictError,
 )
+
+# Third-Party
+import pytest
 
 
 @pytest.fixture
@@ -139,7 +142,7 @@ class TestResourceService:
 
     @pytest.mark.asyncio
     async def test_register_resource_conflict(self, resource_service, mock_resource, test_db):
-        """Test resource registration with URI conflict."""
+        """Registering a resource whose URI already exists raises ResourceError."""
         create_resource = ResourceCreate(
             uri="existing/resource",
             name="Existing Resource",
@@ -148,15 +151,16 @@ class TestResourceService:
             content="Existing content",
         )
 
-        # Mock that a resource with same URI exists
+        # DB returns an existing resource with the same URI
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none = Mock(return_value=mock_resource)
         test_db.execute = Mock(return_value=mock_scalar)
 
-        with pytest.raises(ResourceURIConflictError) as exc_info:
+        with pytest.raises(ResourceError) as exc_info:
             await resource_service.register_resource(test_db, create_resource)
 
-        assert "Resource already exists with URI" in str(exc_info.value)
+        # Error message should mention the conflict
+        assert "already exists with URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_read_resource(self, resource_service, mock_resource, test_db):

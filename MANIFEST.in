@@ -9,6 +9,9 @@ include pyproject.toml
 include gunicorn.config.py
 include Containerfile
 include Containerfile.lite
+include __init__
+include alembic.ini
+include tox.ini
 
 # 2️⃣  Top-level config, examples and helper scripts
 include *.py
@@ -32,12 +35,21 @@ include .pycodestyle
 include .pylintrc
 include .whitesource
 include .coveragerc
-#include .gitignore            # purely optional but many projects ship it
+# include .gitignore            # purely optional but many projects ship it
+include .bumpversion.cfg
+include .yamllint
+include .editorconfig
 
 # 4️⃣  Runtime data that lives *inside* the package at import time
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
 recursive-include mcpgateway *.pyi py.typed
+recursive-include mcpgateway *.ico
+recursive-include alembic *.mako
+recursive-include alembic *.md
+recursive-include alembic *.py
+recursive-include deployment *
+recursive-include mcp-servers *
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 graft docs
@@ -48,3 +60,6 @@ prune build
 prune dist
 prune .eggs
 prune *.egg-info
+prune charts
+prune k8s
+prune .devcontainer

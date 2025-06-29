@@ -1,0 +1,50 @@
+{{- /* -------------------------------------------------------------------
+     DEPLOYMENT — mcp-fast-time-server
+     • Uses helper so the name follows <release>-mcp-stack-* convention.
+     • Includes probes and resource limits already defined in values.yaml.
+     ------------------------------------------------------------------- */}}
+
+{{- if .Values.mcpFastTimeServer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # <release>-mcp-stack-mcp-fast-time-server
+  name: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+spec:
+  replicas: {{ .Values.mcpFastTimeServer.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+    spec:
+      containers:
+        - name: mcp-fast-time-server
+          image: "{{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}"
+          imagePullPolicy: {{ .Values.mcpFastTimeServer.image.pullPolicy }}
+
+          # ─── Service port exposed inside the pod ───
+          ports:
+            - containerPort: {{ .Values.mcpFastTimeServer.port }}
+
+          # ─── Readiness probe ───
+          {{- with .Values.mcpFastTimeServer.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Liveness probe ───
+          {{- with .Values.mcpFastTimeServer.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Resource limits & requests ───
+          resources:
+{{- toYaml .Values.mcpFastTimeServer.resources | nindent 12 }}
+{{- end }}

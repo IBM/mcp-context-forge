@@ -9,11 +9,13 @@ This module implements structured logging according to the MCP specification.
 It supports RFC 5424 severity levels, log level management, and log event subscriptions.
 """
 
+# Standard
 import asyncio
-import logging
 from datetime import datetime
+import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+# First-Party
 from mcpgateway.types import LogLevel
 
 

@@ -19,12 +19,22 @@ The schemas ensure proper validation according to the MCP specification while ad
 gateway-specific extensions for federation support.
 """
 
+# Standard
 import base64
+from datetime import datetime
 import json
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
 
+# First-Party
+from mcpgateway.types import ImageContent
+from mcpgateway.types import Prompt as MCPPrompt
+from mcpgateway.types import Resource as MCPResource
+from mcpgateway.types import ResourceContent, TextContent
+from mcpgateway.types import Tool as MCPTool
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
+
+# Third-Party
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
@@ -33,13 +43,6 @@ from pydantic import (
     root_validator,
     validator,
 )
-
-from mcpgateway.types import ImageContent
-from mcpgateway.types import Prompt as MCPPrompt
-from mcpgateway.types import Resource as MCPResource
-from mcpgateway.types import ResourceContent, TextContent
-from mcpgateway.types import Tool as MCPTool
-from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 logger = logging.getLogger(__name__)
 
@@ -271,24 +274,28 @@ class ToolCreate(BaseModelWithConfig):
       - Unique tool name
       - Valid endpoint URL
       - Valid JSON Schema for input validation
-      - Request type (HTTP method)
       - Integration type: 'MCP' for MCP-compliant tools or 'REST' for REST integrations
+      - Request type (For REST-GET,POST,PUT,DELETE and for MCP-SSE,STDIO,STREAMABLEHTTP)
       - Optional authentication credentials: BasicAuth or BearerTokenAuth or HeadersAuth.
     """
 
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    request_type: Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO"] = Field("SSE", description="HTTP method to be used for invoking the tool")
+    request_type: Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(
         default_factory=lambda: {"type": "object", "properties": {}},
         description="JSON Schema for validating tool parameters",
     )
+    annotations: Optional[Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Tool annotations for behavior hints (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint)",
+    )
     jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
-    gateway_id: Optional[int] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
     @root_validator(pre=True)
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -319,7 +326,7 @@ class ToolCreate(BaseModelWithConfig):
         auth_type = values.get("auth_type")
         if auth_type:
             if auth_type.lower() == "basic":
-                creds = base64.b64encode(f'{values.get("auth_username", "")}:{values.get("auth_password", "")}'.encode("utf-8")).decode()
+                creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
                 values["auth"] = {"auth_type": "basic", "auth_value": encoded_auth}
             elif auth_type.lower() == "bearer":
@@ -340,13 +347,14 @@ class ToolUpdate(BaseModelWithConfig):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO"]] = Field(None, description="HTTP method to be used for invoking the tool")
+    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     integration_type: Optional[Literal["MCP", "REST"]] = Field(None, description="Tool integration type")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
+    annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
     jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
-    gateway_id: Optional[int] = Field(None, description="id of gateway for the tool")
+    gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
     @root_validator(pre=True)
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -378,7 +386,7 @@ class ToolUpdate(BaseModelWithConfig):
         auth_type = values.get("auth_type")
         if auth_type:
             if auth_type.lower() == "basic":
-                creds = base64.b64encode(f'{values.get("auth_username", "")}:{values.get("auth_password", "")}'.encode("utf-8")).decode()
+                creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
                 values["auth"] = {"auth_type": "basic", "auth_value": encoded_auth}
             elif auth_type.lower() == "bearer":
@@ -403,22 +411,26 @@ class ToolRead(BaseModelWithConfig):
     - Request type and authentication settings.
     """
 
-    id: int
-    name: str
+    id: str
+    original_name: str
     url: Optional[str]
     description: Optional[str]
     request_type: str
     integration_type: str
     headers: Optional[Dict[str, str]]
     input_schema: Dict[str, Any]
+    annotations: Optional[Dict[str, Any]]
     jsonpath_filter: Optional[str]
     auth: Optional[AuthenticationValues]
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    gateway_id: Optional[int]
+    gateway_id: Optional[str]
     execution_count: int
     metrics: ToolMetrics
+    name: str
+    gateway_slug: str
+    original_name_slug: str
 
     class Config(BaseModelWithConfig.Config):
         """
@@ -641,6 +653,7 @@ class GatewayCreate(BaseModelWithConfig):
     name: str = Field(..., description="Unique name for the gateway")
     url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
     # Authorizations
     auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, or none")
@@ -752,6 +765,7 @@ class GatewayUpdate(BaseModelWithConfig):
     name: Optional[str] = Field(None, description="Unique name for the gateway")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
     name: Optional[str] = Field(None, description="Unique name for the prompt")
     # Authorizations
@@ -873,10 +887,11 @@ class GatewayRead(BaseModelWithConfig):
     - Authentication header value: for headers auth
     """
 
-    id: int = Field(None, description="Unique ID of the gateway")
+    id: str = Field(None, description="Unique ID of the gateway")
     name: str = Field(..., description="Unique name for the gateway")
     url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
+    transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Gateway capabilities")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")
@@ -893,6 +908,8 @@ class GatewayRead(BaseModelWithConfig):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
+
+    slug: str = Field(None, description="Slug for gateway endpoint URL")
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
@@ -1172,14 +1189,14 @@ class ServerRead(BaseModelWithConfig):
     - Metrics: Aggregated metrics for the server invocations.
     """
 
-    id: int
+    id: str
     name: str
     description: Optional[str]
     icon: Optional[str]
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    associated_tools: List[int] = []
+    associated_tools: List[str] = []
     associated_resources: List[int] = []
     associated_prompts: List[int] = []
     metrics: ServerMetrics

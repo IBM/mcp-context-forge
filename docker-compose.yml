@@ -24,7 +24,8 @@ services:
   # MCP Gateway - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
-    image: ghcr.io/ibm/mcp-context-forge:latest
+    #image: ghcr.io/ibm/mcp-context-forge:0.2.0 # Use the release MCP Context Forge image
+    image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
     build:
       context: .
       dockerfile: Containerfile     # Same one the Makefile builds
@@ -45,18 +46,20 @@ services:
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET_KEY=changeme
+      - JWT_SECRET_KEY=my-test-key
       - BASIC_AUTH_USER=admin
       - BASIC_AUTH_PASSWORD=changeme
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
 
-    depends_on:          # Default stack: Postgres + Redis
+    depends_on:          # Default stack: Postgres + Redis + Alembic migration
       postgres:
         condition: service_healthy   # ▶ wait for DB
       redis:
         condition: service_started
+      migration:
+        condition: service_completed_successfully
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4444/health"]
@@ -117,6 +120,18 @@ services:
   #     - MONGO_INITDB_DATABASE=mcp
   #   volumes: [mongodata:/data/db]
   #   networks: [mcpnet]
+
+  migration:
+    build:
+      context: .
+      dockerfile: Containerfile
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+    command: alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [mcpnet]
 
 ###############################################################################
 #  CACHE

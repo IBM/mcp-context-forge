@@ -15,26 +15,36 @@ Updated to record server associations independently using many-to-many relations
 and to record tool execution metrics.
 """
 
-import re
+# Standard
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict, List, Optional
+import uuid
 
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.types import ResourceContent
+from mcpgateway.utils.create_slug import slugify
+
+# Third-Party
 import jsonschema
 from sqlalchemy import (
-    JSON,
     Boolean,
     Column,
+    create_engine,
     DateTime,
+    event,
     Float,
     ForeignKey,
+    func,
     Integer,
+    JSON,
+    make_url,
+    select,
     String,
     Table,
     Text,
-    create_engine,
-    func,
-    make_url,
-    select,
+    UniqueConstraint,
 )
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
@@ -46,9 +56,7 @@ from sqlalchemy.orm import (
     relationship,
     sessionmaker,
 )
-
-from mcpgateway.config import settings
-from mcpgateway.types import ResourceContent
+from sqlalchemy.orm.attributes import get_history
 
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", …)
@@ -109,8 +117,8 @@ class Base(DeclarativeBase):
 # tool_gateway_table = Table(
 #     "tool_gateway_association",
 #     Base.metadata,
-#     Column("tool_id", Integer, ForeignKey("tools.id"), primary_key=True),
-#     Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
+#     Column("tool_id", String, ForeignKey("tools.id"), primary_key=True),
+#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
 # )
 
 # # Association table for resources and gateways (federation)
@@ -118,7 +126,7 @@ class Base(DeclarativeBase):
 #     "resource_gateway_association",
 #     Base.metadata,
 #     Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
-#     Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
+#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
 # )
 
 # # Association table for prompts and gateways (federation)
@@ -126,22 +134,22 @@ class Base(DeclarativeBase):
 #     "prompt_gateway_association",
 #     Base.metadata,
 #     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
-#     Column("gateway_id", Integer, ForeignKey("gateways.id"), primary_key=True),
+#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
 # )
 
 # Association table for servers and tools
 server_tool_association = Table(
     "server_tool_association",
     Base.metadata,
-    Column("server_id", Integer, ForeignKey("servers.id"), primary_key=True),
-    Column("tool_id", Integer, ForeignKey("tools.id"), primary_key=True),
+    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
+    Column("tool_id", String, ForeignKey("tools.id"), primary_key=True),
 )
 
 # Association table for servers and resources
 server_resource_association = Table(
     "server_resource_association",
     Base.metadata,
-    Column("server_id", Integer, ForeignKey("servers.id"), primary_key=True),
+    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
     Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
 )
 
@@ -149,7 +157,7 @@ server_resource_association = Table(
 server_prompt_association = Table(
     "server_prompt_association",
     Base.metadata,
-    Column("server_id", Integer, ForeignKey("servers.id"), primary_key=True),
+    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
 )
 
@@ -172,7 +180,7 @@ class ToolMetric(Base):
     __tablename__ = "tool_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tool_id: Mapped[int] = mapped_column(Integer, ForeignKey("tools.id"), nullable=False)
+    tool_id: Mapped[str] = mapped_column(String, ForeignKey("tools.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -214,7 +222,7 @@ class ServerMetric(Base):
 
     Attributes:
         id (int): Primary key.
-        server_id (int): Foreign key linking to the server.
+        server_id (str): Foreign key linking to the server.
         timestamp (datetime): The time when the invocation occurred.
         response_time (float): The response time in seconds.
         is_success (bool): True if the invocation succeeded, False otherwise.
@@ -224,7 +232,7 @@ class ServerMetric(Base):
     __tablename__ = "server_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    server_id: Mapped[int] = mapped_column(Integer, ForeignKey("servers.id"), nullable=False)
+    server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -294,14 +302,16 @@ class Tool(Base):
 
     __tablename__ = "tools"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    original_name: Mapped[str] = mapped_column(String, nullable=False)
+    original_name_slug: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=True)
     description: Mapped[Optional[str]]
     integration_type: Mapped[str] = mapped_column(default="MCP")
     request_type: Mapped[str] = mapped_column(default="SSE")
     headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active: Mapped[bool] = mapped_column(default=True)
@@ -312,8 +322,9 @@ class Tool(Base):
     auth_value: Mapped[Optional[str]] = mapped_column(default=None)
 
     # Federation relationship with a local gateway
-    gateway_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gateways.id"))
-    gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="tools")
+    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
+    # gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
+    gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_id == Gateway.id", foreign_keys=[gateway_id], back_populates="tools")
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
 
     # Many-to-many relationship with Servers
@@ -321,6 +332,73 @@ class Tool(Base):
 
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
+
+    # @property
+    # def gateway_slug(self) -> str:
+    #     return self.gateway.slug
+
+    _computed_name = Column("name", String, unique=True)  # Stored column
+
+    @hybrid_property
+    def name(self):
+        """Return the display/lookup name.
+
+        Returns:
+            str: Name to display
+        """
+        if self._computed_name:  # pylint: disable=no-member
+            return self._computed_name  # orm column, resolved at runtime
+
+        original_slug = slugify(self.original_name)  # pylint: disable=no-member
+
+        # Gateway present → prepend its slug and the configured separator
+        if self.gateway_id:  # pylint: disable=no-member
+            gateway_slug = slugify(self.gateway.name)  # pylint: disable=no-member
+            return f"{gateway_slug}{settings.gateway_tool_name_separator}{original_slug}"
+
+        # No gateway → only the original name slug
+        return original_slug
+
+    @name.setter
+    def name(self, value):
+        """Store an explicit value that overrides the calculated one.
+
+        Args:
+            value (str): Value to set to _computed_name
+        """
+        self._computed_name = value
+
+    @name.expression
+    def name(cls):  # pylint: disable=no-self-argument
+        """
+        SQL expression used when the hybrid appears in a filter/order_by.
+        Simply forwards to the ``_computed_name`` column; the Python-side
+        reconstruction above is not needed on the SQL side.
+
+        Returns:
+            str: computed name for SQL use
+        """
+        return cls._computed_name
+
+    __table_args__ = (UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"),)
+
+    @hybrid_property
+    def gateway_slug(self):
+        """Always returns the current slug from the related Gateway
+
+        Returns:
+            str: slug for Python use
+        """
+        return self.gateway.slug if self.gateway else None
+
+    @gateway_slug.expression
+    def gateway_slug(cls):  # pylint: disable=no-self-argument
+        """For database queries - auto-joins to get current slug
+
+        Returns:
+            str: slug for SQL use
+        """
+        return select(Gateway.slug).where(Gateway.id == cls.gateway_id).scalar_subquery()
 
     @hybrid_property
     def execution_count(self) -> int:
@@ -491,7 +569,7 @@ class Resource(Base):
     # Subscription tracking
     subscriptions: Mapped[List["ResourceSubscription"]] = relationship("ResourceSubscription", back_populates="resource", cascade="all, delete-orphan")
 
-    gateway_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gateways.id"))
+    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="resources")
     # federated_with = relationship("Gateway", secondary=resource_gateway_table, back_populates="federated_resources")
 
@@ -672,7 +750,7 @@ class Prompt(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
 
-    gateway_id: Mapped[Optional[int]] = mapped_column(ForeignKey("gateways.id"))
+    gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="prompts")
     # federated_with = relationship("Gateway", secondary=prompt_gateway_table, back_populates="federated_prompts")
 
@@ -812,7 +890,7 @@ class Server(Base):
 
     __tablename__ = "servers"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     name: Mapped[str] = mapped_column(unique=True)
     description: Mapped[Optional[str]]
     icon: Mapped[Optional[str]]
@@ -929,10 +1007,12 @@ class Gateway(Base):
 
     __tablename__ = "gateways"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True)
-    url: Mapped[str]
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    slug: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    url: Mapped[str] = mapped_column(String, unique=True)
     description: Mapped[Optional[str]]
+    transport: Mapped[str] = mapped_column(default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -940,7 +1020,7 @@ class Gateway(Base):
     last_seen: Mapped[Optional[datetime]]
 
     # Relationship with local tools this gateway provides
-    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", cascade="all, delete-orphan")
+    tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan")
 
     # Relationship with local prompts this gateway provides
     prompts: Mapped[List["Prompt"]] = relationship(back_populates="gateway", cascade="all, delete-orphan")
@@ -960,6 +1040,44 @@ class Gateway(Base):
     # Authorizations
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", "headers" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+
+
+@event.listens_for(Gateway, "after_update")
+def update_tool_names_on_gateway_update(_mapper, connection, target):
+    """
+    If a Gateway's name is updated, efficiently update all of its
+    child Tools' names with a single SQL statement.
+
+    Args:
+        _mapper: Mapper
+        connection: Connection
+        target: Target
+    """
+    # 1. Check if the 'name' field was actually part of the update.
+    #    This is a concise way to see if the value has changed.
+    if not get_history(target, "name").has_changes():
+        return
+
+    print(f"Gateway name changed for ID {target.id}. Issuing bulk update for tools.")
+
+    # 2. Get a reference to the underlying database table for Tools
+    tools_table = Tool.__table__
+
+    # 3. Prepare the new values
+    new_gateway_slug = slugify(target.name)
+    separator = settings.gateway_tool_name_separator
+
+    # 4. Construct a single, powerful UPDATE statement using SQLAlchemy Core.
+    #    This is highly efficient as it all happens in the database.
+    stmt = (
+        tools_table.update()
+        .where(tools_table.c.gateway_id == target.id)
+        .values(name=new_gateway_slug + separator + tools_table.c.original_name_slug)
+        .execution_options(synchronize_session=False)  # Important for bulk updates
+    )
+
+    # 5. Execute the statement using the connection from the ongoing transaction.
+    connection.execute(stmt)
 
 
 class SessionRecord(Base):

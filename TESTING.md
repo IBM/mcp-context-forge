@@ -41,13 +41,13 @@ You can run specific tests by specifying the file or directory:
 source ~/.venv/mcpgateway/bin/activate
 
 # Run a specific test file
-python -m pytest tests/unit/mcpgateway/test_config.py -v
+python3 -m pytest tests/unit/mcpgateway/test_config.py -v
 
 # Run a specific test class
-python -m pytest tests/unit/mcpgateway/validation/test_jsonrpc.py::TestJSONRPCValidation -v
+python3 -m pytest tests/unit/mcpgateway/validation/test_jsonrpc.py::TestJSONRPCValidation -v
 
 # Run a specific test method
-python -m pytest tests/unit/mcpgateway/validation/test_jsonrpc.py::TestJSONRPCValidation::test_validate_valid_request -v
+python3 -m pytest tests/unit/mcpgateway/validation/test_jsonrpc.py::TestJSONRPCValidation::test_validate_valid_request -v
 ```
 
 ### Testing README Examples
@@ -67,10 +67,10 @@ To run tests with coverage reporting:
 source ~/.venv/mcpgateway/bin/activate
 
 # Run tests with coverage
-python -m pytest --cov=mcpgateway tests/
+python3 -m pytest --cov=mcpgateway tests/
 
 # Generate a coverage report
-python -m pytest --cov=mcpgateway --cov-report=html tests/
+python3 -m pytest --cov=mcpgateway --cov-report=html tests/
 ```
 
 The HTML coverage report will be available in the `htmlcov` directory.
