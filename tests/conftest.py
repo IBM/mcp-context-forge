@@ -13,7 +13,6 @@ import os
 from unittest.mock import AsyncMock, patch
 
 # First-Party
-from mcpgateway import translate
 from mcpgateway.config import Settings
 from mcpgateway.db import Base
 
