@@ -71,7 +71,7 @@ class SamplingHandler:
             # Extract request parameters
             messages = request.get("messages", [])
             max_tokens = request.get("maxTokens")
-            model_prefs = ModelPreferences.parse_obj(request.get("modelPreferences", {}))
+            model_prefs = ModelPreferences.model_validate(request.get("modelPreferences", {}))
             include_context = request.get("includeContext", "none")
             request.get("metadata", {})
 

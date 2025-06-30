@@ -95,7 +95,6 @@ class SessionBackend:
 
             self._redis = Redis.from_url(redis_url)
             self._pubsub = self._redis.pubsub()
-            self._pubsub.subscribe("mcp_session_events")
 
         elif self._backend == "database":
             if not SQLALCHEMY_AVAILABLE:
@@ -152,6 +151,9 @@ class SessionRegistry(SessionBackend):
             self._cleanup_task = asyncio.create_task(self._db_cleanup_task())
             logger.info("Database cleanup task started")
 
+        elif self._backend == "redis":
+            await self._pubsub.subscribe("mcp_session_events")
+
         elif self._backend == "none":
             # Nothing to initialize for none backend
             pass
@@ -179,8 +181,8 @@ class SessionRegistry(SessionBackend):
         # Close Redis connections
         if self._backend == "redis":
             try:
-                self._pubsub.close()
-                self._redis.close()
+                await self._pubsub.aclose()
+                await self._redis.aclose()
             except Exception as e:
                 logger.error(f"Error closing Redis connection: {e}")
 

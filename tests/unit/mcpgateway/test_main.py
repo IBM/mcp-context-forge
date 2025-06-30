@@ -850,7 +850,9 @@ class TestRPCEndpoints:
 
     def test_rpc_invalid_json(self, test_client, auth_headers):
         """Test RPC error handling for malformed JSON."""
-        response = test_client.post("/rpc/", data="invalid json", headers=auth_headers)
+        headers = auth_headers
+        headers["content-type"] = "application/json"
+        response = test_client.post("/rpc/", content="invalid json", headers=headers)
         assert response.status_code == 200  # Returns error response, not HTTP error
         body = response.json()
         assert "error" in body
@@ -1011,7 +1013,9 @@ class TestErrorHandling:
 
     def test_invalid_json_body(self, test_client, auth_headers):
         """Test handling of malformed JSON in request bodies."""
-        response = test_client.post("/protocol/initialize", data="invalid json", headers=auth_headers)
+        headers = auth_headers
+        headers["content-type"] = "application/json"
+        response = test_client.post("/protocol/initialize", content="invalid json", headers=headers)
         assert response.status_code == 400  # body cannot be parsed, so 400
 
     @patch("mcpgateway.main.server_service.get_server")

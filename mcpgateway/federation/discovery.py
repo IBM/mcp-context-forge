@@ -363,7 +363,7 @@ class DiscoveryService(LocalDiscoveryService):
         if result.get("protocol_version") != PROTOCOL_VERSION:
             raise ValueError(f"Unsupported protocol version: {result.get('protocol_version')}")
 
-        return ServerCapabilities.parse_obj(result["capabilities"])
+        return ServerCapabilities.model_validate(result["capabilities"])
 
     async def _exchange_peers(self) -> None:
         """Exchange peer lists with known gateways."""
