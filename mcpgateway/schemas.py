@@ -443,13 +443,6 @@ class ToolRead(BaseModelWithConfigDict):
     gateway_slug: str
     original_name_slug: str
 
-    # class Config(BaseModelWithConfigDict.Config):
-    #     """
-    #     A configuration class that inherits from BaseModelWithConfigDict.Config.
-    #     This class may be used to define specific configurations, extending
-    #     the base functionality of BaseModelWithConfigDict.
-    #     """
-
 
 class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
@@ -576,20 +569,6 @@ class PromptArgument(BaseModelWithConfigDict):
         **BaseModelWithConfigDict.model_config,   # carry over the base settings
         schema_extra = {"example": {"name": "language", "description": "Programming language", "required": True}}
     )
-
-    # class Config(BaseModelWithConfigDict.Config):
-    #     """
-    #     A configuration class that inherits from BaseModelWithConfigDict.Config.
-
-    #     This class defines an example schema for configuration, which includes:
-    #     - 'name': A string representing the name of the configuration (e.g., "language").
-    #     - 'description': A brief description of the configuration (e.g., "Programming language").
-    #     - 'required': A boolean indicating if the configuration is mandatory (e.g., True).
-
-    #     The `schema_extra` attribute provides an example of how the configuration should be structured.
-    #     """
-
-    #     schema_extra = {"example": {"name": "language", "description": "Programming language", "required": True}}
 
 
 class PromptCreate(BaseModelWithConfigDict):
