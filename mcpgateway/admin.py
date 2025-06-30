@@ -101,7 +101,7 @@ async def admin_list_servers(
     """
     logger.debug(f"User {user} requested server list")
     servers = await server_service.list_servers(db, include_inactive=include_inactive)
-    return [server.dict(by_alias=True) for server in servers]
+    return [server.model_dump(by_alias=True) for server in servers]
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
@@ -316,7 +316,7 @@ async def admin_list_resources(
     """
     logger.debug(f"User {user} requested resource list")
     resources = await resource_service.list_resources(db, include_inactive=include_inactive)
-    return [resource.dict(by_alias=True) for resource in resources]
+    return [resource.model_dump(by_alias=True) for resource in resources]
 
 
 @admin_router.get("/prompts", response_model=List[PromptRead])
@@ -342,7 +342,7 @@ async def admin_list_prompts(
     """
     logger.debug(f"User {user} requested prompt list")
     prompts = await prompt_service.list_prompts(db, include_inactive=include_inactive)
-    return [prompt.dict(by_alias=True) for prompt in prompts]
+    return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
 
 @admin_router.get("/gateways", response_model=List[GatewayRead])
@@ -368,7 +368,7 @@ async def admin_list_gateways(
     """
     logger.debug(f"User {user} requested gateway list")
     gateways = await gateway_service.list_gateways(db, include_inactive=include_inactive)
-    return [gateway.dict(by_alias=True) for gateway in gateways]
+    return [gateway.model_dump(by_alias=True) for gateway in gateways]
 
 
 @admin_router.post("/gateways/{gateway_id}/toggle")
@@ -486,7 +486,7 @@ async def admin_list_tools(
     """
     logger.debug(f"User {user} requested tool list")
     tools = await tool_service.list_tools(db, include_inactive=include_inactive)
-    return [tool.dict(by_alias=True) for tool in tools]
+    return [tool.model_dump(by_alias=True) for tool in tools]
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
@@ -570,7 +570,7 @@ async def admin_add_tool(
     logger.debug(f"Tool data built: {tool_data}")
     try:
         tool = ToolCreate(**tool_data)
-        logger.debug(f"Validated tool data: {tool.dict()}")
+        logger.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
         await tool_service.register_tool(db, tool)
         return JSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
@@ -733,7 +733,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
     """
     logger.debug(f"User {user} requested details for gateway ID {gateway_id}")
     gateway = await gateway_service.get_gateway(db, gateway_id)
-    return gateway.dict(by_alias=True)
+    return gateway.model_dump(by_alias=True)
 
 
 @admin_router.post("/gateways")
@@ -868,7 +868,7 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user: str 
     logger.debug(f"User {user} requested details for resource URI {uri}")
     resource = await resource_service.get_resource_by_uri(db, uri)
     content = await resource_service.read_resource(db, uri)
-    return {"resource": resource.dict(by_alias=True), "content": content}
+    return {"resource": resource.model_dump(by_alias=True), "content": content}
 
 
 @admin_router.post("/resources")
@@ -1023,7 +1023,7 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user: str =
     prompt_details = await prompt_service.get_prompt_details(db, name)
 
     prompt = PromptRead.model_validate(prompt_details)
-    return prompt.dict(by_alias=True)
+    return prompt.model_dump(by_alias=True)
 
 
 @admin_router.post("/prompts")

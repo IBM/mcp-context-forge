@@ -136,9 +136,9 @@ class TestAdminServerRoutes:
         """Test listing servers through admin UI."""
         # Setup
         mock_server1 = MagicMock()
-        mock_server1.dict.return_value = {"id": 1, "name": "Server 1"}
+        mock_server1.model_dump.return_value = {"id": 1, "name": "Server 1"}
         mock_server2 = MagicMock()
-        mock_server2.dict.return_value = {"id": 2, "name": "Server 2"}
+        mock_server2.model_dump.return_value = {"id": 2, "name": "Server 2"}
         mock_list_servers.return_value = [mock_server1, mock_server2]
 
         # Execute
@@ -235,9 +235,9 @@ class TestAdminToolRoutes:
         """Test listing tools through admin UI."""
         # Setup
         mock_tool1 = MagicMock()
-        mock_tool1.dict.return_value = {"id": 1, "name": "Tool 1"}
+        mock_tool1.model_dump.return_value = {"id": 1, "name": "Tool 1"}
         mock_tool2 = MagicMock()
-        mock_tool2.dict.return_value = {"id": 2, "name": "Tool 2"}
+        mock_tool2.model_dump.return_value = {"id": 2, "name": "Tool 2"}
         mock_list_tools.return_value = [mock_tool1, mock_tool2]
 
         # Execute
@@ -347,9 +347,9 @@ class TestAdminResourceRoutes:
         """Test listing resources through admin UI."""
         # Setup
         mock_resource1 = MagicMock()
-        mock_resource1.dict.return_value = {"id": 1, "name": "Resource 1"}
+        mock_resource1.model_dump.return_value = {"id": 1, "name": "Resource 1"}
         mock_resource2 = MagicMock()
-        mock_resource2.dict.return_value = {"id": 2, "name": "Resource 2"}
+        mock_resource2.model_dump.return_value = {"id": 2, "name": "Resource 2"}
         mock_list_resources.return_value = [mock_resource1, mock_resource2]
 
         # Execute
@@ -367,7 +367,7 @@ class TestAdminResourceRoutes:
         """Test getting a single resource through admin UI."""
         # Setup
         mock_resource = MagicMock()
-        mock_resource.dict.return_value = {"id": 1, "name": "Resource 1"}
+        mock_resource.model_dump.return_value = {"id": 1, "name": "Resource 1"}
         mock_get_resource.return_value = mock_resource
         mock_read_resource.return_value = {"type": "resource", "text": "content"}
 
@@ -435,9 +435,9 @@ class TestAdminPromptRoutes:
         """Test listing prompts through admin UI."""
         # Setup
         mock_prompt1 = MagicMock()
-        mock_prompt1.dict.return_value = {"id": 1, "name": "Prompt 1"}
+        mock_prompt1.model_dump.return_value = {"id": 1, "name": "Prompt 1"}
         mock_prompt2 = MagicMock()
-        mock_prompt2.dict.return_value = {"id": 2, "name": "Prompt 2"}
+        mock_prompt2.model_dump.return_value = {"id": 2, "name": "Prompt 2"}
         mock_list_prompts.return_value = [mock_prompt1, mock_prompt2]
 
         # Execute
@@ -537,9 +537,9 @@ class TestAdminGatewayRoutes:
         """Test listing gateways through admin UI."""
         # Setup
         mock_gateway1 = MagicMock()
-        mock_gateway1.dict.return_value = {"id": 1, "name": "Gateway 1"}
+        mock_gateway1.model_dump.return_value = {"id": 1, "name": "Gateway 1"}
         mock_gateway2 = MagicMock()
-        mock_gateway2.dict.return_value = {"id": 2, "name": "Gateway 2"}
+        mock_gateway2.model_dump.return_value = {"id": 2, "name": "Gateway 2"}
         mock_list_gateways.return_value = [mock_gateway1, mock_gateway2]
 
         # Execute
@@ -556,7 +556,7 @@ class TestAdminGatewayRoutes:
         """Test getting a single gateway through admin UI."""
         # Setup
         mock_gateway = MagicMock()
-        mock_gateway.dict.return_value = {"id": 1, "name": "Gateway 1"}
+        mock_gateway.model_dump.return_value = {"id": 1, "name": "Gateway 1"}
         mock_get_gateway.return_value = mock_gateway
 
         # Execute
