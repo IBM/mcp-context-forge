@@ -22,7 +22,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
 # Third-Party
-from pydantic import AnyHttpUrl, AnyUrl, BaseModel, Field
+from pydantic import AnyHttpUrl, AnyUrl, BaseModel, Field, ConfigDict
 
 
 class Role(str, Enum):
@@ -258,16 +258,21 @@ class InitializeRequest(BaseModel):
     capabilities: ClientCapabilities
     client_info: Implementation = Field(..., alias="clientInfo")
 
-    class Config:
-        """Configuration for InitializeRequest.
+    model_config = ConfigDict(
+        populate_by_name=True,
+        allow_population_by_field_name=True,
+    )
 
-        Attributes:
-            populate_by_name (bool): Enables population by field name.
-            allow_population_by_field_name (bool): Allows backward compatibility with older Pydantic versions.
-        """
+    # class Config:
+    #     """Configuration for InitializeRequest.
 
-        populate_by_name = True
-        allow_population_by_field_name = True  # Use this for backward compatibility with older Pydantic versions
+    #     Attributes:
+    #         populate_by_name (bool): Enables population by field name.
+    #         allow_population_by_field_name (bool): Allows backward compatibility with older Pydantic versions.
+    #     """
+
+    #     populate_by_name = True
+    #     allow_population_by_field_name = True  # Use this for backward compatibility with older Pydantic versions
 
 
 class InitializeResult(BaseModel):
@@ -285,15 +290,20 @@ class InitializeResult(BaseModel):
     server_info: Implementation = Field(..., alias="serverInfo")
     instructions: Optional[str] = Field(None, alias="instructions")
 
-    class Config:
-        """
-        Configuration class for Pydantic models.
+    model_config = ConfigDict(
+        populate_by_name=True,
+        allow_population_by_field_name=True,
+    )
 
-        Enables population of model fields by name and by field name.
-        """
+    # class Config:
+    #     """
+    #     Configuration class for Pydantic models.
 
-        populate_by_name = True
-        allow_population_by_field_name = True
+    #     Enables population of model fields by name and by field name.
+    #     """
+
+    #     populate_by_name = True
+    #     allow_population_by_field_name = True
 
 
 # Message types
@@ -474,11 +484,16 @@ class ListResourceTemplatesResult(BaseModel):
     next_cursor: Optional[str] = Field(None, description="An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.")
     resource_templates: List[ResourceTemplate] = Field(default_factory=list, description="List of resource templates available on the server")
 
-    class Config:
-        """Configuration for model serialization."""
+    model_config = ConfigDict(
+        populate_by_name=True,
+        allow_population_by_field_name=True,
+    )
 
-        populate_by_name = True
-        allow_population_by_field_name = True
+    # class Config:
+    #     """Configuration for model serialization."""
+
+    #     populate_by_name = True
+    #     allow_population_by_field_name = True
 
 
 # Root types

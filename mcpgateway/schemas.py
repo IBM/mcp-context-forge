@@ -42,6 +42,7 @@ from pydantic import (
     model_validator,
     root_validator,
     validator,
+    ConfigDict
 )
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ def encode_datetime(v: datetime) -> str:
 
 
 # --- Base Model ---
-class BaseModelWithConfig(BaseModel):
+class BaseModelWithConfigDict(BaseModel):
     """Base model with common configuration.
 
     Provides:
@@ -91,29 +92,39 @@ class BaseModelWithConfig(BaseModel):
     - Automatic conversion from snake_case to camelCase for output
     """
 
-    class Config:
-        """
-        A configuration class that provides default behaviors for how to handle serialization,
-        alias generation, enum values, and extra fields when working with models.
+    model_config = ConfigDict(
+        from_attributes=True,
+        alias_generator=to_camel_case,
+        populate_by_name=True,
+        json_encoders={datetime: encode_datetime},
+        use_enum_values=True,
+        extra="ignore",
+        json_schema_extra={"nullable": True},
+    )
 
-        Attributes:
-            from_attributes (bool): Flag to indicate if attributes should be taken from model fields.
-            alias_generator (callable): Function used to generate aliases for field names (e.g., converting to camelCase).
-            populate_by_name (bool): Flag to specify whether to populate fields by name during initialization.
-            json_encoders (dict): Custom JSON encoders for specific types, such as datetime encoding.
-            use_enum_values (bool): Flag to determine if enum values should be serialized or the enum type itself.
-            extra (str): Defines behavior for extra fields in models. The "ignore" option means extra fields are ignored.
-            json_schema_extra (dict): Additional schema information, e.g., specifying that fields can be nullable.
+    # class Config:
+    #     """
+    #     A configuration class that provides default behaviors for how to handle serialization,
+    #     alias generation, enum values, and extra fields when working with models.
 
-        """
+    #     Attributes:
+    #         from_attributes (bool): Flag to indicate if attributes should be taken from model fields.
+    #         alias_generator (callable): Function used to generate aliases for field names (e.g., converting to camelCase).
+    #         populate_by_name (bool): Flag to specify whether to populate fields by name during initialization.
+    #         json_encoders (dict): Custom JSON encoders for specific types, such as datetime encoding.
+    #         use_enum_values (bool): Flag to determine if enum values should be serialized or the enum type itself.
+    #         extra (str): Defines behavior for extra fields in models. The "ignore" option means extra fields are ignored.
+    #         json_schema_extra (dict): Additional schema information, e.g., specifying that fields can be nullable.
 
-        from_attributes = True
-        alias_generator = to_camel_case
-        populate_by_name = True
-        json_encoders = {datetime: encode_datetime}
-        use_enum_values = True
-        extra = "ignore"
-        json_schema_extra = {"nullable": True}
+    #     """
+
+    #     from_attributes = True
+    #     alias_generator = to_camel_case
+    #     populate_by_name = True
+    #     json_encoders = {datetime: encode_datetime}
+    #     use_enum_values = True
+    #     extra = "ignore"
+    #     json_schema_extra = {"nullable": True}
 
     def to_dict(self, use_alias: bool = False) -> Dict[str, Any]:
         """
@@ -136,7 +147,7 @@ class BaseModelWithConfig(BaseModel):
 # --- Metrics Schemas ---
 
 
-class ToolMetrics(BaseModelWithConfig):
+class ToolMetrics(BaseModelWithConfigDict):
     """
     Represents the performance and execution statistics for a tool.
 
@@ -161,7 +172,7 @@ class ToolMetrics(BaseModelWithConfig):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent invocation")
 
 
-class ResourceMetrics(BaseModelWithConfig):
+class ResourceMetrics(BaseModelWithConfigDict):
     """
     Represents the performance and execution statistics for a resource.
 
@@ -186,7 +197,7 @@ class ResourceMetrics(BaseModelWithConfig):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent invocation")
 
 
-class ServerMetrics(BaseModelWithConfig):
+class ServerMetrics(BaseModelWithConfigDict):
     """
     Represents the performance and execution statistics for a server.
 
@@ -211,7 +222,7 @@ class ServerMetrics(BaseModelWithConfig):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent invocation")
 
 
-class PromptMetrics(BaseModelWithConfig):
+class PromptMetrics(BaseModelWithConfigDict):
     """
     Represents the performance and execution statistics for a prompt.
 
@@ -239,7 +250,7 @@ class PromptMetrics(BaseModelWithConfig):
 # --- JSON Path API modifier Schema
 
 
-class JsonPathModifier(BaseModelWithConfig):
+class JsonPathModifier(BaseModelWithConfigDict):
     """Schema for JSONPath queries.
 
     Provides the structure for parsing JSONPath queries and optional mapping.
@@ -251,7 +262,7 @@ class JsonPathModifier(BaseModelWithConfig):
 
 # --- Tool Schemas ---
 # Authentication model
-class AuthenticationValues(BaseModelWithConfig):
+class AuthenticationValues(BaseModelWithConfigDict):
     """Schema for all Authentications.
     Provides the authentication values for different types of authentication.
     """
@@ -267,7 +278,7 @@ class AuthenticationValues(BaseModelWithConfig):
     auth_header_value: str = Field("", description="Value for custom headers authentication")
 
 
-class ToolCreate(BaseModelWithConfig):
+class ToolCreate(BaseModelWithConfigDict):
     """Schema for creating a new tool.
 
     Supports both MCP-compliant tools and REST integrations. Validates:
@@ -338,7 +349,7 @@ class ToolCreate(BaseModelWithConfig):
         return values
 
 
-class ToolUpdate(BaseModelWithConfig):
+class ToolUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing tool.
 
     Similar to ToolCreate but all fields are optional to allow partial updates.
@@ -398,7 +409,7 @@ class ToolUpdate(BaseModelWithConfig):
         return values
 
 
-class ToolRead(BaseModelWithConfig):
+class ToolRead(BaseModelWithConfigDict):
     """Schema for reading tool information.
 
     Includes all tool fields plus:
@@ -432,15 +443,15 @@ class ToolRead(BaseModelWithConfig):
     gateway_slug: str
     original_name_slug: str
 
-    class Config(BaseModelWithConfig.Config):
-        """
-        A configuration class that inherits from BaseModelWithConfig.Config.
-        This class may be used to define specific configurations, extending
-        the base functionality of BaseModelWithConfig.
-        """
+    # class Config(BaseModelWithConfigDict.Config):
+    #     """
+    #     A configuration class that inherits from BaseModelWithConfigDict.Config.
+    #     This class may be used to define specific configurations, extending
+    #     the base functionality of BaseModelWithConfigDict.
+    #     """
 
 
-class ToolInvocation(BaseModelWithConfig):
+class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
 
     Captures:
@@ -452,7 +463,7 @@ class ToolInvocation(BaseModelWithConfig):
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments matching tool's input schema")
 
 
-class ToolResult(BaseModelWithConfig):
+class ToolResult(BaseModelWithConfigDict):
     """Schema for tool invocation results.
 
     Supports:
@@ -466,7 +477,7 @@ class ToolResult(BaseModelWithConfig):
     error_message: Optional[str] = None
 
 
-class ResourceCreate(BaseModelWithConfig):
+class ResourceCreate(BaseModelWithConfigDict):
     """Schema for creating a new resource.
 
     Supports:
@@ -483,7 +494,7 @@ class ResourceCreate(BaseModelWithConfig):
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
 
 
-class ResourceUpdate(BaseModelWithConfig):
+class ResourceUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing resource.
 
     Similar to ResourceCreate but URI is not required and all fields are optional.
@@ -496,7 +507,7 @@ class ResourceUpdate(BaseModelWithConfig):
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
 
 
-class ResourceRead(BaseModelWithConfig):
+class ResourceRead(BaseModelWithConfigDict):
     """Schema for reading resource information.
 
     Includes all resource fields plus:
@@ -519,7 +530,7 @@ class ResourceRead(BaseModelWithConfig):
     metrics: ResourceMetrics
 
 
-class ResourceSubscription(BaseModelWithConfig):
+class ResourceSubscription(BaseModelWithConfigDict):
     """Schema for resource subscriptions.
 
     Tracks:
@@ -531,7 +542,7 @@ class ResourceSubscription(BaseModelWithConfig):
     subscriber_id: str = Field(..., description="Unique subscriber identifier")
 
 
-class ResourceNotification(BaseModelWithConfig):
+class ResourceNotification(BaseModelWithConfigDict):
     """Schema for resource update notifications.
 
     Contains:
@@ -548,7 +559,7 @@ class ResourceNotification(BaseModelWithConfig):
 # --- Prompt Schemas ---
 
 
-class PromptArgument(BaseModelWithConfig):
+class PromptArgument(BaseModelWithConfigDict):
     """Schema for prompt template arguments.
 
     Defines:
@@ -561,22 +572,27 @@ class PromptArgument(BaseModelWithConfig):
     description: Optional[str] = Field(None, description="Argument description")
     required: bool = Field(default=False, description="Whether argument is required")
 
-    class Config(BaseModelWithConfig.Config):
-        """
-        A configuration class that inherits from BaseModelWithConfig.Config.
-
-        This class defines an example schema for configuration, which includes:
-        - 'name': A string representing the name of the configuration (e.g., "language").
-        - 'description': A brief description of the configuration (e.g., "Programming language").
-        - 'required': A boolean indicating if the configuration is mandatory (e.g., True).
-
-        The `schema_extra` attribute provides an example of how the configuration should be structured.
-        """
-
+    model_config: ConfigDict = ConfigDict(
+        **BaseModelWithConfigDict.model_config,   # carry over the base settings
         schema_extra = {"example": {"name": "language", "description": "Programming language", "required": True}}
+    )
+
+    # class Config(BaseModelWithConfigDict.Config):
+    #     """
+    #     A configuration class that inherits from BaseModelWithConfigDict.Config.
+
+    #     This class defines an example schema for configuration, which includes:
+    #     - 'name': A string representing the name of the configuration (e.g., "language").
+    #     - 'description': A brief description of the configuration (e.g., "Programming language").
+    #     - 'required': A boolean indicating if the configuration is mandatory (e.g., True).
+
+    #     The `schema_extra` attribute provides an example of how the configuration should be structured.
+    #     """
+
+    #     schema_extra = {"example": {"name": "language", "description": "Programming language", "required": True}}
 
 
-class PromptCreate(BaseModelWithConfig):
+class PromptCreate(BaseModelWithConfigDict):
     """Schema for creating a new prompt template.
 
     Includes:
@@ -591,7 +607,7 @@ class PromptCreate(BaseModelWithConfig):
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
 
 
-class PromptUpdate(BaseModelWithConfig):
+class PromptUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing prompt.
 
     Similar to PromptCreate but all fields are optional to allow partial updates.
@@ -603,7 +619,7 @@ class PromptUpdate(BaseModelWithConfig):
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
 
 
-class PromptRead(BaseModelWithConfig):
+class PromptRead(BaseModelWithConfigDict):
     """Schema for reading prompt information.
 
     Includes all prompt fields plus:
@@ -624,7 +640,7 @@ class PromptRead(BaseModelWithConfig):
     metrics: PromptMetrics
 
 
-class PromptInvocation(BaseModelWithConfig):
+class PromptInvocation(BaseModelWithConfigDict):
     """Schema for prompt invocation requests.
 
     Contains:
@@ -639,7 +655,7 @@ class PromptInvocation(BaseModelWithConfig):
 # --- Gateway Schemas ---
 
 
-class GatewayCreate(BaseModelWithConfig):
+class GatewayCreate(BaseModelWithConfigDict):
     """Schema for registering a new federation gateway.
 
     Captures:
@@ -756,7 +772,7 @@ class GatewayCreate(BaseModelWithConfig):
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, or headers.")
 
 
-class GatewayUpdate(BaseModelWithConfig):
+class GatewayUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing federation gateway.
 
     Similar to GatewayCreate but all fields are optional to allow partial updates.
@@ -867,7 +883,7 @@ class GatewayUpdate(BaseModelWithConfig):
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, or headers.")
 
 
-class GatewayRead(BaseModelWithConfig):
+class GatewayRead(BaseModelWithConfigDict):
     """Schema for reading gateway information.
 
     Includes all gateway fields plus:
@@ -940,7 +956,7 @@ class GatewayRead(BaseModelWithConfig):
         return values
 
 
-class FederatedTool(BaseModelWithConfig):
+class FederatedTool(BaseModelWithConfigDict):
     """Schema for tools provided by federated gateways.
 
     Contains:
@@ -954,7 +970,7 @@ class FederatedTool(BaseModelWithConfig):
     gateway_url: str
 
 
-class FederatedResource(BaseModelWithConfig):
+class FederatedResource(BaseModelWithConfigDict):
     """Schema for resources from federated gateways.
 
     Contains:
@@ -968,7 +984,7 @@ class FederatedResource(BaseModelWithConfig):
     gateway_url: str
 
 
-class FederatedPrompt(BaseModelWithConfig):
+class FederatedPrompt(BaseModelWithConfigDict):
     """Schema for prompts from federated gateways.
 
     Contains:
@@ -985,7 +1001,7 @@ class FederatedPrompt(BaseModelWithConfig):
 # --- RPC Schemas ---
 
 
-class RPCRequest(BaseModelWithConfig):
+class RPCRequest(BaseModelWithConfigDict):
     """Schema for JSON-RPC 2.0 requests.
 
     Validates:
@@ -1001,7 +1017,7 @@ class RPCRequest(BaseModelWithConfig):
     id: Optional[Union[int, str]] = None
 
 
-class RPCResponse(BaseModelWithConfig):
+class RPCResponse(BaseModelWithConfigDict):
     """Schema for JSON-RPC 2.0 responses.
 
     Contains:
@@ -1019,7 +1035,7 @@ class RPCResponse(BaseModelWithConfig):
 # --- Event and Admin Schemas ---
 
 
-class EventMessage(BaseModelWithConfig):
+class EventMessage(BaseModelWithConfigDict):
     """Schema for SSE event messages.
 
     Includes:
@@ -1033,7 +1049,7 @@ class EventMessage(BaseModelWithConfig):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-class AdminToolCreate(BaseModelWithConfig):
+class AdminToolCreate(BaseModelWithConfigDict):
     """Schema for creating tools via admin UI.
 
     Handles:
@@ -1070,7 +1086,7 @@ class AdminToolCreate(BaseModelWithConfig):
             raise ValueError("Invalid JSON")
 
 
-class AdminGatewayCreate(BaseModelWithConfig):
+class AdminGatewayCreate(BaseModelWithConfigDict):
     """Schema for creating gateways via admin UI.
 
     Captures:
@@ -1087,13 +1103,13 @@ class AdminGatewayCreate(BaseModelWithConfig):
 # --- New Schemas for Status Toggle Operations ---
 
 
-class StatusToggleRequest(BaseModelWithConfig):
+class StatusToggleRequest(BaseModelWithConfigDict):
     """Request schema for toggling active status."""
 
     activate: bool = Field(..., description="Whether to activate (true) or deactivate (false) the item")
 
 
-class StatusToggleResponse(BaseModelWithConfig):
+class StatusToggleResponse(BaseModelWithConfigDict):
     """Response schema for status toggle operations."""
 
     id: int
@@ -1105,7 +1121,7 @@ class StatusToggleResponse(BaseModelWithConfig):
 # --- Optional Filter Parameters for Listing Operations ---
 
 
-class ListFilters(BaseModelWithConfig):
+class ListFilters(BaseModelWithConfigDict):
     """Filtering options for list operations."""
 
     include_inactive: bool = Field(False, description="Whether to include inactive items in the results")
@@ -1114,7 +1130,7 @@ class ListFilters(BaseModelWithConfig):
 # --- Server Schemas ---
 
 
-class ServerCreate(BaseModelWithConfig):
+class ServerCreate(BaseModelWithConfigDict):
     """Schema for creating a new server.
 
     Attributes:
@@ -1149,7 +1165,7 @@ class ServerCreate(BaseModelWithConfig):
         return v
 
 
-class ServerUpdate(BaseModelWithConfig):
+class ServerUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing server.
 
     All fields are optional to allow partial updates.
@@ -1178,7 +1194,7 @@ class ServerUpdate(BaseModelWithConfig):
         return v
 
 
-class ServerRead(BaseModelWithConfig):
+class ServerRead(BaseModelWithConfigDict):
     """Schema for reading server information.
 
     Includes all server fields plus:
