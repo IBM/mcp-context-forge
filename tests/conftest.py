@@ -13,6 +13,7 @@ import os
 from unittest.mock import AsyncMock, patch
 
 # First-Party
+from mcpgateway import translate
 from mcpgateway.config import Settings
 from mcpgateway.db import Base
 
@@ -20,7 +21,6 @@ from mcpgateway.db import Base
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from mcpgateway import translate
 
 
 @pytest.fixture(scope="session")
@@ -97,6 +97,7 @@ def mock_websocket():
     mock.receive_json = AsyncMock()
     mock.close = AsyncMock()
     return mock
+
 
 # @pytest.fixture(scope="session", autouse=True)
 # def _patch_stdio_first():

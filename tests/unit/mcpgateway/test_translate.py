@@ -42,11 +42,13 @@ import sys
 import types
 from typing import Sequence
 from unittest.mock import AsyncMock, Mock
-# import inspect
 
 # Third-Party
 from fastapi.testclient import TestClient
 import pytest
+
+# import inspect
+
 
 # ---------------------------------------------------------------------------#
 # Pytest fixtures                                                            #
@@ -253,7 +255,11 @@ async def test_fastapi_message_endpoint_invalid_json(translate):
     app = translate._build_fastapi(ps, stdio)
     client = TestClient(app)
 
-    response = client.post("/message", content="invalid json", headers={"content-type": "application/json"},)
+    response = client.post(
+        "/message",
+        content="invalid json",
+        headers={"content-type": "application/json"},
+    )
     assert response.status_code == 400
     assert "Invalid JSON payload" in response.text
 

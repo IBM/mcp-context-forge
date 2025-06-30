@@ -22,7 +22,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
 # Third-Party
-from pydantic import AnyHttpUrl, AnyUrl, BaseModel, Field, ConfigDict
+from pydantic import AnyHttpUrl, AnyUrl, BaseModel, ConfigDict, Field
 
 
 class Role(str, Enum):
@@ -282,6 +282,7 @@ class InitializeResult(BaseModel):
         populate_by_name=True,
     )
 
+
 # Message types
 class Message(BaseModel):
     """A message in a conversation.
@@ -463,6 +464,7 @@ class ListResourceTemplatesResult(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+
 
 # Root types
 class FileUrl(AnyUrl):
