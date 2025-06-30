@@ -42,7 +42,8 @@ from pydantic import (
     model_validator,
     root_validator,
     validator,
-    ConfigDict
+    ConfigDict,
+    field_serializer
 )
 
 logger = logging.getLogger(__name__)
@@ -96,35 +97,10 @@ class BaseModelWithConfigDict(BaseModel):
         from_attributes=True,
         alias_generator=to_camel_case,
         populate_by_name=True,
-        json_encoders={datetime: encode_datetime},
         use_enum_values=True,
         extra="ignore",
         json_schema_extra={"nullable": True},
     )
-
-    # class Config:
-    #     """
-    #     A configuration class that provides default behaviors for how to handle serialization,
-    #     alias generation, enum values, and extra fields when working with models.
-
-    #     Attributes:
-    #         from_attributes (bool): Flag to indicate if attributes should be taken from model fields.
-    #         alias_generator (callable): Function used to generate aliases for field names (e.g., converting to camelCase).
-    #         populate_by_name (bool): Flag to specify whether to populate fields by name during initialization.
-    #         json_encoders (dict): Custom JSON encoders for specific types, such as datetime encoding.
-    #         use_enum_values (bool): Flag to determine if enum values should be serialized or the enum type itself.
-    #         extra (str): Defines behavior for extra fields in models. The "ignore" option means extra fields are ignored.
-    #         json_schema_extra (dict): Additional schema information, e.g., specifying that fields can be nullable.
-
-    #     """
-
-    #     from_attributes = True
-    #     alias_generator = to_camel_case
-    #     populate_by_name = True
-    #     json_encoders = {datetime: encode_datetime}
-    #     use_enum_values = True
-    #     extra = "ignore"
-    #     json_schema_extra = {"nullable": True}
 
     def to_dict(self, use_alias: bool = False) -> Dict[str, Any]:
         """
@@ -547,6 +523,11 @@ class ResourceNotification(BaseModelWithConfigDict):
     uri: str
     content: ResourceContent
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, dt: datetime) -> str:
+        # now returns ISO string with Z
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 # --- Prompt Schemas ---
@@ -1026,6 +1007,11 @@ class EventMessage(BaseModelWithConfigDict):
     type: str = Field(..., description="Event type (tool_added, resource_updated, etc)")
     data: Dict[str, Any] = Field(..., description="Event payload")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, dt: datetime) -> str:
+        # now returns ISO string with Z
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class AdminToolCreate(BaseModelWithConfigDict):
