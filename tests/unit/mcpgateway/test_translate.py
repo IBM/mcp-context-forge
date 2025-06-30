@@ -42,6 +42,7 @@ import sys
 import types
 from typing import Sequence
 from unittest.mock import AsyncMock, Mock
+# import inspect
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -252,7 +253,7 @@ async def test_fastapi_message_endpoint_invalid_json(translate):
     app = translate._build_fastapi(ps, stdio)
     client = TestClient(app)
 
-    response = client.post("/message", data="invalid json")
+    response = client.post("/message", content="invalid json", headers={"content-type": "application/json"},)
     assert response.status_code == 400
     assert "Invalid JSON payload" in response.text
 
@@ -792,7 +793,6 @@ def test_main_function_sse(monkeypatch, translate):
             pass
         return None
 
-    monkeypatch.setattr(translate, "_run_sse_to_stdio", _fake_sse_runner)
     monkeypatch.setattr(translate.asyncio, "run", _fake_asyncio_run)
 
     translate.main(["--sse", "http://example.com/sse"])
@@ -817,6 +817,12 @@ def test_main_function_keyboard_interrupt(monkeypatch, translate, capsys):
 
 def test_main_function_not_implemented_error(monkeypatch, translate, capsys):
     """Test main() function handles NotImplementedError."""
+
+    # def _raise_not_implemented(coro, *a, **kw):
+    #     # close the coroutine if the autouse fixture didn't remove it
+    #     if hasattr(coro, "close"):
+    #         coro.close()
+    #     raise NotImplementedError("Test error message")
 
     def _raise_not_implemented(*args):
         raise NotImplementedError("Test error message")

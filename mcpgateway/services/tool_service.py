@@ -434,7 +434,7 @@ class ToolService:
                     response = await self._http_client.get(final_url, params=payload, headers=headers)
                 else:
                     response = await self._http_client.request(method, final_url, json=payload, headers=headers)
-                response.raise_for_status()
+                await response.raise_for_status()
 
                 # Handle 204 No Content responses that have no body
                 if response.status_code == 204:

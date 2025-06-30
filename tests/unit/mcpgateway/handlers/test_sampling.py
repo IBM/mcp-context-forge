@@ -213,7 +213,7 @@ def test_validate_message(handler):
 async def test_create_message_success(monkeypatch, handler):
     # Patch ModelPreferences.parse_obj to return neutral prefs (no hints)
     neutral_prefs = _t.SimpleNamespace(hints=[], cost_priority=0.33, speed_priority=0.33, intelligence_priority=0.34)
-    monkeypatch.setattr(sp.ModelPreferences, "parse_obj", lambda _x: neutral_prefs)
+    monkeypatch.setattr(sp.ModelPreferences, "model_validate", lambda _x: neutral_prefs)
 
     request = {
         "messages": [
@@ -231,7 +231,7 @@ async def test_create_message_success(monkeypatch, handler):
 
 @pytest.mark.asyncio
 async def test_create_message_no_messages(monkeypatch, handler):
-    monkeypatch.setattr(sp.ModelPreferences, "parse_obj", lambda _x: _t.SimpleNamespace(hints=[], cost_priority=0, speed_priority=0, intelligence_priority=0))
+    monkeypatch.setattr(sp.ModelPreferences, "model_validate", lambda _x: _t.SimpleNamespace(hints=[], cost_priority=0, speed_priority=0, intelligence_priority=0))
 
     request = {"messages": [], "maxTokens": 5, "modelPreferences": {}}
 

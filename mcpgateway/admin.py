@@ -444,6 +444,7 @@ async def admin_ui(
     roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
     root_path = settings.app_root_path
     response = request.app.state.templates.TemplateResponse(
+        request,
         "admin.html",
         {
             "request": request,

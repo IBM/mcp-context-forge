@@ -234,7 +234,7 @@ class FederationManager:
         try:
             # Get tool list
             tools = await self.forward_request(gateway, "tools/list")
-            return [Tool.parse_obj(t) for t in tools]
+            return [Tool.model_validate(t) for t in tools]
 
         except Exception as e:
             raise FederationError(f"Failed to get tools from {gateway.name}: {str(e)}")
@@ -259,7 +259,7 @@ class FederationManager:
         try:
             # Get resource list
             resources = await self.forward_request(gateway, "resources/list")
-            return [Resource.parse_obj(r) for r in resources]
+            return [Resource.model_validate(r) for r in resources]
 
         except Exception as e:
             raise FederationError(f"Failed to get resources from {gateway.name}: {str(e)}")
@@ -284,7 +284,7 @@ class FederationManager:
         try:
             # Get prompt list
             prompts = await self.forward_request(gateway, "prompts/list")
-            return [Prompt.parse_obj(p) for p in prompts]
+            return [Prompt.model_validate(p) for p in prompts]
 
         except Exception as e:
             raise FederationError(f"Failed to get prompts from {gateway.name}: {str(e)}")
@@ -422,7 +422,7 @@ class FederationManager:
                 headers=self._get_auth_headers(),
             )
             response.raise_for_status()
-            result = InitializeResult.parse_obj(response.json())
+            result = InitializeResult.model_validate(response.json())
 
             # Verify protocol version
             if result.protocol_version != PROTOCOL_VERSION:
