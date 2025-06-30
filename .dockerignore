@@ -1,3 +1,4 @@
+mcp-servers/go/fast-time-server/Dockerfile
 Dockerfile
 Dockerfile.*
 Containerfile.*
