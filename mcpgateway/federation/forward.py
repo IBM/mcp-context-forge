@@ -15,7 +15,7 @@ It handles:
 
 # Standard
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
@@ -233,7 +233,7 @@ class ForwardingService:
                     result = response.json()
 
                     # Update last seen
-                    gateway.last_seen = datetime.utcnow()
+                    gateway.last_seen = datetime.now(timezone.utc)
 
                     # Handle response
                     if "error" in result:
@@ -316,7 +316,7 @@ class ForwardingService:
         Returns:
             True if request allowed
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Clean old history
         self._request_history[gateway_url] = [t for t in self._request_history.get(gateway_url, []) if (now - t).total_seconds() < 60]

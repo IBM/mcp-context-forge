@@ -18,7 +18,7 @@ operations, coordinating with discovery, sync and forwarding components.
 
 # Standard
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 from typing import Any, Dict, List, Optional, Set
@@ -158,7 +158,7 @@ class FederationManager:
                 name=gateway_name,
                 url=url,
                 capabilities=capabilities.dict(),
-                last_seen=datetime.utcnow(),
+                last_seen=datetime.now(timezone.utc),
             )
             db.add(gateway)
             db.commit()
@@ -195,7 +195,7 @@ class FederationManager:
 
             # Remove gateway
             gateway.is_active = False
-            gateway.updated_at = datetime.utcnow()
+            gateway.updated_at = datetime.now(timezone.utc)
 
             # Remove associated tools
             db.execute(select(DbTool).where(DbTool.gateway_id == gateway_id)).delete()
@@ -315,7 +315,7 @@ class FederationManager:
             result = response.json()
 
             # Update last seen
-            gateway.last_seen = datetime.utcnow()
+            gateway.last_seen = datetime.now(timezone.utc)
 
             # Handle response
             if "error" in result:
@@ -351,7 +351,7 @@ class FederationManager:
                         # Update capabilities
                         capabilities = await self._initialize_gateway(gateway.url)
                         gateway.capabilities = capabilities.dict()
-                        gateway.last_seen = datetime.utcnow()
+                        gateway.last_seen = datetime.now(timezone.utc)
                         gateway.is_active = True
 
                     except Exception as e:
@@ -383,7 +383,7 @@ class FederationManager:
                     except Exception as e:
                         logger.warning(f"Health check failed for {gateway.name}: {e}")
                         # Mark inactive if not seen recently
-                        if datetime.utcnow() - gateway.last_seen > timedelta(minutes=5):
+                        if datetime.now(timezone.utc) - gateway.last_seen > timedelta(minutes=5):
                             gateway.is_active = False
                             self._active_gateways.discard(gateway.url)
 

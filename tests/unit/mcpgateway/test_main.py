@@ -39,7 +39,7 @@ MOCK_METRICS = {
     "min_response_time": 0.1,
     "max_response_time": 2.5,
     "avg_response_time": 1.2,
-    "last_execution_time": "2023-01-01T00:00:00",
+    "last_execution_time": "2023-01-01T00:00:00+00:00",
 }
 
 MOCK_SERVER_READ = {
@@ -47,8 +47,8 @@ MOCK_SERVER_READ = {
     "name": "test_server",
     "description": "A test server",
     "icon": "server-icon",
-    "created_at": "2023-01-01T00:00:00",
-    "updated_at": "2023-01-01T00:00:00",
+    "created_at": "2023-01-01T00:00:00+00:00",
+    "updated_at": "2023-01-01T00:00:00+00:00",
     "is_active": True,
     "associated_tools": ["101"],
     "associated_resources": [201],
@@ -69,8 +69,8 @@ MOCK_TOOL_READ = {
     "annotations": {},
     "jsonpathFilter": None,
     "auth": {"auth_type": "none"},
-    "createdAt": "2023-01-01T00:00:00",
-    "updatedAt": "2023-01-01T00:00:00",
+    "createdAt": "2023-01-01T00:00:00+00:00",
+    "updatedAt": "2023-01-01T00:00:00+00:00",
     "isActive": True,
     "gatewayId": "gateway-1",
     "executionCount": 5,
@@ -115,8 +115,8 @@ MOCK_RESOURCE_READ = {
     "description": "A test resource",
     "mime_type": "text/plain",
     "size": 12,
-    "created_at": "2023-01-01T00:00:00",
-    "updated_at": "2023-01-01T00:00:00",
+    "created_at": "2023-01-01T00:00:00+00:00",
+    "updated_at": "2023-01-01T00:00:00+00:00",
     "is_active": True,
     "metrics": MOCK_METRICS,
 }
@@ -127,8 +127,8 @@ MOCK_PROMPT_READ = {
     "description": "A test prompt",
     "template": "Hello {name}",
     "arguments": [],
-    "created_at": "2023-01-01T00:00:00",
-    "updated_at": "2023-01-01T00:00:00",
+    "created_at": "2023-01-01T00:00:00+00:00",
+    "updated_at": "2023-01-01T00:00:00+00:00",
     "is_active": True,
     "metrics": MOCK_METRICS,
 }
@@ -140,8 +140,8 @@ MOCK_GATEWAY_READ = {
     "description": "A test gateway",
     "transport": "SSE",
     "auth_type": "none",
-    "created_at": "2023-01-01T00:00:00",
-    "updated_at": "2023-01-01T00:00:00",
+    "created_at": "2023-01-01T00:00:00+00:00",
+    "updated_at": "2023-01-01T00:00:00+00:00",
     "is_active": True,
 }
 

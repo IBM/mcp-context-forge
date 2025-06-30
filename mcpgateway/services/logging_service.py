@@ -11,7 +11,7 @@ It supports RFC 5424 severity levels, log level management, and log event subscr
 
 # Standard
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -106,7 +106,7 @@ class LoggingService:
             "data": {
                 "level": level,
                 "data": data,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             },
         }
         if logger_name:

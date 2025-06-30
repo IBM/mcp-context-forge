@@ -21,7 +21,7 @@ gateway-specific extensions for federation support.
 
 # Standard
 import base64
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -542,7 +542,7 @@ class ResourceNotification(BaseModelWithConfig):
 
     uri: str
     content: ResourceContent
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # --- Prompt Schemas ---
@@ -893,10 +893,10 @@ class GatewayRead(BaseModelWithConfig):
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Gateway capabilities")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Creation timestamp")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp")
     is_active: bool = Field(default=True, description="Is the gateway active?")
-    last_seen: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Last seen timestamp")
+    last_seen: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last seen timestamp")
 
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
@@ -1030,7 +1030,7 @@ class EventMessage(BaseModelWithConfig):
 
     type: str = Field(..., description="Event type (tool_added, resource_updated, etc)")
     data: Dict[str, Any] = Field(..., description="Event payload")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class AdminToolCreate(BaseModelWithConfig):

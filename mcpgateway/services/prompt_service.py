@@ -16,7 +16,7 @@ It handles:
 
 # Standard
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from string import Formatter
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
@@ -377,7 +377,7 @@ class PromptService:
                     argument_schema["properties"][arg.name] = schema
                 prompt.argument_schema = argument_schema
 
-            prompt.updated_at = datetime.utcnow()
+            prompt.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(prompt)
 
@@ -409,7 +409,7 @@ class PromptService:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
             if prompt.is_active != activate:
                 prompt.is_active = activate
-                prompt.updated_at = datetime.utcnow()
+                prompt.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(prompt)
                 if activate:
@@ -602,7 +602,7 @@ class PromptService:
                 "description": prompt.description,
                 "is_active": prompt.is_active,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -621,7 +621,7 @@ class PromptService:
                 "description": prompt.description,
                 "is_active": prompt.is_active,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -635,7 +635,7 @@ class PromptService:
         event = {
             "type": "prompt_activated",
             "data": {"id": prompt.id, "name": prompt.name, "is_active": True},
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -649,7 +649,7 @@ class PromptService:
         event = {
             "type": "prompt_deactivated",
             "data": {"id": prompt.id, "name": prompt.name, "is_active": False},
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -663,7 +663,7 @@ class PromptService:
         event = {
             "type": "prompt_deleted",
             "data": prompt_info,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -677,7 +677,7 @@ class PromptService:
         event = {
             "type": "prompt_removed",
             "data": {"id": prompt.id, "name": prompt.name, "is_active": False},
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
