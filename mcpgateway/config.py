@@ -49,20 +49,14 @@ class Settings(BaseSettings):
     """MCP Gateway configuration settings."""
 
     # Basic Settings
-    app_name: str = Field("MCP_Gateway", env="APP_NAME")
-    host: str = Field("127.0.0.1", env="HOST")
-    port: int = Field(4444, env="PORT")
+    app_name: str = "MCP_Gateway"
+    host: str = "127.0.0.1"
+    port: int = 4444
     database_url: str = "sqlite:///./mcp.db"
     templates_dir: Path = Path("mcpgateway/templates")
     # Absolute paths resolved at import-time (still override-able via env vars)
-    templates_dir: Path = Field(
-        default=files("mcpgateway") / "templates",
-        env="TEMPLATES_DIR",
-    )
-    static_dir: Path = Field(
-        default=files("mcpgateway") / "static",
-        env="STATIC_DIR",
-    )
+    templates_dir: Path = files("mcpgateway") / "templates"
+    static_dir: Path = files("mcpgateway") / "static"
     app_root_path: str = ""
 
     # Protocol
