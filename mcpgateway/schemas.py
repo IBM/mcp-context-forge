@@ -35,16 +35,7 @@ from mcpgateway.types import Tool as MCPTool
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 # Third-Party
-from pydantic import (
-    AnyHttpUrl,
-    BaseModel,
-    Field,
-    model_validator,
-    ConfigDict,
-    field_serializer,
-    field_validator,
-    ValidationInfo
-)
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 logger = logging.getLogger(__name__)
 
@@ -546,7 +537,6 @@ class PromptArgument(BaseModelWithConfigDict):
     description: Optional[str] = Field(None, description="Argument description")
     required: bool = Field(default=False, description="Whether argument is required")
 
-
     model_config: ConfigDict = ConfigDict(
         **{
             # start with every key from the base
@@ -555,9 +545,9 @@ class PromptArgument(BaseModelWithConfigDict):
             "json_schema_extra": {
                 **BaseModelWithConfigDict.model_config.get("json_schema_extra", {}),
                 "example": {
-                    "name":        "language",
+                    "name": "language",
                     "description": "Programming language",
-                    "required":    True,
+                    "required": True,
                 },
             },
         }
@@ -702,7 +692,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         This method is called based on the selected auth_type.
 
         Args:
-            values: Dict containing auth fields
+            info: ValidationInfo containing auth fields
 
         Returns:
             Dict with encoded auth
@@ -792,7 +782,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         Args:
             v: Input URL
-            values: Dict containing auth_type
+            info: ValidationInfo containing auth_type
 
         Returns:
             str: Auth value or URL

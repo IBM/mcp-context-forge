@@ -105,11 +105,13 @@ engine = create_engine(
     connect_args=connect_args,
 )
 
+
 # ---------------------------------------------------------------------------
 # 6. Function to return UTC timestamp
 # ---------------------------------------------------------------------------
 def utc_now():
     return datetime.now(timezone.utc)
+
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

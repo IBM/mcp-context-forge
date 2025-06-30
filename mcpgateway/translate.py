@@ -382,11 +382,14 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str], log_level: s
 
         await asyncio.gather(read_stdout(), pump_sse_to_stdio())
 
+
 def start_stdio(cmd, port, log_level, cors):
     return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors))
 
+
 def start_sse(url, bearer, log_level):
     return asyncio.run(_run_sse_to_stdio(url, bearer, log_level))
+
 
 def main(argv: Optional[Sequence[str]] | None = None) -> None:  # entry-point
     args = _parse_args(argv or sys.argv[1:])
