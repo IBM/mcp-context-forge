@@ -40,10 +40,10 @@ from pydantic import (
     BaseModel,
     Field,
     model_validator,
-    root_validator,
-    validator,
     ConfigDict,
-    field_serializer
+    field_serializer,
+    field_validator,
+    ValidationInfo
 )
 
 logger = logging.getLogger(__name__)
@@ -284,7 +284,7 @@ class ToolCreate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -343,7 +343,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -546,9 +546,21 @@ class PromptArgument(BaseModelWithConfigDict):
     description: Optional[str] = Field(None, description="Argument description")
     required: bool = Field(default=False, description="Whether argument is required")
 
+
     model_config: ConfigDict = ConfigDict(
-        **BaseModelWithConfigDict.model_config,   # carry over the base settings
-        schema_extra = {"example": {"name": "language", "description": "Programming language", "required": True}}
+        **{
+            # start with every key from the base
+            **BaseModelWithConfigDict.model_config,
+            # override only json_schema_extra by merging the two dicts:
+            "json_schema_extra": {
+                **BaseModelWithConfigDict.model_config.get("json_schema_extra", {}),
+                "example": {
+                    "name":        "language",
+                    "description": "Programming language",
+                    "required":    True,
+                },
+            },
+        }
     )
 
 
@@ -641,9 +653,9 @@ class GatewayCreate(BaseModelWithConfigDict):
     auth_header_value: Optional[str] = Field(None, description="Value for custom headers authentication")
 
     # Adding `auth_value` as an alias for better access post-validation
-    auth_value: Optional[str] = None
+    auth_value: Optional[str] = Field(None, validate_default=True)
 
-    @validator("url", pre=True)
+    @field_validator("url", mode="before")
     def ensure_url_scheme(cls, v: str) -> str:
         """
         Ensure URL has an http/https scheme.
@@ -659,31 +671,32 @@ class GatewayCreate(BaseModelWithConfigDict):
             return f"http://{v}"
         return v
 
-    @validator("auth_value", pre=True, always=True)
-    def create_auth_value(cls, v, values):
+    @field_validator("auth_value", mode="before")
+    def create_auth_value(cls, v, info):
         """
-        This validator will run before the model is fully instantiated (pre=True)
+        This validator will run before the model is fully instantiated (mode="before")
         It will process the auth fields based on auth_type and generate auth_value.
 
         Args:
             v: Input url
-            values: Dict containing auth_type
+            info: ValidationInfo containing auth_type
 
         Returns:
             str: Auth value
         """
-        auth_type = values.get("auth_type")
+        data = info.data
+        auth_type = data.get("auth_type")
 
         if (auth_type is None) or (auth_type == ""):
             return v  # If no auth_type is provided, no need to create auth_value
 
         # Process the auth fields and generate auth_value based on auth_type
-        auth_value = cls._process_auth_fields(values)
+        auth_value = cls._process_auth_fields(info)
 
         return auth_value
 
     @staticmethod
-    def _process_auth_fields(values: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _process_auth_fields(info: ValidationInfo) -> Optional[Dict[str, Any]]:
         """
         Processes the input authentication fields and returns the correct auth_value.
         This method is called based on the selected auth_type.
@@ -697,12 +710,13 @@ class GatewayCreate(BaseModelWithConfigDict):
         Raises:
             ValueError: If auth_type is invalid
         """
-        auth_type = values.get("auth_type")
+        data = info.data
+        auth_type = data.get("auth_type")
 
         if auth_type == "basic":
             # For basic authentication, both username and password must be present
-            username = values.get("auth_username")
-            password = values.get("auth_password")
+            username = data.get("auth_username")
+            password = data.get("auth_password")
 
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
@@ -712,7 +726,7 @@ class GatewayCreate(BaseModelWithConfigDict):
 
         if auth_type == "bearer":
             # For bearer authentication, only token is required
-            token = values.get("auth_token")
+            token = data.get("auth_token")
 
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
@@ -721,8 +735,8 @@ class GatewayCreate(BaseModelWithConfigDict):
 
         if auth_type == "authheaders":
             # For headers authentication, both key and value must be present
-            header_key = values.get("auth_header_key")
-            header_value = values.get("auth_header_value")
+            header_key = data.get("auth_header_key")
+            header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
                 raise ValueError("For 'headers' auth, both 'auth_header_key' and 'auth_header_value' must be provided.")
@@ -753,9 +767,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
 
     # Adding `auth_value` as an alias for better access post-validation
-    auth_value: Optional[str] = None
+    auth_value: Optional[str] = Field(None, validate_default=True)
 
-    @validator("url", pre=True)
+    @field_validator("url", mode="before")
     def ensure_url_scheme(cls, v: Optional[str]) -> Optional[str]:
         """
         Ensure URL has an http/https scheme.
@@ -770,10 +784,10 @@ class GatewayUpdate(BaseModelWithConfigDict):
             return f"http://{v}"
         return v
 
-    @validator("auth_value", pre=True, always=True)
-    def create_auth_value(cls, v, values):
+    @field_validator("auth_value", mode="before")
+    def create_auth_value(cls, v, info):
         """
-        This validator will run before the model is fully instantiated (pre=True)
+        This validator will run before the model is fully instantiated (mode="before")
         It will process the auth fields based on auth_type and generate auth_value.
 
         Args:
@@ -783,13 +797,14 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Returns:
             str: Auth value or URL
         """
-        auth_type = values.get("auth_type")
+        data = info.data
+        auth_type = data.get("auth_type")
 
         if (auth_type is None) or (auth_type == ""):
             return v  # If no auth_type is provided, no need to create auth_value
 
         # Process the auth fields and generate auth_value based on auth_type
-        auth_value = cls._process_auth_fields(values)
+        auth_value = cls._process_auth_fields(info)
 
         return auth_value
 
@@ -1029,7 +1044,7 @@ class AdminToolCreate(BaseModelWithConfigDict):
     headers: Optional[str] = None  # JSON string
     input_schema: Optional[str] = None  # JSON string
 
-    @validator("headers", "input_schema")
+    @field_validator("headers", "input_schema")
     def validate_json(cls, v: Optional[str]) -> Optional[Dict[str, Any]]:
         """
         Validate and parse JSON string inputs.
@@ -1114,7 +1129,7 @@ class ServerCreate(BaseModelWithConfigDict):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
 
-    @validator("associated_tools", "associated_resources", "associated_prompts", pre=True)
+    @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1143,7 +1158,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
 
-    @validator("associated_tools", "associated_resources", "associated_prompts", pre=True)
+    @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1182,7 +1197,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_prompts: List[int] = []
     metrics: ServerMetrics
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
     def populate_associated_ids(cls, values):
         """
         Pre-validation method that converts associated objects to their 'id'.
