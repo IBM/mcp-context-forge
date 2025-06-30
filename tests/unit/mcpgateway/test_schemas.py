@@ -10,7 +10,7 @@ defined in the types.py module.
 """
 
 # Standard
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from unittest.mock import Mock
@@ -588,7 +588,7 @@ class TestEventAndAdminSchemas:
 
     def test_event_message(self):
         """Test EventMessage model."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         event = EventMessage(
             type="resource_updated",
@@ -744,7 +744,7 @@ class TestServerSchemas:
 
     def test_server_read(self):
         """Test ServerRead model."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         one_hour_ago = now - timedelta(hours=1)
 
         server = ServerRead(
