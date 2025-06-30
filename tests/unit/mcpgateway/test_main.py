@@ -387,7 +387,7 @@ class TestServerEndpoints:
     def test_server_get_tools(self, mock_list_tools, test_client, auth_headers):
         """Test listing tools associated with a server."""
         mock_tool = MagicMock()
-        mock_tool.dict.return_value = MOCK_TOOL_READ
+        mock_tool.model_dump.return_value = MOCK_TOOL_READ
         mock_list_tools.return_value = [mock_tool]
 
         response = test_client.get("/servers/1/tools", headers=auth_headers)
@@ -400,7 +400,7 @@ class TestServerEndpoints:
     def test_server_get_resources(self, mock_list_resources, test_client, auth_headers):
         """Test listing resources associated with a server."""
         mock_resource = MagicMock()
-        mock_resource.dict.return_value = MOCK_RESOURCE_READ
+        mock_resource.model_dump.return_value = MOCK_RESOURCE_READ
         mock_list_resources.return_value = [mock_resource]
 
         response = test_client.get("/servers/1/resources", headers=auth_headers)

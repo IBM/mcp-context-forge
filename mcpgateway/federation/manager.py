@@ -157,7 +157,7 @@ class FederationManager:
             gateway = DbGateway(
                 name=gateway_name,
                 url=url,
-                capabilities=capabilities.dict(),
+                capabilities=capabilities,
                 last_seen=datetime.now(timezone.utc),
             )
             db.add(gateway)
@@ -350,7 +350,7 @@ class FederationManager:
                     try:
                         # Update capabilities
                         capabilities = await self._initialize_gateway(gateway.url)
-                        gateway.capabilities = capabilities.dict()
+                        gateway.capabilities = capabilities
                         gateway.last_seen = datetime.now(timezone.utc)
                         gateway.is_active = True
 
