@@ -337,6 +337,7 @@ images:
 # help: fawltydeps           - Detect undeclared / unused deps
 # help: wily                 - Maintainability report
 # help: pyre                 - Static analysis with Facebook Pyre
+# help: pyrefly              - Static analysis with Facebook Pyrefly
 # help: depend               - List dependencies in ≈requirements format
 # help: snakeviz             - Profile & visualise with snakeviz
 # help: pstats               - Generate PNG call-graph from cProfile stats
@@ -348,7 +349,7 @@ images:
 
 # List of individual lint targets; lint loops over these
 LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
-           ruff pyright radon pyroma pyre spellcheck importchecker \
+           ruff pyright radon pyroma pyrefly spellcheck importchecker \
 		   pytype check-manifest markdownlint
 
 .PHONY: lint $(LINTERS) black fawltydeps wily depend snakeviz pstats \
@@ -438,6 +439,9 @@ wily:                               ## 📈  Maintainability report
 
 pyre:                               ## 🧠  Facebook Pyre analysis
 	@$(VENV_DIR)/bin/pyre
+
+pyrefly:                            ## 🧠  Facebook Pyrefly analysis (faster, rust)
+	@$(VENV_DIR)/bin/pyrefly check mcpgateway
 
 depend:                             ## 📦  List dependencies
 	pdm list --freeze
@@ -654,8 +658,9 @@ sonar-deps-podman:
 	python3 -m pip install --quiet podman-compose
 
 sonar-deps-docker:
-	@echo "🔧 Ensuring docker-compose is available …"
-	@which docker-compose >/dev/null || python3 -m pip install --quiet docker-compose
+	@echo "🔧 Ensuring $(COMPOSE_CMD) is available …"
+	@command -v $(firstword $(COMPOSE_CMD)) >/dev/null || \
+	  python3 -m pip install --quiet docker-compose
 
 ## ─────────── Run SonarQube server (compose) ────────────────────────────
 sonar-up-podman:
@@ -665,10 +670,11 @@ sonar-up-podman:
 	@sleep 30 && podman ps | grep sonarqube || echo "⚠️  Server may still be starting."
 
 sonar-up-docker:
-	@echo "🚀 Starting SonarQube (v$(SONARQUBE_VERSION)) with docker-compose …"
+	@echo "🚀 Starting SonarQube (v$(SONARQUBE_VERSION)) with $(COMPOSE_CMD) …"
 	SONARQUBE_VERSION=$(SONARQUBE_VERSION) \
-	docker-compose -f podman-compose-sonarqube.yaml up -d
-	@sleep 30 && docker ps | grep sonarqube || echo "⚠️  Server may still be starting."
+	$(COMPOSE_CMD) -f podman-compose-sonarqube.yaml up -d
+	@sleep 30 && $(COMPOSE_CMD) ps | grep sonarqube || \
+	  echo "⚠️  Server may still be starting."
 
 ## ─────────── Containerised Scanner CLI (Docker / Podman) ───────────────
 sonar-submit-docker:
