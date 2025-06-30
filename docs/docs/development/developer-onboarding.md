@@ -56,7 +56,7 @@
 
 ???+ check "Minikube & Helm"
     - [ ] `make helm-install minikube-install minikube-start minikube-k8s-apply helm-package helm-deploy`
-    - [ ] See [minikube deployment](deployment/minikube.md)
+    - [ ] See [minikube deployment](../deployment/minikube.md)
 
 ---
 
