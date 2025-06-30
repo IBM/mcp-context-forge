@@ -337,6 +337,7 @@ images:
 # help: fawltydeps           - Detect undeclared / unused deps
 # help: wily                 - Maintainability report
 # help: pyre                 - Static analysis with Facebook Pyre
+# help: pyrefly              - Static analysis with Facebook Pyrefly
 # help: depend               - List dependencies in ≈requirements format
 # help: snakeviz             - Profile & visualise with snakeviz
 # help: pstats               - Generate PNG call-graph from cProfile stats
@@ -348,7 +349,7 @@ images:
 
 # List of individual lint targets; lint loops over these
 LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
-           ruff pyright radon pyroma pyre spellcheck importchecker \
+           ruff pyright radon pyroma pyrefly spellcheck importchecker \
 		   pytype check-manifest markdownlint
 
 .PHONY: lint $(LINTERS) black fawltydeps wily depend snakeviz pstats \
@@ -438,6 +439,9 @@ wily:                               ## 📈  Maintainability report
 
 pyre:                               ## 🧠  Facebook Pyre analysis
 	@$(VENV_DIR)/bin/pyre
+
+pyrefly:                            ## 🧠  Facebook Pyrefly analysis (faster, rust)
+	@$(VENV_DIR)/bin/pyrefly check mcpgateway
 
 depend:                             ## 📦  List dependencies
 	pdm list --freeze
