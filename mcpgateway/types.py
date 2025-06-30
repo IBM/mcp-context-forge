@@ -260,19 +260,7 @@ class InitializeRequest(BaseModel):
 
     model_config = ConfigDict(
         populate_by_name=True,
-        allow_population_by_field_name=True,
     )
-
-    # class Config:
-    #     """Configuration for InitializeRequest.
-
-    #     Attributes:
-    #         populate_by_name (bool): Enables population by field name.
-    #         allow_population_by_field_name (bool): Allows backward compatibility with older Pydantic versions.
-    #     """
-
-    #     populate_by_name = True
-    #     allow_population_by_field_name = True  # Use this for backward compatibility with older Pydantic versions
 
 
 class InitializeResult(BaseModel):
@@ -292,19 +280,7 @@ class InitializeResult(BaseModel):
 
     model_config = ConfigDict(
         populate_by_name=True,
-        allow_population_by_field_name=True,
     )
-
-    # class Config:
-    #     """
-    #     Configuration class for Pydantic models.
-
-    #     Enables population of model fields by name and by field name.
-    #     """
-
-    #     populate_by_name = True
-    #     allow_population_by_field_name = True
-
 
 # Message types
 class Message(BaseModel):
@@ -486,15 +462,7 @@ class ListResourceTemplatesResult(BaseModel):
 
     model_config = ConfigDict(
         populate_by_name=True,
-        allow_population_by_field_name=True,
     )
-
-    # class Config:
-    #     """Configuration for model serialization."""
-
-    #     populate_by_name = True
-    #     allow_population_by_field_name = True
-
 
 # Root types
 class FileUrl(AnyUrl):
