@@ -24,12 +24,12 @@ ARG PYTHON_VERSION=3.11            # Python major.minor series to track
 ###########################
 # Base image for copying into scratch
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1749632992 AS base
+FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1750858477 AS base
 
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi:9.6-1749542372 AS builder
+FROM registry.access.redhat.com/ubi9/ubi:9.6-1750786174 AS builder
 SHELL ["/bin/bash", "-c"]
 
 ARG PYTHON_VERSION
