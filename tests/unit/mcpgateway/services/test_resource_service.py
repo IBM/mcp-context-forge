@@ -177,7 +177,6 @@ class TestResourceRegistration:
             patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
             patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
         ):
-
             mock_convert.return_value = ResourceRead(
                 id=1,
                 uri=sample_resource_create.uri,
@@ -263,7 +262,6 @@ class TestResourceRegistration:
 
         # Mock validation success
         with patch.object(resource_service, "_is_valid_uri", return_value=True), patch.object(resource_service, "_detect_mime_type", return_value="text/plain"):
-
             # Mock IntegrityError on commit
             mock_db.commit.side_effect = IntegrityError("", "", "")
 
@@ -290,7 +288,6 @@ class TestResourceRegistration:
             patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
             patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
         ):
-
             mock_convert.return_value = ResourceRead(
                 id=1,
                 uri=binary_resource.uri,
@@ -443,7 +440,6 @@ class TestResourceManagement:
         mock_db.get.return_value = mock_inactive_resource
 
         with patch.object(resource_service, "_notify_resource_activated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
-
             mock_convert.return_value = ResourceRead(
                 id=2,
                 uri=mock_inactive_resource.uri,
@@ -478,7 +474,6 @@ class TestResourceManagement:
         mock_db.get.return_value = mock_resource
 
         with patch.object(resource_service, "_notify_resource_deactivated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
-
             mock_convert.return_value = ResourceRead(
                 id=1,
                 uri=mock_resource.uri,
@@ -564,7 +559,6 @@ class TestResourceManagement:
         mock_db.execute.return_value = mock_scalar
 
         with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
-
             mock_convert.return_value = ResourceRead(
                 id=1,
                 uri=mock_resource.uri,
@@ -634,7 +628,6 @@ class TestResourceManagement:
         mock_db.execute.return_value = mock_scalar
 
         with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
-
             mock_convert.return_value = ResourceRead(
                 id=1,
                 uri=mock_resource.uri,
@@ -983,7 +976,6 @@ class TestResourceTemplates:
         resource_service._template_cache["template"] = template
 
         with patch.object(resource_service, "_uri_matches_template", return_value=True), patch.object(resource_service, "_extract_template_params", side_effect=Exception("Template error")):
-
             with pytest.raises(ResourceError) as exc_info:
                 await resource_service._read_template_resource(uri)
 
@@ -1002,7 +994,6 @@ class TestResourceTemplates:
         resource_service._template_cache["binary"] = template
 
         with patch.object(resource_service, "_uri_matches_template", return_value=True), patch.object(resource_service, "_extract_template_params", return_value={"id": "123"}):
-
             with pytest.raises(ResourceError) as exc_info:
                 await resource_service._read_template_resource(uri)
 
@@ -1257,7 +1248,6 @@ class TestErrorHandling:
 
         # Mock validation success
         with patch.object(resource_service, "_is_valid_uri", return_value=True), patch.object(resource_service, "_detect_mime_type", return_value="text/plain"):
-
             # Mock generic error on add
             mock_db.add.side_effect = Exception("Generic error")
 

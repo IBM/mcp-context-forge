@@ -123,6 +123,7 @@ dev = [
     "pylint>=3.3.7",
     "pylint-pydantic>=0.3.5",
     "pyre-check>=0.9.23",
+    "pyrefly>=0.21.0",
     "pyright>=1.1.402",
     "pyroma>=4.2",
     "pyspelling>=2.10",
@@ -365,3 +366,14 @@ ignore_unused = [
   "twine",
   "uvicorn"
 ]
+
+# --------------------------------------------------------------------
+#  🛠  https://github.com/facebook/pyrefly (replaces pyre)
+# --------------------------------------------------------------------
+[tool.pyrefly]
+project-excludes = [
+    "**/build/",
+    '**/\.venv/',
+    '**/\.mypy_cache/',
+]
+python-version = "3.11.0"
