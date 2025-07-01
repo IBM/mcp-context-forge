@@ -3,19 +3,20 @@
 """db_isready.py - Blocks until the MCP Gateway database is ready.
 
 This standalone readiness probe exits *0* once the configured database answers a
-trivial SQL round-trip (``SELECT 1``) and *1* after all retries fail. It is
+trivial SQL round -trip (``SELECT 1``) and *1* after all retries fail. It is
 meant for container orchestrators (Kubernetes, Docker Healthcheck, etc.) and CI
 pipelines that need a dependable way to wait for the DB service.
 
 Features
 --------
 * Works with **any SQLAlchemy URL** supplied via the ``DATABASE_URL`` environment
-  variable or the ``--database-url`` command-line flag.
-* All timing knobs (tries, interval, timeout) are tunable through env-vars or
+  variable or the ``--database-url`` command -line flag.
+* All timing knobs (tries, interval, timeout) are tunable through env -vars or
   CLI flags.
 * **Verbose, timestamped logging** including backend type, target host, current
-  attempt, total attempts, interval and timeout for easy troubleshooting.
-* Prints clear, context-rich diagnostics and degrades gracefully if dependencies
+  attempt, total attempts, interval and timeout for easy troubleshooting - with
+  credentials automatically redacted.
+* Prints clear, context -rich diagnostics and degrades gracefully if dependencies
   are missing.
 * Requires only **SQLAlchemy >= 1.4** - a dependency already present in the MCP
   Gateway.
@@ -29,7 +30,7 @@ DB_WAIT_MAX_TRIES
 DB_WAIT_INTERVAL
     Delay between attempts in seconds (default : 2).
 DB_CONNECT_TIMEOUT
-    Per-attempt network timeout in seconds (default : 2).
+    Per -attempt network timeout in seconds (default : 2).
 
 Example
 ~~~~~~~
@@ -47,24 +48,24 @@ Exit Codes
 2   *sqlalchemy* is missing.
 3   Invalid parameters or ``DATABASE_URL``.
 """
-# Future
 from __future__ import annotations
 
-# Standard
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 from typing import Any, Dict
 
 try:
-    # Third-Party
     from sqlalchemy import create_engine, text  # type: ignore
     from sqlalchemy.engine.url import make_url  # type: ignore
     from sqlalchemy.exc import OperationalError  # type: ignore
 except ImportError:  # pragma: no cover - explicit probe error path
-    sys.stderr.write("❌ SQLAlchemy not installed — aborting (pip install sqlalchemy)\n")
+    sys.stderr.write(
+        "❌ SQLAlchemy not installed — aborting (pip install sqlalchemy)\n"
+    )
     sys.exit(2)
 
 # ---------------------------------------------------------------------------
@@ -86,9 +87,8 @@ DEFAULT_SQLITE_PATH = "sqlite:///./mcp.db"
 # CLI parsing
 # ---------------------------------------------------------------------------
 
-
 def parse_cli() -> argparse.Namespace:  # noqa: D401 - imperative mood
-    """Return parsed command-line arguments."""
+    """Return parsed command -line arguments."""
     parser = argparse.ArgumentParser(
         description="Block until the MCP Gateway database is ready (SQLAlchemy URL)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -99,8 +99,18 @@ def parse_cli() -> argparse.Namespace:  # noqa: D401 - imperative mood
         help="SQLAlchemy connection URL (falls back to env)",
     )
     parser.add_argument("--max-tries", type=int, help="Maximum connection attempts")
-    parser.add_argument("--interval", type=float, help="Delay between attempts in seconds")
-    parser.add_argument("--timeout", type=int, help="Per-attempt connect() timeout in seconds")
+    parser.add_argument(
+        "--interval", type=float, help="Delay between attempts in seconds"
+    )
+    parser.add_argument(
+        "--timeout", type=int, help="Per -attempt connect() timeout in seconds"
+    )
+    parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        default=os.getenv("LOG_LEVEL", "INFO"),
+        help="Logging level (DEBUG, INFO, WARNING, ERROR)",
+    )
     return parser.parse_args()
 
 
@@ -108,9 +118,11 @@ def parse_cli() -> argparse.Namespace:  # noqa: D401 - imperative mood
 # Helper utilities
 # ---------------------------------------------------------------------------
 
-
 def _format_target(url_obj) -> str:
-    """Return a human-readable target string from a SQLAlchemy URL object."""
+    """Return a human -readable target string from a SQLAlchemy URL object.
+
+    The returned string **never contains credentials** (user / password).
+    """
     backend = url_obj.get_backend_name()
     if backend == "sqlite":
         return url_obj.database or "<memory>"
@@ -120,21 +132,34 @@ def _format_target(url_obj) -> str:
     return f"{host}{port}{db}"
 
 
+def _sanitize_credentials(text: str) -> str:
+    """Return *text* with credentials redacted.
+
+    Handles URLs (``scheme://user:pass@host``) and common ``password=`` DSN
+    fragments. The sanitiser is best -effort - it errs on masking rather than
+    leaking.
+    """
+    # Redact ``scheme://user:pass@`` → ``scheme://user:***@``
+    text = re.sub(r"://([^:/?#]+):([^@]+)@", r"://\\1:***@", text)
+    # Redact ``password=secret`` (case -insensitive)
+    text = re.sub(r"(?i)(password|pwd)=([^\s]+)", r"\\1=***", text)
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Main probe logic
 # ---------------------------------------------------------------------------
 
+def main() -> None:  # pragma: no cover - script entry -point
+    args = parse_cli()
 
-def main() -> None:  # pragma: no cover - script entry-point
     # Configure simple timestamped logger (stdout so k8s captures it)
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
+        datefmt="%Y -%m -%dT%H:%M:%S",
     )
     log = logging.getLogger("db_isready")
-
-    args = parse_cli()
 
     # Resolve effective configuration (precedence: CLI > ENV > default)
     database_url = args.database_url or os.getenv(ENV_DB_URL) or DEFAULT_SQLITE_PATH
@@ -151,7 +176,7 @@ def main() -> None:  # pragma: no cover - script entry-point
     try:
         url_obj = make_url(database_url)
     except Exception as exc:  # noqa: BLE001 - any parse failure is fatal here
-        log.error("Invalid DATABASE_URL: %s", exc)
+        log.error("Invalid DATABASE_URL: %s", _sanitize_credentials(str(exc)))
         sys.exit(3)
 
     backend = url_obj.get_backend_name()
@@ -166,7 +191,7 @@ def main() -> None:  # pragma: no cover - script entry-point
         max_tries,
     )
 
-    # Build SQLAlchemy Engine (no pooling; short-lived probe)
+    # Build SQLAlchemy Engine (no pooling; short -lived probe)
     connect_args: Dict[str, Any] = {}
     if backend.startswith(("postgresql", "mysql")):
         # Most network DBAPIs honour 'connect_timeout' keyword (secs)
@@ -185,9 +210,11 @@ def main() -> None:  # pragma: no cover - script entry-point
     for attempt in range(1, max_tries + 1):
         try:
             with engine.connect() as conn:
-                conn.execute(text("SELECT 1"))  # lightweight round-trip
+                conn.execute(text("SELECT 1"))  # lightweight round -trip
             elapsed = time.perf_counter() - start_time
-            log.info("Database is ready after %.2fs (attempt %d)", elapsed, attempt)
+            log.info(
+                "Database is ready after %.2fs (attempt %d)", elapsed, attempt
+            )
             sys.exit(0)
         except OperationalError as exc:  # noqa: BLE001 - broad ok in probe
             log.warning(
@@ -195,13 +222,18 @@ def main() -> None:  # pragma: no cover - script entry-point
                 attempt,
                 max_tries,
                 exc.__class__.__name__,
-                exc,
+                _sanitize_credentials(str(exc)),
                 interval,
                 timeout,
             )
         except Exception as exc:
             # Unexpected errors (driver import race, etc.) still retry but highlighted
-            log.error("Unexpected error while probing DB on attempt %d/%d: %s", attempt, max_tries, exc)
+            log.error(
+                "Unexpected error while probing DB on attempt %d/%d: %s",
+                attempt,
+                max_tries,
+                _sanitize_credentials(str(exc)),
+            )
         time.sleep(interval)
 
     total_elapsed = time.perf_counter() - start_time
@@ -213,5 +245,5 @@ def main() -> None:  # pragma: no cover - script entry-point
     sys.exit(1)
 
 
-if __name__ == "__main__":  # pragma: no cover - CLI entry-point
+if __name__ == "__main__":  # pragma: no cover - CLI entry -point
     main()
