@@ -1,0 +1,76 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-migration
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+spec:
+  # Job configuration
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: {{ .Values.migration.restartPolicy }}
+
+      containers:
+        - name: migration
+          image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+          imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
+
+          # Migration workflow: wait for DB → run migrations
+          command: ["/bin/sh"]
+          args:
+            - -c
+            - |
+              set -e
+              echo "🔍 Waiting for database to be ready..."
+              {{ .Values.migration.command.waitForDb }}
+              echo "✅ Database is ready!"
+              echo "🚀 Running database migrations..."
+              {{ .Values.migration.command.migrate }}
+              echo "✅ Migration job completed successfully!"
+
+          env:
+            # ---------- POSTGRES ----------
+            - name: POSTGRES_HOST
+              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+            - name: POSTGRES_PORT
+              value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_PASSWORD
+
+            # ---------- DERIVED URLS ----------
+            - name: DATABASE_URL
+              value: >-
+                postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
+
+            # ---------- LOGGING ----------
+            - name: LOG_LEVEL
+              value: "INFO"
+
+          # Resource limits
+          resources:
+{{- toYaml .Values.migration.resources | nindent 12 }}
+
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- end }}
+{{- end }}

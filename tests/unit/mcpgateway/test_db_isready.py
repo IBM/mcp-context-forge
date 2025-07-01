@@ -16,12 +16,12 @@ import pytest
 
 
 class _DummyConn:
-    """A no‑op DBAPI connection that always succeeds on ``execute``."""
+    """A no-op DBAPI connection that always succeeds on ``execute``."""
 
     def execute(self, _):
         return 1  # pragma: no cover
 
-    # Context‑manager support -------------------------------------------------
+    # Context-manager support -------------------------------------------------
     def __enter__(self):
         return self
 
@@ -53,7 +53,7 @@ class _DummyEngine:
 
 
 # ---------------------------------------------------------------------------
-# Unit‑tests – utilities first, then public API
+# Unit-tests – utilities first, then public API
 # ---------------------------------------------------------------------------
 
 
@@ -162,7 +162,7 @@ def test_wait_for_db_ready_invalid_parameters():
 
 
 def test_wait_for_db_ready_async_path(monkeypatch):
-    """Async path should off‑load probe into executor without blocking."""
+    """Async path should off-load probe into executor without blocking."""
 
     dummy = _DummyEngine(succeed_after=1)
     monkeypatch.setattr(db_isready, "create_engine", lambda *_a, **_k: dummy)

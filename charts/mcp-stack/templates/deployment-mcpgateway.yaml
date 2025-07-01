@@ -88,9 +88,31 @@ spec:
           ################################################################
           # HEALTH & READINESS PROBES
           ################################################################
+          {{- if .Values.migration.enabled }}
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # Check if migration check already passed
+                  if [ -f /tmp/migration_check_done ]; then
+                    exit 0
+                  fi
+                  # Wait for database to be ready (implies migration completed)
+                  python /app/mcpgateway/utils/db_isready.py --max-tries 1 --interval 1 --timeout 2 || exit 1
+                  # Mark check as done to avoid repeated database calls
+                  touch /tmp/migration_check_done
+                  exit 0
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 60    # Allow up to 5 minutes for migration to complete
+          {{- else }}
           {{- with .Values.mcpContextForge.probes.startup }}
           startupProbe:
 {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
           {{- end }}
 
           {{- with .Values.mcpContextForge.probes.readiness }}
