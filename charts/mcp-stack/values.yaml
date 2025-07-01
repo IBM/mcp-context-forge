@@ -8,14 +8,6 @@ global:
   fullnameOverride: ""          # fully-qualified name override (optional)
 
 ########################################################################
-# DATABASE MIGRATION
-# If true, Helm inserts an initContainer that waits for Postgres and
-# runs `alembic upgrade head` before each mcpgateway pod starts.
-########################################################################
-dbMigration:
-  enabled: true        # ➜ set to false to skip alembic migrations
-
-########################################################################
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################
 mcpContextForge:
@@ -37,8 +29,7 @@ mcpContextForge:
   image:
     repository: ghcr.io/ibm/mcp-context-forge
     tag: latest                 # pin a specific immutable tag in production
-    #pullPolicy: IfNotPresent
-    pullPolicy: Always          # always pull the latest image; useful for dev
+    pullPolicy: IfNotPresent
 
   # Service that fronts the gateway
   service:

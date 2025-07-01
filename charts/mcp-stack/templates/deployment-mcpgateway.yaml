@@ -26,95 +26,8 @@ spec:
     metadata:
       labels:
         app: {{ include "mcp-stack.fullname" . }}-mcpgateway
-        {{- include "mcp-stack.labels" . | nindent 8 }}
 
     spec:
-      ################################################################
-      # INIT CONTAINER — Alembic database migration
-      #
-      # • Enabled via .Values.dbMigration.enabled (toggle in values.yaml)
-      # • Uses the exact same image & env as the main container so no
-      #   duplicate config.
-      #
-      # Step 1: Wait for Postgres by actually opening a connection with
-      #         Python + psycopg2 (acts like a portable pg_isready).
-      # Step 2: Run Alembic; retry both steps for ~60 s to cover slow
-      #         cold starts.
-      ################################################################
-      {{- if .Values.dbMigration.enabled }}
-      initContainers:
-        - name: {{ include "mcp-stack.fullname" . }}-db-migrate
-          image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
-          imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
-
-          env:
-            - name: PYTHONUNBUFFERED            # live logs
-              value: "1"
-            # ---------- POSTGRES ----------
-            - name: POSTGRES_HOST
-              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) | quote }}
-            - name: POSTGRES_PORT
-              value: {{ .Values.mcpContextForge.env.postgres.port | quote }}
-            - name: POSTGRES_DB
-              value: {{ .Values.mcpContextForge.env.postgres.db | quote }}
-            - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: POSTGRES_USER
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: POSTGRES_PASSWORD
-
-          envFrom:
-            - secretRef:
-                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
-            - configMapRef:
-                name: {{ include "mcp-stack.fullname" . }}-gateway-config
-
-          command:
-            - sh
-            - -c
-            - |
-              set -e
-
-              echo '▶ waiting for Postgres via psycopg2…'
-              python - <<'PY'
-              import os, sys, time, psycopg2
-              dsn = "dbname={db} user={user} password={pwd} host={host} port={port}".format(
-                  db=os.environ["POSTGRES_DB"],
-                  user=os.environ["POSTGRES_USER"],
-                  pwd=os.environ["POSTGRES_PASSWORD"],
-                  host=os.environ["POSTGRES_HOST"],
-                  port=os.environ["POSTGRES_PORT"],
-              )
-              for attempt in range(30):
-                  try:
-                      psycopg2.connect(dsn, connect_timeout=2).close()
-                      print("✅ Postgres is ready"); sys.exit(0)
-                  except Exception as e:
-                      print(f"⏳ waiting for Postgres… ({attempt+1}/30) — {e}")
-                      time.sleep(2)
-              print("❌ Postgres not ready after 60 s"); sys.exit(1)
-              PY
-
-              echo '▶ running `alembic --version` to check the Alembic CLI…'
-              alembic --version
-              echo '▶ running Alembic migrations…'
-              for i in $(seq 1 30); do
-                /app/.venv/bin/alembic upgrade head && exit 0
-                echo '⏳ Alembic failed — retrying in 2 s'
-                sleep 2
-              done
-              echo '❌ Alembic failed after multiple attempts'
-              exit 1
-      {{- end }}
-
-      ################################################################
-      # MAIN CONTAINER — MCP Context-Forge
-      ################################################################
       containers:
         - name: mcp-context-forge
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
@@ -132,11 +45,11 @@ spec:
           env:
             # ---------- POSTGRES ----------
             - name: POSTGRES_HOST
-              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) | quote }}
+              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
             - name: POSTGRES_PORT
-              value: {{ .Values.mcpContextForge.env.postgres.port | quote }}
+              value: "{{ .Values.mcpContextForge.env.postgres.port }}"
             - name: POSTGRES_DB
-              value: {{ .Values.mcpContextForge.env.postgres.db | quote }}
+              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
@@ -150,15 +63,16 @@ spec:
 
             # ---------- REDIS ----------
             - name: REDIS_HOST
-              value: {{ printf "%s-redis" (include "mcp-stack.fullname" .) | quote }}
+              value: {{ printf "%s-redis" (include "mcp-stack.fullname" .) }}
             - name: REDIS_PORT
-              value: {{ .Values.mcpContextForge.env.redis.port | quote }}
+              value: "{{ .Values.mcpContextForge.env.redis.port }}"
 
             # ---------- DERIVED URLS ----------
             # These MUST be placed *after* the concrete vars above so the
             # $(…) placeholders are expanded correctly inside the pod.
             - name: DATABASE_URL
-              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+              value: >-
+                postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
             - name: REDIS_URL
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
 
@@ -176,19 +90,19 @@ spec:
           ################################################################
           {{- with .Values.mcpContextForge.probes.startup }}
           startupProbe:
-            {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
           {{- end }}
 
           {{- with .Values.mcpContextForge.probes.readiness }}
           readinessProbe:
-            {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
           {{- end }}
 
           {{- with .Values.mcpContextForge.probes.liveness }}
           livenessProbe:
-            {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
           {{- end }}
 
           # Resource requests / limits
           resources:
-            {{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
+{{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
