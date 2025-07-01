@@ -94,7 +94,6 @@ class SessionBackend:
                 raise ValueError("Redis backend requires redis_url")
 
             self._redis = Redis.from_url(redis_url)
-            self._pubsub = self._redis.pubsub()
 
         elif self._backend == "database":
             if not SQLALCHEMY_AVAILABLE:
@@ -152,6 +151,7 @@ class SessionRegistry(SessionBackend):
             logger.info("Database cleanup task started")
 
         elif self._backend == "redis":
+            self._pubsub = self._redis.pubsub()
             await self._pubsub.subscribe("mcp_session_events")
 
         elif self._backend == "none":
