@@ -182,6 +182,34 @@ helm rollback mcp-stack 1 -n mcp
 
 ---
 
+## Database Migration
+
+The chart includes automatic database migration using **Alembic** that runs before the mcpgateway deployment starts. This ensures your database schema is always up-to-date.
+
+### How It Works
+
+1. **Migration Job** – Runs as a Kubernetes Job alongside other resources
+2. **Database Readiness** – Waits for PostgreSQL using the built-in `db_isready.py` script
+3. **Schema Migration** – Executes `alembic upgrade head` to apply any pending migrations
+4. **Gateway Startup** – mcpgateway uses a startup probe to ensure database is ready before serving traffic
+
+### Configuration
+
+```yaml
+migration:
+  enabled: true                    # Enable/disable migrations (default: true)
+  backoffLimit: 3                  # Retry attempts on failure
+  activeDeadlineSeconds: 600       # Job timeout (10 minutes)
+
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: latest                    # Should match mcpContextForge.image.tag
+
+  command:
+    waitForDb: "python /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"
+    migrate: "alembic upgrade head || echo '⚠️ Migration check failed'"
+---
+
 ## Uninstall
 
 ```bash
@@ -235,11 +263,16 @@ helm template mcp-stack . -f my-values.yaml > /tmp/all.yaml
 
 ## Common Values Reference
 
+## Common Values Reference
+
 | Key                               | Default         | Description                    |
 | --------------------------------- | --------------- | ------------------------------ |
 | `mcpContextForge.image.tag`       | `latest`        | Gateway image version          |
 | `mcpContextForge.ingress.enabled` | `true`          | Create Ingress resource        |
 | `mcpContextForge.ingress.host`    | `gateway.local` | External host                  |
+| `mcpContextForge.hpa.enabled`     | `true`          | Enable Horizontal Pod Autoscaler |
+| `migration.enabled`               | `true`          | Run database migrations        |
+| `migration.backoffLimit`          | `3`             | Migration job retry attempts   |
 | `postgres.credentials.user`       | `admin`         | DB username                    |
 | `postgres.persistence.enabled`    | `true`          | Enable PVC                     |
 | `postgres.persistence.size`       | `10Gi`          | PostgreSQL volume size         |

@@ -29,7 +29,8 @@ mcpContextForge:
   image:
     repository: ghcr.io/ibm/mcp-context-forge
     tag: latest                 # pin a specific immutable tag in production
-    pullPolicy: IfNotPresent
+    #pullPolicy: IfNotPresent
+    pullPolicy: Always          # always pull the latest image; useful for dev/testing
 
   # Service that fronts the gateway
   service:
@@ -221,6 +222,39 @@ mcpContextForge:
         name: mcp-gateway-secret
     - configMapRef:
         name: mcp-gateway-config
+
+########################################################################
+# DATABASE MIGRATION (Alembic)
+# Runs as a Job before mcpgateway deployment
+########################################################################
+migration:
+  enabled: false                             # Set to false to skip migrations
+
+  # Job configuration
+  restartPolicy: Never                      # Job should not restart on failure
+  backoffLimit: 3                          # Retry up to 3 times before giving up
+  activeDeadlineSeconds: 600               # Kill job after 10 minutes
+
+  # Use same image as mcpgateway
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: latest                             # Should match mcpContextForge.image.tag
+    #pullPolicy: IfNotPresent
+    pullPolicy: Always                      # always pull the latest image; useful for dev/testing
+
+  # Resource limits for the migration job
+  resources:
+    limits:
+      cpu: 200m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  # Migration command configuration
+  command:
+    waitForDb: "python /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"
+    migrate: "alembic upgrade head || echo '⚠️ Migration check failed'"
 
 ########################################################################
 # POSTGRES DATABASE
