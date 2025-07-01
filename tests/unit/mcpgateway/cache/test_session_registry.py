@@ -767,9 +767,7 @@ async def test_shutdown_with_redis_error(monkeypatch):
     """shutdown() should swallow Redis / PubSub aclose() errors."""
 
     # Tell the registry that the Redis extras are present
-    monkeypatch.setattr(
-        "mcpgateway.cache.session_registry.REDIS_AVAILABLE", True
-    )
+    monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
 
     # ── fake PubSub object ────────────────────────────────────────────────
     mock_pubsub = AsyncMock(name="MockPubSub")
@@ -789,7 +787,7 @@ async def test_shutdown_with_redis_error(monkeypatch):
             backend="redis",
             redis_url="redis://localhost:6379",
         )
-        await registry.initialize()     # calls mock_redis.pubsub()
+        await registry.initialize()  # calls mock_redis.pubsub()
 
         # must swallow both aclose() exceptions
         await registry.shutdown()
