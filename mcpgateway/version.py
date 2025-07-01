@@ -20,7 +20,7 @@ Features:
 from __future__ import annotations
 
 # Standard
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 import platform
@@ -253,7 +253,7 @@ def _build_payload(
     """
     db_ver, db_ok = _database_version()
     return {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "host": HOSTNAME,
         "uptime_seconds": int(time.time() - START_TIME),
         "app": {
@@ -402,7 +402,7 @@ async def version_endpoint(
     if partial:
         # Return partial HTML fragment for HTMX embedding
         templates = Jinja2Templates(directory=str(settings.templates_dir))
-        return templates.TemplateResponse("version_info_partial.html", {"request": request, "payload": payload})
+        return templates.TemplateResponse(request, "version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")
     if wants_html:
         return HTMLResponse(_render_html(payload))

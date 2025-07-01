@@ -39,7 +39,7 @@ MOCK_METRICS = {
     "min_response_time": 0.1,
     "max_response_time": 2.5,
     "avg_response_time": 1.2,
-    "last_execution_time": "2023-01-01T00:00:00",
+    "last_execution_time": "2023-01-01T00:00:00+00:00",
 }
 
 MOCK_SERVER_READ = {
@@ -47,8 +47,8 @@ MOCK_SERVER_READ = {
     "name": "test_server",
     "description": "A test server",
     "icon": "server-icon",
-    "created_at": "2023-01-01T00:00:00",
-    "updated_at": "2023-01-01T00:00:00",
+    "created_at": "2023-01-01T00:00:00+00:00",
+    "updated_at": "2023-01-01T00:00:00+00:00",
     "is_active": True,
     "associated_tools": ["101"],
     "associated_resources": [201],
@@ -69,8 +69,8 @@ MOCK_TOOL_READ = {
     "annotations": {},
     "jsonpathFilter": None,
     "auth": {"auth_type": "none"},
-    "createdAt": "2023-01-01T00:00:00",
-    "updatedAt": "2023-01-01T00:00:00",
+    "createdAt": "2023-01-01T00:00:00+00:00",
+    "updatedAt": "2023-01-01T00:00:00+00:00",
     "isActive": True,
     "gatewayId": "gateway-1",
     "executionCount": 5,
@@ -115,8 +115,8 @@ MOCK_RESOURCE_READ = {
     "description": "A test resource",
     "mime_type": "text/plain",
     "size": 12,
-    "created_at": "2023-01-01T00:00:00",
-    "updated_at": "2023-01-01T00:00:00",
+    "created_at": "2023-01-01T00:00:00+00:00",
+    "updated_at": "2023-01-01T00:00:00+00:00",
     "is_active": True,
     "metrics": MOCK_METRICS,
 }
@@ -127,8 +127,8 @@ MOCK_PROMPT_READ = {
     "description": "A test prompt",
     "template": "Hello {name}",
     "arguments": [],
-    "created_at": "2023-01-01T00:00:00",
-    "updated_at": "2023-01-01T00:00:00",
+    "created_at": "2023-01-01T00:00:00+00:00",
+    "updated_at": "2023-01-01T00:00:00+00:00",
     "is_active": True,
     "metrics": MOCK_METRICS,
 }
@@ -140,8 +140,8 @@ MOCK_GATEWAY_READ = {
     "description": "A test gateway",
     "transport": "SSE",
     "auth_type": "none",
-    "created_at": "2023-01-01T00:00:00",
-    "updated_at": "2023-01-01T00:00:00",
+    "created_at": "2023-01-01T00:00:00+00:00",
+    "updated_at": "2023-01-01T00:00:00+00:00",
     "is_active": True,
 }
 
@@ -387,7 +387,7 @@ class TestServerEndpoints:
     def test_server_get_tools(self, mock_list_tools, test_client, auth_headers):
         """Test listing tools associated with a server."""
         mock_tool = MagicMock()
-        mock_tool.dict.return_value = MOCK_TOOL_READ
+        mock_tool.model_dump.return_value = MOCK_TOOL_READ
         mock_list_tools.return_value = [mock_tool]
 
         response = test_client.get("/servers/1/tools", headers=auth_headers)
@@ -400,7 +400,7 @@ class TestServerEndpoints:
     def test_server_get_resources(self, mock_list_resources, test_client, auth_headers):
         """Test listing resources associated with a server."""
         mock_resource = MagicMock()
-        mock_resource.dict.return_value = MOCK_RESOURCE_READ
+        mock_resource.model_dump.return_value = MOCK_RESOURCE_READ
         mock_list_resources.return_value = [mock_resource]
 
         response = test_client.get("/servers/1/resources", headers=auth_headers)
@@ -850,7 +850,9 @@ class TestRPCEndpoints:
 
     def test_rpc_invalid_json(self, test_client, auth_headers):
         """Test RPC error handling for malformed JSON."""
-        response = test_client.post("/rpc/", data="invalid json", headers=auth_headers)
+        headers = auth_headers
+        headers["content-type"] = "application/json"
+        response = test_client.post("/rpc/", content="invalid json", headers=headers)
         assert response.status_code == 200  # Returns error response, not HTTP error
         body = response.json()
         assert "error" in body
@@ -1011,7 +1013,9 @@ class TestErrorHandling:
 
     def test_invalid_json_body(self, test_client, auth_headers):
         """Test handling of malformed JSON in request bodies."""
-        response = test_client.post("/protocol/initialize", data="invalid json", headers=auth_headers)
+        headers = auth_headers
+        headers["content-type"] = "application/json"
+        response = test_client.post("/protocol/initialize", content="invalid json", headers=headers)
         assert response.status_code == 400  # body cannot be parsed, so 400
 
     @patch("mcpgateway.main.server_service.get_server")

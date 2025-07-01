@@ -14,7 +14,7 @@ It also publishes event notifications for server changes.
 
 # Standard
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -350,7 +350,7 @@ class ServerService:
                     if prompt_obj:
                         server.prompts.append(prompt_obj)
 
-            server.updated_at = datetime.utcnow()
+            server.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(server)
             # Force loading relationships
@@ -400,7 +400,7 @@ class ServerService:
 
             if server.is_active != activate:
                 server.is_active = activate
-                server.updated_at = datetime.utcnow()
+                server.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(server)
                 if activate:
@@ -500,7 +500,7 @@ class ServerService:
                 "associated_prompts": associated_prompts,
                 "is_active": server.is_active,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -526,7 +526,7 @@ class ServerService:
                 "associated_prompts": associated_prompts,
                 "is_active": server.is_active,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -544,7 +544,7 @@ class ServerService:
                 "name": server.name,
                 "is_active": True,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -562,7 +562,7 @@ class ServerService:
                 "name": server.name,
                 "is_active": False,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 
@@ -576,7 +576,7 @@ class ServerService:
         event = {
             "type": "server_deleted",
             "data": server_info,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
 

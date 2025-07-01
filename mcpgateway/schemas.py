@@ -21,7 +21,7 @@ gateway-specific extensions for federation support.
 
 # Standard
 import base64
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -35,14 +35,7 @@ from mcpgateway.types import Tool as MCPTool
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 # Third-Party
-from pydantic import (
-    AnyHttpUrl,
-    BaseModel,
-    Field,
-    model_validator,
-    root_validator,
-    validator,
-)
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +75,7 @@ def encode_datetime(v: datetime) -> str:
 
 
 # --- Base Model ---
-class BaseModelWithConfig(BaseModel):
+class BaseModelWithConfigDict(BaseModel):
     """Base model with common configuration.
 
     Provides:
@@ -91,29 +84,14 @@ class BaseModelWithConfig(BaseModel):
     - Automatic conversion from snake_case to camelCase for output
     """
 
-    class Config:
-        """
-        A configuration class that provides default behaviors for how to handle serialization,
-        alias generation, enum values, and extra fields when working with models.
-
-        Attributes:
-            from_attributes (bool): Flag to indicate if attributes should be taken from model fields.
-            alias_generator (callable): Function used to generate aliases for field names (e.g., converting to camelCase).
-            populate_by_name (bool): Flag to specify whether to populate fields by name during initialization.
-            json_encoders (dict): Custom JSON encoders for specific types, such as datetime encoding.
-            use_enum_values (bool): Flag to determine if enum values should be serialized or the enum type itself.
-            extra (str): Defines behavior for extra fields in models. The "ignore" option means extra fields are ignored.
-            json_schema_extra (dict): Additional schema information, e.g., specifying that fields can be nullable.
-
-        """
-
-        from_attributes = True
-        alias_generator = to_camel_case
-        populate_by_name = True
-        json_encoders = {datetime: encode_datetime}
-        use_enum_values = True
-        extra = "ignore"
-        json_schema_extra = {"nullable": True}
+    model_config = ConfigDict(
+        from_attributes=True,
+        alias_generator=to_camel_case,
+        populate_by_name=True,
+        use_enum_values=True,
+        extra="ignore",
+        json_schema_extra={"nullable": True},
+    )
 
     def to_dict(self, use_alias: bool = False) -> Dict[str, Any]:
         """
@@ -136,7 +114,7 @@ class BaseModelWithConfig(BaseModel):
 # --- Metrics Schemas ---
 
 
-class ToolMetrics(BaseModelWithConfig):
+class ToolMetrics(BaseModelWithConfigDict):
     """
     Represents the performance and execution statistics for a tool.
 
@@ -161,7 +139,7 @@ class ToolMetrics(BaseModelWithConfig):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent invocation")
 
 
-class ResourceMetrics(BaseModelWithConfig):
+class ResourceMetrics(BaseModelWithConfigDict):
     """
     Represents the performance and execution statistics for a resource.
 
@@ -186,7 +164,7 @@ class ResourceMetrics(BaseModelWithConfig):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent invocation")
 
 
-class ServerMetrics(BaseModelWithConfig):
+class ServerMetrics(BaseModelWithConfigDict):
     """
     Represents the performance and execution statistics for a server.
 
@@ -211,7 +189,7 @@ class ServerMetrics(BaseModelWithConfig):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent invocation")
 
 
-class PromptMetrics(BaseModelWithConfig):
+class PromptMetrics(BaseModelWithConfigDict):
     """
     Represents the performance and execution statistics for a prompt.
 
@@ -239,7 +217,7 @@ class PromptMetrics(BaseModelWithConfig):
 # --- JSON Path API modifier Schema
 
 
-class JsonPathModifier(BaseModelWithConfig):
+class JsonPathModifier(BaseModelWithConfigDict):
     """Schema for JSONPath queries.
 
     Provides the structure for parsing JSONPath queries and optional mapping.
@@ -251,7 +229,7 @@ class JsonPathModifier(BaseModelWithConfig):
 
 # --- Tool Schemas ---
 # Authentication model
-class AuthenticationValues(BaseModelWithConfig):
+class AuthenticationValues(BaseModelWithConfigDict):
     """Schema for all Authentications.
     Provides the authentication values for different types of authentication.
     """
@@ -267,7 +245,7 @@ class AuthenticationValues(BaseModelWithConfig):
     auth_header_value: str = Field("", description="Value for custom headers authentication")
 
 
-class ToolCreate(BaseModelWithConfig):
+class ToolCreate(BaseModelWithConfigDict):
     """Schema for creating a new tool.
 
     Supports both MCP-compliant tools and REST integrations. Validates:
@@ -297,7 +275,7 @@ class ToolCreate(BaseModelWithConfig):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -338,7 +316,7 @@ class ToolCreate(BaseModelWithConfig):
         return values
 
 
-class ToolUpdate(BaseModelWithConfig):
+class ToolUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing tool.
 
     Similar to ToolCreate but all fields are optional to allow partial updates.
@@ -356,7 +334,7 @@ class ToolUpdate(BaseModelWithConfig):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -398,7 +376,7 @@ class ToolUpdate(BaseModelWithConfig):
         return values
 
 
-class ToolRead(BaseModelWithConfig):
+class ToolRead(BaseModelWithConfigDict):
     """Schema for reading tool information.
 
     Includes all tool fields plus:
@@ -432,15 +410,8 @@ class ToolRead(BaseModelWithConfig):
     gateway_slug: str
     original_name_slug: str
 
-    class Config(BaseModelWithConfig.Config):
-        """
-        A configuration class that inherits from BaseModelWithConfig.Config.
-        This class may be used to define specific configurations, extending
-        the base functionality of BaseModelWithConfig.
-        """
 
-
-class ToolInvocation(BaseModelWithConfig):
+class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
 
     Captures:
@@ -452,7 +423,7 @@ class ToolInvocation(BaseModelWithConfig):
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments matching tool's input schema")
 
 
-class ToolResult(BaseModelWithConfig):
+class ToolResult(BaseModelWithConfigDict):
     """Schema for tool invocation results.
 
     Supports:
@@ -466,7 +437,7 @@ class ToolResult(BaseModelWithConfig):
     error_message: Optional[str] = None
 
 
-class ResourceCreate(BaseModelWithConfig):
+class ResourceCreate(BaseModelWithConfigDict):
     """Schema for creating a new resource.
 
     Supports:
@@ -483,7 +454,7 @@ class ResourceCreate(BaseModelWithConfig):
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
 
 
-class ResourceUpdate(BaseModelWithConfig):
+class ResourceUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing resource.
 
     Similar to ResourceCreate but URI is not required and all fields are optional.
@@ -496,7 +467,7 @@ class ResourceUpdate(BaseModelWithConfig):
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
 
 
-class ResourceRead(BaseModelWithConfig):
+class ResourceRead(BaseModelWithConfigDict):
     """Schema for reading resource information.
 
     Includes all resource fields plus:
@@ -519,7 +490,7 @@ class ResourceRead(BaseModelWithConfig):
     metrics: ResourceMetrics
 
 
-class ResourceSubscription(BaseModelWithConfig):
+class ResourceSubscription(BaseModelWithConfigDict):
     """Schema for resource subscriptions.
 
     Tracks:
@@ -531,7 +502,7 @@ class ResourceSubscription(BaseModelWithConfig):
     subscriber_id: str = Field(..., description="Unique subscriber identifier")
 
 
-class ResourceNotification(BaseModelWithConfig):
+class ResourceNotification(BaseModelWithConfigDict):
     """Schema for resource update notifications.
 
     Contains:
@@ -542,13 +513,18 @@ class ResourceNotification(BaseModelWithConfig):
 
     uri: str
     content: ResourceContent
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, dt: datetime) -> str:
+        # now returns ISO string with Z
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 # --- Prompt Schemas ---
 
 
-class PromptArgument(BaseModelWithConfig):
+class PromptArgument(BaseModelWithConfigDict):
     """Schema for prompt template arguments.
 
     Defines:
@@ -561,22 +537,24 @@ class PromptArgument(BaseModelWithConfig):
     description: Optional[str] = Field(None, description="Argument description")
     required: bool = Field(default=False, description="Whether argument is required")
 
-    class Config(BaseModelWithConfig.Config):
-        """
-        A configuration class that inherits from BaseModelWithConfig.Config.
+    model_config: ConfigDict = ConfigDict(
+        **{
+            # start with every key from the base
+            **BaseModelWithConfigDict.model_config,
+            # override only json_schema_extra by merging the two dicts:
+            "json_schema_extra": {
+                **BaseModelWithConfigDict.model_config.get("json_schema_extra", {}),
+                "example": {
+                    "name": "language",
+                    "description": "Programming language",
+                    "required": True,
+                },
+            },
+        }
+    )
 
-        This class defines an example schema for configuration, which includes:
-        - 'name': A string representing the name of the configuration (e.g., "language").
-        - 'description': A brief description of the configuration (e.g., "Programming language").
-        - 'required': A boolean indicating if the configuration is mandatory (e.g., True).
 
-        The `schema_extra` attribute provides an example of how the configuration should be structured.
-        """
-
-        schema_extra = {"example": {"name": "language", "description": "Programming language", "required": True}}
-
-
-class PromptCreate(BaseModelWithConfig):
+class PromptCreate(BaseModelWithConfigDict):
     """Schema for creating a new prompt template.
 
     Includes:
@@ -591,7 +569,7 @@ class PromptCreate(BaseModelWithConfig):
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
 
 
-class PromptUpdate(BaseModelWithConfig):
+class PromptUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing prompt.
 
     Similar to PromptCreate but all fields are optional to allow partial updates.
@@ -603,7 +581,7 @@ class PromptUpdate(BaseModelWithConfig):
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
 
 
-class PromptRead(BaseModelWithConfig):
+class PromptRead(BaseModelWithConfigDict):
     """Schema for reading prompt information.
 
     Includes all prompt fields plus:
@@ -624,7 +602,7 @@ class PromptRead(BaseModelWithConfig):
     metrics: PromptMetrics
 
 
-class PromptInvocation(BaseModelWithConfig):
+class PromptInvocation(BaseModelWithConfigDict):
     """Schema for prompt invocation requests.
 
     Contains:
@@ -639,7 +617,7 @@ class PromptInvocation(BaseModelWithConfig):
 # --- Gateway Schemas ---
 
 
-class GatewayCreate(BaseModelWithConfig):
+class GatewayCreate(BaseModelWithConfigDict):
     """Schema for registering a new federation gateway.
 
     Captures:
@@ -665,9 +643,9 @@ class GatewayCreate(BaseModelWithConfig):
     auth_header_value: Optional[str] = Field(None, description="Value for custom headers authentication")
 
     # Adding `auth_value` as an alias for better access post-validation
-    auth_value: Optional[str] = None
+    auth_value: Optional[str] = Field(None, validate_default=True)
 
-    @validator("url", pre=True)
+    @field_validator("url", mode="before")
     def ensure_url_scheme(cls, v: str) -> str:
         """
         Ensure URL has an http/https scheme.
@@ -683,37 +661,38 @@ class GatewayCreate(BaseModelWithConfig):
             return f"http://{v}"
         return v
 
-    @validator("auth_value", pre=True, always=True)
-    def create_auth_value(cls, v, values):
+    @field_validator("auth_value", mode="before")
+    def create_auth_value(cls, v, info):
         """
-        This validator will run before the model is fully instantiated (pre=True)
+        This validator will run before the model is fully instantiated (mode="before")
         It will process the auth fields based on auth_type and generate auth_value.
 
         Args:
             v: Input url
-            values: Dict containing auth_type
+            info: ValidationInfo containing auth_type
 
         Returns:
             str: Auth value
         """
-        auth_type = values.get("auth_type")
+        data = info.data
+        auth_type = data.get("auth_type")
 
         if (auth_type is None) or (auth_type == ""):
             return v  # If no auth_type is provided, no need to create auth_value
 
         # Process the auth fields and generate auth_value based on auth_type
-        auth_value = cls._process_auth_fields(values)
+        auth_value = cls._process_auth_fields(info)
 
         return auth_value
 
     @staticmethod
-    def _process_auth_fields(values: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _process_auth_fields(info: ValidationInfo) -> Optional[Dict[str, Any]]:
         """
         Processes the input authentication fields and returns the correct auth_value.
         This method is called based on the selected auth_type.
 
         Args:
-            values: Dict containing auth fields
+            info: ValidationInfo containing auth fields
 
         Returns:
             Dict with encoded auth
@@ -721,12 +700,13 @@ class GatewayCreate(BaseModelWithConfig):
         Raises:
             ValueError: If auth_type is invalid
         """
-        auth_type = values.get("auth_type")
+        data = info.data
+        auth_type = data.get("auth_type")
 
         if auth_type == "basic":
             # For basic authentication, both username and password must be present
-            username = values.get("auth_username")
-            password = values.get("auth_password")
+            username = data.get("auth_username")
+            password = data.get("auth_password")
 
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
@@ -736,7 +716,7 @@ class GatewayCreate(BaseModelWithConfig):
 
         if auth_type == "bearer":
             # For bearer authentication, only token is required
-            token = values.get("auth_token")
+            token = data.get("auth_token")
 
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
@@ -745,8 +725,8 @@ class GatewayCreate(BaseModelWithConfig):
 
         if auth_type == "authheaders":
             # For headers authentication, both key and value must be present
-            header_key = values.get("auth_header_key")
-            header_value = values.get("auth_header_value")
+            header_key = data.get("auth_header_key")
+            header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
                 raise ValueError("For 'headers' auth, both 'auth_header_key' and 'auth_header_value' must be provided.")
@@ -756,7 +736,7 @@ class GatewayCreate(BaseModelWithConfig):
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, or headers.")
 
 
-class GatewayUpdate(BaseModelWithConfig):
+class GatewayUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing federation gateway.
 
     Similar to GatewayCreate but all fields are optional to allow partial updates.
@@ -777,9 +757,9 @@ class GatewayUpdate(BaseModelWithConfig):
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
 
     # Adding `auth_value` as an alias for better access post-validation
-    auth_value: Optional[str] = None
+    auth_value: Optional[str] = Field(None, validate_default=True)
 
-    @validator("url", pre=True)
+    @field_validator("url", mode="before")
     def ensure_url_scheme(cls, v: Optional[str]) -> Optional[str]:
         """
         Ensure URL has an http/https scheme.
@@ -794,26 +774,27 @@ class GatewayUpdate(BaseModelWithConfig):
             return f"http://{v}"
         return v
 
-    @validator("auth_value", pre=True, always=True)
-    def create_auth_value(cls, v, values):
+    @field_validator("auth_value", mode="before")
+    def create_auth_value(cls, v, info):
         """
-        This validator will run before the model is fully instantiated (pre=True)
+        This validator will run before the model is fully instantiated (mode="before")
         It will process the auth fields based on auth_type and generate auth_value.
 
         Args:
             v: Input URL
-            values: Dict containing auth_type
+            info: ValidationInfo containing auth_type
 
         Returns:
             str: Auth value or URL
         """
-        auth_type = values.get("auth_type")
+        data = info.data
+        auth_type = data.get("auth_type")
 
         if (auth_type is None) or (auth_type == ""):
             return v  # If no auth_type is provided, no need to create auth_value
 
         # Process the auth fields and generate auth_value based on auth_type
-        auth_value = cls._process_auth_fields(values)
+        auth_value = cls._process_auth_fields(info)
 
         return auth_value
 
@@ -867,7 +848,7 @@ class GatewayUpdate(BaseModelWithConfig):
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, or headers.")
 
 
-class GatewayRead(BaseModelWithConfig):
+class GatewayRead(BaseModelWithConfigDict):
     """Schema for reading gateway information.
 
     Includes all gateway fields plus:
@@ -893,10 +874,10 @@ class GatewayRead(BaseModelWithConfig):
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Gateway capabilities")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Creation timestamp")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp")
     is_active: bool = Field(default=True, description="Is the gateway active?")
-    last_seen: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Last seen timestamp")
+    last_seen: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last seen timestamp")
 
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
@@ -940,7 +921,7 @@ class GatewayRead(BaseModelWithConfig):
         return values
 
 
-class FederatedTool(BaseModelWithConfig):
+class FederatedTool(BaseModelWithConfigDict):
     """Schema for tools provided by federated gateways.
 
     Contains:
@@ -954,7 +935,7 @@ class FederatedTool(BaseModelWithConfig):
     gateway_url: str
 
 
-class FederatedResource(BaseModelWithConfig):
+class FederatedResource(BaseModelWithConfigDict):
     """Schema for resources from federated gateways.
 
     Contains:
@@ -968,7 +949,7 @@ class FederatedResource(BaseModelWithConfig):
     gateway_url: str
 
 
-class FederatedPrompt(BaseModelWithConfig):
+class FederatedPrompt(BaseModelWithConfigDict):
     """Schema for prompts from federated gateways.
 
     Contains:
@@ -985,7 +966,7 @@ class FederatedPrompt(BaseModelWithConfig):
 # --- RPC Schemas ---
 
 
-class RPCRequest(BaseModelWithConfig):
+class RPCRequest(BaseModelWithConfigDict):
     """Schema for JSON-RPC 2.0 requests.
 
     Validates:
@@ -1001,7 +982,7 @@ class RPCRequest(BaseModelWithConfig):
     id: Optional[Union[int, str]] = None
 
 
-class RPCResponse(BaseModelWithConfig):
+class RPCResponse(BaseModelWithConfigDict):
     """Schema for JSON-RPC 2.0 responses.
 
     Contains:
@@ -1019,7 +1000,7 @@ class RPCResponse(BaseModelWithConfig):
 # --- Event and Admin Schemas ---
 
 
-class EventMessage(BaseModelWithConfig):
+class EventMessage(BaseModelWithConfigDict):
     """Schema for SSE event messages.
 
     Includes:
@@ -1030,10 +1011,15 @@ class EventMessage(BaseModelWithConfig):
 
     type: str = Field(..., description="Event type (tool_added, resource_updated, etc)")
     data: Dict[str, Any] = Field(..., description="Event payload")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, dt: datetime) -> str:
+        # now returns ISO string with Z
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-class AdminToolCreate(BaseModelWithConfig):
+class AdminToolCreate(BaseModelWithConfigDict):
     """Schema for creating tools via admin UI.
 
     Handles:
@@ -1048,7 +1034,7 @@ class AdminToolCreate(BaseModelWithConfig):
     headers: Optional[str] = None  # JSON string
     input_schema: Optional[str] = None  # JSON string
 
-    @validator("headers", "input_schema")
+    @field_validator("headers", "input_schema")
     def validate_json(cls, v: Optional[str]) -> Optional[Dict[str, Any]]:
         """
         Validate and parse JSON string inputs.
@@ -1070,7 +1056,7 @@ class AdminToolCreate(BaseModelWithConfig):
             raise ValueError("Invalid JSON")
 
 
-class AdminGatewayCreate(BaseModelWithConfig):
+class AdminGatewayCreate(BaseModelWithConfigDict):
     """Schema for creating gateways via admin UI.
 
     Captures:
@@ -1087,13 +1073,13 @@ class AdminGatewayCreate(BaseModelWithConfig):
 # --- New Schemas for Status Toggle Operations ---
 
 
-class StatusToggleRequest(BaseModelWithConfig):
+class StatusToggleRequest(BaseModelWithConfigDict):
     """Request schema for toggling active status."""
 
     activate: bool = Field(..., description="Whether to activate (true) or deactivate (false) the item")
 
 
-class StatusToggleResponse(BaseModelWithConfig):
+class StatusToggleResponse(BaseModelWithConfigDict):
     """Response schema for status toggle operations."""
 
     id: int
@@ -1105,7 +1091,7 @@ class StatusToggleResponse(BaseModelWithConfig):
 # --- Optional Filter Parameters for Listing Operations ---
 
 
-class ListFilters(BaseModelWithConfig):
+class ListFilters(BaseModelWithConfigDict):
     """Filtering options for list operations."""
 
     include_inactive: bool = Field(False, description="Whether to include inactive items in the results")
@@ -1114,7 +1100,7 @@ class ListFilters(BaseModelWithConfig):
 # --- Server Schemas ---
 
 
-class ServerCreate(BaseModelWithConfig):
+class ServerCreate(BaseModelWithConfigDict):
     """Schema for creating a new server.
 
     Attributes:
@@ -1133,7 +1119,7 @@ class ServerCreate(BaseModelWithConfig):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
 
-    @validator("associated_tools", "associated_resources", "associated_prompts", pre=True)
+    @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1149,7 +1135,7 @@ class ServerCreate(BaseModelWithConfig):
         return v
 
 
-class ServerUpdate(BaseModelWithConfig):
+class ServerUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing server.
 
     All fields are optional to allow partial updates.
@@ -1162,7 +1148,7 @@ class ServerUpdate(BaseModelWithConfig):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
 
-    @validator("associated_tools", "associated_resources", "associated_prompts", pre=True)
+    @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1178,7 +1164,7 @@ class ServerUpdate(BaseModelWithConfig):
         return v
 
 
-class ServerRead(BaseModelWithConfig):
+class ServerRead(BaseModelWithConfigDict):
     """Schema for reading server information.
 
     Includes all server fields plus:
@@ -1201,7 +1187,7 @@ class ServerRead(BaseModelWithConfig):
     associated_prompts: List[int] = []
     metrics: ServerMetrics
 
-    @root_validator(pre=True)
+    @model_validator(mode="before")
     def populate_associated_ids(cls, values):
         """
         Pre-validation method that converts associated objects to their 'id'.

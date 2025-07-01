@@ -625,7 +625,7 @@ async def test_redis_error_handling(monkeypatch):
         def from_url(cls, url):
             return mock_redis
 
-    with patch("mcpgateway.cache.session_registry.Redis", MockRedisClass):
+    with patch("mcpgateway.cache.session_registry.Redis", MockRedis):
         registry = SessionRegistry(backend="redis", redis_url="redis://localhost:6379")
         await registry.initialize()
 
@@ -764,22 +764,34 @@ async def test_memory_cleanup_task():
 
 @pytest.mark.asyncio
 async def test_shutdown_with_redis_error(monkeypatch):
-    """Test shutdown handling Redis connection errors."""
-    mock_redis = Mock()
-    mock_redis.close.side_effect = Exception("Redis close error")
-    mock_pubsub = Mock()
-    mock_pubsub.close.side_effect = Exception("PubSub close error")
+    """shutdown() should swallow Redis / PubSub aclose() errors."""
 
-    monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
+    # Tell the registry that the Redis extras are present
+    monkeypatch.setattr(
+        "mcpgateway.cache.session_registry.REDIS_AVAILABLE", True
+    )
 
-    with patch("redis.asyncio.Redis") as mock_redis_class:
-        mock_redis_class.from_url.return_value = mock_redis
-        mock_redis.pubsub.return_value = mock_pubsub
+    # ── fake PubSub object ────────────────────────────────────────────────
+    mock_pubsub = AsyncMock(name="MockPubSub")
+    mock_pubsub.aclose = AsyncMock(side_effect=Exception("PubSub close error"))
 
-        registry = SessionRegistry(backend="redis", redis_url="redis://localhost:6379")
-        await registry.initialize()
+    # ── fake Redis client ────────────────────────────────────────────────
+    mock_redis = AsyncMock(name="MockRedis")
+    mock_redis.aclose = AsyncMock(side_effect=Exception("Redis close error"))
+    # pubsub() is **not** awaited in prod code, so a plain Mock is fine
+    mock_redis.pubsub = Mock(return_value=mock_pubsub)
 
-        # Should not raise exception during shutdown
+    # ── patch the Redis class the module imported ────────────────────────
+    with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
+        MockRedis.from_url.return_value = mock_redis
+
+        registry = SessionRegistry(
+            backend="redis",
+            redis_url="redis://localhost:6379",
+        )
+        await registry.initialize()     # calls mock_redis.pubsub()
+
+        # must swallow both aclose() exceptions
         await registry.shutdown()
 
 

@@ -23,7 +23,7 @@ and detail.
 from __future__ import annotations
 
 # Standard
-import datetime as _dt
+from datetime import datetime, timedelta, timezone
 
 # First-Party
 from mcpgateway.utils import verify_credentials as vc  # module under test
@@ -44,7 +44,7 @@ ALGO = "HS256"
 def _token(payload: dict, *, exp_delta: int | None = None, secret: str = SECRET) -> str:
     """Return a signed JWT with optional expiry offset (minutes)."""
     if exp_delta is not None:
-        expire = _dt.datetime.utcnow() + _dt.timedelta(minutes=exp_delta)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=exp_delta)
         payload = payload | {"exp": int(expire.timestamp())}
     return jwt.encode(payload, secret, algorithm=ALGO)
 

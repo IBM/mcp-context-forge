@@ -812,7 +812,7 @@ async def server_get_tools(
     """
     logger.debug(f"User: {user} has listed tools for the server_id: {server_id}")
     tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive)
-    return [tool.dict(by_alias=True) for tool in tools]
+    return [tool.model_dump(by_alias=True) for tool in tools]
 
 
 @server_router.get("/{server_id}/resources", response_model=List[ResourceRead])
@@ -840,7 +840,7 @@ async def server_get_resources(
     """
     logger.debug(f"User: {user} has listed resources for the server_id: {server_id}")
     resources = await resource_service.list_server_resources(db, server_id=server_id, include_inactive=include_inactive)
-    return [resource.dict(by_alias=True) for resource in resources]
+    return [resource.model_dump(by_alias=True) for resource in resources]
 
 
 @server_router.get("/{server_id}/prompts", response_model=List[PromptRead])
@@ -868,7 +868,7 @@ async def server_get_prompts(
     """
     logger.debug(f"User: {user} has listed prompts for the server_id: {server_id}")
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive)
-    return [prompt.dict(by_alias=True) for prompt in prompts]
+    return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
 
 #############
