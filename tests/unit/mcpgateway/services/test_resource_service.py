@@ -17,7 +17,7 @@ This suite provides complete test coverage for:
 
 # Standard
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # First-Party
@@ -72,8 +72,8 @@ def mock_resource():
     resource.binary_content = None
     resource.size = 12
     resource.is_active = True
-    resource.created_at = datetime.utcnow()
-    resource.updated_at = datetime.utcnow()
+    resource.created_at = datetime.now(timezone.utc)
+    resource.updated_at = datetime.now(timezone.utc)
     resource.metrics = []
 
     # .content property stub
@@ -104,8 +104,8 @@ def mock_inactive_resource():
     resource.binary_content = None
     resource.size = 0
     resource.is_active = False
-    resource.created_at = datetime.utcnow()
-    resource.updated_at = datetime.utcnow()
+    resource.created_at = datetime.now(timezone.utc)
+    resource.updated_at = datetime.now(timezone.utc)
     resource.metrics = []
 
     # .content property stub
@@ -185,8 +185,8 @@ class TestResourceRegistration:
                 mime_type="text/plain",
                 size=len(sample_resource_create.content),
                 is_active=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 template=None,
                 metrics={
                     "total_executions": 0,
@@ -296,8 +296,8 @@ class TestResourceRegistration:
                 mime_type="application/octet-stream",
                 size=len(binary_resource.content),
                 is_active=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 template=None,
                 metrics={
                     "total_executions": 0,
@@ -448,8 +448,8 @@ class TestResourceManagement:
                 mime_type=mock_inactive_resource.mime_type or "text/plain",
                 size=mock_inactive_resource.size or 0,
                 is_active=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 template=None,
                 metrics={
                     "total_executions": 0,
@@ -482,8 +482,8 @@ class TestResourceManagement:
                 mime_type=mock_resource.mime_type,
                 size=mock_resource.size,
                 is_active=False,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 template=None,
                 metrics={
                     "total_executions": 0,
@@ -528,8 +528,8 @@ class TestResourceManagement:
                 mime_type=mock_resource.mime_type,
                 size=mock_resource.size,
                 is_active=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 template=None,
                 metrics={
                     "total_executions": 0,
@@ -567,8 +567,8 @@ class TestResourceManagement:
                 mime_type="text/plain",
                 size=15,  # length of "Updated content"
                 is_active=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 template=None,
                 metrics={
                     "total_executions": 0,
@@ -636,8 +636,8 @@ class TestResourceManagement:
                 mime_type="application/octet-stream",
                 size=len(b"new binary content"),
                 is_active=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 template=None,
                 metrics={
                     "total_executions": 0,
@@ -1019,7 +1019,7 @@ class TestResourceMetrics:
             MagicMock(scalar=MagicMock(return_value=0.1)),  # min_response_time
             MagicMock(scalar=MagicMock(return_value=2.5)),  # max_response_time
             MagicMock(scalar=MagicMock(return_value=1.2)),  # avg_response_time
-            MagicMock(scalar=MagicMock(return_value=datetime.utcnow())),  # last_execution_time
+            MagicMock(scalar=MagicMock(return_value=datetime.now(timezone.utc))),  # last_execution_time
         ]
 
         result = await resource_service.aggregate_metrics(mock_db)
@@ -1107,7 +1107,7 @@ class TestUtilityMethods:
         metric1, metric2 = MagicMock(), MagicMock()
         metric1.is_success, metric1.response_time = True, 1.0
         metric2.is_success, metric2.response_time = False, 2.0
-        metric1.timestamp = metric2.timestamp = datetime.utcnow()
+        metric1.timestamp = metric2.timestamp = datetime.now(timezone.utc)
         mock_resource.metrics = [metric1, metric2]
 
         result = resource_service._convert_resource_to_read(mock_resource)

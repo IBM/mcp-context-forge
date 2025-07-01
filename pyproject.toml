@@ -311,6 +311,9 @@ minversion = "6.0"
 addopts = "-ra -q --cov=mcpgateway"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
+filterwarnings = [
+  "ignore:Passing 'msg' argument to .*\\.cancel\\(\\) is deprecated:DeprecationWarning", # From 3rd party libraries
+]
 
 # ── fawltydeps ─────────────────────────────────────────────────────
 [tool.fawltydeps]

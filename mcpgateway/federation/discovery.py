@@ -16,7 +16,7 @@ It supports multiple discovery mechanisms:
 # Standard
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 import socket
@@ -205,7 +205,7 @@ class DiscoveryService(LocalDiscoveryService):
         # Skip if already known
         if url in self._discovered_peers:
             peer = self._discovered_peers[url]
-            peer.last_seen = datetime.utcnow()
+            peer.last_seen = datetime.now(timezone.utc)
             return False
 
         try:
@@ -218,8 +218,8 @@ class DiscoveryService(LocalDiscoveryService):
                 name=name,
                 protocol_version=PROTOCOL_VERSION,
                 capabilities=capabilities,
-                discovered_at=datetime.utcnow(),
-                last_seen=datetime.utcnow(),
+                discovered_at=datetime.now(timezone.utc),
+                last_seen=datetime.now(timezone.utc),
                 source=source,
             )
 
@@ -253,7 +253,7 @@ class DiscoveryService(LocalDiscoveryService):
         try:
             capabilities = await self._get_gateway_info(url)
             self._discovered_peers[url].capabilities = capabilities
-            self._discovered_peers[url].last_seen = datetime.utcnow()
+            self._discovered_peers[url].last_seen = datetime.now(timezone.utc)
             return True
         except Exception as e:
             logger.warning(f"Failed to refresh peer {url}: {e}")
@@ -303,7 +303,7 @@ class DiscoveryService(LocalDiscoveryService):
         """Periodically clean up stale peers."""
         while True:
             try:
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 stale_urls = [url for url, peer in self._discovered_peers.items() if now - peer.last_seen > timedelta(minutes=10)]
                 for url in stale_urls:
                     await self.remove_peer(url)
@@ -363,7 +363,7 @@ class DiscoveryService(LocalDiscoveryService):
         if result.get("protocol_version") != PROTOCOL_VERSION:
             raise ValueError(f"Unsupported protocol version: {result.get('protocol_version')}")
 
-        return ServerCapabilities.parse_obj(result["capabilities"])
+        return ServerCapabilities.model_validate(result["capabilities"])
 
     async def _exchange_peers(self) -> None:
         """Exchange peer lists with known gateways."""

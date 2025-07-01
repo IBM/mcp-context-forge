@@ -16,7 +16,7 @@ It handles:
 
 # Standard
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import mimetypes
 import re
@@ -316,7 +316,7 @@ class ResourceService:
             # Update status if it's different
             if resource.is_active != activate:
                 resource.is_active = activate
-                resource.updated_at = datetime.utcnow()
+                resource.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(resource)
 
@@ -443,7 +443,7 @@ class ResourceService:
                 )
                 resource.size = len(resource_update.content)
 
-            resource.updated_at = datetime.utcnow()
+            resource.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(resource)
 
@@ -553,7 +553,7 @@ class ResourceService:
                 "name": resource.name,
                 "is_active": True,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(resource.uri, event)
 
@@ -572,7 +572,7 @@ class ResourceService:
                 "name": resource.name,
                 "is_active": False,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(resource.uri, event)
 
@@ -586,7 +586,7 @@ class ResourceService:
         event = {
             "type": "resource_deleted",
             "data": resource_info,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(resource_info["uri"], event)
 
@@ -605,7 +605,7 @@ class ResourceService:
                 "name": resource.name,
                 "is_active": False,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(resource.uri, event)
 
@@ -762,7 +762,7 @@ class ResourceService:
                 "description": resource.description,
                 "is_active": resource.is_active,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(resource.uri, event)
 
@@ -781,7 +781,7 @@ class ResourceService:
                 "content": resource.content,
                 "is_active": resource.is_active,
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(resource.uri, event)
 

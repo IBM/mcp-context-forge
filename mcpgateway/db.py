@@ -105,6 +105,14 @@ engine = create_engine(
     connect_args=connect_args,
 )
 
+
+# ---------------------------------------------------------------------------
+# 6. Function to return UTC timestamp
+# ---------------------------------------------------------------------------
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -181,7 +189,7 @@ class ToolMetric(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tool_id: Mapped[str] = mapped_column(String, ForeignKey("tools.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -207,7 +215,7 @@ class ResourceMetric(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     resource_id: Mapped[int] = mapped_column(Integer, ForeignKey("resources.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -233,7 +241,7 @@ class ServerMetric(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -259,7 +267,7 @@ class PromptMetric(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     prompt_id: Mapped[int] = mapped_column(Integer, ForeignKey("prompts.id"), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -312,8 +320,8 @@ class Tool(Base):
     headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     jsonpath_filter: Mapped[str] = mapped_column(default="")
 
@@ -557,8 +565,8 @@ class Resource(Base):
     mime_type: Mapped[Optional[str]]
     size: Mapped[Optional[int]]
     template: Mapped[Optional[str]]  # URI template for parameterized resources
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     metrics: Mapped[List["ResourceMetric"]] = relationship("ResourceMetric", back_populates="resource", cascade="all, delete-orphan")
 
@@ -714,7 +722,7 @@ class ResourceSubscription(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id"))
     subscriber_id: Mapped[str]  # Client identifier
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_notification: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     resource: Mapped["Resource"] = relationship(back_populates="subscriptions")
@@ -745,8 +753,8 @@ class Prompt(Base):
     description: Mapped[Optional[str]]
     template: Mapped[str] = mapped_column(Text)
     argument_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
 
@@ -894,8 +902,8 @@ class Server(Base):
     name: Mapped[str] = mapped_column(unique=True)
     description: Mapped[Optional[str]]
     icon: Mapped[Optional[str]]
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     metrics: Mapped[List["ServerMetric"]] = relationship("ServerMetric", back_populates="server", cascade="all, delete-orphan")
 
@@ -1014,8 +1022,8 @@ class Gateway(Base):
     description: Mapped[Optional[str]]
     transport: Mapped[str] = mapped_column(default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]]
 
@@ -1086,8 +1094,8 @@ class SessionRecord(Base):
     __tablename__ = "mcp_sessions"
 
     session_id: Mapped[str] = mapped_column(primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # pylint: disable=not-callable
-    last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))  # pylint: disable=not-callable
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)  # pylint: disable=not-callable
+    last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)  # pylint: disable=not-callable
     data: Mapped[str] = mapped_column(String, nullable=True)
 
     messages: Mapped[List["SessionMessageRecord"]] = relationship("SessionMessageRecord", back_populates="session", cascade="all, delete-orphan")
@@ -1101,8 +1109,8 @@ class SessionMessageRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(ForeignKey("mcp_sessions.session_id"))
     message: Mapped[str] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # pylint: disable=not-callable
-    last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))  # pylint: disable=not-callable
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)  # pylint: disable=not-callable
+    last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)  # pylint: disable=not-callable
 
     session: Mapped["SessionRecord"] = relationship("SessionRecord", back_populates="messages")
 
