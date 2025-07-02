@@ -874,8 +874,8 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 > * Generate tokens via:
 >
 >   ```bash
->   python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 > token.txt
->   export MCPGATEWAY_BEARER_TOKEN=$(cat token.txt)
+>   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+>   echo $MCPGATEWAY_BEARER_TOKEN
 >   ```
 > * Tokens allow non-interactive API clients to authenticate securely.
 >
