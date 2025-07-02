@@ -122,77 +122,83 @@ mcpContextForge:
     GUNICORN_PRELOAD_APP: "true"        # preload app code before forking workers (TODO: not implemented yet)
 
     # ─ Basic application info ─
-    APP_NAME: MCP_Gateway
-    HOST: 0.0.0.0
-    PORT: "4444"
-    APP_ROOT_PATH: ""           # e.g. "/gateway" when deploying under sub-path
+    APP_NAME: MCP_Gateway            # public-facing name of the gateway
+    HOST: 0.0.0.0                    # address the server binds to
+    PORT: "4444"                     # internal container port
+    APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub‑path
 
     # ─ Connection pooling ─
-    DB_POOL_SIZE: "200"
-    DB_MAX_OVERFLOW: "10"
-    DB_POOL_TIMEOUT: "30"
-    DB_POOL_RECYCLE: "3600"
+    DB_POOL_SIZE: "200"              # size of SQLAlchemy connection pool
+    DB_MAX_OVERFLOW: "10"            # extra connections allowed beyond pool size
+    DB_POOL_TIMEOUT: "30"            # seconds to wait for a connection
+    DB_POOL_RECYCLE: "3600"          # recycle connections after N seconds
 
     # ─ Cache behaviour ─
-    CACHE_TYPE: redis
-    CACHE_PREFIX: mcpgw
-    SESSION_TTL: "3600"
-    MESSAGE_TTL: "600"
+    CACHE_TYPE: redis                # Backend cache driver (redis, memory, database)
+    CACHE_PREFIX: mcpgw              # Prefix applied to every cache key
+    SESSION_TTL: "3600"              # TTL (s) for user sessions
+    MESSAGE_TTL: "600"               # TTL (s) for ephemeral messages (completions)
+
+    # ─ Connection retry settings ─
+    REDIS_MAX_RETRIES: "3"           # Maximum retries for Redis cold start
+    REDIS_RETRY_INTERVAL_MS: "2000"  # Interval between Redis retries (ms)
+    DB_MAX_RETRIES: "3"              # Maximum retries for DB cold start
+    DB_RETRY_INTERVAL_MS: "2000"     # Interval between DB retries (ms)
 
     # ─ Protocol & feature toggles ─
     PROTOCOL_VERSION: 2025-03-26
-    MCPGATEWAY_UI_ENABLED: "true"
-    MCPGATEWAY_ADMIN_API_ENABLED: "true"
-    CORS_ENABLED: "true"
-    ALLOWED_ORIGINS: '["http://localhost","http://localhost:4444"]'
-    SKIP_SSL_VERIFY: "false"
+    MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI
+    MCPGATEWAY_ADMIN_API_ENABLED: "true" # toggle Admin API endpoints
+    CORS_ENABLED: "true"             # enable CORS processing in gateway
+    ALLOWED_ORIGINS: '["http://localhost","http://localhost:4444"]' # JSON list of allowed origins
+    SKIP_SSL_VERIFY: "false"         # skip TLS certificate verification on upstream calls
 
     # ─ Logging ─
-    LOG_LEVEL: INFO
-    LOG_FORMAT: json
+    LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    LOG_FORMAT: json                 # json or text format
 
     # ─ Transports ─
-    TRANSPORT_TYPE: all
-    WEBSOCKET_PING_INTERVAL: "30"
-    SSE_RETRY_TIMEOUT: "5000"
+    TRANSPORT_TYPE: all              # comma‑separated list: http, ws, sse, stdio, all
+    WEBSOCKET_PING_INTERVAL: "30"    # seconds between WS pings
+    SSE_RETRY_TIMEOUT: "5000"        # milliseconds before SSE client retries
 
     # ─ Streaming sessions ─
-    USE_STATEFUL_SESSIONS: "false"
-    JSON_RESPONSE_ENABLED: "true"
+    USE_STATEFUL_SESSIONS: "false"   # true = use event store; false = stateless
+    JSON_RESPONSE_ENABLED: "true"    # default to JSON; false for SSE stream
 
     # ─ Federation ─
-    FEDERATION_ENABLED: "true"
-    FEDERATION_DISCOVERY: "false"
-    FEDERATION_PEERS: '[]'
-    FEDERATION_TIMEOUT: "30"
-    FEDERATION_SYNC_INTERVAL: "300"
+    FEDERATION_ENABLED: "true"       # enable federated mode
+    FEDERATION_DISCOVERY: "false"    # advertise & discover peers automatically
+    FEDERATION_PEERS: '[]'           # explicit peer list (JSON array)
+    FEDERATION_TIMEOUT: "30"         # seconds before peer request timeout
+    FEDERATION_SYNC_INTERVAL: "300"  # seconds between peer syncs
 
     # ─ Resource cache ─
-    RESOURCE_CACHE_SIZE: "1000"
-    RESOURCE_CACHE_TTL: "3600"
-    MAX_RESOURCE_SIZE: "10485760"
+    RESOURCE_CACHE_SIZE: "1000"      # max resources kept in memory cache
+    RESOURCE_CACHE_TTL: "3600"       # TTL (s) for resources in cache
+    MAX_RESOURCE_SIZE: "10485760"    # max allowed resource size in bytes (10 MB)
 
     # ─ Tool limits ─
-    TOOL_TIMEOUT: "60"
-    MAX_TOOL_RETRIES: "3"
-    TOOL_RATE_LIMIT: "100"
-    TOOL_CONCURRENT_LIMIT: "10"
+    TOOL_TIMEOUT: "60"               # seconds per tool execution
+    MAX_TOOL_RETRIES: "3"            # retries for failed tool runs
+    TOOL_RATE_LIMIT: "100"           # invocations per minute cap
+    TOOL_CONCURRENT_LIMIT: "10"      # concurrent tool executions
 
     # ─ Prompt cache ─
-    PROMPT_CACHE_SIZE: "100"
-    MAX_PROMPT_SIZE: "102400"
-    PROMPT_RENDER_TIMEOUT: "10"
+    PROMPT_CACHE_SIZE: "100"         # number of prompt templates to cache
+    MAX_PROMPT_SIZE: "102400"        # max template size in bytes
+    PROMPT_RENDER_TIMEOUT: "10"      # seconds to render a template
 
     # ─ Health checks ─
-    HEALTH_CHECK_INTERVAL: "60"
-    HEALTH_CHECK_TIMEOUT: "10"
-    UNHEALTHY_THRESHOLD: "3"
-    FILELOCK_PATH: /tmp/gateway_healthcheck_init.lock
+    HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
+    HEALTH_CHECK_TIMEOUT: "10"       # request timeout per health check
+    UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
+    FILELOCK_PATH: /tmp/gateway_healthcheck_init.lock # lock file used at start‑up
 
     # ─ Development toggles ─
-    DEV_MODE: "false"
-    RELOAD: "false"
-    DEBUG: "false"
+    DEV_MODE: "false"                # enable dev‑mode features
+    RELOAD: "false"                  # auto‑reload code on changes
+    DEBUG: "false"                   # verbose debug traces
 
   ####################################################################
   # SENSITIVE SETTINGS
@@ -202,17 +208,18 @@ mcpContextForge:
   ####################################################################
   secret:
     # ─ Admin & auth ─
-    BASIC_AUTH_USER: admin
-    BASIC_AUTH_PASSWORD: changeme
-    AUTH_REQUIRED: "true"
-    JWT_SECRET_KEY: my-test-key
-    JWT_ALGORITHM: HS256
-    TOKEN_EXPIRY: "10080"
-    AUTH_ENCRYPTION_SECRET: my-test-salt
+    BASIC_AUTH_USER: admin                 # username for basic‑auth login
+    BASIC_AUTH_PASSWORD: changeme          # password for basic‑auth (CHANGE IN PROD!)
+    AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
+    JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
+    JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
+    TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
+    AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
     # (derived URLs are defined in deployment-mcp.yaml)
-    # ─ Optional overrides ─
-    # DATABASE_URL: "postgresql://admin:s3cr3t@db.acme.com:5432/prod"
-    # REDIS_URL:    "redis://cache.acme.com:6379/0"
+
+    # ─ Optional database / redis overrides ─
+    # DATABASE_URL: "postgresql://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
+    # REDIS_URL:    "redis://cache.acme.com:6379/0"                   # override the auto-generated URL
 
   ####################################################################
   # Names of ConfigMap / Secret are resolved by templates; leave as-is.
@@ -232,8 +239,8 @@ migration:
 
   # Job configuration
   restartPolicy: Never                      # Job should not restart on failure
-  backoffLimit: 3                          # Retry up to 3 times before giving up
-  activeDeadlineSeconds: 600               # Kill job after 10 minutes
+  backoffLimit: 3                           # Retry up to 3 times before giving up
+  activeDeadlineSeconds: 600                # Kill job after 10 minutes
 
   # Use same image as mcpgateway
   image:
