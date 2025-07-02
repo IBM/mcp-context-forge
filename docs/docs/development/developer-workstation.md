@@ -51,7 +51,7 @@ This guide helps you to set up your local environment for contributing to the Mo
     -   Debian/Ubuntu: `sudo apt-get update && sudo apt-get install python3 docker.io docker-buildx-plugin docker-compose-plugin make nodejs npm`.
     -   Fedora: `sudo dnf install python3 docker docker-buildx docker-compose make nodejs npm`.
 -   **Permissions**: Add user to `docker` group: `sudo usermod -aG docker $USER`, then reboot.
--   **Troubleshooting**: Use `systemctl start docker` if the service isn’t running.
+-   **Troubleshooting**: Use `systemctl start docker` if the service isn't running.
 
 ### Windows
 
@@ -67,7 +67,7 @@ This guide helps you to set up your local environment for contributing to the Mo
 -   **Windows Terminal**
     -   Install from Microsoft Store. set WSL2 as default profile.
 -   **Make Alternatives**
-    -   Use WSL2’s `make` or install via Chocolatey (`choco install make`).
+    -   Use WSL2's `make` or install via Chocolatey (`choco install make`).
 
 ## Common Gotchas
 
