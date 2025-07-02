@@ -179,6 +179,8 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     db_pool_recycle: int = 3600
+    db_max_retries: int = 3
+    db_retry_interval_ms: int = 2000
 
     # Cache
     cache_type: str = "database"  # memory or redis or database
@@ -186,6 +188,8 @@ class Settings(BaseSettings):
     cache_prefix: str = "mcpgw:"
     session_ttl: int = 3600
     message_ttl: int = 600
+    redis_max_retries: int = 3
+    redis_retry_interval_ms: int = 2000
 
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
