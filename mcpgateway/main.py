@@ -103,6 +103,9 @@ from mcpgateway.validation.jsonrpc import (
     validate_request,
 )
 
+from mcpgateway.utils.db_isready import wait_for_db_ready
+from mcpgateway.utils.redis_isready import wait_for_redis_ready
+
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
 
@@ -138,6 +141,13 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
+# Wait for database to be ready before creating tables
+wait_for_db_ready(
+    max_tries=int(settings.db_max_retries),
+    interval=int(settings.db_retry_interval_ms) / 1000, # Converting ms to s
+    sync=True
+)
+
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
@@ -154,6 +164,14 @@ server_service = ServerService()
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
 
+# Wait for redis to be ready
+if settings.cache_type == "redis":    
+    wait_for_redis_ready(
+        redis_url=settings.redis_url,
+        max_retries=int(settings.redis_max_retries),
+        retry_interval_ms=int(settings.redis_retry_interval_ms),
+        sync=True
+    )
 
 # Initialize session registry
 session_registry = SessionRegistry(
