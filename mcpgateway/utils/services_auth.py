@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
+"""mcpgateway.utils.services_auth - Authentication utilities for MCP Gateway
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

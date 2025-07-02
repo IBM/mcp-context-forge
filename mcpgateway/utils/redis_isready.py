@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """redis_isready - Wait until Redis is ready and accepting connections
-======================================================================
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Reeve Barreto, Mihai Criveti
+
 This helper blocks until the given **Redis** server (defined by a connection URL)
 successfully responds to a `PING` command. It is intended to delay application startup until Redis is online.
 
 It can be used both **synchronously** or **asynchronously**, and will retry
 connections with a configurable interval and number of attempts.
+
+Exit codes when executed as a script
+-----------------------------------
+* ``0`` - Redis ready.
+* ``1`` - all attempts exhausted / timed-out.
+* ``2`` - :pypi:`redis` is **not** installed.
+* ``3`` - invalid parameter combination (``max_retries``/``retry_interval_ms``).
 
 Features
 --------
@@ -45,19 +56,23 @@ Python ::
 
 
 # Standard
+import argparse
 import asyncio
 import logging
 import os
+import sys
 import time
-from typing import Optional
+from typing import Any, Optional
 
+# ---------------------------------------------------------------------------
+# Third-party imports - abort early if redis is missing
+# ---------------------------------------------------------------------------
 try:
     # Third-Party
     from redis import Redis
-
-    REDIS_AVAILABLE = True
-except ImportError:
-    REDIS_AVAILABLE = False
+except ImportError:  # pragma: no cover - handled at runtime for the CLI
+    sys.stderr.write("redis library not installed - aborting (pip install redis)\n")
+    sys.exit(2)
 
 # Environment variables
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -98,7 +113,6 @@ def wait_for_redis_ready(
     Raises:
         RuntimeError: If Redis does not respond successfully after all retry attempts.
     """
-
     log = logger or logging.getLogger("redis_isready")
     if not log.handlers:  # basicConfig **once** - respects *log.setLevel* later
         logging.basicConfig(
@@ -110,26 +124,31 @@ def wait_for_redis_ready(
     if max_retries < 1 or retry_interval_ms <= 0:
         raise RuntimeError("Invalid max_retries or retry_interval_ms values")
 
-    def _probe() -> None:
+    log.info(f"Probing Redis at {redis_url} (interval={retry_interval_ms}ms, max_retries={max_retries})")
+
+    def _probe(*_: Any) -> None:
         """
         Inner synchronous probe running in either the current or a thread.
 
+        Args:
+            *_: Ignored arguments (for compatibility with run_in_executor).
+
         Returns:
-            None - the function exits successfully once the DB answers.
+            None - the function exits successfully once Redis answers.
 
         Raises:
-            RuntimeError: Forwarded after exhausting ``max_tries`` attempts.
+            RuntimeError: Forwarded after exhausting ``max_retries`` attempts.
         """
-
-        redis = Redis.from_url(redis_url)
+        redis_client = Redis.from_url(redis_url)
         for attempt in range(1, max_retries + 1):
             try:
-                redis.ping()
+                redis_client.ping()
                 log.info(f"Redis ready (attempt {attempt})")
                 return
-            except ConnectionError:
-                log.warning(f"Redis connection failed (attempt {attempt}/{max_retries}) - retrying in {retry_interval_ms} ms")
-                time.sleep(retry_interval_ms / 1000.0)
+            except Exception as exc:
+                log.debug(f"Attempt {attempt}/{max_retries} failed ({exc}) - retrying in {retry_interval_ms} ms")
+                if attempt < max_retries:  # Don't sleep on the last attempt
+                    time.sleep(retry_interval_ms / 1000.0)
         raise RuntimeError(f"Redis not ready after {max_retries} attempts")
 
     if sync:
@@ -137,3 +156,68 @@ def wait_for_redis_ready(
     else:
         loop = asyncio.get_event_loop()
         loop.run_until_complete(loop.run_in_executor(None, _probe))
+
+
+# ---------------------------------------------------------------------------
+# CLI helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_cli() -> argparse.Namespace:
+    """Parse command-line arguments for the *redis_isready* CLI wrapper.
+
+    Returns:
+        Parsed :class:`argparse.Namespace` holding all CLI options.
+    """
+
+    parser = argparse.ArgumentParser(
+        description="Wait until Redis is ready and accepting connections.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--redis-url",
+        default=REDIS_URL,
+        help="Redis connection URL (env REDIS_URL)",
+    )
+    parser.add_argument("--max-retries", type=int, default=REDIS_MAX_RETRIES, help="Maximum connection attempts")
+    parser.add_argument("--retry-interval-ms", type=int, default=REDIS_RETRY_INTERVAL_MS, help="Delay between attempts in milliseconds")
+    parser.add_argument("--log-level", default=LOG_LEVEL, help="Logging level (DEBUG, INFO, …)")
+    return parser.parse_args()
+
+
+def main() -> None:  # pragma: no cover
+    """CLI entry-point.
+
+    * Parses command-line options.
+    * Applies ``--log-level`` to the *redis_isready* logger **before** the first
+      message is emitted.
+    * Delegates the actual probing to :func:`wait_for_redis_ready`.
+    * Exits with:
+
+        * ``0`` - Redis became ready.
+        * ``1`` - connection attempts exhausted.
+        * ``2`` - redis library missing.
+        * ``3`` - invalid parameter combination.
+    """
+    cli_args = _parse_cli()
+
+    log = logging.getLogger("redis_isready")
+    log.setLevel(cli_args.log_level.upper())
+
+    try:
+        wait_for_redis_ready(
+            redis_url=cli_args.redis_url,
+            max_retries=cli_args.max_retries,
+            retry_interval_ms=cli_args.retry_interval_ms,
+            sync=True,
+            logger=log,
+        )
+    except RuntimeError as exc:
+        log.error(f"Redis unavailable: {exc}")
+        sys.exit(1)
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()

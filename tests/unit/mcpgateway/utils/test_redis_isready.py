@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+"""redis_isready - Wait until Redis is ready and accepting connections
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Reeve Barreto, Mihai Criveti
+
+"""
 # Standard
 import asyncio
 from unittest.mock import patch
