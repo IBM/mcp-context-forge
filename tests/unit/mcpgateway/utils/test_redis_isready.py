@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 # Standard
 import asyncio
-
-# Third-Party
-import pytest
 from unittest.mock import patch
 
 # First-Party
 import mcpgateway.utils.redis_isready as redis_isready
 
+# Third-Party
+import pytest
 
 # ---------------------------------------------------------------------------
 # Mock Redis
 # ---------------------------------------------------------------------------
+
 
 class MockRedis:
     """Mock Redis client for testing Redis backend."""
@@ -68,6 +68,7 @@ class MockRedis:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_wait_for_redis_ready_success(monkeypatch):
     """A healthy Redis instance should succeed on the first attempt."""
 
@@ -89,7 +90,7 @@ def test_wait_for_redis_ready_retries(monkeypatch):
     """Redis should fail a few times before succeeding."""
 
     mock = MockRedis()
-    mock.attempts = 0 
+    mock.attempts = 0
 
     def failing_then_succeeding_ping():
         mock.attempts += 1

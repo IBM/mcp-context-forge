@@ -44,14 +44,17 @@ Python ::
 """
 
 
+# Standard
+import asyncio
+import logging
 import os
 import time
-import logging
-import asyncio
 from typing import Optional
+
 try:
     # Third-Party
     from redis import Redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -62,6 +65,7 @@ REDIS_MAX_RETRIES = int(os.getenv("REDIS_MAX_RETRIES", "3"))
 REDIS_RETRY_INTERVAL_MS = int(os.getenv("REDIS_RETRY_INTERVAL_MS", "2000"))
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
 
 def wait_for_redis_ready(
     *,
@@ -92,12 +96,11 @@ def wait_for_redis_ready(
             If True, runs the probe synchronously. If False (default), runs it asynchronously.
 
     Raises:
-        RuntimeError
-            If Redis does not respond successfully after all retry attempts.
+        RuntimeError: If Redis does not respond successfully after all retry attempts.
     """
 
     log = logger or logging.getLogger("redis_isready")
-    if not log.handlers: # basicConfig **once** - respects *log.setLevel* later
+    if not log.handlers:  # basicConfig **once** - respects *log.setLevel* later
         logging.basicConfig(
             level=getattr(logging, LOG_LEVEL, logging.INFO),
             format="%(asctime)s [%(levelname)s] %(message)s",
@@ -117,14 +120,14 @@ def wait_for_redis_ready(
         Raises:
             RuntimeError: Forwarded after exhausting ``max_tries`` attempts.
         """
-        
+
         redis = Redis.from_url(redis_url)
         for attempt in range(1, max_retries + 1):
             try:
                 redis.ping()
                 log.info(f"Redis ready (attempt {attempt})")
                 return
-            except ConnectionError as e:
+            except ConnectionError:
                 log.warning(f"Redis connection failed (attempt {attempt}/{max_retries}) - retrying in {retry_interval_ms} ms")
                 time.sleep(retry_interval_ms / 1000.0)
         raise RuntimeError(f"Redis not ready after {max_retries} attempts")
@@ -134,4 +137,3 @@ def wait_for_redis_ready(
     else:
         loop = asyncio.get_event_loop()
         loop.run_until_complete(loop.run_in_executor(None, _probe))
-
