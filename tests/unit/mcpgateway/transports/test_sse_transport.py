@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Tests for the MCP Gateway SSE transport implementation.
+
 """
 
 # Standard

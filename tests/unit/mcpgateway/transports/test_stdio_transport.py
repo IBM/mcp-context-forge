@@ -9,6 +9,7 @@ to mock portably, so these tests **inject in-memory fakes** in place of
 logic (JSON encoding/decoding, connection state, error handling) without
 ever touching real pipes.
 
+
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti

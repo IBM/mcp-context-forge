@@ -14,6 +14,7 @@ Focus areas
 
 No external MCP server is started; we test the isolated utility pieces that
 have no heavy dependencies.
+
 """
 
 # Future
