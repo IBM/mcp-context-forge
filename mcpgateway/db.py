@@ -25,6 +25,7 @@ import uuid
 from mcpgateway.config import settings
 from mcpgateway.types import ResourceContent
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.db_isready import wait_for_db_ready
 
 # Third-Party
 import jsonschema
@@ -1220,4 +1221,7 @@ def init_db():
 
 
 if __name__ == "__main__":
+    # Wait for database to be ready before initializing
+    wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
+
     init_db()
