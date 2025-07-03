@@ -1,0 +1,127 @@
+# Patterns to ignore when building packages.
+# This supports shell glob matching, relative path matching, and
+# negation (prefixed with !). Only one pattern per line.
+
+# Common VCS dirs
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+
+# Common backup files
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+
+# Various IDEs
+.project
+.idea/
+*.tmproj
+.vscode/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Helm-specific
+*.tgz
+.helmignore
+
+# Generated schema files (keep manually curated schema)
+values.schema.generated.json
+
+# Chart development and testing
+my-values.yaml
+*-values.yaml
+values-*.yaml
+test-values.yaml
+dev-values.yaml
+local-values.yaml
+override-values.yaml
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Documentation that shouldn't be in the chart package
+CONTRIBUTING.md
+README.md
+CHANGELOG.md
+LICENSE
+docs/
+examples/
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+.circleci/
+
+# Package manager files
+package.json
+package-lock.json
+yarn.lock
+Gemfile
+Gemfile.lock
+requirements.txt
+pyproject.toml
+poetry.lock
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Logs
+*.log
+logs/
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Chart testing
+ct.yaml
+chart-testing.yaml
+
+# Helm diff plugin output
+*.diff
+
+# Helmfile
+helmfile.yaml
+helmfile.yml
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+terraform.tfvars
+
+# Ansible
+ansible.cfg
+hosts
+inventory
+
+# Security scanning
+.trivyignore
+.snyk
+
+# Custom values files (add your own patterns)
+secrets.yaml
+credentials.yaml
+passwords.yaml
