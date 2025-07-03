@@ -60,6 +60,19 @@ from fastapi.responses import PlainTextResponse
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
+# Conditional imports
+try:
+    # Third-Party
+    from fastapi.middleware.cors import CORSMiddleware
+except ImportError:
+    CORSMiddleware = None
+
+try:
+    # Third-Party
+    import httpx
+except ImportError:
+    httpx = None
+
 LOGGER = logging.getLogger("mcpgateway.translate")
 KEEP_ALIVE_INTERVAL = 30  # seconds - matches the reference implementation
 __all__ = ["main"]  # for console-script entry-point
@@ -75,6 +88,14 @@ class _PubSub:
         self._subscribers: List[asyncio.Queue[str]] = []
 
     async def publish(self, data: str) -> None:
+        """Publish data to all subscribers.
+
+        Args:
+            data: The data string to publish to all subscribers.
+
+        Returns:
+            None
+        """
         dead: List[asyncio.Queue[str]] = []
         for q in self._subscribers:
             try:
@@ -86,11 +107,24 @@ class _PubSub:
                 self._subscribers.remove(q)
 
     def subscribe(self) -> "asyncio.Queue[str]":
+        """Subscribe to published data.
+
+        Returns:
+            asyncio.Queue[str]: A queue that will receive published data.
+        """
         q: asyncio.Queue[str] = asyncio.Queue(maxsize=1024)
         self._subscribers.append(q)
         return q
 
     def unsubscribe(self, q: "asyncio.Queue[str]") -> None:
+        """Unsubscribe from published data.
+
+        Args:
+            q: The queue to unsubscribe from published data.
+
+        Returns:
+            None
+        """
         with suppress(ValueError):
             self._subscribers.remove(q)
 
@@ -109,6 +143,16 @@ class StdIOEndpoint:
         self._pump_task: Optional[asyncio.Task[None]] = None
 
     async def start(self) -> None:
+        """Start the stdio subprocess.
+
+        Creates the subprocess and starts the stdout pump task.
+
+        Returns:
+            None
+
+        Raises:
+            OSError: If the subprocess cannot be started.
+        """
         LOGGER.info("Starting stdio subprocess: %s", self._cmd)
         self._proc = await asyncio.create_subprocess_exec(
             *shlex.split(self._cmd),
@@ -121,6 +165,13 @@ class StdIOEndpoint:
         self._pump_task = asyncio.create_task(self._pump_stdout())
 
     async def stop(self) -> None:
+        """Stop the stdio subprocess.
+
+        Terminates the subprocess and cancels the pump task.
+
+        Returns:
+            None
+        """
         if self._proc is None:
             return
         LOGGER.info("Stopping subprocess (pid=%s)", self._proc.pid)
@@ -131,6 +182,17 @@ class StdIOEndpoint:
             self._pump_task.cancel()
 
     async def send(self, raw: str) -> None:
+        """Send data to the subprocess stdin.
+
+        Args:
+            raw: The raw data string to send to the subprocess.
+
+        Returns:
+            None
+
+        Raises:
+            RuntimeError: If the stdio endpoint is not started.
+        """
         if not self._stdin:
             raise RuntimeError("stdio endpoint not started")
         LOGGER.debug("→ stdio: %s", raw.strip())
@@ -138,6 +200,17 @@ class StdIOEndpoint:
         await self._stdin.drain()
 
     async def _pump_stdout(self) -> None:
+        """Pump stdout from subprocess to pubsub.
+
+        Continuously reads lines from the subprocess stdout and publishes them
+        to the pubsub system.
+
+        Returns:
+            None
+
+        Raises:
+            Exception: If the stdout pump encounters an error.
+        """
         assert self._proc and self._proc.stdout
         reader = self._proc.stdout
         try:
@@ -168,13 +241,23 @@ def _build_fastapi(
     message_path: str = "/message",
     cors_origins: Optional[List[str]] = None,
 ) -> FastAPI:
+    """Build FastAPI application with SSE and message endpoints.
+
+    Args:
+        pubsub: The publish/subscribe system for message routing.
+        stdio: The stdio endpoint for subprocess communication.
+        keep_alive: Interval in seconds for keepalive messages. Defaults to KEEP_ALIVE_INTERVAL.
+        sse_path: Path for the SSE endpoint. Defaults to "/sse".
+        message_path: Path for the message endpoint. Defaults to "/message".
+        cors_origins: Optional list of CORS allowed origins.
+
+    Returns:
+        FastAPI: The configured FastAPI application.
+    """
     app = FastAPI()
 
     # Add CORS middleware if origins specified
-    if cors_origins:
-        # Third-Party
-        from fastapi.middleware.cors import CORSMiddleware
-
+    if cors_origins and CORSMiddleware:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins,
@@ -254,6 +337,7 @@ def _build_fastapi(
             Response: ``202 Accepted`` if the payload is forwarded successfully,
             or ``400 Bad Request`` when the body is not valid JSON.
         """
+        _ = session_id  # Unused but required for API compatibility
         payload = await raw.body()
         try:
             json.loads(payload)  # validate
@@ -268,6 +352,11 @@ def _build_fastapi(
     # ----- Liveness ---------------------------------------------------------#
     @app.get("/healthz")
     async def health() -> Response:  # noqa: D401
+        """Health check endpoint.
+
+        Returns:
+            Response: A plain text response with "ok" status.
+        """
         return PlainTextResponse("ok")
 
     return app
@@ -279,6 +368,17 @@ def _build_fastapi(
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Args:
+        argv: Sequence of command line arguments.
+
+    Returns:
+        argparse.Namespace: Parsed command line arguments.
+
+    Raises:
+        NotImplementedError: If streamableHttp option is specified.
+    """
     p = argparse.ArgumentParser(
         prog="mcpgateway.translate",
         description="Bridges stdio JSON-RPC to SSE or SSE to stdio.",
@@ -312,6 +412,17 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: Optional[List[str]] = None) -> None:
+    """Run stdio to SSE bridge.
+
+    Args:
+        cmd: The command to run as a stdio subprocess.
+        port: The port to bind the HTTP server to.
+        log_level: The logging level to use. Defaults to "info".
+        cors: Optional list of CORS allowed origins.
+
+    Returns:
+        None
+    """
     pubsub = _PubSub()
     stdio = StdIOEndpoint(cmd, pubsub)
     await stdio.start()
@@ -346,9 +457,21 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
     await _shutdown()  # final cleanup
 
 
-async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str], log_level: str = "info") -> None:
-    # Third-Party
-    import httpx
+async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
+    """Run SSE to stdio bridge.
+
+    Args:
+        url: The SSE endpoint URL to connect to.
+        oauth2_bearer: Optional OAuth2 bearer token for authentication.
+
+    Returns:
+        None
+
+    Raises:
+        ImportError: If httpx package is not available.
+    """
+    if not httpx:
+        raise ImportError("httpx package is required for SSE to stdio bridging")
 
     headers = {}
     if oauth2_bearer:
@@ -384,14 +507,46 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str], log_level: s
 
 
 def start_stdio(cmd, port, log_level, cors):
+    """Start stdio bridge.
+
+    Args:
+        cmd: The command to run as a stdio subprocess.
+        port: The port to bind the HTTP server to.
+        log_level: The logging level to use.
+        cors: Optional list of CORS allowed origins.
+
+    Returns:
+        None
+    """
     return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors))
 
 
-def start_sse(url, bearer, log_level):
-    return asyncio.run(_run_sse_to_stdio(url, bearer, log_level))
+def start_sse(url, bearer):
+    """Start SSE bridge.
+
+    Args:
+        url: The SSE endpoint URL to connect to.
+        bearer: Optional OAuth2 bearer token for authentication.
+
+    Returns:
+        None
+    """
+    return asyncio.run(_run_sse_to_stdio(url, bearer))
 
 
-def main(argv: Optional[Sequence[str]] | None = None) -> None:  # entry-point
+def main(argv: Optional[Sequence[str]] | None = None) -> None:
+    """Entry point for the translate module.
+
+    Args:
+        argv: Optional sequence of command line arguments. If None, uses sys.argv[1:].
+
+    Returns:
+        None
+
+    Raises:
+        NotImplementedError: If an unsupported option is specified.
+        KeyboardInterrupt: If the user interrupts the process.
+    """
     args = _parse_args(argv or sys.argv[1:])
     logging.basicConfig(
         level=getattr(logging, args.logLevel.upper(), logging.INFO),
@@ -399,9 +554,9 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:  # entry-point
     )
     try:
         if args.stdio:
-            return start_stdio(args.stdio, args.port, args.logLevel, args.cors)
+            start_stdio(args.stdio, args.port, args.logLevel, args.cors)
         elif args.sse:
-            return start_sse(args.sse, args.oauth2Bearer, args.logLevel)
+            start_sse(args.sse, args.oauth2Bearer)
     except KeyboardInterrupt:
         print("")  # restore shell prompt
         sys.exit(0)
