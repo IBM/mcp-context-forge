@@ -10,6 +10,9 @@ Tests for the MCP Gateway WebSocket transport implementation.
 
 # Standard
 from unittest.mock import AsyncMock
+import logging
+import asyncio
+import types
 
 # First-Party
 from mcpgateway.transports.websocket_transport import WebSocketTransport
@@ -139,6 +142,47 @@ class TestWebSocketTransport:
 
         # Should have sent ping bytes
         mock_websocket.send_bytes.assert_called_once_with(b"ping")
+
+    @pytest.mark.asyncio
+    async def test_send_message_raises_on_send_error(self, websocket_transport, mock_websocket, caplog):
+        """Test send_message logs and raises on send_json error."""
+        await websocket_transport.connect()
+        mock_websocket.send_json.side_effect = Exception("send error")
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(Exception, match="send error"):
+                await websocket_transport.send_message({"foo": "bar"})
+        assert "Failed to send message" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_receive_message_runtime_error(self, websocket_transport):
+        """Test receive_message raises if not connected."""
+        with pytest.raises(RuntimeError, match="Transport not connected"):
+            gen = websocket_transport.receive_message()
+            await gen.__anext__()
+
+    @pytest.mark.asyncio
+    async def test_receive_message_logs_and_disconnects_on_error(self, websocket_transport, mock_websocket, caplog):
+        """Test receive_message logs error and disconnects on generic error."""
+        await websocket_transport.connect()
+        mock_websocket.receive_json.side_effect = Exception("unexpected error")
+        gen = websocket_transport.receive_message()
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(StopAsyncIteration):
+                await gen.__anext__()
+        assert "Error receiving message" in caplog.text
+        assert await websocket_transport.is_connected() is False
+
+    @pytest.mark.asyncio
+    async def test_send_ping_only_when_connected(self, websocket_transport, mock_websocket):
+        """Test send_ping does nothing if not connected."""
+        # Not connected yet
+        await websocket_transport.send_ping()
+        mock_websocket.send_bytes.assert_not_called()
+        # Now connect
+        await websocket_transport.connect()
+        await websocket_transport.send_ping()
+        mock_websocket.send_bytes.assert_called_with(b"ping")
+
 
     # @pytest.mark.asyncio
     # async def test_ping_loop(websocket_transport, mock_websocket):
