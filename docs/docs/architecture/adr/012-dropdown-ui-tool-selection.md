@@ -25,10 +25,10 @@ We implemented this by making the following changes:
    - Show a warning if more than 6 tools are selected in a server. This is to encourage small servers more suited for use with agents.
 
 ## Screenshots
-![Tool selection screen](tool-selection-screen.png)
+![Tool selection screen](images/tool-selection-screen.png)
 *Tool selection screen*
 
-![Tool count warning](tool-count-warning.png)
+![Tool count warning](images/tool-count-warning.png)
 *Tool count warning*
 ## Status
 
