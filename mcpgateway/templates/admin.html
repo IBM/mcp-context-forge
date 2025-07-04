@@ -550,12 +550,51 @@
                       <span class="text-gray-400 text-xs">None</span>
                     {% endif %}
                   </td>
-                  <td class="px-3 py-4 whitespace-nowrap">
-                    <span
-                      class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full {% if tool.isActive %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}"
-                    >
-                      {{ "Active" if tool.isActive else "Inactive" }}
-                    </span>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    {% set enabled = tool.enabled %}
+                    {% set reachable = tool.reachable %}
+
+                    {% if enabled and reachable %}
+                      {% set bg_class = "bg-green-100 text-green-800" %}
+                    {% elif enabled and not reachable %}
+                      {% set bg_class = "bg-yellow-100 text-yellow-800" %}
+                    {% else %}
+                      {% set bg_class = "bg-red-100 text-red-800" %}
+                    {% endif %}
+                    <div class="relative group inline-block">
+                      <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full {{ bg_class }}">
+                        {% if enabled %}
+                          {% if reachable %}
+                            <!-- Active label with green check -->
+                            Active
+                            <svg class="ml-1 h-4 w-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd" />
+                            </svg>
+                          {% else %}
+                            <!-- Offline label with yellow warning -->
+                            Offline
+                            <svg class="ml-1 h-4 w-4 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
+                              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd" />
+                            </svg>
+                          {% endif %}
+                        {% else %}
+                          <!-- Inactive label with red cross -->
+                          Inactive
+                          <svg class="ml-1 h-4 w-4 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                          </svg>
+                        {% endif %}
+                      </span>
+                      <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">
+                        {% if not enabled %}
+                          Tool is Manually Deactivated.
+                        {% elif not reachable %}
+                          The host gateway for this tool is unreachable.
+                        {% else %}
+                          Everything stable.
+                        {% endif %}
+                      </div>
+                    </div>
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <button
@@ -565,7 +604,7 @@
                     >
                       Test
                     </button>
-                    {% if tool.isActive %}
+                    {% if tool.enabled %}
                     <form
                       method="POST"
                       action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
@@ -1345,18 +1384,59 @@
                     {{ gateway.url }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
-                    <span
-                      class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full {% if gateway.isActive %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}"
-                    >
-                      {{ "Active" if gateway.isActive else "Inactive" }}
-                    </span>
+                    {% set enabled = gateway.enabled %}
+                    {% set reachable = gateway.reachable %}
+
+                    {% if enabled and reachable %}
+                      {% set bg_class = "bg-green-100 text-green-800" %}
+                    {% elif enabled and not reachable %}
+                      {% set bg_class = "bg-yellow-100 text-yellow-800" %}
+                    {% else %}
+                      {% set bg_class = "bg-red-100 text-red-800" %}
+                    {% endif %}
+
+                    <!-- Wrapper for tooltip -->
+                    <div class="relative group inline-block">
+                      <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full {{ bg_class }}">
+                        {% if enabled %}
+                          {% if reachable %}
+                            <!-- Active icon (green check) -->
+                            Active
+                            <svg class="ml-1 h-4 w-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd" />
+                            </svg>
+                          {% else %}
+                            <!-- Offline icon (yellow warning) -->
+                            Offline
+                            <svg class="ml-1 h-4 w-4 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
+                              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd" />
+                            </svg>
+                          {% endif %}
+                        {% else %}
+                          <!-- Inactive icon (red error) -->
+                          Inactive
+                          <svg class="ml-1 h-4 w-4 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                          </svg>
+                        {% endif %}
+                      </span>
+                      <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">
+                        {% if not enabled %}
+                          Gateway is Manually Deactivated
+                        {% elif not reachable %}
+                          Gateway is Not Reachable
+                        {% else %}
+                          Everything stable.
+                        {% endif %}
+                      </div>
+                    </div>
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
                     {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                     gateway.lastSeen else 'Never' }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    {% if gateway.isActive %}
+                    {% if gateway.enabled %}
                     <form
                       method="POST"
                       action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"

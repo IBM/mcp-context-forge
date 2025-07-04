@@ -712,7 +712,7 @@ async def admin_toggle_tool(
     form = await request.form()
     activate = form.get("activate", "true").lower() == "true"
     try:
-        await tool_service.toggle_tool_status(db, tool_id, activate)
+        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
     except Exception as e:
         logger.error(f"Error toggling tool status: {e}")
 

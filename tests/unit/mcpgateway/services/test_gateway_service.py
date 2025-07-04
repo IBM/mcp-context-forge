@@ -121,7 +121,8 @@ def mock_gateway():
     gw.description = "A test gateway"
     gw.capabilities = {"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}}
     gw.created_at = gw.updated_at = gw.last_seen = "2025-01-01T00:00:00Z"
-    gw.is_active = True
+    gw.enabled = True
+    gw.reachable = True
 
     # one dummy tool hanging off the gateway
     tool = MagicMock(spec=DbTool, id=101, name="dummy_tool")
@@ -264,7 +265,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_get_gateway_inactive(self, gateway_service, mock_gateway, test_db):
         """Inactive gateway is not returned unless explicitly asked for."""
-        mock_gateway.is_active = False
+        mock_gateway.enabled = False
         test_db.get = Mock(return_value=mock_gateway)
         with pytest.raises(GatewayNotFoundError):
             await gateway_service.get_gateway(test_db, 1)
@@ -358,10 +359,10 @@ class TestGatewayService:
 
         result = await gateway_service.toggle_gateway_status(test_db, 1, activate=False)
 
-        assert mock_gateway.is_active is False
+        assert mock_gateway.enabled is False
         gateway_service._notify_gateway_deactivated.assert_called_once()
         assert tool_service_stub.toggle_tool_status.called
-        assert result.is_active is False
+        assert result.enabled is False
 
     # ────────────────────────────────────────────────────────────────────
     # DELETE

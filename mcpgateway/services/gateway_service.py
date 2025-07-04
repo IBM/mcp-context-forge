@@ -68,19 +68,19 @@ class GatewayNotFoundError(GatewayError):
 class GatewayNameConflictError(GatewayError):
     """Raised when a gateway name conflicts with existing (active or inactive) gateway."""
 
-    def __init__(self, name: str, is_active: bool = True, gateway_id: Optional[int] = None):
+    def __init__(self, name: str, enabled: bool = True, gateway_id: Optional[int] = None):
         """Initialize the error with gateway information.
 
         Args:
             name: The conflicting gateway name
-            is_active: Whether the existing gateway is active
+            enabled: Whether the existing gateway is enabled
             gateway_id: ID of the existing gateway if available
         """
         self.name = name
-        self.is_active = is_active
+        self.enabled = enabled
         self.gateway_id = gateway_id
         message = f"Gateway already exists with name: {name}"
-        if not is_active:
+        if not enabled:
             message += f" (currently inactive, ID: {gateway_id})"
         super().__init__(message)
 
@@ -185,7 +185,7 @@ class GatewayService:
             if existing_gateway:
                 raise GatewayNameConflictError(
                     gateway.name,
-                    is_active=existing_gateway.is_active,
+                    enabled=existing_gateway.enabled,
                     gateway_id=existing_gateway.id,
                 )
 
@@ -264,7 +264,7 @@ class GatewayService:
         query = select(DbGateway)
 
         if not include_inactive:
-            query = query.where(DbGateway.is_active)
+            query = query.where(DbGateway.enabled)
 
         gateways = db.execute(query).scalars().all()
         return [GatewayRead.model_validate(g) for g in gateways]
@@ -291,7 +291,7 @@ class GatewayService:
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-            if not gateway.is_active:
+            if not gateway.enabled:
                 raise GatewayNotFoundError(f"Gateway '{gateway.name}' exists but is inactive")
 
             # Check for name conflicts if name is being changed
@@ -301,7 +301,7 @@ class GatewayService:
                 if existing_gateway:
                     raise GatewayNameConflictError(
                         gateway_update.name,
-                        is_active=existing_gateway.is_active,
+                        enabled=existing_gateway.enabled,
                         gateway_id=existing_gateway.id,
                     )
 
@@ -390,18 +390,20 @@ class GatewayService:
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-        if not gateway.is_active and not include_inactive:
+        if not gateway.enabled and not include_inactive:
             raise GatewayNotFoundError(f"Gateway '{gateway.name}' exists but is inactive")
 
         return GatewayRead.model_validate(gateway)
 
-    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool) -> GatewayRead:
+    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False) -> GatewayRead:
         """Toggle gateway active status.
 
         Args:
             db: Database session
             gateway_id: Gateway ID to toggle
             activate: True to activate, False to deactivate
+            reachable: True if the gateway is reachable, False otherwise
+            only_update_reachable: If True, only updates reachable status without changing enabled status. Applicable for changing tool status. If the tool is manually deactivated, it will not be reactivated if reachable.
 
         Returns:
             Updated gateway information
@@ -416,12 +418,13 @@ class GatewayService:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
             # Update status if it's different
-            if gateway.is_active != activate:
-                gateway.is_active = activate
+            if (gateway.enabled != activate) or (gateway.reachable != reachable):
+                gateway.enabled = activate
+                gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
 
                 # Update tracking
-                if activate:
+                if activate and reachable:
                     self._active_gateways.add(gateway.url)
                     # Try to initialize if activating
                     try:
@@ -449,7 +452,6 @@ class GatewayService:
 
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
-
                         gateway.last_seen = datetime.now(timezone.utc)
                     except Exception as e:
                         logger.warning(f"Failed to initialize reactivated gateway: {e}")
@@ -460,8 +462,13 @@ class GatewayService:
                 db.refresh(gateway)
 
                 tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
-                for tool in tools:
-                    await self.tool_service.toggle_tool_status(db, tool.id, activate)
+
+                if only_update_reachable:
+                    for tool in tools:
+                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable)
+                else:
+                    for tool in tools:
+                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
 
                 # Notify subscribers
                 if activate:
@@ -469,7 +476,7 @@ class GatewayService:
                 else:
                     await self._notify_gateway_deactivated(gateway)
 
-                logger.info(f"Gateway {gateway.name} {'activated' if activate else 'deactivated'}")
+                logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
             return GatewayRead.model_validate(gateway)
 
@@ -491,7 +498,7 @@ class GatewayService:
                 "name": gateway.name,
                 "url": gateway.url,
                 "description": gateway.description,
-                "is_active": gateway.is_active,
+                "enabled": gateway.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -548,7 +555,7 @@ class GatewayService:
             GatewayConnectionError: If forwarding fails
             GatewayError: If gateway gave an error
         """
-        if not gateway.is_active:
+        if not gateway.enabled:
             raise GatewayConnectionError(f"Cannot forward request to inactive gateway: {gateway.name}")
 
         try:
@@ -585,6 +592,13 @@ class GatewayService:
         """
         if GW_FAILURE_THRESHOLD == -1:
             return  # Gateway failure action disabled
+
+        if not gateway.enabled:
+            return  # No action needed for inactive gateways
+
+        if not gateway.reachable:
+            return  # No action needed for unreachable gateways
+
         count = self._gateway_failure_counts.get(gateway.id, 0) + 1
         self._gateway_failure_counts[gateway.id] = count
 
@@ -593,7 +607,7 @@ class GatewayService:
         if count >= GW_FAILURE_THRESHOLD:
             logger.error(f"Gateway {gateway.name} failed {GW_FAILURE_THRESHOLD} times. Deactivating...")
             with SessionLocal() as db:
-                await self.toggle_gateway_status(db, gateway.id, False)
+                await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
     async def check_health_of_gateways(self, gateways: List[DbGateway]) -> bool:
@@ -610,10 +624,8 @@ class GatewayService:
         # Reuse a single HTTP client for all requests
         async with httpx.AsyncClient() as client:
             for gateway in gateways:
-                # Inactive gateways are unhealthy
-                if not gateway.is_active:
-                    continue
 
+                logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
                 try:
                     # Ensure auth_value is a dict
                     auth_data = gateway.auth_value or {}
@@ -630,6 +642,12 @@ class GatewayService:
                             async with ClientSession(read_stream, write_stream) as session:
                                 # Initialize the session
                                 response = await session.initialize()
+
+                    # Reactivate gateway if it was previously inactive and health check passed now
+                    if gateway.enabled and not gateway.reachable:
+                        with SessionLocal() as db:
+                            logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
+                            await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
 
                     # Mark successful check
                     gateway.last_seen = datetime.now(timezone.utc)
@@ -657,7 +675,7 @@ class GatewayService:
         }
 
         # Get all active gateways
-        gateways = db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
+        gateways = db.execute(select(DbGateway).where(DbGateway.enabled)).scalars().all()
 
         # Combine capabilities
         for gateway in gateways:
@@ -779,14 +797,20 @@ class GatewayService:
         except Exception as e:
             raise GatewayConnectionError(f"Failed to initialize gateway at {url}: {str(e)}")
 
-    def _get_active_gateways(self) -> list[DbGateway]:
+    def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).
+
+        Args:
+            include_inactive: Whether to include inactive gateways
 
         Returns:
             List[DbGateway]: List of active gateways
         """
         with SessionLocal() as db:
-            return db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
+            if include_inactive:
+                return db.execute(select(DbGateway)).scalars().all()
+            # Only return active gateways
+            return db.execute(select(DbGateway).where(DbGateway.enabled)).scalars().all()
 
     async def _run_health_checks(self) -> None:
         """Run health checks periodically,
@@ -803,7 +827,7 @@ class GatewayService:
                     self._redis_client.expire(self._leader_key, self._leader_ttl)
 
                     # Run health checks
-                    gateways = await asyncio.to_thread(self._get_active_gateways)
+                    gateways = await asyncio.to_thread(self._get_gateways)
                     if gateways:
                         await self.check_health_of_gateways(gateways)
 
@@ -812,8 +836,7 @@ class GatewayService:
                 elif settings.cache_type == "none":
                     try:
                         # For single worker mode, run health checks directly
-                        gateways = await asyncio.to_thread(self._get_active_gateways)
-
+                        gateways = await asyncio.to_thread(self._get_gateways)
                         if gateways:
                             await self.check_health_of_gateways(gateways)
                     except Exception as e:
@@ -828,7 +851,7 @@ class GatewayService:
                         logger.info("File lock acquired. Running health checks.")
 
                         while True:
-                            gateways = await asyncio.to_thread(self._get_active_gateways)
+                            gateways = await asyncio.to_thread(self._get_gateways)
                             if gateways:
                                 await self.check_health_of_gateways(gateways)
                             await asyncio.sleep(self._health_check_interval)
@@ -876,7 +899,7 @@ class GatewayService:
                 "name": gateway.name,
                 "url": gateway.url,
                 "description": gateway.description,
-                "is_active": gateway.is_active,
+                "enabled": gateway.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -895,7 +918,7 @@ class GatewayService:
                 "id": gateway.id,
                 "name": gateway.name,
                 "url": gateway.url,
-                "is_active": True,
+                "enabled": gateway.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -914,7 +937,7 @@ class GatewayService:
                 "id": gateway.id,
                 "name": gateway.name,
                 "url": gateway.url,
-                "is_active": False,
+                "enabled": gateway.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -943,7 +966,7 @@ class GatewayService:
         """
         event = {
             "type": "gateway_removed",
-            "data": {"id": gateway.id, "name": gateway.name, "is_active": False},
+            "data": {"id": gateway.id, "name": gateway.name, "enabled": gateway.enabled},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)

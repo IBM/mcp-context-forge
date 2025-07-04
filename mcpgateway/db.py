@@ -323,7 +323,8 @@ class Tool(Base):
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    reachable: Mapped[bool] = mapped_column(default=True)
     jsonpath_filter: Mapped[str] = mapped_column(default="")
 
     # Request type and authentication fields
@@ -1025,7 +1026,8 @@ class Gateway(Base):
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]]
 
     # Relationship with local tools this gateway provides
