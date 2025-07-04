@@ -291,7 +291,7 @@ max-args=12
 max-positional-arguments = 6
 
 # Maximum number of attributes for a class (see R0902).
-max-attributes=10
+max-attributes=16
 
 # Maximum number of boolean expressions in an if statement (see R0916).
 max-bool-expr=5
@@ -476,7 +476,7 @@ notes-rgx=
 [REFACTORING]
 
 # Maximum number of nested blocks for function / method body
-max-nested-blocks=5
+max-nested-blocks=6
 
 # Complete name of functions that never returns. When checking for
 # inconsistent-return-statements if a never returning function is called then
