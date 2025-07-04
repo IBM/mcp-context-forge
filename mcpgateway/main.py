@@ -35,9 +35,10 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router
+from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import Base, engine, SessionLocal
+from mcpgateway.db import SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.schemas import (
     GatewayCreate,
@@ -97,6 +98,8 @@ from mcpgateway.types import (
     ResourceContent,
     Root,
 )
+from mcpgateway.utils.db_isready import wait_for_db_ready
+from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.verify_credentials import require_auth, require_auth_override
 from mcpgateway.validation.jsonrpc import (
     JSONRPCError,
@@ -138,8 +141,11 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
+# Wait for database to be ready before creating tables
+wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
+
 # Create database tables
-Base.metadata.create_all(bind=engine)
+asyncio.run(bootstrap_db())
 
 # Initialize services
 tool_service = ToolService()
@@ -154,6 +160,9 @@ server_service = ServerService()
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
 
+# Wait for redis to be ready
+if settings.cache_type == "redis":
+    wait_for_redis_ready(redis_url=settings.redis_url, max_retries=int(settings.redis_max_retries), retry_interval_ms=int(settings.redis_retry_interval_ms), sync=True)
 
 # Initialize session registry
 session_registry = SessionRegistry(
@@ -928,7 +937,7 @@ async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str
         logger.debug(f"User {user} is creating a new tool")
         return await tool_service.register_tool(db, tool)
     except ToolNameConflictError as e:
-        if not e.is_active and e.tool_id:
+        if not e.enabled and e.tool_id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Tool name already exists but is inactive. Consider activating it with ID: {e.tool_id}",
@@ -1051,7 +1060,7 @@ async def toggle_tool_status(
     """
     try:
         logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
-        tool = await tool_service.toggle_tool_status(db, tool_id, activate)
+        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",

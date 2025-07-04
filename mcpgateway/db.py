@@ -25,6 +25,7 @@ import uuid
 from mcpgateway.config import settings
 from mcpgateway.types import ResourceContent
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.db_isready import wait_for_db_ready
 
 # Third-Party
 import jsonschema
@@ -322,7 +323,8 @@ class Tool(Base):
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    reachable: Mapped[bool] = mapped_column(default=True)
     jsonpath_filter: Mapped[str] = mapped_column(default="")
 
     # Request type and authentication fields
@@ -1024,7 +1026,8 @@ class Gateway(Base):
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]]
 
     # Relationship with local tools this gateway provides
@@ -1220,4 +1223,7 @@ def init_db():
 
 
 if __name__ == "__main__":
+    # Wait for database to be ready before initializing
+    wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
+
     init_db()

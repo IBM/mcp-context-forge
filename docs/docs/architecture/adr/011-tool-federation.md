@@ -1,14 +1,15 @@
 # ADR-0011: Allow gateways to add tools with the same server side name to the MCP Gateway without conflict
 
-- *Status:* Draft
+- *Status:* Implemented
 - *Date:* 2025-06-22
 - *Deciders:* Core Engineering Team
+- *Implemented by*: https://github.com/IBM/mcp-context-forge/issues/116
 
 ## Context
 
 The current functionality only supports unique names for tools, making it hard for addition of tools from different gateways with similar common names.
 
-This needs to be updated so that tool names are allowed with a combination of gateway name (slugified) and tool name. This would allow servers to add their own versions of the tools.
+This needs to be updated so that tool names are allowed with a combination of gateway name (slugified namespace) and tool name. This would allow servers to add their own versions of the tools.
 
 The tool names would be stored along with their original name in the database so that the correct server side name is passed while invoking it.
 

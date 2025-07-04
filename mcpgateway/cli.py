@@ -122,7 +122,7 @@ def main() -> None:  # noqa: D401 – imperative mood is fine here
 
     # Uvicorn's `main()` uses sys.argv – patch it in and run.
     sys.argv = ["mcpgateway", *uvicorn_argv]
-    uvicorn.main()
+    uvicorn.main()  # pylint: disable=no-value-for-parameter
 
 
 if __name__ == "__main__":  # pragma: no cover – executed only when run directly

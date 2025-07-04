@@ -23,6 +23,8 @@ Deploy the full **MCP Gateway Stack**-MCP Context Forge gateway, PostgreSQL, Red
 
 ## Architecture
 
+High-level architecture:
+
 ```
           ┌─────────────────────────────┐
           │      NGINX Ingress          │
@@ -39,6 +41,123 @@ Deploy the full **MCP Gateway Stack**-MCP Context Forge gateway, PostgreSQL, Red
       ┌─────▼────┐          ┌─────▼────┐
       │   PV     │          │  Redis   │
       └──────────┘          └──────────┘
+```
+
+Chart design:
+
+```mermaid
+graph TB
+    %% External Access
+    Ingress[🌐 NGINX Ingress<br/>gateway.local]
+
+    %% Pre-deployment Job
+    subgraph "Database Migration"
+        MigrationJob[🔄 Migration Job<br/>Alembic upgrade head<br/>Runs before Gateway<br/>CPU: 100m-200m<br/>Memory: 256Mi-512Mi<br/>Restart: Never, Max 3 retries]
+    end
+
+    %% Application Tier
+    subgraph "Application Layer"
+        MCPGateway[🚪 MCP Gateway<br/>Replicas: 2<br/>Port: 4444<br/>CPU: 100m-200m<br/>Memory: 512Mi-1024Mi]
+        FastTimeServer[⏰ Fast Time Server<br/>Replicas: 2<br/>Port: 8080<br/>CPU: 25m-50m<br/>Memory: 10Mi-64Mi]
+        HPA{📈 Auto Scaling<br/>Min: 2, Max: 10<br/>CPU/Memory: 90%}
+    end
+
+    %% Management UIs
+    subgraph "Management UIs - Optional"
+        PgAdmin[📊 PgAdmin<br/>Postgres Web UI<br/>Port: 80<br/>CPU: 100m-200m<br/>Memory: 128Mi-256Mi]
+        RedisCommander[🔧 Redis Commander<br/>Redis Web UI<br/>Port: 8081<br/>CPU: 50m-100m<br/>Memory: 128Mi-256Mi]
+    end
+
+    %% Configuration Management
+    subgraph "Configuration"
+        GatewayConfig[(📄 Gateway ConfigMap<br/>~40 app settings)]
+        GatewaySecret[(🔐 Gateway Secret<br/>Auth & JWT keys)]
+        PostgresConfig[(📄 Postgres ConfigMap<br/>Database name)]
+        PostgresSecret[(🔐 Postgres Secret<br/>DB credentials)]
+    end
+
+    %% Data & State Management
+    subgraph "Data & State"
+        PostgreSQL[(🗄️ PostgreSQL 17<br/>Port: 5432<br/>CPU: 500m-1000m<br/>Memory: 64Mi-1Gi<br/>MCP Server configs)]
+        Redis[(🔄 Redis<br/>Port: 6379<br/>CPU: 50m-100m<br/>Memory: 16Mi-256Mi<br/>Sessions & Cache)]
+        PVC[(💾 Persistent Volume<br/>5Gi RWX Storage<br/>PostgreSQL data)]
+    end
+
+    %% Services Layer
+    subgraph "Services (ClusterIP)"
+        GatewaySvc[🔗 Gateway Service<br/>Port: 80]
+        FastTimeSvc[🔗 Fast Time Service<br/>Port: 80]
+        PostgresSvc[🔗 Postgres Service<br/>Port: 5432]
+        RedisSvc[🔗 Redis Service<br/>Port: 6379]
+        PgAdminSvc[🔗 PgAdmin Service<br/>Port: 80]
+        RedisCommanderSvc[🔗 Redis Commander Service<br/>Port: 8081]
+    end
+
+    %% Network Connections
+    Ingress --> GatewaySvc
+    Ingress -.->|/fast-time| FastTimeSvc
+    GatewaySvc --> MCPGateway
+    FastTimeSvc --> FastTimeServer
+
+    %% Migration Flow (Sequential)
+    MigrationJob -->|Waits for DB ready| PostgresSvc
+    MigrationJob -->|Runs before| MCPGateway
+
+    %% Application to Services
+    MCPGateway --> PostgresSvc
+    MCPGateway --> RedisSvc
+    PostgresSvc --> PostgreSQL
+    RedisSvc --> Redis
+
+    %% UI Connections
+    PgAdminSvc --> PgAdmin
+    RedisCommanderSvc --> RedisCommander
+    PgAdmin --> PostgresSvc
+    RedisCommander --> RedisSvc
+
+    %% Configuration Injection
+    GatewayConfig --> MCPGateway
+    GatewaySecret --> MCPGateway
+    PostgresConfig --> PostgreSQL
+    PostgresSecret --> PostgreSQL
+    PostgresSecret --> PgAdmin
+    PostgresSecret --> MigrationJob
+
+    %% Storage
+    PostgreSQL --> PVC
+
+    %% Auto Scaling
+    HPA -.-> MCPGateway
+
+    %% Health Checks (dotted lines)
+    MCPGateway -.->|/health<br/>/ready| MCPGateway
+    FastTimeServer -.->|/health| FastTimeServer
+    PostgreSQL -.->|pg_isready| PostgreSQL
+    Redis -.->|PING| Redis
+    PgAdmin -.->|/misc/ping| PgAdmin
+    RedisCommander -.->|HTTP root| RedisCommander
+    MigrationJob -.->|db_isready.py| PostgreSQL
+
+    %% Deployment Order (optional visual cue)
+    PostgreSQL -.->|Must be ready first| MigrationJob
+    MigrationJob -.->|Must complete first| MCPGateway
+
+    %% Styling
+    classDef app fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef migration fill:#fff3e0,stroke:#ef6c00,stroke-width:3px
+    classDef ui fill:#e8eaf6,stroke:#3f51b5,stroke-width:2px
+    classDef config fill:#fff8e1,stroke:#f57c00,stroke-width:2px
+    classDef data fill:#f1f8e9,stroke:#388e3c,stroke-width:2px
+    classDef service fill:#e0f2f1,stroke:#00695c,stroke-width:2px
+    classDef network fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+
+    class MCPGateway,FastTimeServer,HPA app
+    class MigrationJob migration
+    class PgAdmin,RedisCommander ui
+    class GatewayConfig,GatewaySecret,PostgresConfig,PostgresSecret config
+    class PostgreSQL,Redis,PVC data
+    class GatewaySvc,FastTimeSvc,PostgresSvc,RedisSvc,PgAdminSvc,RedisCommanderSvc service
+    class Ingress network
 ```
 
 ---
@@ -182,6 +301,34 @@ helm rollback mcp-stack 1 -n mcp
 
 ---
 
+## Database Migration
+
+The chart includes automatic database migration using **Alembic** that runs before the mcpgateway deployment starts. This ensures your database schema is always up-to-date.
+
+### How It Works
+
+1. **Migration Job** – Runs as a Kubernetes Job alongside other resources
+2. **Database Readiness** – Waits for PostgreSQL using the built-in `db_isready.py` script
+3. **Schema Migration** – Executes `alembic upgrade head` to apply any pending migrations
+4. **Gateway Startup** – mcpgateway uses a startup probe to ensure database is ready before serving traffic
+
+### Configuration
+
+```yaml
+migration:
+  enabled: true                    # Enable/disable migrations (default: true)
+  backoffLimit: 3                  # Retry attempts on failure
+  activeDeadlineSeconds: 600       # Job timeout (10 minutes)
+
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: latest                    # Should match mcpContextForge.image.tag
+
+  command:
+    waitForDb: "python /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"
+    migrate: "alembic upgrade head || echo '⚠️ Migration check failed'"
+---
+
 ## Uninstall
 
 ```bash
@@ -235,11 +382,16 @@ helm template mcp-stack . -f my-values.yaml > /tmp/all.yaml
 
 ## Common Values Reference
 
+## Common Values Reference
+
 | Key                               | Default         | Description                    |
 | --------------------------------- | --------------- | ------------------------------ |
 | `mcpContextForge.image.tag`       | `latest`        | Gateway image version          |
 | `mcpContextForge.ingress.enabled` | `true`          | Create Ingress resource        |
 | `mcpContextForge.ingress.host`    | `gateway.local` | External host                  |
+| `mcpContextForge.hpa.enabled`     | `true`          | Enable Horizontal Pod Autoscaler |
+| `migration.enabled`               | `true`          | Run database migrations        |
+| `migration.backoffLimit`          | `3`             | Migration job retry attempts   |
 | `postgres.credentials.user`       | `admin`         | DB username                    |
 | `postgres.persistence.enabled`    | `true`          | Enable PVC                     |
 | `postgres.persistence.size`       | `10Gi`          | PostgreSQL volume size         |

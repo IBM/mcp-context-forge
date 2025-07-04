@@ -92,14 +92,11 @@ make podman-run-ssl    # run with self-signed TLS at https://localhost:4444
 
 Admin UI and API are protected by Basic Auth or JWT.
 
-To generate a JWT:
+To generate a JWT token:
 
 ```bash
-python3 -m mcpgateway.utils.create_jwt_token \
-  -u admin \
-  -e 10080 | tee token.txt
-
-export MCPGATEWAY_BEARER_TOKEN=$(cat token.txt)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+echo $MCPGATEWAY_BEARER_TOKEN
 ```
 
 Then test:

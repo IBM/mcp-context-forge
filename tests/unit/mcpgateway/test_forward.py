@@ -24,20 +24,22 @@ import pytest
 
 
 class DummyGateway:
-    def __init__(self, id_, name, url, is_active=True):
+    def __init__(self, id_, name, url, enabled: bool = True, reachable: bool = True):
         self.id = id_
         self.name = name
         self.url = url
-        self.is_active = is_active
+        self.enabled = enabled
+        self.reachable = reachable
         self.last_seen: datetime | None = None
 
 
 class DummyTool:
-    def __init__(self, id_, name, gateway_id=None, is_active=True):
+    def __init__(self, id_, name, gateway_id=None, enabled: bool = True, reachable: bool = True):
         self.id = id_
         self.name = name
         self.gateway_id = gateway_id
-        self.is_active = is_active
+        self.enabled = enabled
+        self.reachable = reachable
 
 
 class _FakeResult:

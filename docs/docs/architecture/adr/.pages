@@ -10,3 +10,6 @@ nav:
   - 8 Federation & Auto-Discovery via DNS-SD: 008-federation-discovery.md
   - 9 Built-in Health Checks: 000-built-in-health-checks.md
   - 10 Observability via Prometheus: 010-observability-prometheus.md
+  - 11 Namespaced Tool Federation: 011-tool-federation.md
+  - 12 Drop-down tool selection: 012-dropdown-ui-tool-selection.md
+  - 13 APIs for server connection string: 013-APIs-for-server-connection-strings.md

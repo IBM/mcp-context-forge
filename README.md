@@ -874,8 +874,8 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 > * Generate tokens via:
 >
 >   ```bash
->   python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 > token.txt
->   export MCPGATEWAY_BEARER_TOKEN=$(cat token.txt)
+>   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+>   echo $MCPGATEWAY_BEARER_TOKEN
 >   ```
 > * Tokens allow non-interactive API clients to authenticate securely.
 >
@@ -970,20 +970,24 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 ### Database
 
-| Setting           | Description                     | Default | Options |
-| ----------------- | ------------------------------- | ------- | ------- |
-| `DB_POOL_SIZE`    | SQLAlchemy connection pool size | `200`   | int > 0 |
-| `DB_MAX_OVERFLOW` | Extra connections beyond pool   | `10`    | int ≥ 0 |
-| `DB_POOL_TIMEOUT` | Wait for connection (secs)      | `30`    | int > 0 |
-| `DB_POOL_RECYCLE` | Recycle connections (secs)      | `3600`  | int > 0 |
+| Setting                 | Description                     | Default | Options |
+| ----------------------- | ------------------------------- | ------- | ------- |
+| `DB_POOL_SIZE`   .      | SQLAlchemy connection pool size | `200`   | int > 0 |
+| `DB_MAX_OVERFLOW`.      | Extra connections beyond pool   | `10`    | int ≥ 0 |
+| `DB_POOL_TIMEOUT`.      | Wait for connection (secs)      | `30`    | int > 0 |
+| `DB_POOL_RECYCLE`.      | Recycle connections (secs)      | `3600`  | int > 0 |
+| `DB_MAX_RETRIES` .      | Max Retry Attempts              | `3`     | int > 0 |
+| `DB_RETRY_INTERVAL_MS`  | Retry Interval (ms)             | `2000`  | int > 0 |
 
 ### Cache Backend
 
-| Setting        | Description                | Default  | Options                  |
-| -------------- | -------------------------- | -------- | ------------------------ |
-| `CACHE_TYPE`   | Backend (`memory`/`redis`) | `memory` | `none`, `memory`,`redis` |
-| `REDIS_URL`    | Redis connection URL       | (none)   | string or empty          |
-| `CACHE_PREFIX` | Key prefix                 | `mcpgw:` | string                   |
+| Setting                   | Description                | Default  | Options                  |
+| ------------------------- | -------------------------- | -------- | ------------------------ |
+| `CACHE_TYPE`              | Backend (`memory`/`redis`) | `memory` | `none`, `memory`,`redis` |
+| `REDIS_URL`               | Redis connection URL       | (none)   | string or empty          |
+| `CACHE_PREFIX`            | Key prefix                 | `mcpgw:` | string                   |
+| `REDIS_MAX_RETRIES`       | Max Retry Attempts         | `3`      | int > 0                  |
+| `REDIS_RETRY_INTERVAL_MS` | Retry Interval (ms)        | `2000`   | int > 0                  |
 
 > 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for persistence, or `redis` for distributed caching.
 
