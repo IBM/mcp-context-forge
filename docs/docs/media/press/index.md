@@ -3,6 +3,13 @@
 > Coverage from industry publications, press, and news media about MCP Gateway, ACP, and IBM's agentic AI initiatives.
 
 ## Articles
+!!! details "Watsonx.ai Agent to MCP Gateway (ruslanmv.com)"
+**Author:** Ruslan Magana Vsevolodovna | **Publication:** ruslanmv.com | **Date:** July 4, 2025
+[Read the article](https://ruslanmv.com/blog/watsonx-agent-to-mcp-gateway)
+
+    !!! quote
+    This detailed, end-to-end tutorial provides a practical blueprint for developers. It walks through the entire process of building a watsonx.ai-powered agent, registering it with the MCP Gateway using SSE, and connecting it to a custom FastAPI frontend. The post serves as a hands-on guide for creating fully-functional, multi-component AI applications.
+
 !!! details "IBM's MCP Gateway: A Unified FastAPI-Based Model Context Protocol Gateway for Next-Gen AI Toolchains (MarkTechPost)"
     **Author:** Nikhil | **Publication:** MarkTechPost | **Date:** June 21, 2025
     [Read the article](https://www.marktechpost.com/2025/06/21/ibms-mcp-gateway-a-unified-fastapi-based-model-context-protocol-gateway-for-next-gen-ai-toolchains/)
