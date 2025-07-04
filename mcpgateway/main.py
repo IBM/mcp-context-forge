@@ -35,10 +35,9 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router
-from mcpgateway.bootstrap_db import main as alembic_upgrade
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import Base, engine, SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.schemas import (
     GatewayCreate,
@@ -140,7 +139,7 @@ logging.basicConfig(
 )
 
 # Create database tables
-asyncio.run(alembic_upgrade())
+Base.metadata.create_all(bind=engine)
 
 # Initialize services
 tool_service = ToolService()

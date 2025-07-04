@@ -31,6 +31,14 @@ def upgrade() -> None:
     table. It includes a server-side default of an empty JSON object ('{}') to ensure
     that existing rows get a non-null default value.
     """
+    bind = op.get_bind()
+    sess = Session(bind=bind)
+    inspector = sa.inspect(bind)
+
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+
     op.add_column('tools', sa.Column('annotations', sa.JSON(), server_default=sa.text("'{}'"), nullable=False))
 
 
@@ -40,5 +48,13 @@ def downgrade() -> None:
 
     This function provides a way to undo the migration, safely removing the
     'annotations' column from the 'tool' table.
-    """ 
+    """
+    bind = op.get_bind()
+    sess = Session(bind=bind)
+    inspector = sa.inspect(bind)
+    
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+    
     op.drop_column('tools', 'annotations')
