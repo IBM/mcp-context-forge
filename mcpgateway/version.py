@@ -30,16 +30,16 @@ import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
-# First-Party
-from mcpgateway.config import settings
-from mcpgateway.db import engine
-from mcpgateway.utils.verify_credentials import require_auth
-
 # Third-Party
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
+
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.db import engine
+from mcpgateway.utils.verify_credentials import require_auth
 
 # Optional runtime dependencies
 try:
