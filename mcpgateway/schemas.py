@@ -26,6 +26,9 @@ import json
 import logging
 from typing import Any, Dict, List, Literal, Optional, Union
 
+# Third-Party
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
+
 # First-Party
 from mcpgateway.types import ImageContent
 from mcpgateway.types import Prompt as MCPPrompt
@@ -33,9 +36,6 @@ from mcpgateway.types import Resource as MCPResource
 from mcpgateway.types import ResourceContent, TextContent
 from mcpgateway.types import Tool as MCPTool
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-
-# Third-Party
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +276,7 @@ class ToolCreate(BaseModelWithConfigDict):
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
     @model_validator(mode="before")
+    # pylint: disable=no-self-argument
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -335,6 +336,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
     @model_validator(mode="before")
+    # pylint: disable=no-self-argument
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -517,7 +519,17 @@ class ResourceNotification(BaseModelWithConfigDict):
 
     @field_serializer("timestamp")
     def serialize_timestamp(self, dt: datetime) -> str:
-        # now returns ISO string with Z
+        """Serialize the `timestamp` field as an ISO 8601 string with UTC timezone.
+
+        Converts the given datetime to UTC and returns it in ISO 8601 format,
+        replacing the "+00:00" suffix with "Z" to indicate UTC explicitly.
+
+        Args:
+            dt (datetime): The datetime object to serialize.
+
+        Returns:
+            str: ISO 8601 formatted string in UTC, ending with 'Z'.
+        """
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -646,6 +658,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     auth_value: Optional[str] = Field(None, validate_default=True)
 
     @field_validator("url", mode="before")
+    # pylint: disable=no-self-argument
     def ensure_url_scheme(cls, v: str) -> str:
         """
         Ensure URL has an http/https scheme.
@@ -662,6 +675,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         return v
 
     @field_validator("auth_value", mode="before")
+    # pylint: disable=no-self-argument
     def create_auth_value(cls, v, info):
         """
         This validator will run before the model is fully instantiated (mode="before")
@@ -760,6 +774,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     auth_value: Optional[str] = Field(None, validate_default=True)
 
     @field_validator("url", mode="before")
+    # pylint: disable=no-self-argument
     def ensure_url_scheme(cls, v: Optional[str]) -> Optional[str]:
         """
         Ensure URL has an http/https scheme.
@@ -775,6 +790,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         return v
 
     @field_validator("auth_value", mode="before")
+    # pylint: disable=no-self-argument
     def create_auth_value(cls, v, info):
         """
         This validator will run before the model is fully instantiated (mode="before")
@@ -894,6 +910,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
+    # pylint: disable=no-self-argument
     def _populate_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         auth_type = values.auth_type
         auth_value_encoded = values.auth_value
@@ -1015,7 +1032,18 @@ class EventMessage(BaseModelWithConfigDict):
 
     @field_serializer("timestamp")
     def serialize_timestamp(self, dt: datetime) -> str:
-        # now returns ISO string with Z
+        """
+        Serialize the `timestamp` field as an ISO 8601 string with UTC timezone.
+
+        Converts the given datetime to UTC and returns it in ISO 8601 format,
+        replacing the "+00:00" suffix with "Z" to indicate UTC explicitly.
+
+        Args:
+            dt (datetime): The datetime object to serialize.
+
+        Returns:
+            str: ISO 8601 formatted string in UTC, ending with 'Z'.
+        """
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -1035,6 +1063,7 @@ class AdminToolCreate(BaseModelWithConfigDict):
     input_schema: Optional[str] = None  # JSON string
 
     @field_validator("headers", "input_schema")
+    # pylint: disable=no-self-argument
     def validate_json(cls, v: Optional[str]) -> Optional[Dict[str, Any]]:
         """
         Validate and parse JSON string inputs.
@@ -1120,6 +1149,7 @@ class ServerCreate(BaseModelWithConfigDict):
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    # pylint: disable=no-self-argument
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1149,6 +1179,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    # pylint: disable=no-self-argument
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1188,6 +1219,7 @@ class ServerRead(BaseModelWithConfigDict):
     metrics: ServerMetrics
 
     @model_validator(mode="before")
+    # pylint: disable=no-self-argument
     def populate_associated_ids(cls, values):
         """
         Pre-validation method that converts associated objects to their 'id'.
