@@ -15,6 +15,10 @@ import json
 import os
 from unittest.mock import Mock
 
+# Third-Party
+from pydantic import ValidationError
+import pytest
+
 # First-Party
 from mcpgateway.schemas import (
     AdminGatewayCreate,
@@ -55,10 +59,6 @@ from mcpgateway.types import (
     Tool,
     ToolResult,
 )
-
-# Third-Party
-from pydantic import ValidationError
-import pytest
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
 

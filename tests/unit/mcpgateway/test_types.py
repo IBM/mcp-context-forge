@@ -13,6 +13,10 @@ defined in the types.py module.
 import json
 import os
 
+# Third-Party
+from pydantic import ValidationError
+import pytest
+
 # First-Party
 from mcpgateway.types import (
     ClientCapabilities,
@@ -41,10 +45,6 @@ from mcpgateway.types import (
     Tool,
     ToolResult,
 )
-
-# Third-Party
-from pydantic import ValidationError
-import pytest
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
 

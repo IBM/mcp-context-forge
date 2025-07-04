@@ -13,6 +13,10 @@ import json
 import os
 from unittest.mock import ANY, MagicMock, patch
 
+# Third-Party
+from fastapi.testclient import TestClient
+import pytest
+
 # First-Party
 from mcpgateway.schemas import (
     PromptRead,
@@ -20,10 +24,6 @@ from mcpgateway.schemas import (
     ServerRead,
 )
 from mcpgateway.types import InitializeResult, ResourceContent, ServerCapabilities
-
-# Third-Party
-from fastapi.testclient import TestClient
-import pytest
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #

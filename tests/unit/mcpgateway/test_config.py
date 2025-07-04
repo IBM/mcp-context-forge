@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
+# Third-Party
+from fastapi import HTTPException
+
+# Third-party
+import pytest
+
 # First-Party
 from mcpgateway.config import (
     extract_using_jq,
@@ -19,12 +25,6 @@ from mcpgateway.config import (
     jsonpath_modifier,
     Settings,
 )
-
-# Third-Party
-from fastapi import HTTPException
-
-# Third-party
-import pytest
 
 
 # --------------------------------------------------------------------------- #

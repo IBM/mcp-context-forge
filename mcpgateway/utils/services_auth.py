@@ -13,11 +13,11 @@ import hashlib
 import json
 import os
 
-# First-Party
-from mcpgateway.config import settings
-
 # Third-Party
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# First-Party
+from mcpgateway.config import settings
 
 
 def get_key() -> bytes:

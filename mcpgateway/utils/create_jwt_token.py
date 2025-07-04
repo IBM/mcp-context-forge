@@ -35,11 +35,11 @@ import json
 import sys
 from typing import Any, Dict, List, Sequence
 
-# First-Party
-from mcpgateway.config import settings
-
 # Third-Party
 import jwt  # PyJWT
+
+# First-Party
+from mcpgateway.config import settings
 
 __all__: Sequence[str] = (
     "create_jwt_token",

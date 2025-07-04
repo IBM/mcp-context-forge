@@ -15,13 +15,13 @@ import json
 import types
 from unittest.mock import AsyncMock, Mock, patch
 
-# First-Party
-from mcpgateway.transports.sse_transport import SSETransport
-
 # Third-Party
 from fastapi import Request
 import pytest
 from sse_starlette.sse import EventSourceResponse
+
+# First-Party
+from mcpgateway.transports.sse_transport import SSETransport
 
 
 @pytest.fixture

@@ -10,9 +10,6 @@ Authors: Mihai Criveti
 # Standard
 from typing import Optional
 
-# First-Party
-from mcpgateway.config import settings
-
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import (
@@ -24,6 +21,9 @@ from fastapi.security import (
 from fastapi.security.utils import get_authorization_scheme_param
 import jwt
 from jwt import PyJWTError
+
+# First-Party
+from mcpgateway.config import settings
 
 basic_security = HTTPBasic(auto_error=False)
 security = HTTPBearer(auto_error=False)

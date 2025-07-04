@@ -1,19 +1,20 @@
+# -*- coding: utf-8 -*-
 """Add enabled and reachable columns in tools and gateways tables and migrate data (is_active ➜ enabled,reachable).
 
 Revision ID: e75490e949b1
 Revises: e4fc04d1a442
-Create Date: 2025‑07‑02 17:12:40.678256
+Create Date: 2025‑07‑02 17:12:40.678256
 """
 
 # Standard
 from typing import Sequence, Union
 
+# Third-Party
+import sqlalchemy as sa
+
 # First-Party
 # Alembic / SQLAlchemy
 from alembic import op
-
-# Third-Party
-import sqlalchemy as sa
 
 # Revision identifiers.
 revision: str = "e75490e949b1"
@@ -24,7 +25,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade():
     """
-    Renames 'is_active' to 'enabled' and adds a new 'reachable' column (default True) 
+    Renames 'is_active' to 'enabled' and adds a new 'reachable' column (default True)
     in both 'tools' and 'gateways' tables.
     """
     op.alter_column('tools', 'is_active', new_column_name='enabled')
@@ -36,7 +37,7 @@ def upgrade():
 
 def downgrade():
     """
-    Reverts the changes by renaming 'enabled' back to 'is_active' 
+    Reverts the changes by renaming 'enabled' back to 'is_active'
     and dropping the 'reachable' column in both 'tools' and 'gateways' tables.
     """
     op.alter_column('tools', 'enabled', new_column_name='is_active')

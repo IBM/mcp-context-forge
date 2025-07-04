@@ -32,13 +32,13 @@ import re
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, Mock, patch
 
-# First-Party
-from mcpgateway.cache.session_registry import SessionRegistry
-from mcpgateway.config import settings
-
 # Third-Party
 from fastapi import HTTPException
 import pytest
+
+# First-Party
+from mcpgateway.cache.session_registry import SessionRegistry
+from mcpgateway.config import settings
 
 
 # --------------------------------------------------------------------------- #
