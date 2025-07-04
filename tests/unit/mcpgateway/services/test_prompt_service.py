@@ -20,6 +20,9 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
@@ -30,9 +33,6 @@ from mcpgateway.services.prompt_service import (
     PromptService,
 )
 from mcpgateway.types import Message, PromptResult, Role
-
-# Third-Party
-import pytest
 
 # ---------------------------------------------------------------------------
 # helpers

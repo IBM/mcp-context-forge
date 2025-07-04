@@ -11,12 +11,12 @@ Comprehensive unit tests for the forwarding service module.
 # Standard
 from datetime import datetime
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.federation.forward import ForwardingError, ForwardingService, ToolResult
 from mcpgateway.types import TextContent
-
-# Third-Party
-import pytest
 
 # ---------------------------------------------------------------------------
 # Tiny dummy ORM objects + fake Session

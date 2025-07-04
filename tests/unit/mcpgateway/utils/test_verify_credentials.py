@@ -25,14 +25,14 @@ from __future__ import annotations
 # Standard
 from datetime import datetime, timedelta, timezone
 
-# First-Party
-from mcpgateway.utils import verify_credentials as vc  # module under test
-
 # Third-Party
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
 import jwt
 import pytest
+
+# First-Party
+from mcpgateway.utils import verify_credentials as vc  # module under test
 
 # ---------------------------------------------------------------------------
 # Shared constants / helpers

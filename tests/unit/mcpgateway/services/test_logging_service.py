@@ -23,12 +23,12 @@ import asyncio
 from datetime import datetime
 import logging
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.types import LogLevel
-
-# Third-Party
-import pytest
 
 # ---------------------------------------------------------------------------
 # Basic behaviour

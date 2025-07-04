@@ -14,12 +14,12 @@ import logging
 import types
 from unittest.mock import AsyncMock
 
-# First-Party
-from mcpgateway.transports.websocket_transport import WebSocketTransport
-
 # Third-Party
 from fastapi import WebSocket, WebSocketDisconnect
 import pytest
+
+# First-Party
+from mcpgateway.transports.websocket_transport import WebSocketTransport
 
 
 @pytest.fixture

@@ -19,6 +19,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock
 
+# Third-Party
+import pytest
+
 # First-Party
 # ---------------------------------------------------------------------------
 # Application imports
@@ -33,9 +36,6 @@ from mcpgateway.services.gateway_service import (
     GatewayNotFoundError,
     GatewayService,
 )
-
-# Third-Party
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers & global monkey-patches

@@ -9,12 +9,12 @@ Create Date: 2025-06-27 21:45:35.099713
 # Standard
 from typing import Sequence, Union
 
-# First-Party
-from alembic import op
-
 # Third-Party
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
+
+# First-Party
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'e4fc04d1a442'
@@ -52,9 +52,9 @@ def downgrade() -> None:
     bind = op.get_bind()
     sess = Session(bind=bind)
     inspector = sa.inspect(bind)
-    
+
     if not inspector.has_table("gateways"):
         print("Fresh database detected. Skipping migration.")
         return
-    
+
     op.drop_column('tools', 'annotations')

@@ -11,11 +11,11 @@ Authors: Reeve Barreto, Mihai Criveti
 import asyncio
 from unittest.mock import patch
 
-# First-Party
-import mcpgateway.utils.redis_isready as redis_isready
-
 # Third-Party
 import pytest
+
+# First-Party
+import mcpgateway.utils.redis_isready as redis_isready
 
 # ---------------------------------------------------------------------------
 # Mock Redis

@@ -2,12 +2,12 @@
 # Standard
 from logging.config import fileConfig
 
+# Third-Party
+from sqlalchemy import engine_from_config, pool
+
 # First-Party
 from alembic import context
 from mcpgateway.config import settings
-
-# Third-Party
-from sqlalchemy import engine_from_config, pool
 
 # from mcpgateway.db import get_metadata
 # target_metadata = get_metadata()

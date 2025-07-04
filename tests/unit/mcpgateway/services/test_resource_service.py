@@ -20,6 +20,10 @@ import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# Third-Party
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 # First-Party
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.resource_service import (
@@ -27,10 +31,6 @@ from mcpgateway.services.resource_service import (
     ResourceNotFoundError,
     ResourceService,
 )
-
-# Third-Party
-import pytest
-from sqlalchemy.exc import IntegrityError
 
 # --------------------------------------------------------------------------- #
 # Fixtures and test helpers                                                   #

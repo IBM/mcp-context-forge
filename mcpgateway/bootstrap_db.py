@@ -1,17 +1,18 @@
+# -*- coding: utf-8 -*-
 # mcpgateway/bootstrap_db.py
 # Standard
 import asyncio
 import logging
 from pathlib import Path
 
+# Third-Party
+from sqlalchemy import create_engine, inspect
+
 # First-Party
 from alembic import command
 from alembic.config import Config
 from mcpgateway.config import settings
 from mcpgateway.db import Base
-
-# Third-Party
-from sqlalchemy import create_engine, inspect
 
 logger = logging.getLogger(__name__)
 

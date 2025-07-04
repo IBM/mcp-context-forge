@@ -16,16 +16,16 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
+# Third-Party
+from fastapi import HTTPException, status
+import httpx
+
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.transports import SSETransport
 from mcpgateway.types import Implementation, InitializeResult, ServerCapabilities
-
-# Third-Party
-from fastapi import HTTPException, status
-import httpx
 
 logger = logging.getLogger(__name__)
 

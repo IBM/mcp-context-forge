@@ -50,7 +50,6 @@ from mcpgateway.db import SessionLocal
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.verify_credentials import verify_credentials
 
-
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 

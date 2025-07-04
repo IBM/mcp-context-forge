@@ -12,14 +12,14 @@ Comprehensive unit tests for the discovery service module.
 # tests/test_discovery.py
 import asyncio
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.federation.discovery import (
     DiscoveryService,
     PROTOCOL_VERSION,
 )
-
-# Third-Party
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures

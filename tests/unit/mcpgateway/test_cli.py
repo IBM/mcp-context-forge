@@ -21,11 +21,11 @@ from __future__ import annotations
 import sys
 from typing import Any, Dict, List
 
-# First-Party
-import mcpgateway.cli as cli
-
 # Third-Party
 import pytest
+
+# First-Party
+import mcpgateway.cli as cli
 
 # ---------------------------------------------------------------------------
 # helpers / fixtures

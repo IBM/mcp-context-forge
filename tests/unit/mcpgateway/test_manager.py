@@ -16,12 +16,12 @@ import asyncio
 from datetime import datetime
 from itertools import count
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.federation.manager import FederationManager
 from mcpgateway.types import Prompt, Resource, ServerCapabilities, Tool
-
-# Third-Party
-import pytest
 
 # ---------------------------------------------------------------------------
 # In-memory stand-ins for ORM models and SQLAlchemy Session

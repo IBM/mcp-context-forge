@@ -7,6 +7,9 @@ Authors: Mihai Criveti
 
 """
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.validation.jsonrpc import (
     INVALID_REQUEST,
@@ -14,9 +17,6 @@ from mcpgateway.validation.jsonrpc import (
     validate_request,
     validate_response,
 )
-
-# Third-Party
-import pytest
 
 
 class TestJSONRPCValidation:

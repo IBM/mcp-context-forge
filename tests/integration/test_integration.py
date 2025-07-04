@@ -26,14 +26,14 @@ from datetime import datetime
 from unittest.mock import ANY, AsyncMock, patch
 import urllib.parse
 
+# Third-Party
+from fastapi.testclient import TestClient
+import pytest
+
 # First-Party
 from mcpgateway.main import app, require_auth
 from mcpgateway.schemas import ResourceRead, ServerRead, ToolMetrics, ToolRead
 from mcpgateway.types import InitializeResult, ResourceContent, ServerCapabilities
-
-# Third-Party
-from fastapi.testclient import TestClient
-import pytest
 
 
 # -----------------------------------------------------------------------------
