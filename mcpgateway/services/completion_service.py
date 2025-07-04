@@ -13,14 +13,14 @@ It handles completion suggestions for prompt arguments and resource URIs.
 import logging
 from typing import Any, Dict, List
 
+# Third-Party
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.types import CompleteResult
-
-# Third-Party
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

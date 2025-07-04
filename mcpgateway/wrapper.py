@@ -41,9 +41,6 @@ import sys
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
-# First-Party
-from mcpgateway import __version__
-
 # Third-Party
 import httpx
 from mcp import types
@@ -51,6 +48,9 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 import mcp.server.stdio
 from pydantic import AnyUrl
+
+# First-Party
+from mcpgateway import __version__
 
 # -----------------------------------------------------------------------------
 # Configuration

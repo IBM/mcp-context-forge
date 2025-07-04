@@ -19,16 +19,16 @@ from datetime import datetime, timezone
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+# Third-Party
+import httpx
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.types import ToolResult
-
-# Third-Party
-import httpx
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
