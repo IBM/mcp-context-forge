@@ -21,17 +21,17 @@ import logging
 from string import Formatter
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
-# First-Party
-from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.db import PromptMetric, server_prompt_association
-from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
-from mcpgateway.types import Message, PromptResult, Role, TextContent
-
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
 from sqlalchemy import delete, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+# First-Party
+from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import PromptMetric, server_prompt_association
+from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
+from mcpgateway.types import Message, PromptResult, Role, TextContent
 
 logger = logging.getLogger(__name__)
 

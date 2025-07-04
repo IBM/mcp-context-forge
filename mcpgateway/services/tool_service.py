@@ -24,6 +24,15 @@ import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+# Third-Party
+import httpx
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
+from sqlalchemy import case, delete, func, literal, not_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
@@ -38,15 +47,6 @@ from mcpgateway.schemas import (
 from mcpgateway.types import TextContent, ToolResult
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth
-
-# Third-Party
-import httpx
-from mcp import ClientSession
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import case, delete, func, literal, not_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
 # Local
 from ..config import extract_using_jq

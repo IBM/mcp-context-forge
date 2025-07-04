@@ -41,11 +41,11 @@ import os
 import sys
 from typing import List
 
-# First-Party
-from mcpgateway import __version__
-
 # Third-Party
 import uvicorn
+
+# First-Party
+from mcpgateway import __version__
 
 # ---------------------------------------------------------------------------
 # Configuration defaults (overridable via environment variables)

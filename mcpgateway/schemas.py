@@ -26,6 +26,9 @@ import json
 import logging
 from typing import Any, Dict, List, Literal, Optional, Union
 
+# Third-Party
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
+
 # First-Party
 from mcpgateway.types import ImageContent
 from mcpgateway.types import Prompt as MCPPrompt
@@ -33,9 +36,6 @@ from mcpgateway.types import Resource as MCPResource
 from mcpgateway.types import ResourceContent, TextContent
 from mcpgateway.types import Tool as MCPTool
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-
-# Third-Party
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 logger = logging.getLogger(__name__)
 
@@ -519,7 +519,17 @@ class ResourceNotification(BaseModelWithConfigDict):
 
     @field_serializer("timestamp")
     def serialize_timestamp(self, dt: datetime) -> str:
-        # now returns ISO string with Z
+        """Serialize the `timestamp` field as an ISO 8601 string with UTC timezone.
+
+        Converts the given datetime to UTC and returns it in ISO 8601 format,
+        replacing the "+00:00" suffix with "Z" to indicate UTC explicitly.
+
+        Args:
+            dt (datetime): The datetime object to serialize.
+
+        Returns:
+            str: ISO 8601 formatted string in UTC, ending with 'Z'.
+        """
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -1020,7 +1030,18 @@ class EventMessage(BaseModelWithConfigDict):
 
     @field_serializer("timestamp")
     def serialize_timestamp(self, dt: datetime) -> str:
-        # now returns ISO string with Z
+        """
+        Serialize the `timestamp` field as an ISO 8601 string with UTC timezone.
+
+        Converts the given datetime to UTC and returns it in ISO 8601 format,
+        replacing the "+00:00" suffix with "Z" to indicate UTC explicitly.
+
+        Args:
+            dt (datetime): The datetime object to serialize.
+
+        Returns:
+            str: ISO 8601 formatted string in UTC, ending with 'Z'.
+        """
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 

@@ -13,11 +13,12 @@ It handles model selection, sampling preferences, and message generation.
 import logging
 from typing import Any, Dict, List
 
+# Third-Party
+from sqlalchemy.orm import Session
+
 # First-Party
 from mcpgateway.types import CreateMessageResult, ModelPreferences, Role, TextContent
 
-# Third-Party
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ class SamplingHandler:
                 if not self._validate_message(msg):
                     raise SamplingError(f"Invalid message format: {msg}")
 
+            # pylint: disable=fixme
             # TODO: Sample from selected model
             # For now return mock response
             response = self._mock_sample(messages=messages)
@@ -160,6 +162,7 @@ class SamplingHandler:
         Returns:
             Messages with added context
         """
+        # pylint: disable=fixme
         # TODO: Implement context gathering based on type
         # For now return original messages
         return messages
