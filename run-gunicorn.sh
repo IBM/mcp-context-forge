@@ -74,15 +74,6 @@ if [[ "${SSL}" == "true" ]]; then
     echo "✓  TLS enabled – using ${CERT_FILE} / ${KEY_FILE}"
 fi
 
-# ──────────────────────────────
-# Database migrations / checks
-# ──────────────────────────────
-"${PYTHON}" -m mcpgateway.db
-if [[ $? -ne 0 ]]; then
-    echo "✘  Database migration/check failed. Please resolve issues before starting the server."
-    exit 1
-fi
-
 exec gunicorn -c gunicorn.config.py \
     --worker-class uvicorn.workers.UvicornWorker \
     --workers "${GUNICORN_WORKERS}" \

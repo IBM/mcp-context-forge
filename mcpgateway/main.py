@@ -35,9 +35,10 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router
+from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import Base, engine, SessionLocal
+from mcpgateway.db import SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.schemas import (
     GatewayCreate,
@@ -144,7 +145,7 @@ logging.basicConfig(
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
 # Create database tables
-Base.metadata.create_all(bind=engine)
+asyncio.run(bootstrap_db())
 
 # Initialize services
 tool_service = ToolService()
