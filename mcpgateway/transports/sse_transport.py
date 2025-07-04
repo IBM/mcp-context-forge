@@ -17,13 +17,13 @@ import logging
 from typing import Any, AsyncGenerator, Dict
 import uuid
 
-# First-Party
-from mcpgateway.config import settings
-from mcpgateway.transports.base import Transport
-
 # Third-Party
 from fastapi import Request
 from sse_starlette.sse import EventSourceResponse
+
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.transports.base import Transport
 
 logger = logging.getLogger(__name__)
 
