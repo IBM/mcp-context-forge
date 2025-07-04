@@ -54,7 +54,6 @@ Python ::
     wait_for_redis_ready(sync=True)        # synchronous / blocking
 """
 
-
 # Standard
 import argparse
 import asyncio
@@ -65,19 +64,7 @@ import time
 from typing import Any, Optional
 
 # First Party imports
-from mcpgateway.config import settings  
-
-
-# ---------------------------------------------------------------------------
-# Third-party imports - abort early if redis is missing
-# ---------------------------------------------------------------------------
-if settings.cache_type == "redis":
-    try:
-        # Third-Party
-        from redis import Redis
-    except ImportError:  # pragma: no cover - handled at runtime for the CLI
-        sys.stderr.write("redis library not installed - aborting (pip install redis)\n")
-        sys.exit(2)
+from mcpgateway.config import settings
 
 # Environment variables
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -144,12 +131,12 @@ def wait_for_redis_ready(
         Raises:
             RuntimeError: Forwarded after exhausting ``max_retries`` attempts.
         """
-        # try:
-        #     # Third-Party
-        #     from redis import Redis
-        # except ImportError:  # pragma: no cover - handled at runtime for the CLI
-        #     sys.stderr.write("redis library not installed - aborting (pip install redis)\n")
-        #     sys.exit(2)
+        try:
+            # Import redis here to avoid dependency issues if not used
+            from redis import Redis
+        except ImportError:  # pragma: no cover - handled at runtime for the CLI
+            sys.stderr.write("redis library not installed - aborting (pip install redis)\n")
+            sys.exit(2)
 
         redis_client = Redis.from_url(redis_url)
         for attempt in range(1, max_retries + 1):

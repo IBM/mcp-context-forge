@@ -6,6 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Reeve Barreto, Mihai Criveti
 
 """
+
 # Standard
 import asyncio
 from unittest.mock import patch
@@ -84,7 +85,7 @@ def test_wait_for_redis_ready_success(monkeypatch):
 
     monkeypatch.setattr(redis_isready.time, "sleep", lambda *_: None)
 
-    with patch("mcpgateway.utils.redis_isready.Redis", MockRedis):
+    with patch("redis.Redis", MockRedis):
         redis_isready.wait_for_redis_ready(
             redis_url="redis://localhost:6379/0",
             max_retries=3,
@@ -113,7 +114,7 @@ def test_wait_for_redis_ready_retries(monkeypatch):
         def from_url(cls, url):
             return mock
 
-    with patch("mcpgateway.utils.redis_isready.Redis", MockRedisWithFromUrl):
+    with patch("redis.Redis", MockRedisWithFromUrl):
         redis_isready.wait_for_redis_ready(
             redis_url="redis://localhost:6379/0",
             max_retries=5,
@@ -137,7 +138,7 @@ def test_wait_for_redis_ready_fails(monkeypatch):
         def from_url(cls, url):
             return mock
 
-    with patch("mcpgateway.utils.redis_isready.Redis", MockRedisWithFromUrl):
+    with patch("redis.Redis", MockRedisWithFromUrl):
         with pytest.raises(RuntimeError, match="Redis not ready after"):
             redis_isready.wait_for_redis_ready(
                 redis_url="redis://localhost:6379/0",
@@ -188,7 +189,7 @@ def test_wait_for_redis_ready_async_path(monkeypatch):
         def from_url(cls, url):
             return mock
 
-    with patch("mcpgateway.utils.redis_isready.Redis", MockRedisWithFromUrl):
+    with patch("redis.Redis", MockRedisWithFromUrl):
         redis_isready.wait_for_redis_ready(
             redis_url="redis://localhost:6379/0",
             max_retries=2,
