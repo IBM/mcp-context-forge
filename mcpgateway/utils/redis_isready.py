@@ -63,6 +63,7 @@ import sys
 import time
 from typing import Any, Optional
 
+# First-Party
 # First Party imports
 from mcpgateway.config import settings
 
@@ -133,6 +134,7 @@ def wait_for_redis_ready(
         """
         try:
             # Import redis here to avoid dependency issues if not used
+            # Third-Party
             from redis import Redis
         except ImportError:  # pragma: no cover - handled at runtime for the CLI
             sys.stderr.write("redis library not installed - aborting (pip install redis)\n")

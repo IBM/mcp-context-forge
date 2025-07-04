@@ -236,7 +236,7 @@ from_first                 = true         # place all "from ... import ..." befo
 ###############################################################################
 # Section ordering & headings
 ###############################################################################
-sections                   = ["FUTURE", "STDLIB", "FIRSTPARTY", "THIRDPARTY", "LOCALFOLDER"]
+sections                   = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
 import_heading_future      = "Future"       # header above FUTURE imports (if headings enabled)
 import_heading_stdlib      = "Standard"     # header for built-in Stdlib imports
 import_heading_thirdparty  = "Third-Party"  # header for pip-installed packages

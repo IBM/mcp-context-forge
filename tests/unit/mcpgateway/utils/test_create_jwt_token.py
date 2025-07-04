@@ -32,12 +32,12 @@ import sys
 from types import SimpleNamespace
 from typing import Any, Dict
 
-# First-Party
-from mcpgateway.utils import create_jwt_token as jwt_util  # noqa: E402
-
 # Third-Party
 import jwt
 import pytest
+
+# First-Party
+from mcpgateway.utils import create_jwt_token as jwt_util  # noqa: E402
 
 # --------------------------------------------------------------------------- #
 # Patch module-level constants **before** we start calling helpers            #

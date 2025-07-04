@@ -32,6 +32,28 @@ import json
 import logging
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
+# Third-Party
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    status,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.background import BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+import httpx
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from starlette.middleware.base import BaseHTTPMiddleware
+
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router
@@ -108,28 +130,6 @@ from mcpgateway.validation.jsonrpc import (
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
-
-# Third-Party
-from fastapi import (
-    APIRouter,
-    Body,
-    Depends,
-    FastAPI,
-    HTTPException,
-    Request,
-    status,
-    WebSocket,
-    WebSocketDisconnect,
-)
-from fastapi.background import BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-import httpx
-from sqlalchemy import text
-from sqlalchemy.orm import Session
-from starlette.middleware.base import BaseHTTPMiddleware
 
 # Initialize logging service first
 logging_service = LoggingService()
