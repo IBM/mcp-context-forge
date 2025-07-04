@@ -1,6 +1,6 @@
-# MCP Gateway StdIO to SSE Bridge (`mcpgateway-translate`)
+# MCP Gateway StdIO to SSE Bridge (`mcpgateway.translate`)
 
-`mcpgateway-translate` is a lightweight bridge that connects a JSON-RPC server
+`mcpgateway.translate` is a lightweight bridge that connects a JSON-RPC server
 running over StdIO to an HTTP/SSE interface, or consumes a remote SSE stream
 and forwards messages to a local StdIO process.
 
@@ -31,7 +31,7 @@ Supported modes:
 ### Expose a local StdIO server over SSE
 
 ```bash
-mcpgateway-translate \
+python3 -m mcpgateway.translate \
   --stdio "uvenv run mcp-server-git" \
   --port 9000
 ```
@@ -45,7 +45,7 @@ http://localhost:9000/sse
 ### Bridge a remote SSE endpoint to a local process
 
 ```bash
-mcpgateway-translate \
+python3 -m mcpgateway.translate \
   --sse "https://corp.example.com/mcp" \
   --oauth2Bearer "your-token"
 ```
@@ -55,7 +55,7 @@ mcpgateway-translate \
 ## Command-Line Options
 
 ```
-mcpgateway-translate [--stdio CMD | --sse URL | --streamableHttp URL] [options]
+python3 -m mcpgateway.translate [--stdio CMD | --sse URL | --streamableHttp URL] [options]
 ```
 
 ### Required (one of)
@@ -110,7 +110,7 @@ Health check endpoint. Always responds with `ok`.
 ### 1. Browser integration
 
 ```bash
-mcpgateway-translate \
+python3 -m mcpgateway.translate \
   --stdio "uvenv run mcp-server-git" \
   --port 9000 \
   --cors "https://myapp.com"
@@ -125,7 +125,7 @@ http://localhost:9000/sse
 ### 2. Connect remote server to local CLI tools
 
 ```bash
-mcpgateway-translate \
+python3 -m mcpgateway.translate \
   --sse "https://corp.example.com/mcp" \
   --oauth2Bearer "$TOKEN" \
   --logLevel debug
