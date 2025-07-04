@@ -9,7 +9,7 @@ Tests for tool service implementation.
 """
 
 # Standard
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch, call
 
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
@@ -31,6 +31,9 @@ import re
 import pytest
 from sqlalchemy.exc import IntegrityError
 from contextlib import asynccontextmanager
+import asyncio
+
+from datetime import datetime, timezone
 
 
 @pytest.fixture
@@ -712,7 +715,7 @@ class TestToolService:
         test_db.get.assert_called_once_with(DbTool, "1")
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_activate_tool(self, tool_service, test_db, mock_tool):
+    async def test_toggle_tool_status_activate_tool(self, tool_service, test_db, mock_tool, monkeypatch):
         """Test toggling tool active status."""
         # Mock DB get to return tool
         mock_tool.is_active = False
@@ -727,8 +730,87 @@ class TestToolService:
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, "1")
 
-        tool_service._notify_tool_activated.assert_called_once()
+        tool_service._notify_tool_activated.assert_called_once_with(
+            mock_tool
+        )
+
+        assert result.is_active is True
     
+    @pytest.mark.asyncio
+    async def test_notify_tool_publish_event(self, tool_service, mock_tool, monkeypatch):
+        # Arrange – freeze the publish method so we can inspect the call
+        publish_mock = AsyncMock()
+        monkeypatch.setattr(tool_service, "_publish_event", publish_mock)
+
+        await tool_service._notify_tool_activated(mock_tool)
+        await tool_service._notify_tool_deactivated(mock_tool)
+        await tool_service._notify_tool_removed(mock_tool)
+        await tool_service._notify_tool_deleted({"id": mock_tool.id, "name": mock_tool.name})
+
+        assert publish_mock.await_count == 4
+
+        publish_mock.assert_has_calls(
+            [
+                call(
+                    {
+                        "type": "tool_activated",
+                        "data": {
+                            "id": mock_tool.id,
+                            "name": mock_tool.name,
+                            "is_active": True,
+                        },
+                        "timestamp": ANY,
+                    }
+                ),
+                call(
+                    {
+                        "type": "tool_deactivated",
+                        "data": {
+                            "id": mock_tool.id,
+                            "name": mock_tool.name,
+                            "is_active": False,
+                        },
+                        "timestamp": ANY,
+                    }
+                ),
+                call(
+                    {
+                        "type": "tool_removed",
+                        "data": {
+                            "id": mock_tool.id,
+                            "name": mock_tool.name,
+                            "is_active": False,
+                        },
+                        "timestamp": ANY,
+                    }
+                ),
+                call(
+                    {
+                        "type": "tool_deleted",
+                        "data": {"id": mock_tool.id, "name": mock_tool.name},
+                        "timestamp": ANY,
+                    }
+                )
+            ],
+            any_order=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_publish_event_with_real_queue(self, tool_service):
+        # Arrange
+        q = asyncio.Queue()
+        tool_service._event_subscribers = [q]        # seed one subscriber
+        event = {"type": "test", "data": 123}
+
+        # Act
+        await tool_service._publish_event(event)
+
+        # Assert – the event was put on the queue
+        queued_event = await q.get()
+        assert queued_event == event
+        assert q.empty()
+
+
     @pytest.mark.asyncio
     async def test_toggle_tool_status_no_change(self, tool_service, mock_tool, test_db):
         """Test toggling tool active status."""
