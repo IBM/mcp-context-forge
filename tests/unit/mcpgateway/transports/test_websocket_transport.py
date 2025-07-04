@@ -9,10 +9,10 @@ Tests for the MCP Gateway WebSocket transport implementation.
 """
 
 # Standard
-from unittest.mock import AsyncMock
-import logging
 import asyncio
+import logging
 import types
+from unittest.mock import AsyncMock
 
 # First-Party
 from mcpgateway.transports.websocket_transport import WebSocketTransport
@@ -182,7 +182,6 @@ class TestWebSocketTransport:
         await websocket_transport.connect()
         await websocket_transport.send_ping()
         mock_websocket.send_bytes.assert_called_with(b"ping")
-
 
     # @pytest.mark.asyncio
     # async def test_ping_loop(websocket_transport, mock_websocket):

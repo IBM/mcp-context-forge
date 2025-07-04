@@ -92,9 +92,6 @@ class _PubSub:
 
         Args:
             data: The data string to publish to all subscribers.
-
-        Returns:
-            None
         """
         dead: List[asyncio.Queue[str]] = []
         for q in self._subscribers:
@@ -121,9 +118,6 @@ class _PubSub:
 
         Args:
             q: The queue to unsubscribe from published data.
-
-        Returns:
-            None
         """
         with suppress(ValueError):
             self._subscribers.remove(q)
@@ -146,12 +140,6 @@ class StdIOEndpoint:
         """Start the stdio subprocess.
 
         Creates the subprocess and starts the stdout pump task.
-
-        Returns:
-            None
-
-        Raises:
-            OSError: If the subprocess cannot be started.
         """
         LOGGER.info("Starting stdio subprocess: %s", self._cmd)
         self._proc = await asyncio.create_subprocess_exec(
@@ -168,9 +156,6 @@ class StdIOEndpoint:
         """Stop the stdio subprocess.
 
         Terminates the subprocess and cancels the pump task.
-
-        Returns:
-            None
         """
         if self._proc is None:
             return
@@ -187,9 +172,6 @@ class StdIOEndpoint:
         Args:
             raw: The raw data string to send to the subprocess.
 
-        Returns:
-            None
-
         Raises:
             RuntimeError: If the stdio endpoint is not started.
         """
@@ -205,11 +187,8 @@ class StdIOEndpoint:
         Continuously reads lines from the subprocess stdout and publishes them
         to the pubsub system.
 
-        Returns:
-            None
-
         Raises:
-            Exception: If the stdout pump encounters an error.
+            asyncio.CancelledError: If the pump task is cancelled.
         """
         assert self._proc and self._proc.stdout
         reader = self._proc.stdout
@@ -225,7 +204,6 @@ class StdIOEndpoint:
             raise
         except Exception:  # pragma: no cover --best-effort logging
             LOGGER.exception("stdout pump crashed - terminating bridge")
-            raise
 
 
 # ---------------------------------------------------------------------------#
@@ -419,9 +397,6 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
         port: The port to bind the HTTP server to.
         log_level: The logging level to use. Defaults to "info".
         cors: Optional list of CORS allowed origins.
-
-    Returns:
-        None
     """
     pubsub = _PubSub()
     stdio = StdIOEndpoint(cmd, pubsub)
@@ -463,9 +438,6 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
     Args:
         url: The SSE endpoint URL to connect to.
         oauth2_bearer: Optional OAuth2 bearer token for authentication.
-
-    Returns:
-        None
 
     Raises:
         ImportError: If httpx package is not available.
@@ -516,7 +488,7 @@ def start_stdio(cmd, port, log_level, cors):
         cors: Optional list of CORS allowed origins.
 
     Returns:
-        None
+        None: This function does not return a value.
     """
     return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors))
 
@@ -529,7 +501,7 @@ def start_sse(url, bearer):
         bearer: Optional OAuth2 bearer token for authentication.
 
     Returns:
-        None
+        None: This function does not return a value.
     """
     return asyncio.run(_run_sse_to_stdio(url, bearer))
 
@@ -539,13 +511,6 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
 
     Args:
         argv: Optional sequence of command line arguments. If None, uses sys.argv[1:].
-
-    Returns:
-        None
-
-    Raises:
-        NotImplementedError: If an unsupported option is specified.
-        KeyboardInterrupt: If the user interrupts the process.
     """
     args = _parse_args(argv or sys.argv[1:])
     logging.basicConfig(
