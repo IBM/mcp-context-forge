@@ -26,12 +26,6 @@ import re
 from typing import List, Union
 from uuid import uuid4
 
-# First-Party
-from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
-from mcpgateway.services.tool_service import ToolService
-from mcpgateway.utils.verify_credentials import verify_credentials
-
 # Third-Party
 from fastapi.security.utils import get_authorization_scheme_param
 from mcp import types
@@ -49,6 +43,13 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.types import Receive, Scope, Send
+
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.db import SessionLocal
+from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.verify_credentials import verify_credentials
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -128,7 +129,7 @@ class InMemoryEventStore(EventStore):
         self,
         last_event_id: EventId,
         send_callback: EventCallback,
-    ) -> StreamId | None:
+    ) -> Union[StreamId, None]:
         """
         Replays events that occurred after the specified event ID.
 
