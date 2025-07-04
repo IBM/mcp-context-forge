@@ -129,7 +129,7 @@ services:
       dockerfile: Containerfile
     environment:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-    command: ["python", "-m", "mcpgateway.bootstrap_db"]
+    command: alembic upgrade head
     depends_on:
       postgres:
         condition: service_healthy
