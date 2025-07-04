@@ -36,8 +36,8 @@ async def main():
         logger.info("Empty DB detected – creating baseline schema")
         Base.metadata.create_all(engine)
         command.stamp(cfg, "head")  # record baseline
-
-    # command.upgrade(cfg, "head")  # apply any new revisions
+    else:
+        command.upgrade(cfg, "head")  # apply any new revisions
     logger.info("Database ready")
 
 
