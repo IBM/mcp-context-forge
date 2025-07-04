@@ -126,7 +126,7 @@ class ForwardingService:
         """
         try:
             # Find tool
-            tool = db.execute(select(DbTool).where(DbTool.name == tool_name).where(DbTool.is_active)).scalar_one_or_none()
+            tool = db.execute(select(DbTool).where(DbTool.name == tool_name).where(DbTool.enabled)).scalar_one_or_none()
 
             if not tool:
                 raise ForwardingError(f"Tool not found: {tool_name}")
@@ -208,7 +208,7 @@ class ForwardingService:
         """
         # Get gateway
         gateway = db.get(DbGateway, gateway_id)
-        if not gateway or not gateway.is_active:
+        if not gateway or not gateway.enabled:
             raise ForwardingError(f"Gateway not found: {gateway_id}")
 
         # Check rate limits
@@ -263,7 +263,7 @@ class ForwardingService:
             ForwardingError: If all forwards fail
         """
         # Get active gateways
-        gateways = db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
+        gateways = db.execute(select(DbGateway).where(DbGateway.enabled)).scalars().all()
 
         # Forward to each gateway
         results = []
@@ -292,7 +292,7 @@ class ForwardingService:
             Gateway record or None
         """
         # Get active gateways
-        gateways = db.execute(select(DbGateway).where(DbGateway.is_active)).scalars().all()
+        gateways = db.execute(select(DbGateway).where(DbGateway.enabled)).scalars().all()
 
         # Check each gateway
         for gateway in gateways:

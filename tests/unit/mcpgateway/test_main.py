@@ -71,7 +71,8 @@ MOCK_TOOL_READ = {
     "auth": {"auth_type": "none"},
     "createdAt": "2023-01-01T00:00:00+00:00",
     "updatedAt": "2023-01-01T00:00:00+00:00",
-    "isActive": True,
+    "enabled": True,
+    "reachable": True,
     "gatewayId": "gateway-1",
     "executionCount": 5,
     "metrics": MOCK_METRICS,
@@ -88,7 +89,6 @@ _TOOL_KEY_MAP = {
     "jsonpathFilter": "jsonpath_filter",
     "createdAt": "created_at",
     "updatedAt": "updated_at",
-    "isActive": "is_active",
     "gatewayId": "gateway_id",
     "gatewaySlug": "gateway_slug",
     "originalNameSlug": "original_name_slug",
@@ -142,7 +142,8 @@ MOCK_GATEWAY_READ = {
     "auth_type": "none",
     "created_at": "2023-01-01T00:00:00+00:00",
     "updated_at": "2023-01-01T00:00:00+00:00",
-    "is_active": True,
+    "enabled": True,
+    "reachable": True,
 }
 
 MOCK_ROOT = {

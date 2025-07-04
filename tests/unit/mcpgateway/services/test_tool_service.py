@@ -47,8 +47,8 @@ def mock_gateway():
     gw.transport = "SSE"
     gw.capabilities = {"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}}
     gw.created_at = gw.updated_at = gw.last_seen = "2025-01-01T00:00:00Z"
-    gw.is_active = True
-
+    gw.enabled = True
+    gw.reachable = True
     return gw
 
 
@@ -68,7 +68,8 @@ def mock_tool():
     tool.jsonpath_filter = ""
     tool.created_at = "2023-01-01T00:00:00"
     tool.updated_at = "2023-01-01T00:00:00"
-    tool.is_active = True
+    tool.enabled = True
+    tool.reachable = True
     tool.auth_type = None
     tool.auth_username = None
     tool.auth_password = None
@@ -133,7 +134,8 @@ class TestToolService:
                 jsonpath_filter="",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
+                reachable=True,
                 gateway_id=None,
                 execution_count=0,
                 auth=None,  # Add auth field
@@ -174,7 +176,7 @@ class TestToolService:
         assert result.name == "test-gateway-test-tool"
         assert result.url == "http://example.com/tools/test"
         assert result.integration_type == "MCP"
-        assert result.is_active is True
+        assert result.enabled is True
 
         # Verify notification
         tool_service._notify_tool_added.assert_called_once()
@@ -257,7 +259,8 @@ class TestToolService:
             jsonpath_filter="",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=True,
+            enabled=True,
+            reachable=True,
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
@@ -308,7 +311,8 @@ class TestToolService:
             jsonpath_filter="",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=True,
+            enabled=True,
+            reachable=True,
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
@@ -410,7 +414,8 @@ class TestToolService:
             jsonpath_filter="",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=False,  # Changed to False
+            enabled=False,
+            reachable=True,
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
@@ -429,7 +434,7 @@ class TestToolService:
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
-        result = await tool_service.toggle_tool_status(test_db, 1, activate=False)
+        result = await tool_service.toggle_tool_status(test_db, 1, activate=False, reachable=False)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
@@ -437,7 +442,7 @@ class TestToolService:
         test_db.refresh.assert_called_once()
 
         # Verify properties were updated
-        assert mock_tool.is_active is False
+        assert mock_tool.enabled is False
 
         # Verify notification
         tool_service._notify_tool_deactivated.assert_called_once()
@@ -479,7 +484,8 @@ class TestToolService:
             jsonpath_filter="",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=True,
+            enabled=True,
+            reachable=True,
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
@@ -533,7 +539,7 @@ class TestToolService:
         conflicting_tool = MagicMock(spec=DbTool)
         conflicting_tool.id = 2
         conflicting_tool.name = "existing_tool"
-        conflicting_tool.is_active = True
+        conflicting_tool.enabled = True
 
         # Mock DB query to check for name conflicts (returns the conflicting tool)
         mock_scalar = Mock()
@@ -588,7 +594,7 @@ class TestToolService:
     async def test_invoke_tool_inactive(self, tool_service, mock_tool, test_db):
         """Test invoking an inactive tool."""
         # Set tool to inactive
-        mock_tool.is_active = False
+        mock_tool.enabled = False
 
         # Mock DB to return inactive tool for first query, None for second query
         mock_scalar1 = Mock()
