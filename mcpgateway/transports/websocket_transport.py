@@ -14,12 +14,12 @@ import asyncio
 import logging
 from typing import Any, AsyncGenerator, Dict, Optional
 
+# Third-Party
+from fastapi import WebSocket, WebSocketDisconnect
+
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.transports.base import Transport
-
-# Third-Party
-from fastapi import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
