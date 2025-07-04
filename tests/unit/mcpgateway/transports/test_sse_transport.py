@@ -13,7 +13,7 @@ Tests for the MCP Gateway SSE transport implementation.
 import asyncio
 import json
 import types
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 # First-Party
 from mcpgateway.transports.sse_transport import SSETransport
@@ -83,6 +83,7 @@ class TestSSETransport:
         # Should raise error
         with pytest.raises(RuntimeError, match="Transport not connected"):
             await sse_transport.send_message(message)
+
     @pytest.mark.asyncio
     async def test_receive_message_not_connected(self, sse_transport):
         """receive_message should raise RuntimeError if not connected."""
@@ -94,8 +95,7 @@ class TestSSETransport:
     async def test_send_message_queue_exception(self, sse_transport):
         """send_message should log and raise if queue.put fails."""
         await sse_transport.connect()
-        with patch.object(sse_transport._message_queue, "put", side_effect=Exception("fail")), \
-            patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
+        with patch.object(sse_transport._message_queue, "put", side_effect=Exception("fail")), patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
             with pytest.raises(Exception, match="fail"):
                 await sse_transport.send_message({"foo": "bar"})
             assert mock_logger.error.called
@@ -104,30 +104,24 @@ class TestSSETransport:
     async def test_receive_message_cancelled(self, sse_transport):
         """Test receive_message handles CancelledError and logs."""
         await sse_transport.connect()
-        with patch("asyncio.sleep", side_effect=asyncio.CancelledError), \
-            patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
+        with patch("asyncio.sleep", side_effect=asyncio.CancelledError), patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
             gen = sse_transport.receive_message()
             await gen.__anext__()  # initialize message
             with pytest.raises(asyncio.CancelledError):
                 await gen.__anext__()
             # Check that logger.info was called with the cancel message
-            assert any(
-                "SSE receive loop cancelled" in str(call)
-                for call in [args[0] for args, _ in mock_logger.info.call_args_list]
-            )
+            assert any("SSE receive loop cancelled" in str(call) for call in [args[0] for args, _ in mock_logger.info.call_args_list])
+
     @pytest.mark.asyncio
     async def test_receive_message_finally_logs(self, sse_transport):
         """Test receive_message logs in finally block."""
         await sse_transport.connect()
-        with patch("asyncio.sleep", side_effect=Exception("fail")), \
-            patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
+        with patch("asyncio.sleep", side_effect=Exception("fail")), patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
             gen = sse_transport.receive_message()
             await gen.__anext__()  # initialize message
             with pytest.raises(Exception):
                 await gen.__anext__()
             assert any("SSE receive loop ended" in str(call) for call in mock_logger.info.call_args_list)
-
-
 
     @pytest.mark.asyncio
     async def test_create_sse_response(self, sse_transport, mock_request):
@@ -146,14 +140,13 @@ class TestSSETransport:
         assert response.headers["Cache-Control"] == "no-cache"
         assert response.headers["Content-Type"] == "text/event-stream"
         assert response.headers["X-MCP-SSE"] == "true"
-    
+
     @pytest.mark.asyncio
     async def test_create_sse_response_event_generator_error(self, sse_transport, mock_request):
         """Test event_generator handles generic Exception and CancelledError."""
         await sse_transport.connect()
         # Patch _message_queue.get to raise Exception, then CancelledError
-        with patch.object(sse_transport._message_queue, "get", side_effect=[Exception("fail"), asyncio.CancelledError()]), \
-             patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
+        with patch.object(sse_transport._message_queue, "get", side_effect=[Exception("fail"), asyncio.CancelledError()]), patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
             response = await sse_transport.create_sse_response(mock_request)
             gen = response.body_iterator
             await gen.__anext__()  # endpoint
@@ -166,7 +159,7 @@ class TestSSETransport:
             with pytest.raises(StopAsyncIteration):
                 await gen.__anext__()
             assert mock_logger.error.called or mock_logger.info.called
-            
+
     def test_session_id_property(self, sse_transport):
         """Test session_id property returns the correct value."""
         assert sse_transport.session_id == sse_transport._session_id

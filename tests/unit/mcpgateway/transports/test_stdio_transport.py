@@ -26,7 +26,7 @@ from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # First-Party
-from mcpgateway.transports.stdio_transport import StdioTransport, logger
+from mcpgateway.transports.stdio_transport import logger, StdioTransport
 
 # Third-Party
 import pytest
@@ -106,6 +106,7 @@ async def test_connect_sets_up_streams_and_connected(monkeypatch):
         assert transport._connected is True
         log_info.assert_called_with("stdio transport connected")
 
+
 @pytest.mark.asyncio
 async def test_send_message_happy_path(transport):
     """
@@ -126,37 +127,45 @@ async def test_send_message_happy_path(transport):
     assert raw.endswith(b"\n")
     assert json.loads(raw.decode().rstrip("\n")) == payload
 
+
 @pytest.mark.asyncio
 async def test_send_message_raises_on_writer_exception(transport):
     """send_message should raise if writer.write or drain fails."""
+
     class FailingWriter(_DummyWriter):
         def write(self, data):
             raise IOError("fail write")
+
     transport._stdout_writer = FailingWriter()  # type: ignore[attr-defined]
     transport._connected = True  # type: ignore[attr-defined]
     with pytest.raises(IOError):
         await transport.send_message({"fail": True})
 
+
 @pytest.mark.asyncio
 async def test_receive_message_handles_json_decode_error(transport, caplog):
     """receive_message should skip lines that are not valid JSON."""
-    reader = _DummyReader(['not-json', '{"ok": 1}'])
+    reader = _DummyReader(["not-json", '{"ok": 1}'])
     transport._stdin_reader = reader  # type: ignore[attr-defined]
     transport._connected = True  # type: ignore[attr-defined]
     msgs = [m async for m in transport.receive_message()]
     assert msgs == [{"ok": 1}]
     assert any("Failed to receive message" in r.message for r in caplog.records)
 
+
 @pytest.mark.asyncio
 async def test_receive_message_handles_cancelled_error(transport):
     """receive_message should break on CancelledError."""
+
     class CancelReader:
         async def readline(self):
             raise asyncio.CancelledError()
+
     transport._stdin_reader = CancelReader()  # type: ignore[attr-defined]
     transport._connected = True  # type: ignore[attr-defined]
     msgs = [m async for m in transport.receive_message()]
     assert msgs == []
+
 
 @pytest.mark.asyncio
 async def test_disconnect_when_not_connected(transport):
@@ -172,6 +181,7 @@ async def test_disconnect_when_not_connected(transport):
 #     """Calling `send_message()` without a writer should raise RuntimeError."""
 #     with pytest.raises(RuntimeError):
 #         await transport.send_message({"oops": 1})
+
 
 @pytest.mark.asyncio
 async def test_send_message_raises_if_not_connected(transport):
