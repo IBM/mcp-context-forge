@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.types import ToolResult
+from mcpgateway.models import ToolResult
 
 logger = logging.getLogger(__name__)
 

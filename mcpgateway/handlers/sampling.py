@@ -17,7 +17,7 @@ from typing import Any, Dict, List
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.types import CreateMessageResult, ModelPreferences, Role, TextContent
+from mcpgateway.models import CreateMessageResult, ModelPreferences, Role, TextContent
 
 logger = logging.getLogger(__name__)
 

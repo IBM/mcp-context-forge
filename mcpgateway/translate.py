@@ -51,13 +51,13 @@ import logging
 import shlex
 import signal
 import sys
-from typing import AsyncIterator, List, Optional, Sequence
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence
 import uuid
 
 # Third-Party
 from fastapi import FastAPI, Request, Response, status
-from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
@@ -65,7 +65,7 @@ try:
     # Third-Party
     import httpx
 except ImportError:
-    httpx = None
+    httpx = None  # type: ignore[assignment]
 
 LOGGER = logging.getLogger("mcpgateway.translate")
 KEEP_ALIVE_INTERVAL = 30  # seconds - matches the reference implementation
@@ -182,7 +182,7 @@ class StdIOEndpoint:
         to the pubsub system.
 
         Raises:
-            asyncio.CancelledError: If the pump task is cancelled.
+            Exception: For any other error encountered while pumping stdout.
         """
         assert self._proc and self._proc.stdout
         reader = self._proc.stdout
@@ -254,7 +254,7 @@ def _build_fastapi(
         queue = pubsub.subscribe()
         session_id = uuid.uuid4().hex
 
-        async def event_gen() -> AsyncIterator[dict]:
+        async def event_gen() -> AsyncIterator[Dict[str, Any]]:
             # 1️⃣ Mandatory "endpoint" bootstrap required by the MCP spec
             endpoint_url = f"{str(request.base_url).rstrip('/')}{message_path}?session_id={session_id}"
             yield {
@@ -418,7 +418,7 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):  # Windows lacks add_signal_handler
-            loop.add_signal_handler(sig, lambda _s=sig: asyncio.create_task(_shutdown()))
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
 
     LOGGER.info("Bridge ready → http://127.0.0.1:%s/sse", port)
     await server.serve()
@@ -450,7 +450,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
             stderr=sys.stderr,
         )
 
-        async def read_stdout():
+        async def read_stdout() -> None:
             assert process.stdout
             while True:
                 line = await process.stdout.readline()
@@ -458,7 +458,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
                     break
                 print(line.decode().rstrip())
 
-        async def pump_sse_to_stdio():
+        async def pump_sse_to_stdio() -> None:
             async with client.stream("GET", url) as response:
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
@@ -471,7 +471,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
         await asyncio.gather(read_stdout(), pump_sse_to_stdio())
 
 
-def start_stdio(cmd, port, log_level, cors):
+def start_stdio(cmd: str, port: int, log_level: str, cors: Optional[List[str]]) -> None:
     """Start stdio bridge.
 
     Args:
@@ -486,7 +486,7 @@ def start_stdio(cmd, port, log_level, cors):
     return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors))
 
 
-def start_sse(url, bearer):
+def start_sse(url: str, bearer: Optional[str]) -> None:
     """Start SSE bridge.
 
     Args:

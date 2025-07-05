@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.types import CompleteResult
+from mcpgateway.models import CompleteResult
 
 logger = logging.getLogger(__name__)
 

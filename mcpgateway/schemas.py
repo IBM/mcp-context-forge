@@ -30,11 +30,11 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 # First-Party
-from mcpgateway.types import ImageContent
-from mcpgateway.types import Prompt as MCPPrompt
-from mcpgateway.types import Resource as MCPResource
-from mcpgateway.types import ResourceContent, TextContent
-from mcpgateway.types import Tool as MCPTool
+from mcpgateway.models import ImageContent
+from mcpgateway.models import Prompt as MCPPrompt
+from mcpgateway.models import Resource as MCPResource
+from mcpgateway.models import ResourceContent, TextContent
+from mcpgateway.models import Tool as MCPTool
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 logger = logging.getLogger(__name__)
