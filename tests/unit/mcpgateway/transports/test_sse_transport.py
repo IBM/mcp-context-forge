@@ -12,8 +12,7 @@ Tests for the MCP Gateway SSE transport implementation.
 # Standard
 import asyncio
 import json
-import types
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 # Third-Party
 from fastapi import Request
