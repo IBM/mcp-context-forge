@@ -110,7 +110,13 @@ engine = create_engine(
 # ---------------------------------------------------------------------------
 # 6. Function to return UTC timestamp
 # ---------------------------------------------------------------------------
-def utc_now():
+def utc_now() -> datetime:
+    """Return the current Coordinated Universal Time (UTC).
+
+    Returns:
+        datetime: A timezone-aware `datetime` whose `tzinfo` is
+        `datetime.timezone.utc`.
+    """
     return datetime.now(timezone.utc)
 
 
@@ -122,6 +128,7 @@ class Base(DeclarativeBase):
     """Base class for all models."""
 
 
+# TODO: cleanup, not sure why this is commented out?
 # # Association table for tools and gateways (federation)
 # tool_gateway_table = Table(
 #     "tool_gateway_association",

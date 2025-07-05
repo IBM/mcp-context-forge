@@ -88,7 +88,7 @@ persistent=yes
 
 # Minimum Python version to use for version dependent checks. Will default to
 # the version used to run pylint.
-py-version=3.9
+py-version=3.11
 
 # Discover python modules and packages in the file system subtree.
 recursive=no
@@ -291,7 +291,7 @@ max-args=12
 max-positional-arguments = 6
 
 # Maximum number of attributes for a class (see R0902).
-max-attributes=10
+max-attributes=16
 
 # Maximum number of boolean expressions in an if statement (see R0916).
 max-bool-expr=5
@@ -397,7 +397,9 @@ preferred-modules=
 
 # The type of string formatting that logging methods do. `old` means using %
 # formatting, `new` is for `{}` formatting.
-logging-format-style=new
+# Mihai: Not having this set to old triggers: E1205 (logging-too-many-args)
+#logging-format-style=new
+logging-format-style=old
 
 # Logging modules to check that the string format arguments are in logging
 # function parameter format.
@@ -476,7 +478,7 @@ notes-rgx=
 [REFACTORING]
 
 # Maximum number of nested blocks for function / method body
-max-nested-blocks=5
+max-nested-blocks=6
 
 # Complete name of functions that never returns. When checking for
 # inconsistent-return-statements if a never returning function is called then

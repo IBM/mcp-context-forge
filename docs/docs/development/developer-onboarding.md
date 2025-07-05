@@ -11,7 +11,8 @@
     - [ ] Node.js and npm, npx (used for testing with `supergateway` and the HTML/JS Admin UI)
     - [ ] Docker, Docker Compose, and Podman
     - [ ] Make, GitHub CLI (`gh`), `curl`, `jq`, `openssl`
-    - [ ] Optional: Visual Studio Code + Dev Containers extension (or WSL2 if on Windows)
+    - [ ] Optional: Visual Studio Code + Dev Containers extension (or WSL2 if on Windows) + Pyrefly
+    - [ ] Optional: On Windows, install the WSL and Remote Development extensions
 
 ???+ check "Python tooling"
     - [ ] `pip install --upgrade pip`

@@ -9,9 +9,7 @@ Tests for the MCP Gateway WebSocket transport implementation.
 """
 
 # Standard
-import asyncio
 import logging
-import types
 from unittest.mock import AsyncMock
 
 # Third-Party
