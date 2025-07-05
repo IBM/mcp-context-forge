@@ -57,15 +57,9 @@ import uuid
 # Third-Party
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import PlainTextResponse
+from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
-
-# Conditional imports
-try:
-    # Third-Party
-    from fastapi.middleware.cors import CORSMiddleware
-except ImportError:
-    CORSMiddleware = None
 
 try:
     # Third-Party
@@ -200,10 +194,9 @@ class StdIOEndpoint:
                 text = line.decode(errors="replace")
                 LOGGER.debug("← stdio: %s", text.strip())
                 await self._pubsub.publish(text)
-        except asyncio.CancelledError:
-            raise
         except Exception:  # pragma: no cover --best-effort logging
             LOGGER.exception("stdout pump crashed - terminating bridge")
+            raise
 
 
 # ---------------------------------------------------------------------------#
@@ -235,7 +228,7 @@ def _build_fastapi(
     app = FastAPI()
 
     # Add CORS middleware if origins specified
-    if cors_origins and CORSMiddleware:
+    if cors_origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins,
