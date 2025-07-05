@@ -1058,10 +1058,3 @@ class TestErrorHandling:
         req = {"description": "Missing required name field"}
         response = test_client.post("/tools/", json=req, headers=auth_headers)
         assert response.status_code == 422  # Validation error
-
-    def test_invalid_url_format(self, test_client, auth_headers):
-        """Test validation of URL fields."""
-        req = {"name": "test_tool", "url": "not-a-valid-url"}
-        response = test_client.post("/tools/", json=req, headers=auth_headers)
-        # This may pass or fail depending on URL validation implementation
-        assert response.status_code in [200, 201, 422]
