@@ -62,6 +62,14 @@ from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.models import (
+    InitializeRequest,
+    InitializeResult,
+    ListResourceTemplatesResult,
+    LogLevel,
+    ResourceContent,
+    Root,
+)
 from mcpgateway.schemas import (
     GatewayCreate,
     GatewayRead,
@@ -111,14 +119,6 @@ from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     SessionManagerWrapper,
     streamable_http_auth,
-)
-from mcpgateway.types import (
-    InitializeRequest,
-    InitializeResult,
-    ListResourceTemplatesResult,
-    LogLevel,
-    ResourceContent,
-    Root,
 )
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
@@ -1663,7 +1663,7 @@ async def list_roots(
 @root_router.post("", response_model=Root)
 @root_router.post("/", response_model=Root)
 async def add_root(
-    root: Root,  # Accept JSON body using the Root model from types.py
+    root: Root,  # Accept JSON body using the Root model from models.py
     user: str = Depends(require_auth),
 ) -> Root:
     """

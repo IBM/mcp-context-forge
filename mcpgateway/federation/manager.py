@@ -33,7 +33,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.federation.discovery import DiscoveryService
-from mcpgateway.types import (
+from mcpgateway.models import (
     ClientCapabilities,
     Implementation,
     InitializeRequest,

@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 This module contains tests for the various MCP protocol type definitions
-defined in the types.py module.
+defined in the models.py module.
 """
 
 # Standard
@@ -20,19 +20,7 @@ from pydantic import ValidationError
 import pytest
 
 # First-Party
-from mcpgateway.schemas import (
-    AdminGatewayCreate,
-    AdminToolCreate,
-    EventMessage,
-    ListFilters,
-    ServerCreate,
-    ServerMetrics,
-    ServerRead,
-    ServerUpdate,
-    StatusToggleRequest,
-    StatusToggleResponse,
-)
-from mcpgateway.types import (
+from mcpgateway.models import (
     ClientCapabilities,
     CreateMessageResult,
     ImageContent,
@@ -58,6 +46,18 @@ from mcpgateway.types import (
     TextContent,
     Tool,
     ToolResult,
+)
+from mcpgateway.schemas import (
+    AdminGatewayCreate,
+    AdminToolCreate,
+    EventMessage,
+    ListFilters,
+    ServerCreate,
+    ServerMetrics,
+    ServerRead,
+    ServerUpdate,
+    StatusToggleRequest,
+    StatusToggleResponse,
 )
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")

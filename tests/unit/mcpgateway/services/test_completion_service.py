@@ -11,12 +11,12 @@ Authors: Mihai Criveti
 import pytest
 
 # First-Party
+from mcpgateway.models import (
+    CompleteResult,
+)
 from mcpgateway.services.completion_service import (
     CompletionError,
     CompletionService,
-)
-from mcpgateway.types import (
-    CompleteResult,
 )
 
 

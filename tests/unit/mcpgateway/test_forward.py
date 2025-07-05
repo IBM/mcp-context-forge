@@ -16,7 +16,7 @@ import pytest
 
 # First-Party
 from mcpgateway.federation.forward import ForwardingError, ForwardingService, ToolResult
-from mcpgateway.types import TextContent
+from mcpgateway.models import TextContent
 
 # ---------------------------------------------------------------------------
 # Tiny dummy ORM objects + fake Session

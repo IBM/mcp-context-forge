@@ -16,7 +16,7 @@ import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # First-Party
-from mcpgateway.types import LogLevel
+from mcpgateway.models import LogLevel
 
 
 class LoggingService:
