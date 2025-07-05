@@ -10,8 +10,8 @@ The script:
 1. Creates a synchronous SQLAlchemy ``Engine`` from ``settings.database_url``.
 2. Looks for an *alembic.ini* two levels up from this file to drive migrations.
 3. If the database is still empty (no ``gateways`` table), it:
-   • builds the base schema with ``Base.metadata.create_all()``
-   • stamps the migration head so Alembic knows it is up-to-date
+   - builds the base schema with ``Base.metadata.create_all()``
+   - stamps the migration head so Alembic knows it is up-to-date
 4. Otherwise, it applies any outstanding Alembic revisions.
 5. Logs a **"Database ready"** message on success.
 
@@ -45,13 +45,6 @@ async def main() -> None:
 
     Args:
         None
-
-    Returns:
-        None
-
-    Raises:
-        sqlalchemy.exc.SQLAlchemyError: Bubble-up of any Alembic
-            or SQLAlchemy runtime errors.
     """
     engine = create_engine(settings.database_url)
     project_root = Path(__file__).resolve().parents[1]

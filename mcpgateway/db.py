@@ -114,7 +114,7 @@ def utc_now() -> datetime:
     """Return the current Coordinated Universal Time (UTC).
 
     Returns:
-        datetime.datetime: A timezone-aware `datetime` whose `tzinfo` is
+        datetime: A timezone-aware `datetime` whose `tzinfo` is
         `datetime.timezone.utc`.
     """
     return datetime.now(timezone.utc)
