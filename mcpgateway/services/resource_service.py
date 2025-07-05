@@ -34,6 +34,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
+from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.schemas import (
     ResourceCreate,
     ResourceMetrics,
@@ -41,7 +42,6 @@ from mcpgateway.schemas import (
     ResourceSubscription,
     ResourceUpdate,
 )
-from mcpgateway.types import ResourceContent, ResourceTemplate, TextContent
 
 logger = logging.getLogger(__name__)
 

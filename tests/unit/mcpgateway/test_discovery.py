@@ -37,7 +37,7 @@ async def discovery():
     async def _fake_gateway_info(url: str):  # noqa: D401, ANN001
         # Return an *empty* capabilities object – structure is unimportant here.
         # First-Party
-        from mcpgateway.types import ServerCapabilities
+        from mcpgateway.models import ServerCapabilities
 
         return ServerCapabilities()
 

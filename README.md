@@ -1654,7 +1654,7 @@ make lint            # Run lint tools
 │   │   ├── sse_transport.py        # Server-Sent Events transport
 │   │   ├── stdio_transport.py      # stdio transport for embedding
 │   │   └── websocket_transport.py  # WS transport with ping/pong
-│   ├── types.py                    # Core enums / type aliases
+│   ├── models.py                   # Core enums / type aliases
 │   ├── utils
 │   │   ├── create_jwt_token.py     # CLI & library for JWT generation
 │   │   ├── services_auth.py        # Service-to-service auth dependency

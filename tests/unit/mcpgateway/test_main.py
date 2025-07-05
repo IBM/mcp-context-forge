@@ -18,12 +18,12 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.schemas import (
     PromptRead,
     ResourceRead,
     ServerRead,
 )
-from mcpgateway.types import InitializeResult, ResourceContent, ServerCapabilities
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -726,7 +726,7 @@ class TestRootEndpoints:
     def test_list_roots_endpoint(self, mock_list, test_client, auth_headers):
         """Test listing all registered roots."""
         # First-Party
-        from mcpgateway.types import Root
+        from mcpgateway.models import Root
 
         mock_list.return_value = [Root(uri="file:///test", name="Test Root")]  # valid URI
         response = test_client.get("/roots/", headers=auth_headers)
@@ -740,7 +740,7 @@ class TestRootEndpoints:
     def test_add_root_endpoint(self, mock_add, test_client, auth_headers):
         """Test adding a new root directory."""
         # First-Party
-        from mcpgateway.types import Root
+        from mcpgateway.models import Root
 
         mock_add.return_value = Root(uri="file:///test", name="Test Root")  # valid URI
 

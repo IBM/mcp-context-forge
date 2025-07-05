@@ -23,9 +23,9 @@ import httpx
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
+from mcpgateway.models import Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.transports import SSETransport
-from mcpgateway.types import Implementation, InitializeResult, ServerCapabilities
 
 logger = logging.getLogger(__name__)
 

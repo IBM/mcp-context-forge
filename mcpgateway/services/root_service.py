@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.types import Root
+from mcpgateway.models import Root
 
 logger = logging.getLogger(__name__)
 

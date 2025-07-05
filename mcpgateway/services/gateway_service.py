@@ -624,7 +624,6 @@ class GatewayService:
         # Reuse a single HTTP client for all requests
         async with httpx.AsyncClient() as client:
             for gateway in gateways:
-
                 logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
                 try:
                     # Ensure auth_value is a dict

@@ -30,7 +30,7 @@ from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.types import ServerCapabilities
+from mcpgateway.models import ServerCapabilities
 
 logger = logging.getLogger(__name__)
 

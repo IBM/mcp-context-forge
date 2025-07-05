@@ -39,12 +39,12 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
+from mcpgateway.models import TextContent, ToolResult
 from mcpgateway.schemas import (
     ToolCreate,
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.types import TextContent, ToolResult
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth
 

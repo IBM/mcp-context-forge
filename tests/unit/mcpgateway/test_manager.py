@@ -21,7 +21,7 @@ import pytest
 
 # First-Party
 from mcpgateway.federation.manager import FederationManager
-from mcpgateway.types import Prompt, Resource, ServerCapabilities, Tool
+from mcpgateway.models import Prompt, Resource, ServerCapabilities, Tool
 
 # ---------------------------------------------------------------------------
 # In-memory stand-ins for ORM models and SQLAlchemy Session
