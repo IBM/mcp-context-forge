@@ -70,7 +70,7 @@ def log_section(title: str, emoji: str = "⚙️"):
     logging.info("\n%s  %s\n%s", emoji, title, "─" * (len(title) + 4))
 
 
-# ───────────────────────── Tail‑N streaming runner ───────────────────────
+# ───────────────────────── Tail-N streaming runner ───────────────────────
 _spinner_cycle = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
 
@@ -288,15 +288,15 @@ def step_5_start_time_server(restart=False):
             except Exception as e:
                 logging.warning("Could not stop existing server: %s", e)
         else:
-            logging.info("ℹ️  Re‑using MCP‑Time‑Server on port %d", PORT_TIME_SERVER)
+            logging.info("ℹ️  Re-using MCP-Time-Server on port %d", PORT_TIME_SERVER)
     if not port_open(PORT_TIME_SERVER):
-        log_section("Launching MCP‑Time‑Server", "⏰")
+        log_section("Launching MCP-Time-Server", "⏰")
         _supergw_proc = subprocess.Popen(SUPERGW_CMD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(20):
             if port_open(PORT_TIME_SERVER):
                 break
             if _supergw_proc.poll() is not None:
-                raise RuntimeError("Time‑Server exited")
+                raise RuntimeError("Time-Server exited")
             time.sleep(1)
 
 
@@ -379,12 +379,12 @@ STEPS: List[Tuple[str, StepFunc]] = [
 
 # ──────────────────────────────── Main ───────────────────────────────────
 def main():
-    ap = argparse.ArgumentParser(description="MCP Gateway smoke‑test")
+    ap = argparse.ArgumentParser(description="MCP Gateway smoke-test")
     ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("--tail", type=int, default=10, help="Tail window (default 10)")
     ap.add_argument("--start-step", type=int, default=1)
     ap.add_argument("--end-step", type=int)
-    ap.add_argument("--only-steps", help="Comma separated indices (1‑based)")
+    ap.add_argument("--only-steps", help="Comma separated indices (1-based)")
     ap.add_argument("--cleanup-only", action="store_true")
     ap.add_argument("--restart-time-server", action="store_true")
     args = ap.parse_args()
@@ -422,7 +422,7 @@ def main():
                 gid = fn()  # type: ignore[func-returns-value]
             elif name == "cleanup_gateway":
                 if gid is None:
-                    logging.warning("🧹  Skipping gateway‐deletion: no gateway was ever registered")
+                    logging.warning("🧹  Skipping gateway-deletion: no gateway was ever registered")
                 else:
                     fn(gid)  # type: ignore[arg-type]
             else:
