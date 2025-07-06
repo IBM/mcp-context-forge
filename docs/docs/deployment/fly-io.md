@@ -10,7 +10,7 @@ Fly.io is a global app platform for running containers close to your users, with
 
 ---
 
-## 1 · Prerequisites
+## 1 - Prerequisites
 
 | Requirement | Details |
 | -------------------- | ------------------------------------------------------------------ |
@@ -21,7 +21,7 @@ Fly.io is a global app platform for running containers close to your users, with
 
 ---
 
-## 2 · Quick Start (Recommended)
+## 2 - Quick Start (Recommended)
 
 ### 2.1 Initialize Fly project
 ```bash
@@ -56,7 +56,7 @@ fly deploy
 
 ---
 
-## 3 · Containerfile Requirements
+## 3 - Containerfile Requirements
 
 Ensure your Containerfile explicitly installs PostgreSQL dependencies:
 
@@ -72,7 +72,7 @@ The explicit `psycopg2-binary` installation is required because uv may not prope
 
 ---
 
-## 4 · fly.toml Configuration
+## 4 - fly.toml Configuration
 
 Your `fly.toml` should look like this:
 
@@ -105,7 +105,7 @@ cpus = 1
 
 ---
 
-## 5 · Testing Your Deployment
+## 5 - Testing Your Deployment
 
 ### 5.1 Check app status
 ```bash
@@ -130,7 +130,7 @@ curl -u admin:your-password https://your-app-name.fly.dev/tools
 
 ---
 
-## 6 · Troubleshooting
+## 6 - Troubleshooting
 
 ### Common Issue 1: SQLAlchemy postgres dialect error
 ```
@@ -162,7 +162,7 @@ fly scale count 1
 
 ---
 
-## 7 · Production Considerations
+## 7 - Production Considerations
 
 ### Security
 - Change default `BASIC_AUTH_PASSWORD` to a strong password
@@ -189,7 +189,7 @@ fly machine status MACHINE_ID
 
 ---
 
-## 8 · Clean Deployment Script
+## 8 - Clean Deployment Script
 
 For a completely fresh deployment:
 
@@ -225,7 +225,7 @@ echo "🏗️  Ready to deploy. Run: fly deploy"
 
 ---
 
-## 9 · Additional Resources
+## 9 - Additional Resources
 
 - [Fly.io Documentation](https://fly.io/docs)
 - [Fly Postgres Guide](https://fly.io/docs/postgres/)

@@ -18,10 +18,10 @@
 
 ## Why Alembic?
 
-- **Versioned DDL** — Revisions are timestamped, diff-able, and reversible.
-- **Autogeneration** — Detects model vs. DB drift and writes `op.create_table`, `op.add_column`, etc.
-- **Multi-DB Support** — Works with SQLite, PostgreSQL, MySQL—anything SQLAlchemy supports.
-- **Zero Runtime Cost** — Only runs when you call it (dev, CI, deploy).
+- **Versioned DDL** - Revisions are timestamped, diff-able, and reversible.
+- **Autogeneration** - Detects model vs. DB drift and writes `op.create_table`, `op.add_column`, etc.
+- **Multi-DB Support** - Works with SQLite, PostgreSQL, MySQL-anything SQLAlchemy supports.
+- **Zero Runtime Cost** - Only runs when you call it (dev, CI, deploy).
 
 ---
 

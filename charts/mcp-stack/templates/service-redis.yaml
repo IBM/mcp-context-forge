@@ -1,8 +1,8 @@
 {{/* -------------------------------------------------------------------
-     SERVICE — Redis
+     SERVICE - Redis
      -------------------------------------------------------------------
-     • Exposes port 6379 (or whatever you set in values.yaml).
-     • Selector now matches the app label from the Deployment above.
+     - Exposes port 6379 (or whatever you set in values.yaml).
+     - Selector now matches the app label from the Deployment above.
      ------------------------------------------------------------------- */}}
 
 {{- if .Values.redis.enabled }}

@@ -1,5 +1,5 @@
 # ===============================================================
-# 🔍  Lint & Static Analysis – Code Quality Gate
+# 🔍  Lint & Static Analysis - Code Quality Gate
 # ===============================================================
 #
 #   - runs each linter in its own matrix job for visibility

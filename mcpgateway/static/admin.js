@@ -1933,10 +1933,10 @@ function updateRequestTypeOptions(preselectedValue = null) {
  * Initialise a multi-select so it displays the chosen items
  * and warns when the count exceeds a limit.
  *
- * @param {string} selectId   – id of the <select multiple>
- * @param {string} infoId     – id of the div that lists selected names
- * @param {string} warnId     – id of the warning div
- * @param {number} max        – maximum allowed items before warning
+ * @param {string} selectId   - id of the <select multiple>
+ * @param {string} infoId     - id of the div that lists selected names
+ * @param {string} warnId     - id of the warning div
+ * @param {number} max        - maximum allowed items before warning
  */
 function initToolSelect(selectId,
                         pillsId,

@@ -1,5 +1,5 @@
 // -*- coding: utf-8 -*-
-// fast-time-server – ultra-fast MCP server exposing time-related tools
+// fast-time-server - ultra-fast MCP server exposing time-related tools
 //
 // Copyright 2025
 // SPDX-License-Identifier: Apache-2.0
@@ -392,7 +392,7 @@ func main() {
     /* ---------------------------- flags --------------------------- */
     var (
         transport  = flag.String("transport", "stdio", "Transport: stdio | sse | http | dual")
-        addrFlag   = flag.String("addr", "", "Full listen address (host:port) – overrides -listen/-port")
+        addrFlag   = flag.String("addr", "", "Full listen address (host:port) - overrides -listen/-port")
         listenHost = flag.String("listen", defaultListen, "Listen interface for sse/http")
         port       = flag.Int("port", defaultPort, "TCP port for sse/http")
         publicURL  = flag.String("public-url", "", "External base URL advertised to SSE clients")
@@ -405,7 +405,7 @@ func main() {
     flag.Usage = func() {
         const ind = "  "
         fmt.Fprintf(flag.CommandLine.Output(),
-            "%s %s – ultra-fast time service for LLM agents via MCP\n\n",
+            "%s %s - ultra-fast time service for LLM agents via MCP\n\n",
             appName, appVersion)
         fmt.Fprintln(flag.CommandLine.Output(), "Options:")
         flag.VisitAll(func(fl *flag.Flag) {

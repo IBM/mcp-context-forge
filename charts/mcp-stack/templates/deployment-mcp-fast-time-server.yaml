@@ -1,7 +1,7 @@
 {{- /* -------------------------------------------------------------------
-     DEPLOYMENT — mcp-fast-time-server
-     • Uses helper so the name follows <release>-mcp-stack-* convention.
-     • Includes probes and resource limits already defined in values.yaml.
+     DEPLOYMENT - mcp-fast-time-server
+     - Uses helper so the name follows <release>-mcp-stack-* convention.
+     - Includes probes and resource limits already defined in values.yaml.
      ------------------------------------------------------------------- */}}
 
 {{- if .Values.mcpFastTimeServer.enabled }}

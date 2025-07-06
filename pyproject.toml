@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------
 # 💡 Build system (PEP 517)
-#     • setuptools ≥ 77 gives SPDX licence support (PEP 639)
-#     • wheel is needed by most build front-ends
+#     - setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     - wheel is needed by most build front-ends
 # ----------------------------------------------------------------
 [build-system]
 requires = ["setuptools>=77", "wheel"]

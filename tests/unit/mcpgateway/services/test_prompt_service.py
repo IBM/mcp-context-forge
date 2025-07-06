@@ -5,7 +5,7 @@ Unit-tests for PromptService.
 All tests run entirely with `MagicMock` / `AsyncMock`; no live DB or Jinja
 environment is required.  Where `PromptService` returns Pydantic models we
 monkey-patch the `model_validate` method so that it simply echoes the raw
-dict we pass in – that keeps validation out of scope for these pure-unit
+dict we pass in - that keeps validation out of scope for these pure-unit
 tests.
 
 Copyright 2025
@@ -43,9 +43,9 @@ def _make_execute_result(*, scalar: Any = None, scalars_list: Optional[list] = N
     """
     Return a MagicMock that mimics the SQLAlchemy Result object:
 
-      • .scalar_one_or_none() → scalar
-      • .scalar()            → scalar
-      • .scalars().all()     → scalars_list
+      - .scalar_one_or_none() → scalar
+      - .scalar()            → scalar
+      - .scalars().all()     → scalars_list
     """
     result = MagicMock()
     result.scalar_one_or_none.return_value = scalar

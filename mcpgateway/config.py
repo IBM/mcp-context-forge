@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     skip_ssl_verify: bool = False
 
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
-    # Tell pydantic *not* to touch this env var – our validator will.
+    # Tell pydantic *not* to touch this env var - our validator will.
     allowed_origins: Annotated[Set[str], NoDecode] = {
         "http://localhost",
         "http://localhost:4444",

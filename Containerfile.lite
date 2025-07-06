@@ -1,18 +1,18 @@
 # syntax=docker/dockerfile:1.7
 
 ###############################################################################
-# MCP Gateway (lite) – OCI-compliant container build
+# MCP Gateway (lite) - OCI-compliant container build
 #
 # This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
 # image that automatically tracks the latest Python 3.11.x patch release
 # from the RHEL 9 repositories and is fully patched on each rebuild.
 #
 # Key design points:
-#   • Builder stage has full DNF + devel headers for wheel compilation
-#   • Runtime stage is scratch: only the Python runtime and app
-#   • Both builder and runtime rootfs receive `dnf upgrade -y`
-#   • Development headers are dropped from the final image
-#   • Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
+#   - Builder stage has full DNF + devel headers for wheel compilation
+#   - Runtime stage is scratch: only the Python runtime and app
+#   - Both builder and runtime rootfs receive `dnf upgrade -y`
+#   - Development headers are dropped from the final image
+#   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
 ###############################################################################
 
 ###########################

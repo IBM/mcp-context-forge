@@ -77,12 +77,12 @@ flowchart TD
 | Requirement                                                                                 | Minimum | Reference                                                        |
 | ------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------- |
 | **IBM Cloud CLI**                                                                           | ≥ 2.16  | [https://clis.cloud.ibm.com](https://clis.cloud.ibm.com)         |
-| CLI plugins — `container-registry`, `kubernetes-service`, `vpc-infrastructure`, `secrets-manager`, `logs` | latest  | `ibmcloud plugin install …`                                      |
+| CLI plugins - `container-registry`, `kubernetes-service`, `vpc-infrastructure`, `secrets-manager`, `logs` | latest  | `ibmcloud plugin install ...`                                      |
 | **kubectl**                                                                                 | ≥ 1.25  | [https://kubernetes.io/](https://kubernetes.io/)                 |
 | **Helm 3**                                                                                  | ≥ 3.12  | [https://helm.sh/](https://helm.sh/)                             |
-| **git**, **podman**/**docker**                                                              | —       | distro packages                                                  |
+| **git**, **podman**/**docker**                                                              | -       | distro packages                                                  |
 | **Argo CD CLI**                                                                             | ≥ 2.9   | [https://argo-cd.readthedocs.io](https://argo-cd.readthedocs.io) |
-| IBM Cloud account with VPC quota                                                            | —       | free tier works                                                  |
+| IBM Cloud account with VPC quota                                                            | -       | free tier works                                                  |
 
 !!! info "Quick sanity check"
     ```bash

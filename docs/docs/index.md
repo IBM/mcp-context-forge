@@ -6,7 +6,7 @@ owner: Mihai Criveti
 
 # MCP Gateway
 
-A flexible FastAPI-based gateway and router for **Model Context Protocol (MCP)** with support for virtual servers. It acts as a unified interface for tools, resources, prompts, virtual servers, and federated gateways — all accessible via rich multi-transport APIs and an interactive web-based Admin UI.
+A flexible FastAPI-based gateway and router for **Model Context Protocol (MCP)** with support for virtual servers. It acts as a unified interface for tools, resources, prompts, virtual servers, and federated gateways - all accessible via rich multi-transport APIs and an interactive web-based Admin UI.
 
 ![MCP Gateway](images/mcpgateway.gif)
 
@@ -104,13 +104,13 @@ MCP Gateway serves:
 | **Minikube (local k8s)**      | `make minikube`                                                                                      | [Minikube Guide](deployment/minikube.md)         |
 | **OpenShift / OKD**           | `oc apply -k openshift/`                                                                             | [OpenShift](deployment/openshift.md)             |
 | **Argo CD / GitOps**          | `kubectl apply -f argo.yaml`                                                                         | [Argo CD](deployment/argocd.md)                  |
-| **IBM Cloud – Code Engine**   | `ibmcloud ce app create --name mcpgw --image ghcr.io/ibm/mcp-context-forge:<tag>`                    | [IBM Code Engine](deployment/ibm-code-engine.md) |
-| **AWS – ECS (Fargate)**       | `aws ecs create-service --cli-input-json file://ecs.json`                                            | [AWS Guide](deployment/aws.md)                   |
-| **AWS – EKS (Helm)**          | `helm install mcpgw mcpgw/mcpgateway`                                                                | [AWS Guide](deployment/aws.md)                   |
+| **IBM Cloud - Code Engine**   | `ibmcloud ce app create --name mcpgw --image ghcr.io/ibm/mcp-context-forge:<tag>`                    | [IBM Code Engine](deployment/ibm-code-engine.md) |
+| **AWS - ECS (Fargate)**       | `aws ecs create-service --cli-input-json file://ecs.json`                                            | [AWS Guide](deployment/aws.md)                   |
+| **AWS - EKS (Helm)**          | `helm install mcpgw mcpgw/mcpgateway`                                                                | [AWS Guide](deployment/aws.md)                   |
 | **Google Cloud Run**          | `gcloud run deploy mcpgw --image ghcr.io/ibm/mcp-context-forge:<tag>`                                | [GCP Cloud Run](deployment/google-cloud-run.md)  |
 | **Google GKE (Helm)**         | `helm install mcpgw mcpgw/mcpgateway`                                                                | [GCP Guide](deployment/google-cloud-run.md)      |
-| **Azure – Container Apps**    | `az containerapp up --name mcpgw --image ghcr.io/ibm/mcp-context-forge:<tag>`                        | [Azure Guide](deployment/azure.md)               |
-| **Azure – AKS (Helm)**        | `helm install mcpgw mcpgw/mcpgateway`                                                                | [Azure Guide](deployment/azure.md)               |
+| **Azure - Container Apps**    | `az containerapp up --name mcpgw --image ghcr.io/ibm/mcp-context-forge:<tag>`                        | [Azure Guide](deployment/azure.md)               |
+| **Azure - AKS (Helm)**        | `helm install mcpgw mcpgw/mcpgateway`                                                                | [Azure Guide](deployment/azure.md)               |
 
 
 > **PyPI Package**: [`mcp-contextforge-gateway`](https://pypi.org/project/mcp-contextforge-gateway/)
@@ -138,6 +138,6 @@ Jump straight to:
 
 ## Authors and Contributors
 
-* **Mihai Criveti** – IBM Distinguished Engineer, Agentic AI
+* **Mihai Criveti** - IBM Distinguished Engineer, Agentic AI
 
 <!-- [Download PDF](pdf/mcpgateway-docs.pdf){ .md-button } [Download DOCX](out/mcpgateway-docs.docx){ .md-button } -->

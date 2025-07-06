@@ -71,7 +71,7 @@ if [[ "${SSL}" == "true" ]]; then
         exit 1
     fi
     SSL_ARGS="--certfile=${CERT_FILE} --keyfile=${KEY_FILE}"
-    echo "✓  TLS enabled – using ${CERT_FILE} / ${KEY_FILE}"
+    echo "✓  TLS enabled - using ${CERT_FILE} / ${KEY_FILE}"
 fi
 
 exec gunicorn -c gunicorn.config.py \

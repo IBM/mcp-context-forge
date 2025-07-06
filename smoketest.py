@@ -138,7 +138,7 @@ def run_shell(
 
     globals()["_PREV_CMD_OUTPUT"] = "\n".join(full_buf)  # for show_last()
     status = "✅ PASS" if proc.returncode == 0 else "❌ FAIL"
-    logging.info("%s – %s", status, desc)
+    logging.info("%s - %s", status, desc)
     if proc.returncode and check:
         logging.error("↳ Last %d lines:\n%s", tail, "\n".join(tail_buf))
         raise subprocess.CalledProcessError(proc.returncode, cmd, output="\n".join(full_buf))
@@ -311,7 +311,7 @@ def step_6_register_gateway() -> int:
     # 409 conflict → find existing
     if r.status_code == 409:
         gw = next(g for g in request("GET", "/gateways").json() if g["name"] == payload["name"])
-        logging.info("ℹ️  Gateway already present – using ID %s", gw["id"])
+        logging.info("ℹ️  Gateway already present - using ID %s", gw["id"])
         return gw["id"]
     # other error
     msg = r.text
@@ -348,7 +348,7 @@ def step_9_version_health():
     health = request("GET", "/health").json()["status"].lower()
     assert health in ("ok", "healthy"), f"Unexpected health status: {health}"
     ver = request("GET", "/version").json()["app"]["name"]
-    logging.info("✅ Health OK – app %s", ver)
+    logging.info("✅ Health OK - app %s", ver)
 
 
 def step_10_cleanup_gateway(gid: int | None = None):
@@ -415,7 +415,7 @@ def main():
 
     try:
         for no, (name, fn) in enumerate(sel, 1):
-            logging.info("\n🔸 Step %s/%s — %s", no, len(sel), name)
+            logging.info("\n🔸 Step %s/%s - %s", no, len(sel), name)
             if name == "start_time_server":
                 fn(args.restart_time_server)  # type: ignore[arg-type]
             elif name == "register_gateway":
