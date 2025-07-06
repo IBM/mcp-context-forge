@@ -98,7 +98,7 @@ async def create_jwt_token(
     secret: str = DEFAULT_SECRET,
     algorithm: str = DEFAULT_ALGO,
 ) -> str:
-    """Async facade for historic code. Internally synchronous—almost instant.
+    """Async facade for historic code. Internally synchronous-almost instant.
 
     Args:
         data: Dictionary containing payload data to encode in the token.
@@ -129,7 +129,7 @@ async def get_jwt_token() -> str:
 
 
 def _decode_jwt_token(token: str, algorithms: List[str] | None = None) -> Dict[str, Any]:
-    """Decode *without* signature verification—handy for inspection.
+    """Decode *without* signature verification-handy for inspection.
 
     Args:
         token: JWT token string to decode.

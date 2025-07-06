@@ -1,6 +1,6 @@
 # MCP Gateway
 
-> Model Context Protocol gateway & proxy — unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
+> Model Context Protocol gateway & proxy - unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
 
 ![](docs/docs/images/contextforge-banner.png)
 
@@ -30,26 +30,26 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 ## Table of Contents
 - [Overview & Goals](#-overview--goals)
-- [Quick Start — PyPI](#quick-start--pypi)
-  - [1 · Install & run (copy‑paste friendly)](#1--install--run-copypaste-friendly)
-- [Quick Start — Containers](#quick-start--containers)
+- [Quick Start - PyPI](#quick-start--pypi)
+  - [1 - Install & run (copy-paste friendly)](#1--install--run-copypaste-friendly)
+- [Quick Start - Containers](#quick-start--containers)
   - [Docker](#-docker)
-    - [1 · Minimum viable run](#1--minimum-viable-run)
-    - [2 · Persist the SQLite database](#2--persist-the-sqlite-database)
-    - [3 · Local tool discovery (host network)](#3--local-tool-discovery-host-network)
+    - [1 - Minimum viable run](#1--minimum-viable-run)
+    - [2 - Persist the SQLite database](#2--persist-the-sqlite-database)
+    - [3 - Local tool discovery (host network)](#3--local-tool-discovery-host-network)
   - [Podman (rootless-friendly)](#-podman-rootless-friendly)
-    - [1 · Basic run](#1--basic-run)
-    - [2 · Persist SQLite](#2--persist-sqlite)
-    - [3 · Host networking (rootless)](#3--host-networking-rootless)
+    - [1 - Basic run](#1--basic-run)
+    - [2 - Persist SQLite](#2--persist-sqlite)
+    - [3 - Host networking (rootless)](#3--host-networking-rootless)
 - [Testing `mcpgateway.wrapper` by hand:](#testing-mcpgatewaywrapper-by-hand)
   - [Running from an MCP Client (`mcpgateway.wrapper`)](#-running-from-an-mcp-client-mcpgatewaywrapper)
-    - [1 · Install <code>uv</code>  (<code>uvenv</code> is an alias it provides)](#1--install-uv--uvenv-is-an-alias-it-provides)
-    - [2 · Create an on-the-spot venv & run the wrapper](#2--create-an-on-the-spot-venv--run-the-wrapper)
+    - [1 - Install <code>uv</code>  (<code>uvenv</code> is an alias it provides)](#1--install-uv--uvenv-is-an-alias-it-provides)
+    - [2 - Create an on-the-spot venv & run the wrapper](#2--create-an-on-the-spot-venv--run-the-wrapper)
     - [Claude Desktop JSON (runs through **uvenv run**)](#claude-desktop-json-runs-through-uvenv-run)
   - [Using with Claude Desktop (or any GUI MCP client)](#-using-with-claude-desktop-or-any-gui-mcp-client)
 - [Quick Start: VS Code Dev Container](#-quick-start-vs-code-dev-container)
-  - [1 · Clone & Open](#1--clone--open)
-  - [2 · First-Time Build (Automatic)](#2--first-time-build-automatic)
+  - [1 - Clone & Open](#1--clone--open)
+  - [2 - First-Time Build (Automatic)](#2--first-time-build-automatic)
 - [Quick Start (manual install)](#quick-start-manual-install)
   - [Prerequisites](#prerequisites)
   - [One-liner (dev)](#one-liner-dev)
@@ -106,7 +106,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 ## 🚀 Overview & Goals
 
-**ContextForge MCP Gateway** is a production-grade gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API—exposing a unified endpoint for all your AI clients.
+**ContextForge MCP Gateway** is a production-grade gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API-exposing a unified endpoint for all your AI clients.
 
 It supports:
 
@@ -181,7 +181,7 @@ For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap
 
 ---
 
-## Quick Start — PyPI
+## Quick Start - PyPI
 
 MCP Gateway is published on [PyPI](https://pypi.org/project/mcp-contextforge-gateway/) as `mcp-contextforge-gateway`.
 
@@ -191,11 +191,11 @@ MCP Gateway is published on [PyPI](https://pypi.org/project/mcp-contextforge-gat
 <summary><strong>📋 Prerequisites</strong></summary>
 
 * **Python ≥ 3.10** (3.11 recommended)
-* **curl + jq** – only for the last smoke‑test step
+* **curl + jq** - only for the last smoke-test step
 
 </details>
 
-### 1 · Install & run (copy‑paste friendly)
+### 1 - Install & run (copy-paste friendly)
 
 ```bash
 # 1️⃣  Isolated env + install from pypi
@@ -208,7 +208,7 @@ pip install mcp-contextforge-gateway
 BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
   mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
 
-# 3️⃣  Generate a bearer token & smoke‑test the API
+# 3️⃣  Generate a bearer token & smoke-test the API
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
     --username admin --exp 10080 --secret my-test-key)
 
@@ -224,7 +224,7 @@ Copy [.env.example](.env.example) to `.env` and tweak any of the settings (or us
 </details>
 
 <details>
-<summary><strong>🚀 End‑to‑end demo (register a local MCP server)</strong></summary>
+<summary><strong>🚀 End-to-end demo (register a local MCP server)</strong></summary>
 
 ```bash
 # 1️⃣  Spin up a sample MCP server (Node supergateway)
@@ -262,10 +262,10 @@ npx -y @modelcontextprotocol/inspector
 ```bash
 export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
 export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
-python3 -m mcpgateway.wrapper  # Ctrl‑C to exit
+python3 -m mcpgateway.wrapper  # Ctrl-C to exit
 ```
 
-You can also run it with `uv` or inside Docker/Podman – see the *Containers* section above.
+You can also run it with `uv` or inside Docker/Podman - see the *Containers* section above.
 
 In MCP Inspector, define `MCP_AUTH_TOKEN` and `MCP_SERVER_CATALOG_URLS` env variables, and select `python3` as the Command, and `-m mcpgateway.wrapper` as Arguments.
 
@@ -298,7 +298,7 @@ When using a MCP Client such as Claude with stdio:
 
 ---
 
-## Quick Start — Containers
+## Quick Start - Containers
 
 Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 
@@ -306,7 +306,7 @@ Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 
 ### 🐳 Docker
 
-#### 1 · Minimum viable run
+#### 1 - Minimum viable run
 
 ```bash
 docker run -d --name mcpgateway \
@@ -329,7 +329,7 @@ docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.2.0 \
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `admin` / pass `changeme`).
 
-#### 2 · Persist the SQLite database
+#### 2 - Persist the SQLite database
 
 ```bash
 mkdir -p $(pwd)/data
@@ -348,7 +348,7 @@ docker run -d --name mcpgateway \
 
 SQLite now lives on the host at `./data/mcp.db`.
 
-#### 3 · Local tool discovery (host network)
+#### 3 - Local tool discovery (host network)
 
 ```bash
 docker run -d --name mcpgateway \
@@ -366,7 +366,7 @@ Using `--network=host` allows Docker to access the local network, allowing you t
 
 ### 🦭 Podman (rootless-friendly)
 
-#### 1 · Basic run
+#### 1 - Basic run
 
 ```bash
 podman run -d --name mcpgateway \
@@ -376,7 +376,7 @@ podman run -d --name mcpgateway \
   ghcr.io/ibm/mcp-context-forge:0.2.0
 ```
 
-#### 2 · Persist SQLite
+#### 2 - Persist SQLite
 
 ```bash
 mkdir -p $(pwd)/data
@@ -389,7 +389,7 @@ podman run -d --name mcpgateway \
   ghcr.io/ibm/mcp-context-forge:0.2.0
 ```
 
-#### 3 · Host networking (rootless)
+#### 3 - Host networking (rootless)
 
 ```bash
 podman run -d --name mcpgateway \
@@ -404,14 +404,14 @@ podman run -d --name mcpgateway \
 <details>
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
-* **.env files** — Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](.env.example) for reference.
-* **Pinned tags** — Use an explicit version (e.g. `v0.2.0`) instead of `latest` for reproducible builds.
-* **JWT tokens** — Generate one in the running container:
+* **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](.env.example) for reference.
+* **Pinned tags** - Use an explicit version (e.g. `v0.2.0`) instead of `latest` for reproducible builds.
+* **JWT tokens** - Generate one in the running container:
 
   ```bash
   docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 --secret my-test-key
   ```
-* **Upgrades** — Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
+* **Upgrades** - Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
 
 </details>
 
@@ -585,7 +585,7 @@ uv run --directory . -m mcpgateway.wrapper
 <details>
 <summary><strong>⚡ uv / uvenv (light-speed venvs)</strong></summary>
 
-#### 1 · Install <code>uv</code>  (<code>uvenv</code> is an alias it provides)
+#### 1 - Install <code>uv</code>  (<code>uvenv</code> is an alias it provides)
 
 ```bash
 # (a) official one-liner
@@ -595,7 +595,7 @@ curl -Ls https://astral.sh/uv/install.sh | sh
 pipx install uv
 ```
 
-#### 2 · Create an on-the-spot venv & run the wrapper
+#### 2 - Create an on-the-spot venv & run the wrapper
 
 ```bash
 # Create venv in ~/.venv/mcpgateway (or current dir if you prefer)
@@ -646,7 +646,7 @@ uv run --directory . -m mcpgateway.wrapper # Use this just for testing, as the C
 
 Need help? See:
 
-* **MCP Debugging Guide** – [https://modelcontextprotocol.io/docs/tools/debugging](https://modelcontextprotocol.io/docs/tools/debugging)
+* **MCP Debugging Guide** - [https://modelcontextprotocol.io/docs/tools/debugging](https://modelcontextprotocol.io/docs/tools/debugging)
 
 ---
 
@@ -667,7 +667,7 @@ Spin up a fully-loaded dev environment (Python 3.11, Docker/Podman CLI, all proj
 <details>
 <summary><strong>🧰 Setup Instructions</strong></summary>
 
-### 1 · Clone & Open
+### 1 - Clone & Open
 
 ```bash
 git clone https://github.com/ibm/mcp-context-forge.git
@@ -681,7 +681,7 @@ VS Code will detect the `.devcontainer` and prompt:
 
 ---
 
-### 2 · First-Time Build (Automatic)
+### 2 - First-Time Build (Automatic)
 
 The container build will:
 
@@ -709,8 +709,8 @@ make lint
 
 Optional:
 
-* `make bash` — drop into an interactive shell
-* `make clean` — clear build artefacts & caches
+* `make bash` - drop into an interactive shell
+* `make clean` - clear build artefacts & caches
 * Port forwarding is automatic (customize via `.devcontainer/devcontainer.json`)
 
 </details>
@@ -843,7 +843,7 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | --------------- | ---------------------------------------- | ---------------------- | ---------------------- |
 | `APP_NAME`      | Gateway / OpenAPI title                  | `MCP Gateway`          | string                 |
 | `HOST`          | Bind address for the app                 | `0.0.0.0`              | IPv4/IPv6              |
-| `PORT`          | Port the server listens on               | `4444`                 | 1–65535                |
+| `PORT`          | Port the server listens on               | `4444`                 | 1-65535                |
 | `DATABASE_URL`  | SQLAlchemy connection URL                | `sqlite:///./mcp.db`   | any SQLAlchemy dialect |
 | `APP_ROOT_PATH` | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
 | `TEMPLATES_DIR` | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
@@ -900,7 +900,7 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | Setting           | Description                    | Default                                        | Options    |
 | ----------------- | ------------------------------ | ---------------------------------------------- | ---------- |
 | `SKIP_SSL_VERIFY` | Skip upstream TLS verification | `false`                                        | bool       |
-| `ALLOWED_ORIGINS` | CORS allow‐list                | `["http://localhost","http://localhost:4444"]` | JSON array |
+| `ALLOWED_ORIGINS` | CORS allow-list                | `["http://localhost","http://localhost:4444"]` | JSON array |
 | `CORS_ENABLED`    | Enable CORS                    | `true`                                         | bool       |
 
 > Note: do not quote the ALLOWED_ORIGINS values, this needs to be valid JSON, such as: `ALLOWED_ORIGINS=["http://localhost", "http://localhost:4444"]`
@@ -909,7 +909,7 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 | Setting      | Description       | Default | Options            |
 | ------------ | ----------------- | ------- | ------------------ |
-| `LOG_LEVEL`  | Minimum log level | `INFO`  | `DEBUG`…`CRITICAL` |
+| `LOG_LEVEL`  | Minimum log level | `INFO`  | `DEBUG`...`CRITICAL` |
 | `LOG_FORMAT` | Log format        | `json`  | `json`, `text`     |
 | `LOG_FILE`   | Log output file   | (none)  | path or empty      |
 
@@ -928,7 +928,7 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | Setting                    | Description            | Default | Options    |
 | -------------------------- | ---------------------- | ------- | ---------- |
 | `FEDERATION_ENABLED`       | Enable federation      | `true`  | bool       |
-| `FEDERATION_DISCOVERY`     | Auto‐discover peers    | `false` | bool       |
+| `FEDERATION_DISCOVERY`     | Auto-discover peers    | `false` | bool       |
 | `FEDERATION_PEERS`         | Comma-sep peer URLs    | `[]`    | JSON array |
 | `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
 | `FEDERATION_SYNC_INTERVAL` | Sync interval (secs)   | `300`   | int > 0    |
@@ -1088,7 +1088,7 @@ IBMCLOUD_PROJECT=my-codeengine-project
 IBMCLOUD_CODE_ENGINE_APP=mcpgateway
 IBMCLOUD_IMAGE_NAME=us.icr.io/myspace/mcpgateway:latest
 IBMCLOUD_IMG_PROD=mcpgateway/mcpgateway
-IBMCLOUD_API_KEY=your_api_key_here   # Optional – omit to use interactive `ibmcloud login --sso`
+IBMCLOUD_API_KEY=your_api_key_here   # Optional - omit to use interactive `ibmcloud login --sso`
 
 # ── Optional overrides (sensible defaults provided) ──────
 IBMCLOUD_CPU=1                       # vCPUs for the app
@@ -1534,7 +1534,7 @@ make lint            # Run lint tools
 ├── .hadolint.yaml                  # Hadolint rules for Dockerfiles
 ├── .htmlhintrc                     # HTMLHint rules
 ├── .markdownlint.json              # Markdown-lint rules
-├── .pre-commit-config.yaml         # Pre-commit hooks (ruff, black, mypy, …)
+├── .pre-commit-config.yaml         # Pre-commit hooks (ruff, black, mypy, ...)
 ├── .pycodestyle                    # PEP-8 checker settings
 ├── .pylintrc                       # Pylint configuration
 ├── .pyspelling.yml                 # Spell-checker dictionary & filters
@@ -1576,7 +1576,7 @@ make lint            # Run lint tools
 ├── charts                          # Helm chart(s) for K8s / OpenShift
 │   ├── mcp-stack                   # Umbrella chart
 │   │   ├── Chart.yaml              # Chart metadata
-│   │   ├── templates/…             # Manifest templates
+│   │   ├── templates/...             # Manifest templates
 │   │   └── values.yaml             # Default values
 │   └── README.md                   # Install / upgrade guide
 ├── k8s                             # Raw (non-Helm) K8s manifests
@@ -1678,10 +1678,10 @@ make lint            # Run lint tools
 ├── test_readme.py                  # Guard: README stays in sync
 ├── tests
 │   ├── conftest.py                 # Shared fixtures
-│   ├── e2e/…                       # End-to-end scenarios
-│   ├── hey/…                       # Load-test logs & helper script
-│   ├── integration/…               # API-level integration tests
-│   └── unit/…                      # Pure unit tests for business logic
+│   ├── e2e/...                       # End-to-end scenarios
+│   ├── hey/...                       # Load-test logs & helper script
+│   ├── integration/...               # API-level integration tests
+│   └── unit/...                      # Pure unit tests for business logic
 ```
 
 </details>
@@ -1765,7 +1765,7 @@ sbom                 - Produce a CycloneDX SBOM and vulnerability scan
 pytype               - Flow-sensitive type checker
 check-manifest       - Verify sdist/wheel completeness
 yamllint            - Lint YAML files (uses .yamllint)
-jsonlint            - Validate every *.json file with jq (‐‐exit-status)
+jsonlint            - Validate every *.json file with jq (--exit-status)
 tomllint            - Validate *.toml files with tomlcheck
 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
 install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js & Prettier via npm
@@ -1898,7 +1898,7 @@ ss -tlnp | grep 4444        # Use ss
 netstat -anp | grep 4444    # or netstat
 ```
 
-*Seeing `:::4444 LISTEN rootlessport` is normal* – the IPv6 wildcard
+*Seeing `:::4444 LISTEN rootlessport` is normal* - the IPv6 wildcard
 socket (`::`) also accepts IPv4 traffic **when**
 `net.ipv6.bindv6only = 0` (default on Linux).
 
@@ -1948,7 +1948,7 @@ Missing or empty required vars cause a fast-fail at startup.
 1. Fork the repo, create a feature branch.
 2. Run `make lint` and fix any issues.
 3. Keep `make test` green and 100% coverage.
-4. Open a PR – describe your changes clearly.
+4. Open a PR - describe your changes clearly.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 ---
@@ -1959,7 +1959,7 @@ A complete changelog can be found here: [CHANGELOG.md](./CHANGELOG.md)
 
 ## License
 
-Licensed under the **Apache License 2.0** – see [LICENSE](./LICENSE)
+Licensed under the **Apache License 2.0** - see [LICENSE](./LICENSE)
 
 
 ## Core Authors and Maintainers

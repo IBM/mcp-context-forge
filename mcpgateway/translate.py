@@ -411,7 +411,7 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
         if shutting_down.is_set():
             return
         shutting_down.set()
-        LOGGER.info("Shutting down …")
+        LOGGER.info("Shutting down ...")
         await stdio.stop()
         await server.shutdown()
 

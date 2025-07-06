@@ -1,61 +1,61 @@
 # Gateway Tuning Guide
 
-> This page collects practical levers for squeezing the most performance, reliability, and observability out of **MCP Gateway**—no matter where you run the container (Code Engine, Kubernetes, Docker Compose, Nomad, etc.).
+> This page collects practical levers for squeezing the most performance, reliability, and observability out of **MCP Gateway**-no matter where you run the container (Code Engine, Kubernetes, Docker Compose, Nomad, etc.).
 >
 > **TL;DR**
 >
 > 1. Tune the **runtime environment** via `.env` and configure mcpgateway to use PostgreSQL and Redis.
-> 2. Adjust **Gunicorn** workers & time‑outs in `gunicorn.conf.py`.
-> 3. Right‑size **CPU/RAM** for the container or spin up more instances (with shared Redis state) and change the database settings (ex: connection limits).
-> 4. Benchmark with **hey** (or your favourite load‑generator) before & after. See also: [performance testing guide](../testing/performance.md)
+> 2. Adjust **Gunicorn** workers & time-outs in `gunicorn.conf.py`.
+> 3. Right-size **CPU/RAM** for the container or spin up more instances (with shared Redis state) and change the database settings (ex: connection limits).
+> 4. Benchmark with **hey** (or your favourite load-generator) before & after. See also: [performance testing guide](../testing/performance.md)
 
 ---
 
-## 1 · Environment variables (`.env`)
+## 1 - Environment variables (`.env`)
 
 |  Variable        |  Default       |  Why you might change it                                                            |
 | ---------------- | -------------- | ----------------------------------------------------------------------------------- |
-| `AUTH_REQUIRED`  | `true`         | Disable for internal/behind‑VPN deployments to shave a few ms per request.          |
-| `JWT_SECRET_KEY` | random         | Longer key ➜ slower HMAC verify; still negligible—leave as is.                      |
-| `CACHE_TYPE`     | `database`     | Switch to `redis` or `memory` if your workload is read‑heavy and latency‑sensitive. |
+| `AUTH_REQUIRED`  | `true`         | Disable for internal/behind-VPN deployments to shave a few ms per request.          |
+| `JWT_SECRET_KEY` | random         | Longer key ➜ slower HMAC verify; still negligible-leave as is.                      |
+| `CACHE_TYPE`     | `database`     | Switch to `redis` or `memory` if your workload is read-heavy and latency-sensitive. |
 | `DATABASE_URL`   | SQLite         | Move to managed PostgreSQL + connection pooling for anything beyond dev tests.      |
-| `HOST`/`PORT`    | `0.0.0.0:4444` | Expose a different port or bind only to `127.0.0.1` behind a reverse‑proxy.         |
+| `HOST`/`PORT`    | `0.0.0.0:4444` | Expose a different port or bind only to `127.0.0.1` behind a reverse-proxy.         |
 
-> **Tip**  Any change here requires rebuilding or restarting the container if you pass the file with `--env‑file`.
+> **Tip**  Any change here requires rebuilding or restarting the container if you pass the file with `--env-file`.
 
 ---
 
-## 2 · Gunicorn settings (`gunicorn.conf.py`)
+## 2 - Gunicorn settings (`gunicorn.conf.py`)
 
 |  Knob                    |  Purpose            |  Rule of thumb                                                    |
 | ------------------------ | ------------------- | ----------------------------------------------------------------- |
-| `workers`                | Parallel processes  | `2–4 × vCPU` for CPU‑bound work; fewer if memory‑bound.           |
-| `threads`                | Per‑process threads | Use only with `sync` worker; keeps memory low for I/O workloads.  |
-| `timeout`                | Kill stuck worker   | Set ≥ end‑to‑end model latency. E.g. 600 s for LLM calls.         |
-| `preload_app`            | Load app once       | Saves RAM; safe for pure‑Python apps.                             |
+| `workers`                | Parallel processes  | `2-4 × vCPU` for CPU-bound work; fewer if memory-bound.           |
+| `threads`                | Per-process threads | Use only with `sync` worker; keeps memory low for I/O workloads.  |
+| `timeout`                | Kill stuck worker   | Set ≥ end-to-end model latency. E.g. 600 s for LLM calls.         |
+| `preload_app`            | Load app once       | Saves RAM; safe for pure-Python apps.                             |
 | `worker_class`           | Async workers       | `gevent` or `eventlet` for many concurrent requests / websockets. |
-| `max_requests(+_jitter)` | Self‑healing        | Recycle workers to mitigate memory leaks.                         |
+| `max_requests(+_jitter)` | Self-healing        | Recycle workers to mitigate memory leaks.                         |
 
 Edit the file **before** building the image, then redeploy.
 
 ---
 
-## 3 · Container resources
+## 3 - Container resources
 
 | vCPU × RAM   | Good for              | Notes                                              |
 | ------------ | --------------------- | -------------------------------------------------- |
-| `0.5 × 1 GB` | Smoke tests / CI      | Smallest footprint; likely CPU‑starved under load. |
+| `0.5 × 1 GB` | Smoke tests / CI      | Smallest footprint; likely CPU-starved under load. |
 | `1 × 4 GB`   | Typical dev / staging | Handles a few hundred RPS with default 8 workers.  |
-| `2 × 8 GB`   | Small prod            | Allows \~16–20 workers; good concurrency.          |
+| `2 × 8 GB`   | Small prod            | Allows \~16-20 workers; good concurrency.          |
 | `4 × 16 GB`+ | Heavy prod            | Combine with async workers or autoscaling.         |
 
-> Always test with **your** workload; JSON‑RPC payload size and backend model latency change the equation.
+> Always test with **your** workload; JSON-RPC payload size and backend model latency change the equation.
 
 To change your database connection settings, see the respective documentation for your selected database or managed service. For example, when using IBM Cloud Databases for PostgreSQL - you can [raise the maximum number of connections](https://cloud.ibm.com/docs/databases-for-postgresql?topic=databases-for-postgresql-managing-connections&locale=en#postgres-connection-limits).
 
 ---
 
-## 4 · Performance testing
+## 4 - Performance testing
 
 ### 4.1 Tooling: **hey**
 
@@ -68,7 +68,7 @@ sudo apt install hey         # Debian/Ubuntu
 go install github.com/rakyll/hey@latest  # $GOPATH/bin must be in PATH
 ```
 
-### 4.2 Sample load‑test script (`tests/hey.sh`)
+### 4.2 Sample load-test script (`tests/hey.sh`)
 
 ```bash
 #!/usr/bin/env bash
@@ -101,9 +101,9 @@ hey -n 10000 -c 200 \
 
 `hey` prints latency distribution, requests/second, and error counts. Focus on:
 
-* **99th percentile latency** – adjust `timeout` if it clips.
-* **Errors** – 5xx under load often mean too few workers or DB connections.
-* **Throughput (RPS)** – compare before/after tuning.
+* **99th percentile latency** - adjust `timeout` if it clips.
+* **Errors** - 5xx under load often mean too few workers or DB connections.
+* **Throughput (RPS)** - compare before/after tuning.
 
 ### 4.4 Common bottlenecks & fixes
 
@@ -115,7 +115,7 @@ hey -n 10000 -c 200 \
 
 ---
 
-## 5 · Logging & observability
+## 5 - Logging & observability
 
 * Set `loglevel = "debug"` in `gunicorn.conf.py` during tests; revert to `info` in prod.
 * Forward `stdout`/`stderr` from the container to your platform's log stack (e.g. `kubectl logs`, `docker logs`).
@@ -123,9 +123,9 @@ hey -n 10000 -c 200 \
 
 ---
 
-## 6 · Security tips while tuning
+## 6 - Security tips while tuning
 
-* Never commit real `JWT_SECRET_KEY`, DB passwords, or tokens—use `.env.example` as a template.
+* Never commit real `JWT_SECRET_KEY`, DB passwords, or tokens-use `.env.example` as a template.
 * Prefer platform secrets (K8s Secrets, Code Engine secrets) over baking creds into the image.
 * If you enable `gevent`/`eventlet`, pin their versions and run **bandit** or **trivy** scans.
 

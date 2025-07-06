@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────
-# MANIFEST.in – source-distribution contents for mcpgateway
+# MANIFEST.in - source-distribution contents for mcpgateway
 # ──────────────────────────────────────────────────────────────
 
 # 1️⃣  Core project files that SDists/Wheels should always carry

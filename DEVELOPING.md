@@ -15,7 +15,7 @@ export MCP_AUTH_TOKEN="<your_bearer_token>"
 | **Stdio wrapper** <br/>*(for clients that can't speak SSE)* | `npx @modelcontextprotocol/inspector python -m mcpgateway.wrapper`           | Spins up the wrapper **in-process** and points Inspector to its stdio stream. |
 | **Stdio wrapper via uv / uvenv**                            | `npx @modelcontextprotocol/inspector uvenv run python -m mcpgateway.wrapper` | Uses the lightning-fast `uv` virtual-env if installed.                        |
 
-🔍 MCP Inspector boots at **[http://localhost:5173](http://localhost:5173)** – open it in a browser and add:
+🔍 MCP Inspector boots at **[http://localhost:5173](http://localhost:5173)** - open it in a browser and add:
 
 ```text
 Server URL: http://localhost:4444/servers/1/sse
@@ -26,7 +26,7 @@ Headers:    Authorization: Bearer <your_bearer_token>
 
 ## 🌉 SuperGateway (stdio-in ⇢ SSE-out bridge)
 
-SuperGateway lets you expose *any* MCP **stdio** server over **SSE** with a single command – perfect for
+SuperGateway lets you expose *any* MCP **stdio** server over **SSE** with a single command - perfect for
 remote debugging or for clients that only understand SSE.
 
 ```bash

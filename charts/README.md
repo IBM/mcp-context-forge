@@ -1,6 +1,6 @@
-# MCP Gateway Stack – Helm Chart
+# MCP Gateway Stack - Helm Chart
 
-Deploy the full **MCP Gateway Stack**-MCP Context Forge gateway, PostgreSQL, Redis, and optional PgAdmin & Redis‑Commander UIs-on any Kubernetes distribution with a single Helm release. The chart lives in [`charts/mcp-stack`](https://github.com/IBM/mcp-context-forge/tree/main/charts/mcp-stack).
+Deploy the full **MCP Gateway Stack**-MCP Context Forge gateway, PostgreSQL, Redis, and optional PgAdmin & Redis-Commander UIs-on any Kubernetes distribution with a single Helm release. The chart lives in [`charts/mcp-stack`](https://github.com/IBM/mcp-context-forge/tree/main/charts/mcp-stack).
 
 ---
 
@@ -164,13 +164,13 @@ graph TB
 
 ## Prerequisites
 
-* **Kubernetes ≥ 1.23** – Minikube, kind, EKS, AKS, GKE, OpenShift …
-* **Helm 3** – Install via Homebrew, Chocolatey, or cURL script
-* **kubectl** – Configured to talk to the target cluster
-* **Ingress controller** – NGINX, Traefik, or cloud‑native (or disable via values)
-* **RWX StorageClass** – Required for PostgreSQL PVC unless `postgres.persistence.enabled=false`
+* **Kubernetes ≥ 1.23** - Minikube, kind, EKS, AKS, GKE, OpenShift ...
+* **Helm 3** - Install via Homebrew, Chocolatey, or cURL script
+* **kubectl** - Configured to talk to the target cluster
+* **Ingress controller** - NGINX, Traefik, or cloud-native (or disable via values)
+* **RWX StorageClass** - Required for PostgreSQL PVC unless `postgres.persistence.enabled=false`
 
-### Pre‑flight checklist
+### Pre-flight checklist
 
 ```bash
 # Check current context and cluster
@@ -213,7 +213,7 @@ helm upgrade --install mcp-stack . \
   --wait --timeout 30m
 ```
 
-If you are running locally, add the line below to `/etc/hosts` (or enable the Minikube *ingress‑dns* addon):
+If you are running locally, add the line below to `/etc/hosts` (or enable the Minikube *ingress-dns* addon):
 
 ```text
 $(minikube ip)  gateway.local
@@ -232,7 +232,7 @@ helm status mcp-stack -n mcp
 kubectl get ingress -n mcp
 curl http://gateway.local/health
 
-# No ingress? Port‑forward instead
+# No ingress? Port-forward instead
 kubectl port-forward svc/mcp-stack-app 8080:80 -n mcp
 curl http://localhost:8080/health
 ```
@@ -291,7 +291,7 @@ ahelm upgrade mcp-stack . -n mcp-private\
   --set mcpContextForge.image.tag=v1.2.3 \
   --wait
 
-# Preview changes (requires helm‑diff plugin)
+# Preview changes (requires helm-diff plugin)
 helm plugin install https://github.com/databus23/helm-diff
 helm diff upgrade mcp-stack . -n mcp-private-f my-values.yaml
 
@@ -307,10 +307,10 @@ The chart includes automatic database migration using **Alembic** that runs befo
 
 ### How It Works
 
-1. **Migration Job** – Runs as a Kubernetes Job alongside other resources
-2. **Database Readiness** – Waits for PostgreSQL using the built-in `db_isready.py` script
-3. **Schema Migration** – Executes `alembic upgrade head` to apply any pending migrations
-4. **Gateway Startup** – mcpgateway uses a startup probe to ensure database is ready before serving traffic
+1. **Migration Job** - Runs as a Kubernetes Job alongside other resources
+2. **Database Readiness** - Waits for PostgreSQL using the built-in `db_isready.py` script
+3. **Schema Migration** - Executes `alembic upgrade head` to apply any pending migrations
+4. **Gateway Startup** - mcpgateway uses a startup probe to ensure database is ready before serving traffic
 
 ### Configuration
 
@@ -366,7 +366,7 @@ oci://ghcr.io/ibm/mcp-context-forge
 | ------------------------ | ------------------------------------- | -------------------------------------------------- |
 | `ImagePullBackOff`       | Image missing or private              | Check image tag & ensure pull secret is configured |
 | Ingress 404 / no address | Controller not ready or host mismatch | `kubectl get ingress`, verify DNS / `/etc/hosts`   |
-| `CrashLoopBackOff`       | Bad configuration / missing env vars  | `kubectl logs` and `kubectl describe pod …`        |
+| `CrashLoopBackOff`       | Bad configuration / missing env vars  | `kubectl logs` and `kubectl describe pod ...`        |
 | Env vars missing         | Secret/ConfigMap not mounted          | Confirm `envFrom` refs and resource existence      |
 | RBAC access denied       | Roles/Bindings not created            | Set `rbac.create=true` or add roles manually       |
 
@@ -396,8 +396,8 @@ helm template mcp-stack . -f my-values.yaml > /tmp/all.yaml
 | `postgres.persistence.enabled`    | `true`          | Enable PVC                     |
 | `postgres.persistence.size`       | `10Gi`          | PostgreSQL volume size         |
 | `pgadmin.enabled`                 | `false`         | Deploy PgAdmin UI              |
-| `redisCommander.enabled`          | `false`         | Deploy Redis‑Commander UI      |
-| `rbac.create`                     | `true`          | Auto‑create Role & RoleBinding |
+| `redisCommander.enabled`          | `false`         | Deploy Redis-Commander UI      |
+| `rbac.create`                     | `true`          | Auto-create Role & RoleBinding |
 
 For every setting see the [full annotated `values.yaml`](https://github.com/IBM/mcp-context-forge/blob/main/charts/mcp-stack/values.yaml).
 
@@ -424,17 +424,17 @@ For every setting see the [full annotated `values.yaml`](https://github.com/IBM/
 
 ## Features
 
-* 🗂️ Multi-service stack – Deploys MCP Gateway (`n` replicas), Fast-Time-Server (`n` replicas), Postgres 17, Redis, PGAdmin 4 and Redis-Commander out of the box.
-* 🎛️ Idiomatic naming – All objects use helper templates (`mcp-stack.fullname`, chart labels) so release names and overrides stay collision-free.
-* 🔐 Secrets & credentials – `mcp-stack-gateway-secret` (Basic-Auth creds, JWT signing key, encryption salt, …) and `postgres-secret` (DB user / password / database name), both injected via `envFrom`.
-* ⚙️ Config as code – `mcp-stack-gateway-config` (\~40 tunables) and `postgres-config` for the DB name.
-* 🔗 Derived URLs – Pods build `DATABASE_URL` and `REDIS_URL` from explicit host/port/user/pass variables—no hard-coding.
-* ❤️‍🩹 Health management – Readiness and liveness probes on every deployment; the Gateway also has a startupProbe.
-* 🚦 Resource safeguards – CPU and memory requests/limits set for all containers.
-* 💾 Stateful storage – PV + PVC for Postgres (`/var/lib/postgresql/data`), storage class selectable.
-* 🌐 Networking & access – ClusterIP services, optional NGINX Ingress, and `NOTES.txt` with port-forward plus safe secret-fetch commands (password, bearer token, `JWT_SECRET_KEY`).
-* 📈 Replicas & availability – Gateway (3) and Fast-Time-Server (2) provide basic HA; stateful components run single-instance.
-* 📦 Helm best-practice layout – Clear separation of Deployments, Services, ConfigMaps, Secrets, PVC/PV and Ingress; chart version 0.2.0.
+* 🗂️ Multi-service stack - Deploys MCP Gateway (`n` replicas), Fast-Time-Server (`n` replicas), Postgres 17, Redis, PGAdmin 4 and Redis-Commander out of the box.
+* 🎛️ Idiomatic naming - All objects use helper templates (`mcp-stack.fullname`, chart labels) so release names and overrides stay collision-free.
+* 🔐 Secrets & credentials - `mcp-stack-gateway-secret` (Basic-Auth creds, JWT signing key, encryption salt, ...) and `postgres-secret` (DB user / password / database name), both injected via `envFrom`.
+* ⚙️ Config as code - `mcp-stack-gateway-config` (\~40 tunables) and `postgres-config` for the DB name.
+* 🔗 Derived URLs - Pods build `DATABASE_URL` and `REDIS_URL` from explicit host/port/user/pass variables-no hard-coding.
+* ❤️🩹 Health management - Readiness and liveness probes on every deployment; the Gateway also has a startupProbe.
+* 🚦 Resource safeguards - CPU and memory requests/limits set for all containers.
+* 💾 Stateful storage - PV + PVC for Postgres (`/var/lib/postgresql/data`), storage class selectable.
+* 🌐 Networking & access - ClusterIP services, optional NGINX Ingress, and `NOTES.txt` with port-forward plus safe secret-fetch commands (password, bearer token, `JWT_SECRET_KEY`).
+* 📈 Replicas & availability - Gateway (3) and Fast-Time-Server (2) provide basic HA; stateful components run single-instance.
+* 📦 Helm best-practice layout - Clear separation of Deployments, Services, ConfigMaps, Secrets, PVC/PV and Ingress; chart version 0.2.0.
 * ⚙️ Horizontal Pod Autoscaler (HPA) support for mcpgateway
 
 ---
@@ -596,14 +596,14 @@ kubectl top pods -l app=mcp-stack-mcpgateway -n mcp-private --sort-by=cpu
 
 ### Prerequisites & Gotchas
 
-* **Metrics API** – The cluster **must** run the Kubernetes *metrics-server* (or a Prometheus Adapter) so the control-plane can read CPU / memory stats.
+* **Metrics API** - The cluster **must** run the Kubernetes *metrics-server* (or a Prometheus Adapter) so the control-plane can read CPU / memory stats.
 
   ```bash
   kubectl get deployment metrics-server -n kube-system
   ```
-* **Resource requests** – The gateway deployment already sets `resources.requests.cpu` & `.memory`.
+* **Resource requests** - The gateway deployment already sets `resources.requests.cpu` & `.memory`.
   Percentage-based HPAs need these values to compute utilisation.
-* **RBAC** – Most distributions grant HPAs read-only access to metrics. Hardened clusters may require an additional `RoleBinding`.
+* **RBAC** - Most distributions grant HPAs read-only access to metrics. Hardened clusters may require an additional `RoleBinding`.
 
 ---
 
@@ -612,5 +612,5 @@ kubectl top pods -l app=mcp-stack-mcpgateway -n mcp-private --sort-by=cpu
 | Symptom                                | Checks                                                                                                                                                                   |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cpu: <unknown>` / `memory: <unknown>` | *metrics-server* missing or failing → `kubectl logs deployment/metrics-server -n kube-system`                                                                            |
-| HPA exists but never scales            | • Is the workload actually under load? See `kubectl top pods …`.<br>• Are limits **lower** than requests? Requests should reflect the typical baseline, not the ceiling. |
+| HPA exists but never scales            | - Is the workload actually under load? See `kubectl top pods ...`.<br>- Are limits **lower** than requests? Requests should reflect the typical baseline, not the ceiling. |
 | No HPA rendered                        | Was the chart installed with `--set mcpContextForge.hpa.enabled=true`? Use `helm template` to confirm the YAML renders.                                                  |

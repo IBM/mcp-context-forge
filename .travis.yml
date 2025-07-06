@@ -1,29 +1,29 @@
 # ===============================================================
-# Travis CI – two‑stage build for the mcpgateway project
+# Travis CI - two-stage build for the mcpgateway project
 # ===============================================================
 #
-# Updated 2025‑06‑21
-#   • Moves to **Ubuntu 24.04 LTS (Noble Numbat)** build image
-#   • Uses the distro‑default **Python 3.12** (no external PPAs)
-#   • Installs only python3‑venv & python3‑dev from the main repo
-#   • Keeps the existing two‑stage workflow (build‑test → docker)
+# Updated 2025-06-21
+#   - Moves to **Ubuntu 24.04 LTS (Noble Numbat)** build image
+#   - Uses the distro-default **Python 3.12** (no external PPAs)
+#   - Installs only python3-venv & python3-dev from the main repo
+#   - Keeps the existing two-stage workflow (build-test → docker)
 #
-# Stage ❶  build‑test :
-#   • Creates Python venv       → ~/.venv/mcpgateway
-#   • Runs `make venv install`  (deps + project)
-#   • Executes lint / unit‑test targets
+# Stage ❶  build-test :
+#   - Creates Python venv       → ~/.venv/mcpgateway
+#   - Runs `make venv install`  (deps + project)
+#   - Executes lint / unit-test targets
 #
 # Stage ❷  docker :
-#   • Uses the same repo checkout (depth‑1 clone)
-#   • Builds Containerfile → mcpgateway/mcpgateway:latest
-#   • Starts the container and makes a quick health curl
+#   - Uses the same repo checkout (depth-1 clone)
+#   - Builds Containerfile → mcpgateway/mcpgateway:latest
+#   - Starts the container and makes a quick health curl
 #
 # Requirements
-#   • Works on Travis "noble" image (Ubuntu 24.04; system Python 3.12)
-#   • Docker daemon available via services: docker
+#   - Works on Travis "noble" image (Ubuntu 24.04; system Python 3.12)
+#   - Docker daemon available via services: docker
 # ===============================================================
 
-dist: noble            # Ubuntu 24.04 – up‑to‑date packages
+dist: noble            # Ubuntu 24.04 - up-to-date packages
 language: generic      # using the image's default Python 3.12
 services:
   - docker             # enable Docker Engine inside job
@@ -67,17 +67,17 @@ jobs:
       name: "Build & run Docker image"
       script: |
         set -e
-        echo "🏗️  Building container…"
+        echo "🏗️  Building container..."
         docker build -f Containerfile -t mcpgateway/mcpgateway:latest .
 
-        echo "🚀  Launching container…"
+        echo "🚀  Launching container..."
         docker run -d --name mcpgateway -p 4444:4444 \
                    -e HOST=0.0.0.0 mcpgateway/mcpgateway:latest
 
-        echo "⏳  Waiting for startup…"
+        echo "⏳  Waiting for startup..."
         sleep 10
 
-        echo "🔍  Hitting health endpoint…"
+        echo "🔍  Hitting health endpoint..."
         curl -fsSL http://localhost:4444/health || {
           echo "❌ Health check failed"; docker logs mcpgateway; exit 1;
         }

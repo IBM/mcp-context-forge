@@ -1,11 +1,11 @@
 ########################################################################
-# DEPLOYMENT — MCP Context-Forge (Gateway)
+# DEPLOYMENT - MCP Context-Forge (Gateway)
 #
-# • Spins up the HTTP / WebSocket gateway pods.
-# • Injects release-scoped hosts for Postgres & Redis.
-# • Pulls ALL other environment variables from the dedicated
+# - Spins up the HTTP / WebSocket gateway pods.
+# - Injects release-scoped hosts for Postgres & Redis.
+# - Pulls ALL other environment variables from the dedicated
 #   ConfigMap + Secret via envFrom (mounted later in this file).
-# • DATABASE_URL and REDIS_URL are declared LAST so that every
+# - DATABASE_URL and REDIS_URL are declared LAST so that every
 #   $(POSTGRES_*) / $(REDIS_*) placeholder is already defined.
 ########################################################################
 apiVersion: apps/v1
@@ -39,7 +39,7 @@ spec:
 
           ################################################################
           # EXPLICIT ENV-VARS
-          # • DB/cache endpoints must be set here so they can be used as
+          # - DB/cache endpoints must be set here so they can be used as
           #   placeholders in the derived URL variables declared below.
           ################################################################
           env:
@@ -69,7 +69,7 @@ spec:
 
             # ---------- DERIVED URLS ----------
             # These MUST be placed *after* the concrete vars above so the
-            # $(…) placeholders are expanded correctly inside the pod.
+            # $(...) placeholders are expanded correctly inside the pod.
             - name: DATABASE_URL
               value: >-
                 postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
@@ -77,7 +77,7 @@ spec:
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
 
           ################################################################
-          # BULK ENV-VARS — pulled from ConfigMap + Secret
+          # BULK ENV-VARS - pulled from ConfigMap + Secret
           ################################################################
           envFrom:
             - secretRef:

@@ -100,7 +100,7 @@ class GatewayService:
     - Active/inactive status management
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the gateway service."""
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify)

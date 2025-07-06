@@ -1,7 +1,7 @@
 version: "3.9"          # Supported by both podman-compose and Docker Compose v2+
 
 ###############################################################################
-#  NETWORKS + VOLUMES – declared first so they can be referenced later
+#  NETWORKS + VOLUMES - declared first so they can be referenced later
 ###############################################################################
 networks:
   mcpnet:               # Single user-defined bridge network keeps traffic private
@@ -16,7 +16,7 @@ volumes:                # Named volumes survive podman-compose down/up
   redisinsight_data:
 
 ###############################################################################
-#  CORE SERVICE – MCP Gateway
+#  CORE SERVICE - MCP Gateway
 ###############################################################################
 services:
 
@@ -35,7 +35,7 @@ services:
     networks: [mcpnet]
 
     # ──────────────────────────────────────────────────────────────────────
-    # Environment – pick ONE database URL line, comment the rest
+    # Environment - pick ONE database URL line, comment the rest
     # ──────────────────────────────────────────────────────────────────────
     environment:
       - HOST=0.0.0.0
@@ -73,10 +73,10 @@ services:
     #   - ./certs:/app/certs:ro   # mount certs folder read-only
 
 ###############################################################################
-#  DATABASES – enable ONE of these blocks and adjust DATABASE_URL
+#  DATABASES - enable ONE of these blocks and adjust DATABASE_URL
 ###############################################################################
 
-  postgres:              # Official image – easy defaults
+  postgres:              # Official image - easy defaults
     image: postgres:17
     environment:
       - POSTGRES_USER=postgres
@@ -145,7 +145,7 @@ services:
     networks: [mcpnet]
 
 ###############################################################################
-#  OPTIONAL ADMIN TOOLS – handy web UIs for DB & cache (disabled by default)
+#  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
 ###############################################################################
   pgadmin:              # 🔧 Postgres admin UI
     image: dpage/pgadmin4:latest
@@ -162,7 +162,7 @@ services:
         condition: service_healthy
 
   # ──────────────────────────────────────────────────────────────────────
-  # Redis Insight – a powerful Redis GUI (recently updated)
+  # Redis Insight - a powerful Redis GUI (recently updated)
   # ──────────────────────────────────────────────────────────────────────
   redis_insight:                    # 🔧 Redis Insight GUI
     image: redis/redisinsight:latest
@@ -181,18 +181,18 @@ services:
     # volumes:
     #   - ./redisinsight_data:/data
     volumes:
-      - redisinsight_data:/data  # <— persist data in named volume
+      - redisinsight_data:/data  # <- persist data in named volume
 
     # ──────────────────────────────────────────────────────────────────────
     # Preconfigure Redis connection(s) via env vars
     # ──────────────────────────────────────────────────────────────────────
     environment:
       # Single connection (omit "*" since only one):
-      - RI_REDIS_HOST=redis         # <— your Redis hostname
-      - RI_REDIS_PORT=6379          # <— your Redis port
-      - RI_REDIS_USERNAME=default   # <— ACL/username (Redis 6+)
-      #- RI_REDIS_PASSWORD=changeme  # <— Redis AUTH password
-      #- RI_REDIS_TLS=true           # <— enable TLS
+      - RI_REDIS_HOST=redis         # <- your Redis hostname
+      - RI_REDIS_PORT=6379          # <- your Redis port
+      - RI_REDIS_USERNAME=default   # <- ACL/username (Redis 6+)
+      #- RI_REDIS_PASSWORD=changeme  # <- Redis AUTH password
+      #- RI_REDIS_TLS=true           # <- enable TLS
 
       # Optional: validate self-signed CA instead of trusting all:
       # - RI_REDIS_TLS_CA_PATH=/certs/selfsigned.crt
@@ -203,8 +203,8 @@ services:
       # ──────────────────────────────────────────────────────────────────
       # Core Redis Insight settings
       # ──────────────────────────────────────────────────────────────────
-      - RI_APP_HOST=0.0.0.0          # <— listen on all interfaces
-      - RI_APP_PORT=5540             # <— UI port (container-side)
+      - RI_APP_HOST=0.0.0.0          # <- listen on all interfaces
+      - RI_APP_PORT=5540             # <- UI port (container-side)
 
       # ──────────────────────────────────────────────────────────────────
       # (Optional) Enable HTTPS for the UI
@@ -213,7 +213,7 @@ services:
       # - RI_SERVER_TLS_CERT=/certs/tls.crt
 
   # ──────────────────────────────────────────────────────────────────────
-  # Redis Commander – a web-based Redis GUI
+  # Redis Commander - a web-based Redis GUI
   # ──────────────────────────────────────────────────────────────────────
   # redis_commander:       # 🔧 Redis key browser
   #   image: rediscommander/redis-commander:latest
@@ -223,40 +223,40 @@ services:
   #     redis:
   #       condition: service_started
   #   ports:
-  #     - "8081:8081"    # <— change if you want a different host port
+  #     - "8081:8081"    # <- change if you want a different host port
 
   #   # ─────────────────────────────────────────────────────────────────────────
   #   # Mount your local certs directory (only needed if you want real cert validation)
   #   # ─────────────────────────────────────────────────────────────────────────
   #   # volumes:
-  #   #   - ./certs:/certs:ro   # <— put your selfsigned.crt (PEM) in ./certs
+  #   #   - ./certs:/certs:ro   # <- put your selfsigned.crt (PEM) in ./certs
 
   #   environment:
   #     # ──────────────────────────────────────────────────────────────────────
-  #     # LEGACY HOST LIST (for showing in UI — not used for TLS)
+  #     # LEGACY HOST LIST (for showing in UI - not used for TLS)
   #     # ──────────────────────────────────────────────────────────────────────
   #     - REDIS_HOSTS=local:redis:6379
 
   #     # ──────────────────────────────────────────────────────────────────────
   #     # CORE REDIS/TLS
   #     # ──────────────────────────────────────────────────────────────────────
-  #     - REDIS_HOST=redis                # <— your Redis hostname or IP
-  #     - REDIS_PORT=6379                 # <— your Redis port
+  #     - REDIS_HOST=redis                # <- your Redis hostname or IP
+  #     - REDIS_PORT=6379                 # <- your Redis port
   #     - REDIS_USERNAME=admin          # ← REQUIRED when Redis has users/ACLs
-  #     - REDIS_PASSWORD=${REDIS_PASSWORD}# <— if you need a Redis auth password
-  #     # - REDIS_TLS=true                  # <— turn on TLS
-  #     - CLUSTER_NO_TLS_VALIDATION=true  # <— skip SNI/hostname checks in clusters
+  #     - REDIS_PASSWORD=${REDIS_PASSWORD}# <- if you need a Redis auth password
+  #     # - REDIS_TLS=true                  # <- turn on TLS
+  #     - CLUSTER_NO_TLS_VALIDATION=true  # <- skip SNI/hostname checks in clusters
 
   #     # ──────────────────────────────────────────────────────────────────────
   #     # SELF-SIGNED: trust no-CA by default
   #     # ──────────────────────────────────────────────────────────────────────
-  #     - NODE_TLS_REJECT_UNAUTHORIZED=0  # <— Node.js will accept your self-signed cert
+  #     - NODE_TLS_REJECT_UNAUTHORIZED=0  # <- Node.js will accept your self-signed cert
 
   #     # ──────────────────────────────────────────────────────────────────────
   #     # HTTP BASIC-AUTH FOR THE WEB UI
   #     # ──────────────────────────────────────────────────────────────────────
-  #     - HTTP_USER=admin                # <— change your UI username
-  #     - HTTP_PASSWORD=changeme         # <— change your UI password
+  #     - HTTP_USER=admin                # <- change your UI username
+  #     - HTTP_PASSWORD=changeme         # <- change your UI password
 
   #     # ──────────────────────────────────────────────────────────────────────
   #     # OPTIONAL: ENABLE REAL CERT VALIDATION (instead of skipping checks)
@@ -293,7 +293,7 @@ services:
   #       condition: service_started
 
 ###############################################################################
-#  OPTIONAL MCP SERVERS – drop-in helpers the Gateway can call
+#  OPTIONAL MCP SERVERS - drop-in helpers the Gateway can call
 # ###############################################################################
 #   mcp_time:
 #     image: mcp/time:latest

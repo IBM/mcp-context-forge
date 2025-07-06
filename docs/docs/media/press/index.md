@@ -29,7 +29,7 @@
     [Read the article](https://pitangent.com/ai-ml-development-services/ibm-mcp-gateway-revolutionizing-genai-integration-for-startups-and-enterprises/)
 
     !!! quote
-        "IBM's MCP Gateway is more than a bridge—it's a platform for accelerating GenAI transformation with agility and confidence. For startups and enterprises navigating the complex AI tool landscape, this innovation brings a modular, future-proof path to build smarter, scalable, and context-aware applications."
+        "IBM's MCP Gateway is more than a bridge-it's a platform for accelerating GenAI transformation with agility and confidence. For startups and enterprises navigating the complex AI tool landscape, this innovation brings a modular, future-proof path to build smarter, scalable, and context-aware applications."
 
         The article breaks down the technical benefits of the MCP Gateway and positions it as a game-changer for reducing integration overhead, improving developer productivity, and democratizing AI access for early-stage companies.
 

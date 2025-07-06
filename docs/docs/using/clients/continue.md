@@ -3,16 +3,16 @@
 [Continue](https://www.continue.dev/) is an open-source AI code assistant for Visual Studio
 Code.
 Because it speaks the **Model Context Protocol (MCP)**, Continue can discover and call the
-tools you publish through **MCP Gateway** – no plug-in code required.
+tools you publish through **MCP Gateway** - no plug-in code required.
 
 ---
 
 ## 🧰 Key Features
 
 * ✨ **AI-powered completions, edits & chat**
-* 🔌 **MCP integration** – dynamic tool list pulled from your gateway
-* 🏗 **Bring-your-own model** – local Ollama, OpenAI, Anthropic, etc.
-* 🧠 **Context-aware** – reads your workspace to craft better replies
+* 🔌 **MCP integration** - dynamic tool list pulled from your gateway
+* 🏗 **Bring-your-own model** - local Ollama, OpenAI, Anthropic, etc.
+* 🧠 **Context-aware** - reads your workspace to craft better replies
 
 ---
 
@@ -35,7 +35,7 @@ There are **two ways** to attach Continue to a gateway:
 
 > For both options you still need a **JWT** or Basic auth if the gateway is protected.
 
-### Option A · Direct SSE
+### Option A - Direct SSE
 
 ```jsonc
 // ~/.continue/config.json
@@ -60,7 +60,7 @@ There are **two ways** to attach Continue to a gateway:
 export MCP_AUTH_TOKEN=$(python -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
 ```
 
-### Option B · Local stdio bridge (`mcpgateway.wrapper`)
+### Option B - Local stdio bridge (`mcpgateway.wrapper`)
 
 1. **Install the wrapper** (pipx keeps it isolated):
 
@@ -100,7 +100,7 @@ pipx install --include-deps mcp-contextforge-gateway
 Once VS Code restarts:
 
 1. Open **Continue Chat** (`⌥ C` on macOS / `Alt C` on Windows/Linux)
-2. Click **Tools** – your gateway's tools should appear
+2. Click **Tools** - your gateway's tools should appear
 3. Chat naturally:
 
    ```
@@ -113,10 +113,10 @@ Once VS Code restarts:
 
 ## 📝 Tips
 
-* **SSE vs stdio** – SSE is simpler in prod, stdio is great for offline or
+* **SSE vs stdio** - SSE is simpler in prod, stdio is great for offline or
   header-free environments.
-* **Multiple servers** – add more blocks under `"servers"` if you run staging vs prod.
-* **Custom instructions** – Continue's *Custom Instructions* pane lets you steer tool use.
+* **Multiple servers** - add more blocks under `"servers"` if you run staging vs prod.
+* **Custom instructions** - Continue's *Custom Instructions* pane lets you steer tool use.
 
 ---
 

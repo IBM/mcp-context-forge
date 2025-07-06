@@ -129,7 +129,7 @@ def _sanitize(txt: str) -> str:
     """Hide credentials contained in connection strings or driver errors.
 
     Args:
-        txt: Arbitrary text that may contain a DB DSN or ``password=…``
+        txt: Arbitrary text that may contain a DB DSN or ``password=...``
             parameter.
 
     Returns:
@@ -281,7 +281,7 @@ def _parse_cli() -> argparse.Namespace:
     parser.add_argument("--max-tries", type=int, default=DEFAULT_MAX_TRIES, help="Maximum connection attempts")
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL, help="Delay between attempts in seconds")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="Per-attempt connect timeout in seconds")
-    parser.add_argument("--log-level", default=DEFAULT_LOG_LEVEL, help="Logging level (DEBUG, INFO, …)")
+    parser.add_argument("--log-level", default=DEFAULT_LOG_LEVEL, help="Logging level (DEBUG, INFO, ...)")
     return parser.parse_args()
 
 

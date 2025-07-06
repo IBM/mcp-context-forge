@@ -17,7 +17,7 @@
 
 * **SSE-Backed Streaming on POST**
   **As** a developer
-  **I want** the server, upon receiving request-bearing POSTs, to return `Content-Type: text/event-stream` and open an SSE stream—emitting JSON-RPC responses, server-to-client requests, and notifications until complete—before closing the stream
+  **I want** the server, upon receiving request-bearing POSTs, to return `Content-Type: text/event-stream` and open an SSE stream-emitting JSON-RPC responses, server-to-client requests, and notifications until complete-before closing the stream
   **So that** clients can consume large or real-time payloads incrementally without buffering.
 
 * **Unsolicited Server Notifications via GET**
@@ -32,7 +32,7 @@
 
 * **Security & Compatibility**
   **As** a platform admin
-  **I want** to validate `Origin` headers, bind to localhost by default, and enforce authentication against DNS rebinding—while optionally preserving the legacy HTTP+SSE endpoints for backward compatibility with 2024-11-05 clients
+  **I want** to validate `Origin` headers, bind to localhost by default, and enforce authentication against DNS rebinding-while optionally preserving the legacy HTTP+SSE endpoints for backward compatibility with 2024-11-05 clients
   **So that** we uphold security best practices and maintain dual-transport support.
 
 ---
@@ -425,7 +425,7 @@ Allow choosing which MCP protocol version each virtual server uses.
 
 ### 🧭 Epic: Role-Based Access Control (User/Team/Global Scopes)
 
-???+ "RBAC & Scoping — Overview"
+???+ "RBAC & Scoping - Overview"
     - **User-Level Scopes:**
         As a platform admin, I want to assign permissions at the individual-user level so that I can grant fine-grained access.
     - **Team-Level Scopes:**

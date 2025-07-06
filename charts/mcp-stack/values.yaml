@@ -89,7 +89,7 @@ mcpContextForge:
       nginx.ingress.kubernetes.io/rewrite-target: /
 
   ####################################################################
-  # CORE ENVIRONMENT — injected one-by-one as name/value pairs.
+  # CORE ENVIRONMENT - injected one-by-one as name/value pairs.
   # Only the DATABASE / CACHE connection points live here; everything
   # else goes into the ConfigMap or Secret blocks below.
   ####################################################################
@@ -125,7 +125,7 @@ mcpContextForge:
     APP_NAME: MCP_Gateway            # public-facing name of the gateway
     HOST: 0.0.0.0                    # address the server binds to
     PORT: "4444"                     # internal container port
-    APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub‑path
+    APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
 
     # ─ Connection pooling ─
     DB_POOL_SIZE: "200"              # size of SQLAlchemy connection pool
@@ -158,7 +158,7 @@ mcpContextForge:
     LOG_FORMAT: json                 # json or text format
 
     # ─ Transports ─
-    TRANSPORT_TYPE: all              # comma‑separated list: http, ws, sse, stdio, all
+    TRANSPORT_TYPE: all              # comma-separated list: http, ws, sse, stdio, all
     WEBSOCKET_PING_INTERVAL: "30"    # seconds between WS pings
     SSE_RETRY_TIMEOUT: "5000"        # milliseconds before SSE client retries
 
@@ -193,11 +193,11 @@ mcpContextForge:
     HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
     HEALTH_CHECK_TIMEOUT: "10"       # request timeout per health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
-    FILELOCK_PATH: /tmp/gateway_healthcheck_init.lock # lock file used at start‑up
+    FILELOCK_PATH: /tmp/gateway_healthcheck_init.lock # lock file used at start-up
 
     # ─ Development toggles ─
-    DEV_MODE: "false"                # enable dev‑mode features
-    RELOAD: "false"                  # auto‑reload code on changes
+    DEV_MODE: "false"                # enable dev-mode features
+    RELOAD: "false"                  # auto-reload code on changes
     DEBUG: "false"                   # verbose debug traces
 
   ####################################################################
@@ -208,8 +208,8 @@ mcpContextForge:
   ####################################################################
   secret:
     # ─ Admin & auth ─
-    BASIC_AUTH_USER: admin                 # username for basic‑auth login
-    BASIC_AUTH_PASSWORD: changeme          # password for basic‑auth (CHANGE IN PROD!)
+    BASIC_AUTH_USER: admin                 # username for basic-auth login
+    BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
@@ -367,7 +367,7 @@ redis:
       failureThreshold: 5
 
 ########################################################################
-# PGADMIN — Web UI for Postgres
+# PGADMIN - Web UI for Postgres
 ########################################################################
 pgadmin:
   enabled: true
@@ -417,7 +417,7 @@ pgadmin:
       failureThreshold: 5
 
 ########################################################################
-# REDIS-COMMANDER — Web UI for Redis
+# REDIS-COMMANDER - Web UI for Redis
 ########################################################################
 redisCommander:
   enabled: true
@@ -463,7 +463,7 @@ redisCommander:
       failureThreshold: 5
 
 ########################################################################
-# MCP-FAST-TIME-SERVER — optional high-performance time server for MCP (go)
+# MCP-FAST-TIME-SERVER - optional high-performance time server for MCP (go)
 # Provides a fast implementation including SSE and Streamable HTTP
 ########################################################################
 mcpFastTimeServer:

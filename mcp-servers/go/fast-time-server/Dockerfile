@@ -1,5 +1,5 @@
 # =============================================================================
-# 🦫 FAST-TIME-SERVER – Multi-stage Containerfile
+# 🦫 FAST-TIME-SERVER - Multi-stage Containerfile
 # =============================================================================
 #
 # Default runtime = DUAL transport  →  SSE  (/sse, /messages)
@@ -11,7 +11,7 @@
 # =============================================================================
 
 # =============================================================================
-# 🏗️  STAGE 1 – BUILD STATIC BINARY (Go 1.23, CGO disabled)
+# 🏗️  STAGE 1 - BUILD STATIC BINARY (Go 1.23, CGO disabled)
 # =============================================================================
 FROM --platform=$TARGETPLATFORM golang:1.23 AS builder
 
@@ -28,7 +28,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -o /usr/local/bin/fast-time-server .
 
 # =============================================================================
-# 📦  STAGE 2 – MINIMAL RUNTIME (scratch + tzdata + binary)
+# 📦  STAGE 2 - MINIMAL RUNTIME (scratch + tzdata + binary)
 # =============================================================================
 FROM scratch
 LABEL org.opencontainers.image.source https://github.com/IBM/mcp-context-forge

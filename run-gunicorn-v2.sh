@@ -8,12 +8,12 @@
 #    This script provides a robust way to launch a production API server using
 #    Gunicorn with the following features:
 #
-#    • Portable Python detection across different distros (python vs python3)
-#    • Virtual environment handling (activates project venv if available)
-#    • Configurable via environment variables for CI/CD pipelines
-#    • Optional TLS/SSL support for secure connections
-#    • Database initialization before server start
-#    • Comprehensive error handling and user feedback
+#    - Portable Python detection across different distros (python vs python3)
+#    - Virtual environment handling (activates project venv if available)
+#    - Configurable via environment variables for CI/CD pipelines
+#    - Optional TLS/SSL support for secure connections
+#    - Database initialization before server start
+#    - Comprehensive error handling and user feedback
 #
 #  Environment Variables:
 #    PYTHON                        : Path to Python interpreter (optional)
@@ -218,7 +218,7 @@ if [[ "${SSL}" == "true" ]]; then
         exit 1
     fi
 
-    echo "✓  TLS enabled – using:"
+    echo "✓  TLS enabled - using:"
     echo "   Certificate: ${CERT_FILE}"
     echo "   Private Key: ${KEY_FILE}"
 else

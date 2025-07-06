@@ -5,10 +5,10 @@
 # Status: Active
 #
 # This workflow:
-#   • Waits for ALL security/quality checks to pass
-#   • Uses the pre-built image from ghcr.io (docker-image.yml)
-#   • Creates a proxy repository in Artifact Registry for ghcr.io
-#   • Deploys to Google Cloud Run with autoscale=1
+#   - Waits for ALL security/quality checks to pass
+#   - Uses the pre-built image from ghcr.io (docker-image.yml)
+#   - Creates a proxy repository in Artifact Registry for ghcr.io
+#   - Deploys to Google Cloud Run with autoscale=1
 #
 # Dependency chain:
 #   1. docker-image.yml → Builds, scans, and pushes to ghcr.io
@@ -408,9 +408,9 @@ jobs:
           echo "❌ Deployment to Google Cloud Run was blocked"
           echo ""
           echo "One or more required workflows have not passed:"
-          echo "  • Secure Docker Build"
-          echo "  • Bandit"
-          echo "  • CodeQL Advanced"
-          echo "  • Dependency Review"
+          echo "  - Secure Docker Build"
+          echo "  - Bandit"
+          echo "  - CodeQL Advanced"
+          echo "  - Dependency Review"
           echo ""
           echo "Please check the workflow runs and fix any issues before deployment."

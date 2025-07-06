@@ -102,13 +102,13 @@ install-dev: venv
 
 .PHONY: update
 update:
-	@echo "⬆️   Updating installed dependencies…"
+	@echo "⬆️   Updating installed dependencies..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -U .[dev]"
 
 # help: check-env            - Verify all required env vars in .env are present
 .PHONY: check-env
 check-env:
-	@echo "🔎  Checking .env against .env.example…"
+	@echo "🔎  Checking .env against .env.example..."
 	@missing=0; \
 	for key in $$(grep -Ev '^\s*#|^\s*$$' .env.example | cut -d= -f1); do \
 	  grep -q "^$$key=" .env || { echo "❌ Missing: $$key"; missing=1; }; \
@@ -143,9 +143,9 @@ run:
 ## --- Certificate helper ------------------------------------------------------
 certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem (idempotent)
 	@if [ -f certs/cert.pem ] && [ -f certs/key.pem ]; then \
-		echo "🔏  Existing certificates found in ./certs – skipping generation."; \
+		echo "🔏  Existing certificates found in ./certs - skipping generation."; \
 	else \
-		echo "🔏  Generating self-signed certificate (1 year)…"; \
+		echo "🔏  Generating self-signed certificate (1 year)..."; \
 		mkdir -p certs; \
 		openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
 			-keyout certs/key.pem -out certs/cert.pem \
@@ -159,7 +159,7 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 # help: clean                - Remove caches, build artefacts, virtualenv, docs, certs, coverage, SBOM, etc.
 .PHONY: clean
 clean:
-	@echo "🧹  Cleaning workspace…"
+	@echo "🧹  Cleaning workspace..."
 	@# Remove matching directories
 	@for dir in $(DIRS_TO_CLEAN); do \
 		find . -type d -name "$$dir" -exec rm -rf {} +; \
@@ -186,12 +186,12 @@ clean:
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
-	@echo "🚀 Running smoketest…"
+	@echo "🚀 Running smoketest..."
 	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
 test:
-	@echo "🧪 Running tests…"
+	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q pytest pytest-asyncio pytest-cov && \
@@ -217,19 +217,19 @@ coverage:
 	@echo "✅  Coverage artefacts: md, HTML in $(COVERAGE_DIR), XML & badge ✔"
 
 htmlcov:
-	@echo "📊  Generating HTML coverage report…"
+	@echo "📊  Generating HTML coverage report..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(COVERAGE_DIR)
 	# If there's no existing coverage data, fall back to the full test-run
 	@if [ ! -f .coverage ]; then \
-		echo "ℹ️  No .coverage file found – running full coverage first…"; \
+		echo "ℹ️  No .coverage file found - running full coverage first..."; \
 		$(MAKE) --no-print-directory coverage; \
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -i -d $(COVERAGE_DIR)"
 	@echo "✅  HTML coverage report ready → $(COVERAGE_DIR)/index.html"
 
 pytest-examples:
-	@echo "🧪 Testing README examples…"
+	@echo "🧪 Testing README examples..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q pytest pytest-examples && \
@@ -282,12 +282,12 @@ endif
 
 .PHONY: docs
 docs: images sbom
-	@echo "📚  Generating documentation with handsdown…"
+	@echo "📚  Generating documentation with handsdown..."
 	uv handsdown --external https://github.com/yourorg/$(PROJECT_NAME)/ \
 	             -o $(DOCS_DIR)/docs \
 	             -n app --name "$(PROJECT_NAME)" --cleanup
 
-	@echo "🔧  Rewriting GitHub links…"
+	@echo "🔧  Rewriting GitHub links..."
 	@find $(DOCS_DIR)/docs/app -type f \
 	      -exec sed $(SED_INPLACE) 's#https://github.com/yourorg#https://github.com/ibm/mcp-context-forge#g' {} +
 
@@ -299,7 +299,7 @@ docs: images sbom
 
 .PHONY: images
 images:
-	@echo "🖼️   Generating documentation diagrams…"
+	@echo "🖼️   Generating documentation diagrams..."
 	@mkdir -p $(DOCS_DIR)/docs/design/images
 	@code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
@@ -360,10 +360,10 @@ LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
 ##  Master target
 ## --------------------------------------------------------------------------- ##
 lint:
-	@echo "🔍  Running full lint suite…"
+	@echo "🔍  Running full lint suite..."
 	@set -e; for t in $(LINTERS); do \
 	    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	    echo "• $$t"; \
+	    echo "- $$t"; \
 	    $(MAKE) $$t || true; \
 	done
 
@@ -375,10 +375,10 @@ autoflake:                          ## 🧹  Strip unused imports / vars
 	          --remove-unused-variables -r mcpgateway tests
 
 black:                              ## 🎨  Reformat code with black
-	@echo "🎨  black …" && $(VENV_DIR)/bin/black -l 200 mcpgateway tests
+	@echo "🎨  black ..." && $(VENV_DIR)/bin/black -l 200 mcpgateway tests
 
 isort:                              ## 🔀  Sort imports
-	@echo "🔀  isort …" && $(VENV_DIR)/bin/isort .
+	@echo "🔀  isort ..." && $(VENV_DIR)/bin/isort .
 
 flake8:                             ## 🐍  flake8 checks
 	@$(VENV_DIR)/bin/flake8 mcpgateway
@@ -458,11 +458,11 @@ spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 	sort -d -f -o $< $<
 
 tox:                                ## 🧪  Multi-Python tox matrix (uv)
-	@echo "🧪  Running tox with uv …"
+	@echo "🧪  Running tox with uv ..."
 	python -m tox -p auto $(TOXARGS)
 
 sbom:								## 🛡️  Generate SBOM & security report
-	@echo "🛡️   Generating SBOM & security report…"
+	@echo "🛡️   Generating SBOM & security report..."
 	@rm -Rf "$(VENV_DIR).sbom"
 	@python3 -m venv "$(VENV_DIR).sbom"
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv && python3 -m uv pip install .[dev]"
@@ -501,18 +501,18 @@ sbom:								## 🛡️  Generate SBOM & security report
 	@echo "    - $(DOCS_DIR)/docs/test/sbom.md (Markdown report)"
 
 pytype:								## 🧠  Pytype static type analysis
-	@echo "🧠  Pytype analysis…"
+	@echo "🧠  Pytype analysis..."
 	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto mcpgateway tests
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
-	@echo "📦  Verifying MANIFEST.in completeness…"
+	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
 
 # -----------------------------------------------------------------------------
 # 📑 YAML / JSON / TOML LINTERS
 # -----------------------------------------------------------------------------
 # help: yamllint             - Lint YAML files (uses .yamllint)
-# help: jsonlint             - Validate every *.json file with jq (‐‐exit-status)
+# help: jsonlint             - Validate every *.json file with jq (--exit-status)
 # help: tomllint             - Validate *.toml files with tomlcheck
 #
 # ➊  Add the new linters to the master list
@@ -524,12 +524,12 @@ LINTERS += yamllint jsonlint tomllint
 yamllint:                         ## 📑 YAML linting
 	@command -v yamllint >/dev/null 2>&1 || { \
 	  echo '❌  yamllint not installed  ➜  pip install yamllint'; exit 1; }
-	@echo '📑  yamllint …' && $(VENV_DIR)/bin/yamllint -c .yamllint .
+	@echo '📑  yamllint ...' && $(VENV_DIR)/bin/yamllint -c .yamllint .
 
 jsonlint:                         ## 📑 JSON validation (jq)
 	@command -v jq >/dev/null 2>&1 || { \
 	  echo '❌  jq not installed  ➜  sudo apt-get install jq'; exit 1; }
-	@echo '📑  jsonlint (jq) …'
+	@echo '📑  jsonlint (jq) ...'
 	@find . -type f -name '*.json' -not -path './node_modules/*' -print0 \
 	  | xargs -0 -I{} sh -c 'jq empty "{}"' \
 	&& echo '✅  All JSON valid'
@@ -537,7 +537,7 @@ jsonlint:                         ## 📑 JSON validation (jq)
 tomllint:                         ## 📑 TOML validation (tomlcheck)
 	@command -v tomlcheck >/dev/null 2>&1 || { \
 	  echo '❌  tomlcheck not installed  ➜  pip install tomlcheck'; exit 1; }
-	@echo '📑  tomllint (tomlcheck) …'
+	@echo '📑  tomllint (tomlcheck) ...'
 	@find . -type f -name '*.toml' -print0 \
 	  | xargs -0 -I{} $(VENV_DIR)/bin/tomlcheck "{}"
 
@@ -553,7 +553,7 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 install-web-linters:
 	@echo "🔧 Installing HTML/CSS/JS lint, security & formatting tools..."
 	@if [ ! -f package.json ]; then \
-	  echo "📦 Initializing npm project…"; \
+	  echo "📦 Initializing npm project..."; \
 	  npm init -y >/dev/null; \
 	fi
 	@npm install --no-save \
@@ -564,23 +564,23 @@ install-web-linters:
 		prettier
 
 lint-web: install-web-linters
-	@echo "🔍 Linting HTML files…"
+	@echo "🔍 Linting HTML files..."
 	@npx htmlhint "mcpgateway/templates/**/*.html" || true
-	@echo "🔍 Linting CSS files…"
+	@echo "🔍 Linting CSS files..."
 	@npx stylelint "mcpgateway/static/**/*.css" || true
-	@echo "🔍 Linting JS files…"
+	@echo "🔍 Linting JS files..."
 	@npx eslint "mcpgateway/static/**/*.js" || true
-	@echo "🔒 Scanning for known JS/CSS library vulnerabilities with retire.js…"
+	@echo "🔒 Scanning for known JS/CSS library vulnerabilities with retire.js..."
 	@npx retire --path mcpgateway/static || true
 	@if [ -f package.json ]; then \
-	  echo "🔒 Running npm audit (high severity)…"; \
+	  echo "🔒 Running npm audit (high severity)..."; \
 	  npm audit --audit-level=high || true; \
 	else \
 	  echo "⚠️  Skipping npm audit: no package.json found"; \
 	fi
 
 format-web: install-web-linters
-	@echo "🎨 Formatting HTML, CSS & JS with Prettier…"
+	@echo "🎨 Formatting HTML, CSS & JS with Prettier..."
 	@npx prettier --write "mcpgateway/templates/**/*.html" \
 	                 "mcpgateway/static/**/*.css" \
 	                 "mcpgateway/static/**/*.js"
@@ -601,12 +601,12 @@ osv-install:                  ## Install/upgrade osv-scanner
 
 # ─────────────── Source directory scan ────────────────────────────────────────
 osv-scan-source:
-	@echo "🔍  osv-scanner source scan…"
+	@echo "🔍  osv-scanner source scan..."
 	@osv-scanner scan source --recursive .
 
 # ─────────────── Container image scan ─────────────────────────────────────────
 osv-scan-image:
-	@echo "🔍  osv-scanner image scan…"
+	@echo "🔍  osv-scanner image scan..."
 	@CONTAINER_CLI=$$(command -v docker || command -v podman) ; \
 	  if [ -n "$$CONTAINER_CLI" ]; then \
 	    osv-scanner scan image $(DOCKLE_IMAGE) || true ; \
@@ -654,23 +654,23 @@ PROJECT_BASEDIR     ?= $(strip $(PWD))
 
 ## ─────────── Dependencies (compose + misc) ─────────────────────────────
 sonar-deps-podman:
-	@echo "🔧 Installing podman-compose …"
+	@echo "🔧 Installing podman-compose ..."
 	python3 -m pip install --quiet podman-compose
 
 sonar-deps-docker:
-	@echo "🔧 Ensuring $(COMPOSE_CMD) is available …"
+	@echo "🔧 Ensuring $(COMPOSE_CMD) is available ..."
 	@command -v $(firstword $(COMPOSE_CMD)) >/dev/null || \
 	  python3 -m pip install --quiet docker-compose
 
 ## ─────────── Run SonarQube server (compose) ────────────────────────────
 sonar-up-podman:
-	@echo "🚀 Starting SonarQube (v$(SONARQUBE_VERSION)) with podman-compose …"
+	@echo "🚀 Starting SonarQube (v$(SONARQUBE_VERSION)) with podman-compose ..."
 	SONARQUBE_VERSION=$(SONARQUBE_VERSION) \
 	podman-compose -f podman-compose-sonarqube.yaml up -d
 	@sleep 30 && podman ps | grep sonarqube || echo "⚠️  Server may still be starting."
 
 sonar-up-docker:
-	@echo "🚀 Starting SonarQube (v$(SONARQUBE_VERSION)) with $(COMPOSE_CMD) …"
+	@echo "🚀 Starting SonarQube (v$(SONARQUBE_VERSION)) with $(COMPOSE_CMD) ..."
 	SONARQUBE_VERSION=$(SONARQUBE_VERSION) \
 	$(COMPOSE_CMD) -f podman-compose-sonarqube.yaml up -d
 	@sleep 30 && $(COMPOSE_CMD) ps | grep sonarqube || \
@@ -678,7 +678,7 @@ sonar-up-docker:
 
 ## ─────────── Containerised Scanner CLI (Docker / Podman) ───────────────
 sonar-submit-docker:
-	@echo "📡 Scanning code with containerised Sonar Scanner CLI (Docker) …"
+	@echo "📡 Scanning code with containerised Sonar Scanner CLI (Docker) ..."
 	docker run --rm \
 		-e SONAR_HOST_URL="$(SONAR_HOST_URL)" \
 		$(if $(SONAR_TOKEN),-e SONAR_TOKEN="$(SONAR_TOKEN)",) \
@@ -687,7 +687,7 @@ sonar-submit-docker:
 		-Dproject.settings=$(SONAR_PROPS)
 
 sonar-submit-podman:
-	@echo "📡 Scanning code with containerised Sonar Scanner CLI (Podman) …"
+	@echo "📡 Scanning code with containerised Sonar Scanner CLI (Podman) ..."
 	podman run --rm \
 		--network $(SONAR_NETWORK) \
 		-e SONAR_HOST_URL="$(SONAR_HOST_URL)" \
@@ -698,7 +698,7 @@ sonar-submit-podman:
 
 ## ─────────── Python wrapper (pysonar-scanner) ───────────────────────────
 pysonar-scanner:
-	@echo "🐍 Scanning code with pysonar-scanner (PyPI) …"
+	@echo "🐍 Scanning code with pysonar-scanner (PyPI) ..."
 	@test -f $(SONAR_PROPS) || { echo "❌ $(SONAR_PROPS) not found."; exit 1; }
 	python3 -m pip install --upgrade --quiet pysonar-scanner
 	python3 -m pysonar_scanner \
@@ -715,7 +715,7 @@ sonar-info:
 	@echo "1. Open   $(SONAR_HOST_URL)   in your browser."
 	@echo "2. Log in → click your avatar → **My Account → Security**."
 	@echo "3. Under **Tokens**, enter a name (e.g. mcp-local) and press **Generate**."
-	@echo "4. **Copy the token NOW** – you will not see it again."
+	@echo "4. **Copy the token NOW** - you will not see it again."
 	@echo
 	@echo "Then in your shell:"
 	@echo "   export SONAR_TOKEN=<paste-token>"
@@ -734,24 +734,24 @@ sonar-info:
 .PHONY: trivy
 trivy:
 	@systemctl --user enable --now podman.socket
-	@echo "🔎  trivy vulnerability scan…"
+	@echo "🔎  trivy vulnerability scan..."
 	@trivy --format table --severity HIGH,CRITICAL image localhost/$(PROJECT_NAME)/$(PROJECT_NAME)
 
 # help: dockle               - Lint the built container image via tarball (no daemon/socket needed)
 .PHONY: dockle
 DOCKLE_IMAGE ?= $(IMG):latest         # mcpgateway/mcpgateway:latest from your build
 dockle:
-	@echo "🔎  dockle scan (tar mode) on $(DOCKLE_IMAGE)…"
+	@echo "🔎  dockle scan (tar mode) on $(DOCKLE_IMAGE)..."
 	@command -v dockle >/dev/null || { \
 		echo '❌  Dockle not installed. See https://github.com/goodwithtech/dockle'; exit 1; }
 
-	# Pick docker or podman—whichever is on PATH
+	# Pick docker or podman-whichever is on PATH
 	@CONTAINER_CLI=$$(command -v docker || command -v podman) ; \
 	[ -n "$$CONTAINER_CLI" ] || { echo '❌  docker/podman not found.'; exit 1; }; \
 	TARBALL=$$(mktemp /tmp/$(PROJECT_NAME)-dockle-XXXXXX.tar) ; \
-	echo "📦  Saving image to $$TARBALL…" ; \
+	echo "📦  Saving image to $$TARBALL..." ; \
 	"$$CONTAINER_CLI" save $(DOCKLE_IMAGE) -o "$$TARBALL" || { rm -f "$$TARBALL"; exit 1; }; \
-	echo "🧪  Running Dockle…" ; \
+	echo "🧪  Running Dockle..." ; \
 	dockle --no-color --exit-code 1 --exit-level warn --input "$$TARBALL" ; \
 	rm -f "$$TARBALL"
 
@@ -761,7 +761,7 @@ dockle:
 HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
-	@echo "🔎  hadolint scan…"
+	@echo "🔎  hadolint scan..."
 
 	# ─── Ensure hadolint is installed ──────────────────────────────────────
 	@if ! command -v hadolint >/dev/null 2>&1; then \
@@ -787,14 +787,14 @@ hadolint:
 		fi; \
 	done; \
 	if [ "$$found" -eq 0 ]; then \
-		echo "ℹ️  No Containerfile/Dockerfile found – nothing to scan."; \
+		echo "ℹ️  No Containerfile/Dockerfile found - nothing to scan."; \
 	fi
 
 
 # help: pip-audit            - Audit Python dependencies for published CVEs
 .PHONY: pip-audit
 pip-audit:
-	@echo "🔒  pip-audit vulnerability scan…"
+	@echo "🔒  pip-audit vulnerability scan..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install --quiet --upgrade pip-audit && \
@@ -810,13 +810,13 @@ pip-audit:
 .PHONY: deps-update containerfile-update
 
 deps-update:
-	@echo "⬆️  Updating project dependencies via update-deps.py…"
+	@echo "⬆️  Updating project dependencies via update-deps.py..."
 	@test -f update-deps.py || { echo "❌ update-deps.py not found in root directory."; exit 1; }
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python update-deps.py"
 	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
 
 containerfile-update:
-	@echo "⬆️  Updating base image in Containerfile to :latest tag…"
+	@echo "⬆️  Updating base image in Containerfile to :latest tag..."
 	@test -f Containerfile || { echo "❌ Containerfile not found."; exit 1; }
 	@sed -i.bak -E 's|^(FROM\s+\S+):[^\s]+|\1:latest|' Containerfile && rm -f Containerfile.bak
 	@echo "✅ Base image updated to latest."
@@ -863,15 +863,15 @@ verify: dist               ## Build, run metadata & manifest checks
 	twine check dist/* && \
 	check-manifest && \
 	pyroma -d ."
-	@echo "✅  Package verified – ready to publish."
+	@echo "✅  Package verified - ready to publish."
 
 publish: verify            ## Verify, then upload to PyPI
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload dist/*"
-	@echo "🚀  Upload finished – check https://pypi.org/project/$(PROJECT_NAME)/"
+	@echo "🚀  Upload finished - check https://pypi.org/project/$(PROJECT_NAME)/"
 
 publish-testpypi: verify   ## Verify, then upload to TestPyPI
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload --repository testpypi dist/*"
-	@echo "🚀  Upload finished – check https://test.pypi.org/project/$(PROJECT_NAME)/"
+	@echo "🚀  Upload finished - check https://test.pypi.org/project/$(PROJECT_NAME)/"
 
 # =============================================================================
 # 🦭 PODMAN CONTAINER BUILD & RUN
@@ -895,18 +895,18 @@ IMG_DEV            = $(IMG)-dev
 IMG_PROD           = $(IMG)
 
 podman-dev:
-	@echo "🦭  Building dev container…"
+	@echo "🦭  Building dev container..."
 	podman build --ssh default --platform=linux/amd64 --squash \
 	             -t $(IMG_DEV) .
 
 podman:
-	@echo "🦭  Building container using ubi9-minimal…"
+	@echo "🦭  Building container using ubi9-minimal..."
 	podman build --ssh default --platform=linux/amd64 --squash \
 	             -t $(IMG_PROD) .
 	podman images $(IMG_PROD)
 
 podman-prod:
-	@echo "🦭  Building production container from Containerfile.lite (ubi-micro → scratch)…"
+	@echo "🦭  Building production container from Containerfile.lite (ubi-micro → scratch)..."
 	podman build --ssh default \
 	             --platform=linux/amd64 \
 	             --squash \
@@ -917,7 +917,7 @@ podman-prod:
 
 ## --------------------  R U N   (HTTP)  ---------------------------------------
 podman-run:
-	@echo "🚀  Starting podman container (HTTP)…"
+	@echo "🚀  Starting podman container (HTTP)..."
 	-podman stop $(PROJECT_NAME) 2>/dev/null || true
 	-podman rm   $(PROJECT_NAME) 2>/dev/null || true
 	podman run --name $(PROJECT_NAME) \
@@ -931,7 +931,7 @@ podman-run:
 	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1
 
 podman-run-shell:
-	@echo "🚀  Starting podman container shell…"
+	@echo "🚀  Starting podman container shell..."
 	podman run --name $(PROJECT_NAME)-shell \
 		--env-file=.env \
 		-p 4444:4444 \
@@ -941,7 +941,7 @@ podman-run-shell:
 
 ## --------------------  R U N   (HTTPS)  --------------------------------------
 podman-run-ssl: certs
-	@echo "🚀  Starting podman container (TLS)…"
+	@echo "🚀  Starting podman container (TLS)..."
 	-podman stop $(PROJECT_NAME) 2>/dev/null || true
 	-podman rm   $(PROJECT_NAME) 2>/dev/null || true
 	podman run --name $(PROJECT_NAME) \
@@ -959,7 +959,7 @@ podman-run-ssl: certs
 	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1
 
 podman-run-ssl-host: certs
-	@echo "🚀  Starting podman container (TLS) with host neworking…"
+	@echo "🚀  Starting podman container (TLS) with host neworking..."
 	-podman stop $(PROJECT_NAME) 2>/dev/null || true
 	-podman rm   $(PROJECT_NAME) 2>/dev/null || true
 	podman run --name $(PROJECT_NAME) \
@@ -977,22 +977,22 @@ podman-run-ssl-host: certs
 	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1
 
 podman-stop:
-	@echo "🛑  Stopping podman container…"
+	@echo "🛑  Stopping podman container..."
 	-podman stop $(PROJECT_NAME) && podman rm $(PROJECT_NAME) || true
 
 podman-test:
-	@echo "🔬  Testing podman endpoint…"
-	@echo "• HTTP  -> curl  http://localhost:4444/system/test"
-	@echo "• HTTPS -> curl -k https://localhost:4444/system/test"
+	@echo "🔬  Testing podman endpoint..."
+	@echo "- HTTP  -> curl  http://localhost:4444/system/test"
+	@echo "- HTTPS -> curl -k https://localhost:4444/system/test"
 
 podman-logs:
-	@echo "📜  Streaming podman logs (press Ctrl+C to exit)…"
+	@echo "📜  Streaming podman logs (press Ctrl+C to exit)..."
 	@podman logs -f $(PROJECT_NAME)
 
 # help: podman-stats         - Show container resource stats (if supported)
 .PHONY: podman-stats
 podman-stats:
-	@echo "📊  Showing Podman container stats…"
+	@echo "📊  Showing Podman container stats..."
 	@if podman info --format '{{.Host.CgroupManager}}' | grep -q 'cgroupfs'; then \
 		echo "⚠️  podman stats not supported in rootless mode without cgroups v2 (e.g., WSL2)"; \
 		echo "👉  Falling back to 'podman top'"; \
@@ -1004,13 +1004,13 @@ podman-stats:
 # help: podman-top           - Show live top-level process info in container
 .PHONY: podman-top
 podman-top:
-	@echo "🧠  Showing top-level processes in the Podman container…"
+	@echo "🧠  Showing top-level processes in the Podman container..."
 	podman top $(PROJECT_NAME)
 
 # help: podman-shell         - Open an interactive shell inside the Podman container
 .PHONY: podman-shell
 podman-shell:
-	@echo "🔧  Opening shell in Podman container…"
+	@echo "🔧  Opening shell in Podman container..."
 	@podman exec -it $(PROJECT_NAME) bash || podman exec -it $(PROJECT_NAME) /bin/sh
 
 # =============================================================================
@@ -1033,15 +1033,15 @@ IMG_DOCKER_DEV  = $(IMG)-dev:latest
 IMG_DOCKER_PROD = $(IMG):latest
 
 docker-dev:
-	@echo "🐋  Building dev Docker image…"
+	@echo "🐋  Building dev Docker image..."
 	docker build --platform=linux/amd64 -t $(IMG_DOCKER_DEV) .
 
 docker:
-	@echo "🐋  Building production Docker image…"
+	@echo "🐋  Building production Docker image..."
 	docker build --platform=linux/amd64 -t $(IMG_DOCKER_PROD) -f Containerfile .
 
 docker-prod:
-	@echo "🦭  Building production container from Containerfile.lite (ubi-micro → scratch)…"
+	@echo "🦭  Building production container from Containerfile.lite (ubi-micro → scratch)..."
 	docker build \
 	             --platform=linux/amd64 \
 	             -f Containerfile.lite \
@@ -1051,7 +1051,7 @@ docker-prod:
 
 ## --------------------  R U N   (HTTP)  ---------------------------------------
 docker-run:
-	@echo "🚀  Starting Docker container (HTTP)…"
+	@echo "🚀  Starting Docker container (HTTP)..."
 	-docker stop $(PROJECT_NAME) 2>/dev/null || true
 	-docker rm   $(PROJECT_NAME) 2>/dev/null || true
 	docker run --name $(PROJECT_NAME) \
@@ -1066,7 +1066,7 @@ docker-run:
 
 ## --------------------  R U N   (HTTPS)  --------------------------------------
 docker-run-ssl: certs
-	@echo "🚀  Starting Docker container (TLS)…"
+	@echo "🚀  Starting Docker container (TLS)..."
 	-docker stop $(PROJECT_NAME) 2>/dev/null || true
 	-docker rm   $(PROJECT_NAME) 2>/dev/null || true
 	docker run --name $(PROJECT_NAME) \
@@ -1084,7 +1084,7 @@ docker-run-ssl: certs
 	@sleep 2 && docker logs $(PROJECT_NAME) | tail -n +1
 
 docker-run-ssl-host: certs
-	@echo "🚀  Starting Docker container (TLS) with host neworking…"
+	@echo "🚀  Starting Docker container (TLS) with host neworking..."
 	-docker stop $(PROJECT_NAME) 2>/dev/null || true
 	-docker rm   $(PROJECT_NAME) 2>/dev/null || true
 	docker run --name $(PROJECT_NAME) \
@@ -1103,35 +1103,35 @@ docker-run-ssl-host: certs
 	@sleep 2 && docker logs $(PROJECT_NAME) | tail -n +1
 
 docker-stop:
-	@echo "🛑  Stopping Docker container…"
+	@echo "🛑  Stopping Docker container..."
 	-docker stop $(PROJECT_NAME) && docker rm $(PROJECT_NAME) || true
 
 docker-test:
-	@echo "🔬  Testing Docker endpoint…"
-	@echo "• HTTP  -> curl  http://localhost:4444/system/test"
-	@echo "• HTTPS -> curl -k https://localhost:4444/system/test"
+	@echo "🔬  Testing Docker endpoint..."
+	@echo "- HTTP  -> curl  http://localhost:4444/system/test"
+	@echo "- HTTPS -> curl -k https://localhost:4444/system/test"
 
 
 docker-logs:
-	@echo "📜  Streaming Docker logs (press Ctrl+C to exit)…"
+	@echo "📜  Streaming Docker logs (press Ctrl+C to exit)..."
 	@docker logs -f $(PROJECT_NAME)
 
 # help: docker-stats         - Show container resource usage stats (non-streaming)
 .PHONY: docker-stats
 docker-stats:
-	@echo "📊  Showing Docker container stats…"
-	@docker stats --no-stream || { echo "⚠️  Failed to fetch docker stats. Falling back to 'docker top'…"; docker top $(PROJECT_NAME); }
+	@echo "📊  Showing Docker container stats..."
+	@docker stats --no-stream || { echo "⚠️  Failed to fetch docker stats. Falling back to 'docker top'..."; docker top $(PROJECT_NAME); }
 
 # help: docker-top           - Show top-level process info in Docker container
 .PHONY: docker-top
 docker-top:
-	@echo "🧠  Showing top-level processes in the Docker container…"
+	@echo "🧠  Showing top-level processes in the Docker container..."
 	docker top $(PROJECT_NAME)
 
 # help: docker-shell         - Open an interactive shell inside the Docker container
 .PHONY: docker-shell
 docker-shell:
-	@echo "🔧  Opening shell in Docker container…"
+	@echo "🔧  Opening shell in Docker container..."
 	@docker exec -it $(PROJECT_NAME) bash || docker exec -it $(PROJECT_NAME) /bin/sh
 
 
@@ -1182,7 +1182,7 @@ compose-up:
 	$(COMPOSE) up -d
 
 compose-restart:
-	@echo "🔄  Restarting stack (build + pull if needed)…"
+	@echo "🔄  Restarting stack (build + pull if needed)..."
 	$(COMPOSE) up -d --pull=missing --build
 
 compose-build:
@@ -1209,7 +1209,7 @@ compose-down:
 compose-rm:
 	$(COMPOSE) rm -f
 
-# Removes **containers + named volumes** – irreversible!
+# Removes **containers + named volumes** - irreversible!
 compose-clean:
 	$(COMPOSE) down -v
 
@@ -1236,7 +1236,7 @@ compose-clean:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📦  Load environment file with IBM Cloud Code Engine configuration
-#     • .env.ce   – IBM Cloud / Code Engine deployment vars
+#     - .env.ce   - IBM Cloud / Code Engine deployment vars
 # ─────────────────────────────────────────────────────────────────────────────
 -include .env.ce
 
@@ -1259,7 +1259,7 @@ IBMCLOUD_REGISTRY_SECRET ?= $(IBMCLOUD_PROJECT)-registry-secret
 
 ibmcloud-check-env:
 	@bash -eu -o pipefail -c '\
-		echo "🔍  Verifying required IBM Cloud variables (.env.ce)…"; \
+		echo "🔍  Verifying required IBM Cloud variables (.env.ce)..."; \
 		missing=0; \
 		for var in IBMCLOUD_REGION IBMCLOUD_PROJECT IBMCLOUD_RESOURCE_GROUP \
 		           IBMCLOUD_CODE_ENGINE_APP IBMCLOUD_IMAGE_NAME IBMCLOUD_IMG_PROD \
@@ -1270,7 +1270,7 @@ ibmcloud-check-env:
 			fi; \
 		done; \
 		if [ -z "$$IBMCLOUD_API_KEY" ]; then \
-			echo "⚠️   IBMCLOUD_API_KEY not set – interactive SSO login will be used"; \
+			echo "⚠️   IBMCLOUD_API_KEY not set - interactive SSO login will be used"; \
 		else \
 			echo "🔑  IBMCLOUD_API_KEY found"; \
 		fi; \
@@ -1282,7 +1282,7 @@ ibmcloud-check-env:
 		fi'
 
 ibmcloud-cli-install:
-	@echo "☁️  Detecting OS and installing IBM Cloud CLI…"
+	@echo "☁️  Detecting OS and installing IBM Cloud CLI..."
 	@if grep -qi microsoft /proc/version 2>/dev/null; then \
 		echo "🔧 Detected WSL2"; \
 		curl -fsSL https://clis.cloud.ibm.com/install/linux | sh; \
@@ -1298,13 +1298,13 @@ ibmcloud-cli-install:
 	else \
 		echo "❌ Unsupported OS"; exit 1; \
 	fi
-	@echo "✅ CLI installed. Installing required plugins…"
+	@echo "✅ CLI installed. Installing required plugins..."
 	@ibmcloud plugin install container-registry -f
 	@ibmcloud plugin install code-engine -f
 	@ibmcloud --version
 
 ibmcloud-login:
-	@echo "🔐 Starting IBM Cloud login…"
+	@echo "🔐 Starting IBM Cloud login..."
 	@echo "──────────────────────────────────────────────"
 	@echo "👤  User:               $(USER)"
 	@echo "📍  Region:             $(IBMCLOUD_REGION)"
@@ -1324,18 +1324,18 @@ ibmcloud-login:
 	else \
 		ibmcloud login --sso -r "$(IBMCLOUD_REGION)" -g "$(IBMCLOUD_RESOURCE_GROUP)"; \
 	fi
-	@echo "🎯 Targeting region and resource group…"
+	@echo "🎯 Targeting region and resource group..."
 	@ibmcloud target -r "$(IBMCLOUD_REGION)" -g "$(IBMCLOUD_RESOURCE_GROUP)"
 	@ibmcloud target
 
 ibmcloud-ce-login:
-	@echo "🎯 Targeting Code Engine project '$(IBMCLOUD_PROJECT)' in region '$(IBMCLOUD_REGION)'…"
+	@echo "🎯 Targeting Code Engine project '$(IBMCLOUD_PROJECT)' in region '$(IBMCLOUD_REGION)'..."
 	@ibmcloud ce project select --name "$(IBMCLOUD_PROJECT)"
 
 ibmcloud-list-containers:
 	@echo "📦 Listing Code Engine images"
 	ibmcloud cr images
-	@echo "📦 Listing Code Engine applications…"
+	@echo "📦 Listing Code Engine applications..."
 	@ibmcloud ce application list
 
 ibmcloud-tag:
@@ -1344,20 +1344,20 @@ ibmcloud-tag:
 	podman images | head -3
 
 ibmcloud-push:
-	@echo "📤 Logging into IBM Container Registry and pushing image…"
+	@echo "📤 Logging into IBM Container Registry and pushing image..."
 	@ibmcloud cr login
 	podman push $(IBMCLOUD_IMAGE_NAME)
 
 ibmcloud-deploy:
-	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)…"
+	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)..."
 	@if ibmcloud ce application get --name $(IBMCLOUD_CODE_ENGINE_APP) > /dev/null 2>&1; then \
-		echo "🔁 Updating existing app…"; \
+		echo "🔁 Updating existing app..."; \
 		ibmcloud ce application update --name $(IBMCLOUD_CODE_ENGINE_APP) \
 			--image $(IBMCLOUD_IMAGE_NAME) \
 			--cpu $(IBMCLOUD_CPU) --memory $(IBMCLOUD_MEMORY) \
 			--registry-secret $(IBMCLOUD_REGISTRY_SECRET); \
 	else \
-		echo "🆕 Creating new app…"; \
+		echo "🆕 Creating new app..."; \
 		ibmcloud ce application create --name $(IBMCLOUD_CODE_ENGINE_APP) \
 			--image $(IBMCLOUD_IMAGE_NAME) \
 			--cpu $(IBMCLOUD_CPU) --memory $(IBMCLOUD_MEMORY) \
@@ -1366,29 +1366,29 @@ ibmcloud-deploy:
 	fi
 
 ibmcloud-ce-logs:
-	@echo "📜 Streaming logs for '$(IBMCLOUD_CODE_ENGINE_APP)'…"
+	@echo "📜 Streaming logs for '$(IBMCLOUD_CODE_ENGINE_APP)'..."
 	@ibmcloud ce application logs --name $(IBMCLOUD_CODE_ENGINE_APP) --follow
 
 ibmcloud-ce-status:
-	@echo "📈 Application status for '$(IBMCLOUD_CODE_ENGINE_APP)'…"
+	@echo "📈 Application status for '$(IBMCLOUD_CODE_ENGINE_APP)'..."
 	@ibmcloud ce application get --name $(IBMCLOUD_CODE_ENGINE_APP)
 
 ibmcloud-ce-rm:
-	@echo "🗑️  Deleting Code Engine app: $(IBMCLOUD_CODE_ENGINE_APP)…"
+	@echo "🗑️  Deleting Code Engine app: $(IBMCLOUD_CODE_ENGINE_APP)..."
 	@ibmcloud ce application delete --name $(IBMCLOUD_CODE_ENGINE_APP) -f
 
 
 # =============================================================================
 # 🧪 MINIKUBE LOCAL CLUSTER
 # =============================================================================
-# A self‑contained block with sensible defaults, overridable via the CLI.
+# A self-contained block with sensible defaults, overridable via the CLI.
 # App is accessible after: kubectl port-forward svc/mcp-context-forge 8080:80
 # Examples:
 #   make minikube-start MINIKUBE_DRIVER=podman
 #   make minikube-image-load TAG=v0.1.2
 #
 #   # Push via the internal registry (registry addon):
-#   # 1️⃣ Discover the randomized host‑port (docker driver only):
+#   # 1️⃣ Discover the randomized host-port (docker driver only):
 #   REG_URL=$(shell minikube -p $(MINIKUBE_PROFILE) service registry -n kube-system --url)
 #   # 2️⃣ Tag & push:
 #   docker build -t $${REG_URL}/$(PROJECT_NAME):dev .
@@ -1407,18 +1407,18 @@ ibmcloud-ce-rm:
 
 # ▸ Tunables (export or pass on the command line)
 MINIKUBE_PROFILE ?= mcpgw          # Profile/cluster name
-MINIKUBE_DRIVER  ?= docker         # docker | podman | hyperkit | virtualbox …
+MINIKUBE_DRIVER  ?= docker         # docker | podman | hyperkit | virtualbox ...
 MINIKUBE_CPUS    ?= 4              # vCPUs to allocate
 MINIKUBE_MEMORY  ?= 6g             # RAM (supports m / g suffix)
-# Enabled addons – tweak to suit your workflow (`minikube addons list`).
-# • ingress / ingress-dns      – Ingress controller + CoreDNS wildcard hostnames
-# • metrics-server             – HPA / kubectl top
-# • dashboard                  – Web UI (make minikube-dashboard)
-# • registry                   – Local Docker registry, *dynamic* host-port
-# • registry-aliases           – Adds handy DNS names inside the cluster
+# Enabled addons - tweak to suit your workflow (`minikube addons list`).
+# - ingress / ingress-dns      - Ingress controller + CoreDNS wildcard hostnames
+# - metrics-server             - HPA / kubectl top
+# - dashboard                  - Web UI (make minikube-dashboard)
+# - registry                   - Local Docker registry, *dynamic* host-port
+# - registry-aliases           - Adds handy DNS names inside the cluster
 MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry registry-aliases
 # OCI image tag to preload into the cluster.
-# • By default we point to the *local* image built via `make docker-prod`, e.g.
+# - By default we point to the *local* image built via `make docker-prod`, e.g.
 #   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
 #   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.2.0).
 TAG              ?= latest         # override with TAG=<ver>
@@ -1434,7 +1434,7 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # help: minikube-delete         - Delete the cluster completely
 # help: minikube-tunnel         - Run "minikube tunnel" (LoadBalancer) in foreground
 # help: minikube-port-forward   - Run kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
-# help: minikube-dashboard      - Print & (best‑effort) open the Kubernetes dashboard URL
+# help: minikube-dashboard      - Print & (best-effort) open the Kubernetes dashboard URL
 # help: minikube-image-load     - Load $(IMAGE) into Minikube container runtime
 # help: minikube-k8s-apply      - Apply manifests from k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
 # help: minikube-status         - Cluster + addon health overview
@@ -1452,7 +1452,7 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # 🚀  INSTALLATION HELPERS
 # -----------------------------------------------------------------------------
 minikube-install:
-	@echo "💻 Detecting OS and installing Minikube + kubectl…"
+	@echo "💻 Detecting OS and installing Minikube + kubectl..."
 	@if [ "$(shell uname)" = "Darwin" ]; then \
 	  brew install minikube kubernetes-cli; \
 	elif [ "$(shell uname)" = "Linux" ]; then \
@@ -1470,7 +1470,7 @@ minikube-install:
 # ⏯  LIFECYCLE COMMANDS
 # -----------------------------------------------------------------------------
 minikube-start:
-	@echo "🚀 Starting Minikube profile '$(MINIKUBE_PROFILE)' (driver=$(MINIKUBE_DRIVER)) …"
+	@echo "🚀 Starting Minikube profile '$(MINIKUBE_PROFILE)' (driver=$(MINIKUBE_DRIVER)) ..."
 	minikube start -p $(MINIKUBE_PROFILE) \
 	  --driver=$(MINIKUBE_DRIVER) \
 	  --cpus=$(MINIKUBE_CPUS) --memory=$(MINIKUBE_MEMORY)
@@ -1480,26 +1480,26 @@ minikube-start:
 	done
 
 minikube-stop:
-	@echo "🛑 Stopping Minikube …"
+	@echo "🛑 Stopping Minikube ..."
 	minikube stop -p $(MINIKUBE_PROFILE)
 
 minikube-delete:
-	@echo "🗑 Deleting Minikube profile '$(MINIKUBE_PROFILE)' …"
+	@echo "🗑 Deleting Minikube profile '$(MINIKUBE_PROFILE)' ..."
 	minikube delete -p $(MINIKUBE_PROFILE)
 
 # -----------------------------------------------------------------------------
 # 🛠  UTILITIES
 # -----------------------------------------------------------------------------
 minikube-tunnel:
-	@echo "🌐 Starting minikube tunnel (Ctrl+C to quit) …"
+	@echo "🌐 Starting minikube tunnel (Ctrl+C to quit) ..."
 	minikube -p $(MINIKUBE_PROFILE) tunnel
 
 minikube-port-forward:
-	@echo "🔌 Forwarding http://localhost:8080 → svc/mcp-stack-mcpgateway:80 in namespace mcp-private  (Ctrl+C to stop)…"
+	@echo "🔌 Forwarding http://localhost:8080 → svc/mcp-stack-mcpgateway:80 in namespace mcp-private  (Ctrl+C to stop)..."
 	kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
 
 minikube-dashboard:
-	@echo "📊 Fetching dashboard URL …"
+	@echo "📊 Fetching dashboard URL ..."
 	@minikube dashboard -p $(MINIKUBE_PROFILE) --url | { \
 	  read url; \
 	  echo "🔗 Dashboard: $$url"; \
@@ -1508,35 +1508,35 @@ minikube-dashboard:
 	}
 
 minikube-context:
-	@echo "🎯 Switching kubectl context to Minikube …"
+	@echo "🎯 Switching kubectl context to Minikube ..."
 	kubectl config use-context minikube
 
 minikube-ssh:
-	@echo "🔧 Connecting to Minikube VM (exit with Ctrl+D) …"
+	@echo "🔧 Connecting to Minikube VM (exit with Ctrl+D) ..."
 	minikube ssh -p $(MINIKUBE_PROFILE)
 
 # -----------------------------------------------------------------------------
 # 📦  IMAGE & MANIFEST HANDLING
 # -----------------------------------------------------------------------------
 minikube-image-load:
-	@echo "📦 Loading $(IMAGE) into Minikube …"
+	@echo "📦 Loading $(IMAGE) into Minikube ..."
 	@if ! docker image inspect $(IMAGE) >/dev/null 2>&1; then \
 	  echo "❌ $(IMAGE) not found locally. Build or pull it first."; exit 1; \
 	fi
 	minikube image load $(IMAGE) -p $(MINIKUBE_PROFILE)
 
 minikube-k8s-apply:
-	@echo "🧩 Applying k8s manifests in ./k8s …"
+	@echo "🧩 Applying k8s manifests in ./k8s ..."
 	@kubectl apply -f k8s/ --recursive
 
 # -----------------------------------------------------------------------------
-# 🔍  Utility: print the current registry URL (host‑port) – works after cluster
+# 🔍  Utility: print the current registry URL (host-port) - works after cluster
 #             + registry addon are up.
 # -----------------------------------------------------------------------------
 minikube-registry-url:
 	@echo "📦 Internal registry URL:" && \
 	minikube -p $(MINIKUBE_PROFILE) service registry -n kube-system --url || \
-	echo "⚠️  Registry addon not ready – run make minikube-start first."
+	echo "⚠️  Registry addon not ready - run make minikube-start first."
 
 # -----------------------------------------------------------------------------
 # 📊  INSPECTION & RESET
@@ -1571,7 +1571,7 @@ NAMESPACE      ?= mcp
 VALUES         ?= $(CHART_DIR)/values.yaml
 
 helm-install:
-	@echo "📦 Installing Helm CLI…"
+	@echo "📦 Installing Helm CLI..."
 	@if [ "$(shell uname)" = "Darwin" ]; then \
 	  brew install helm; \
 	elif [ "$(shell uname)" = "Linux" ]; then \
@@ -1609,10 +1609,10 @@ helm-delete:
 
 
 # =============================================================================
-# 🚢 ARGO CD – GITOPS
+# 🚢 ARGO CD - GITOPS
 # TODO: change default to custom namespace (e.g. mcp-gitops)
 # =============================================================================
-# help: 🚢 ARGO CD – GITOPS
+# help: 🚢 ARGO CD - GITOPS
 # help: argocd-cli-install   - Install Argo CD CLI locally
 # help: argocd-install       - Install Argo CD into Minikube (ns=$(ARGOCD_NS))
 # help: argocd-password      - Echo initial admin password
@@ -1632,20 +1632,20 @@ GIT_PATH    ?= k8s
         argocd-login argocd-app-bootstrap argocd-app-sync
 
 argocd-cli-install:
-	@echo "🔧 Installing Argo CD CLI…"
+	@echo "🔧 Installing Argo CD CLI..."
 	@if command -v argocd >/dev/null 2>&1; then echo "✅ argocd already present"; \
 	elif [ "$$(uname)" = "Darwin" ];  then brew install argocd; \
 	elif [ "$$(uname)" = "Linux" ];   then curl -sSL -o /tmp/argocd \
 	     https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64 && \
 	     sudo install -m 555 /tmp/argocd /usr/local/bin/argocd; \
-	else echo "❌ Unsupported OS – install argocd manually"; exit 1; fi
+	else echo "❌ Unsupported OS - install argocd manually"; exit 1; fi
 
 argocd-install:
-	@echo "🚀 Installing Argo CD into Minikube…"
+	@echo "🚀 Installing Argo CD into Minikube..."
 	kubectl create namespace $(ARGOCD_NS) --dry-run=client -o yaml | kubectl apply -f -
 	kubectl apply -n $(ARGOCD_NS) \
 	  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-	@echo "⏳ Waiting for Argo CD server pod…"
+	@echo "⏳ Waiting for Argo CD server pod..."
 	kubectl -n $(ARGOCD_NS) rollout status deploy/argocd-server
 
 argocd-password:
@@ -1653,16 +1653,16 @@ argocd-password:
 	  -o jsonpath='{.data.password}' | base64 -d ; echo
 
 argocd-forward:
-	@echo "🌐 Port-forward http://localhost:$(ARGOCD_PORT) → svc/argocd-server:443 (Ctrl-C to stop)…"
+	@echo "🌐 Port-forward http://localhost:$(ARGOCD_PORT) → svc/argocd-server:443 (Ctrl-C to stop)..."
 	kubectl -n $(ARGOCD_NS) port-forward svc/argocd-server $(ARGOCD_PORT):443
 
 argocd-login: argocd-cli-install
-	@echo "🔐 Logging into Argo CD CLI…"
+	@echo "🔐 Logging into Argo CD CLI..."
 	@PASS=$$(kubectl -n $(ARGOCD_NS) get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d); \
 	argocd login localhost:$(ARGOCD_PORT) --username admin --password $$PASS --insecure
 
 argocd-app-bootstrap:
-	@echo "🚀 Creating Argo CD application $(ARGOCD_APP)…"
+	@echo "🚀 Creating Argo CD application $(ARGOCD_APP)..."
 	-argocd app create $(ARGOCD_APP) \
 	    --repo $(GIT_REPO) \
 	    --path $(GIT_PATH) \
@@ -1673,7 +1673,7 @@ argocd-app-bootstrap:
 	argocd app sync $(ARGOCD_APP)
 
 argocd-app-sync:
-	@echo "🔄  Syncing Argo CD application $(ARGOCD_APP)…"
+	@echo "🔄  Syncing Argo CD application $(ARGOCD_APP)..."
 	argocd app sync $(ARGOCD_APP)
 
 # =============================================================================
@@ -2064,7 +2064,7 @@ print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['vers
 2>/dev/null || echo 0.0.0)
 
 devpi-delete: devpi-setup-user                 ## Delete mcp-contextforge-gateway==$(VER) from index
-	@echo "🗑️   Removing mcp-contextforge-gateway==$(VER) from $(DEVPI_INDEX)…"
+	@echo "🗑️   Removing mcp-contextforge-gateway==$(VER) from $(DEVPI_INDEX)..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		devpi use $(DEVPI_INDEX) && \
 		devpi remove -y mcp-contextforge-gateway==$(VER) || true"
@@ -2088,11 +2088,11 @@ SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' -not -path './node_modules/
 .PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
 
 shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
-	@echo "🔧  Installing/ensuring shell linters are present…"
+	@echo "🔧  Installing/ensuring shell linters are present..."
 	@set -e ; \
 	# -------- ShellCheck -------- \
 	if ! command -v shellcheck >/dev/null 2>&1 ; then \
-	  echo "🛠  Installing ShellCheck…" ; \
+	  echo "🛠  Installing ShellCheck..." ; \
 	  case "$$(uname -s)" in \
 	    Darwin)  brew install shellcheck ;; \
 	    Linux)   { command -v apt-get && sudo apt-get update -qq && sudo apt-get install -y shellcheck ; } || \
@@ -2103,14 +2103,14 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	fi ; \
 	# -------- shfmt (Go) -------- \
 	if ! command -v shfmt >/dev/null 2>&1 ; then \
-	  echo "🛠  Installing shfmt…" ; \
+	  echo "🛠  Installing shfmt..." ; \
 	  GO111MODULE=on go install mvdan.cc/sh/v3/cmd/shfmt@latest || \
-	  { echo "⚠️  go not found – install Go or brew/apt shfmt package manually"; } ; \
+	  { echo "⚠️  go not found - install Go or brew/apt shfmt package manually"; } ; \
 	  export PATH=$$PATH:$$HOME/go/bin ; \
 	fi ; \
 	# -------- bashate (pip) ----- \
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
-	  echo "🛠  Installing bashate (into venv)…" ; \
+	  echo "🛠  Installing bashate (into venv)..." ; \
 	  test -d "$(VENV_DIR)" || $(MAKE) venv ; \
 	  /bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --quiet bashate" ; \
 	fi
@@ -2119,17 +2119,17 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 # -----------------------------------------------------------------------------
 
 shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
-	@echo "🔍  Running shfmt (diff-only)…"
+	@echo "🔍  Running shfmt (diff-only)..."
 	@shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true
-	@echo "🔍  Running ShellCheck…"
+	@echo "🔍  Running ShellCheck..."
 	@shellcheck $(SHELL_SCRIPTS) || true
-	@echo "🔍  Running bashate…"
+	@echo "🔍  Running bashate..."
 	@$(VENV_DIR)/bin/bashate -C $(SHELL_SCRIPTS) || true
 	@echo "✅  Shell lint complete."
 
 
 shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
-	@echo "🎨  Formatting shell scripts with shfmt -w…"
+	@echo "🎨  Formatting shell scripts with shfmt -w..."
 	@shfmt -w -i 4 -ci $(SHELL_SCRIPTS)
 	@echo "✅  shfmt formatting done."
 
@@ -2156,7 +2156,7 @@ REV     ?= -1             # Default: one step down; can be hash, -n, +n, etc.
 .PHONY: alembic-install db-new db-up db-down db-current db-history db-revision-id
 
 alembic-install:
-	@echo "➜ Installing Alembic …"
+	@echo "➜ Installing Alembic ..."
 	pip install --quiet alembic sqlalchemy
 
 db-new:
@@ -2164,11 +2164,11 @@ db-new:
 	$(ALEMBIC) revision --autogenerate -m $(MSG)
 
 db-up:
-	@echo "➜ Upgrading database to head …"
+	@echo "➜ Upgrading database to head ..."
 	$(ALEMBIC) upgrade head
 
 db-down:
-	@echo "➜ Downgrading database → $(REV) …"
+	@echo "➜ Downgrading database → $(REV) ..."
 	$(ALEMBIC) downgrade $(REV)
 
 db-current:

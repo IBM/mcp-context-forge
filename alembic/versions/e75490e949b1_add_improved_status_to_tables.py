@@ -3,7 +3,7 @@
 
 Revision ID: e75490e949b1
 Revises: e4fc04d1a442
-Create Date: 2025‑07‑02 17:12:40.678256
+Create Date: 2025-07-02 17:12:40.678256
 """
 
 # Standard
