@@ -22,6 +22,7 @@ from the web, or tidying a repository before committing.
 - **Built-in configuration** - mappings, removals, warnings and ignore globs
   are all Python literals in this file, making the tool self-documenting.
 - **Comprehensive ignore patterns** for modern development environments.
+- **File type whitelist** - only processes specified file types.
 
 Usage examples::
 
@@ -62,7 +63,7 @@ from typing import Dict, Iterable, List, Optional, Pattern, Sequence
 __all__ = [
     "main",
     "apply_char_map",
-    "apply_removals", 
+    "apply_removals",
     "gather_warnings",
     "find_files",
 ]
@@ -74,11 +75,130 @@ _LOG = logging.getLogger("normalize_characters")
 # Configurable rules – tweak these to suit your project
 # ---------------------------------------------------------------------------
 
+# Whitelist of allowed file extensions (only these files will be processed)
+DEFAULT_ALLOWED_EXTENSIONS: List[str] = [
+    # Programming languages
+    ".py",          # Python
+    ".js",          # JavaScript
+    ".ts",          # TypeScript
+    ".jsx",         # React JSX
+    ".tsx",         # React TypeScript
+    ".html",        # HTML
+    ".htm",         # HTML
+    ".css",         # CSS
+    ".scss",        # Sass
+    ".sass",        # Sass
+    ".less",        # Less CSS
+    ".php",         # PHP
+    ".rb",          # Ruby
+    ".go",          # Go
+    ".rs",          # Rust
+    ".java",        # Java
+    ".c",           # C
+    ".cpp",         # C++
+    ".cxx",         # C++
+    ".cc",          # C++
+    ".h",           # C/C++ Header
+    ".hpp",         # C++ Header
+    ".hxx",         # C++ Header
+    ".cs",          # C#
+    ".swift",       # Swift
+    ".kt",          # Kotlin
+    ".scala",       # Scala
+    ".clj",         # Clojure
+    ".hs",          # Haskell
+    ".ml",          # OCaml
+    ".fs",          # F#
+    ".dart",        # Dart
+    ".lua",         # Lua
+    ".r",           # R
+    ".m",           # Objective-C/MATLAB
+    ".pl",          # Perl
+    ".pm",          # Perl Module
+    
+    # Shell and scripts
+    ".sh",          # Shell script
+    ".bash",        # Bash script
+    ".zsh",         # Zsh script
+    ".fish",        # Fish script
+    ".ps1",         # PowerShell
+    ".bat",         # Batch file
+    ".cmd",         # Command file
+    
+    # Data and config files
+    ".json",        # JSON
+    ".yaml",        # YAML
+    ".yml",         # YAML
+    ".xml",         # XML
+    ".toml",        # TOML
+    ".ini",         # INI file
+    ".cfg",         # Config file
+    ".conf",        # Config file
+    ".properties",  # Properties file
+    ".env",         # Environment file
+    
+    # Documentation and text
+    ".md",          # Markdown
+    ".rst",         # reStructuredText
+    ".txt",         # Plain text
+    ".rtf",         # Rich text
+    ".tex",         # LaTeX
+    ".org",         # Org-mode
+    
+    # Database
+    ".sql",         # SQL
+    ".sqlite",      # SQLite
+    ".psql",        # PostgreSQL
+    
+    # Web and markup
+    ".svg",         # SVG (text-based)
+    ".vue",         # Vue.js
+    ".svelte",      # Svelte
+    
+    # Build and project files
+    ".dockerfile",  # Dockerfile
+    ".makefile",    # Makefile
+    ".gradle",      # Gradle
+    ".maven",       # Maven
+    ".cmake",       # CMake
+    ".gyp",         # GYP
+    ".gypi",        # GYP
+    
+    # Version control
+    ".gitignore",   # Git ignore
+    ".gitattributes", # Git attributes
+    
+    # Without extension (common script files)
+    "Dockerfile",
+    "Makefile",
+    "Rakefile",
+    "Gemfile",
+    "Pipfile",
+    "requirements.txt",
+    "setup.py",
+    "pyproject.toml",
+    "package.json",
+    "tsconfig.json",
+    "webpack.config.js",
+    "rollup.config.js",
+    "vite.config.js",
+    "next.config.js",
+    "nuxt.config.js",
+    "tailwind.config.js",
+    "postcss.config.js",
+    "babel.config.js",
+    "eslint.config.js",
+    ".eslintrc",
+    ".prettierrc",
+    ".babelrc",
+    ".editorconfig",
+]
+
 # fmt: off  # (Keep one-item-per-line style for readability.)
 DEFAULT_MAPPING: Dict[str, str] = {
     # "Smart" double quotes & guillemets → plain double quote
-    """: '"',   # U+201C LEFT DOUBLE QUOTATION MARK
-    """: '"',   # U+201D RIGHT DOUBLE QUOTATION MARK
+    "“": '"',   # U+201C LEFT DOUBLE QUOTATION MARK
+    "”": '"',   # U+201D RIGHT DOUBLE QUOTATION MARK
     "„": '"',   # U+201E DOUBLE LOW-9 QUOTATION MARK
     "‟": '"',   # U+201F DOUBLE HIGH-REVERSED-9 QUOTATION MARK
     "«": '"',   # U+00AB LEFT-POINTING DOUBLE ANGLE QUOTATION MARK (guillemet)
@@ -155,7 +275,6 @@ DEFAULT_REGEX_REMOVE: List[str] = [
 # Warn-only patterns – flagged but not auto-fixed
 DEFAULT_WARN_PATTERNS: List[str] = [
     r"\t",      # Literal TAB characters
-    r"\s+$",    # Trailing whitespace at EOL (multiline)
     r"\r\n",    # Windows CRLF line endings
     r"[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]",  # Control characters
 ]
@@ -164,22 +283,25 @@ DEFAULT_WARN_PATTERNS: List[str] = [
 DEFAULT_IGNORES: List[str] = [
     # Self-reference - prevent the script from modifying itself
     "normalize_characters.py",
-    "normalize_special_characters.py", 
+    "normalize_special_characters.py",
     "normalize-characters.py",
     "character_normalizer.py",
     "**/normalize_characters.py",
-    "**/normalize_special_characters.py", 
+    "**/normalize_special_characters.py",
     "**/normalize-characters.py",
     "**/character_normalizer.py",
-    
+
     # Version control
+    ".git",
+    ".git*",
+    ".git/**",
     "**/.git/**/*",
     "**/.gitignore",
     "**/.gitmodules",
     "**/.gitattributes",
     "**/.hg/**/*",
     "**/.svn/**/*",
-    
+
     # CI/CD and configuration
     "**/.github/**/*",
     "**/.gitlab-ci.yml",
@@ -187,7 +309,7 @@ DEFAULT_IGNORES: List[str] = [
     "**/.circleci/**/*",
     "**/.pre-commit-config.yaml",
     "**/pre-commit-config.yaml",
-    
+
     # Python
     "**/__pycache__/**/*",
     "**/*.pyc",
@@ -204,7 +326,7 @@ DEFAULT_IGNORES: List[str] = [
     "**/dist/**/*",
     "**/build/**/*",
     "**/*.egg-info/**/*",
-    
+
     # Node.js
     "**/node_modules/**/*",
     "**/npm-debug.log*",
@@ -214,7 +336,7 @@ DEFAULT_IGNORES: List[str] = [
     "**/.yarn/**/*",
     "**/package-lock.json",
     "**/yarn.lock",
-    
+
     # IDEs and editors
     "**/.vscode/**/*",
     "**/.idea/**/*",
@@ -223,7 +345,7 @@ DEFAULT_IGNORES: List[str] = [
     "**/*~",
     "**/.DS_Store",
     "**/Thumbs.db",
-    
+
     # Compiled files and binaries
     "**/*.o",
     "**/*.so",
@@ -231,44 +353,48 @@ DEFAULT_IGNORES: List[str] = [
     "**/*.exe",
     "**/*.class",
     "**/*.jar",
-    
+
     # Documentation builds
     "**/docs/_build/**/*",
     "**/site/**/*",
-    
+
     # Temporary files
     "**/tmp/**/*",
     "**/temp/**/*",
     "**/*.tmp",
     "**/*.temp",
     "**/*.log",
-    
+
     # Archives
     "**/*.zip",
     "**/*.tar.gz",
     "**/*.tar.bz2",
     "**/*.rar",
     "**/*.7z",
-    
+
     # Images and media (usually binary)
     "**/*.png",
     "**/*.jpg",
     "**/*.jpeg",
     "**/*.gif",
     "**/*.ico",
-    "**/*.svg",
     "**/*.mp4",
     "**/*.avi",
     "**/*.mov",
     "**/*.mp3",
     "**/*.wav",
-    
+
     # Fonts
     "**/*.ttf",
     "**/*.otf",
     "**/*.woff",
     "**/*.woff2",
     "**/*.eot",
+
+    # Database
+    "mcp.db",
+    "*.db",
+    "**/*.db",
 ]
 
 # ---------------------------------------------------------------------------
@@ -290,12 +416,12 @@ def apply_char_map(text: str, mapping: Optional[Dict[str, str]] = None) -> str:
 
     Args:
         text: The input string to normalise.
-        mapping: A custom mapping to use instead of DEFAULT_MAPPING. 
+        mapping: A custom mapping to use instead of DEFAULT_MAPPING.
                 If None, uses the default mapping.
 
     Returns:
         The transformed string with characters replaced according to the mapping.
-        
+
     Examples:
         >>> apply_char_map('"smart quotes"')
         '"smart quotes"'
@@ -308,11 +434,11 @@ def apply_char_map(text: str, mapping: Optional[Dict[str, str]] = None) -> str:
     """
     if not text:
         return text
-        
+
     char_mapping = mapping if mapping is not None else DEFAULT_MAPPING
     if not char_mapping:
         return text
-        
+
     rx = _CHAR_PATTERN if mapping is None else re.compile(
         "|".join(sorted(map(re.escape, char_mapping), key=len, reverse=True))
     )
@@ -321,14 +447,14 @@ def apply_char_map(text: str, mapping: Optional[Dict[str, str]] = None) -> str:
 
 def apply_removals(text: str, patterns: Optional[Iterable[Pattern[str]]] = None) -> str:
     """Strip substrings that match patterns.
-    
+
     Args:
         text: The input string to process.
         patterns: Regex patterns to remove. If None, uses _REMOVE_REGEX.
-        
+
     Returns:
         String with matching patterns removed.
-        
+
     Examples:
         >>> apply_removals('text::contentReference[oaicite:1]{index=0}more')
         'textmore'
@@ -341,7 +467,7 @@ def apply_removals(text: str, patterns: Optional[Iterable[Pattern[str]]] = None)
     """
     if not text:
         return text
-        
+
     regex_patterns = patterns if patterns is not None else _REMOVE_REGEX
     result = text
     for rx in regex_patterns:
@@ -350,20 +476,20 @@ def apply_removals(text: str, patterns: Optional[Iterable[Pattern[str]]] = None)
 
 
 def gather_warnings(
-    text: str, 
-    src: Path, 
+    text: str,
+    src: Path,
     warn_rx: Optional[Iterable[Pattern[str]]] = None
 ) -> List[str]:
     """Return a list of warning strings for each regex that matches text.
-    
+
     Args:
         text: The text content to check for warnings.
         src: Path to the source file (for warning messages).
         warn_rx: Warning regex patterns. If None, uses _WARN_REGEX.
-        
+
     Returns:
         List of warning messages for patterns that matched.
-        
+
     Examples:
         >>> from pathlib import Path
         >>> import re
@@ -378,7 +504,7 @@ def gather_warnings(
     """
     if not text:
         return []
-        
+
     warning_patterns = warn_rx if warn_rx is not None else _WARN_REGEX
     return [
         f"⚠ Warn: {rx.pattern!r} matched in {src}"
@@ -387,16 +513,51 @@ def gather_warnings(
     ]
 
 
-def find_files(inputs: Sequence[str], ignore: Sequence[str]) -> List[Path]:
-    """Expand inputs (files/directories/globs) into a unique list of Path objects.
+def is_allowed_file(path: Path, allowed_extensions: Optional[Sequence[str]] = None) -> bool:
+    """Check if a file is in the allowed extensions whitelist.
+
+    Args:
+        path: Path to the file to check.
+        allowed_extensions: List of allowed extensions. If None, uses DEFAULT_ALLOWED_EXTENSIONS.
+
+    Returns:
+        True if the file should be processed, False otherwise.
+
+    Examples:
+        >>> is_allowed_file(Path('test.py'))
+        True
+        >>> is_allowed_file(Path('test.exe'))
+        False
+        >>> is_allowed_file(Path('Dockerfile'))
+        True
+        >>> is_allowed_file(Path('test.custom'), ['.custom'])
+        True
+    """
+    extensions = allowed_extensions if allowed_extensions is not None else DEFAULT_ALLOWED_EXTENSIONS
     
+    # Check exact filename matches (for files like Dockerfile, Makefile, etc.)
+    if path.name in extensions:
+        return True
+    
+    # Check file extension
+    if path.suffix.lower() in [ext.lower() for ext in extensions]:
+        return True
+    
+    return False
+
+
+def find_files(inputs: Sequence[str], ignore: Sequence[str], allowed_extensions: Optional[Sequence[str]] = None) -> List[Path]:
+    """Expand inputs (files/directories/globs) into a unique list of Path objects.
+
     Args:
         inputs: List of file paths, directory paths, or glob patterns.
         ignore: List of glob patterns to ignore.
-        
+        allowed_extensions: List of allowed file extensions. If None, uses DEFAULT_ALLOWED_EXTENSIONS.
+
     Returns:
-        Sorted list of unique Path objects that match inputs but not ignore patterns.
-        
+        Sorted list of unique Path objects that match inputs but not ignore patterns
+        and are in the allowed extensions whitelist.
+
     Examples:
         >>> import tempfile
         >>> import os
@@ -404,10 +565,10 @@ def find_files(inputs: Sequence[str], ignore: Sequence[str]) -> List[Path]:
         ...     # Create test files
         ...     test_py = Path(tmpdir) / 'test.py'
         ...     test_py.write_text('print("hello")')
-        ...     test_txt = Path(tmpdir) / 'test.txt'  
-        ...     test_txt.write_text('hello world')
+        ...     test_exe = Path(tmpdir) / 'test.exe'
+        ...     test_exe.write_text('binary')
         ...     # Test finding files
-        ...     files = find_files([tmpdir], ['**/*.txt'])
+        ...     files = find_files([tmpdir], [])
         ...     len([f for f in files if f.name == 'test.py']) == 1
         14
         True
@@ -416,7 +577,7 @@ def find_files(inputs: Sequence[str], ignore: Sequence[str]) -> List[Path]:
     """
     if not inputs:
         return []
-        
+
     paths: List[Path] = []
     for token in inputs:
         p = Path(token)
@@ -431,6 +592,9 @@ def find_files(inputs: Sequence[str], ignore: Sequence[str]) -> List[Path]:
                     rel = match.as_posix()
                     if any(fnmatch.fnmatch(rel, pat) for pat in ignore):
                         continue
+                    # Check if file is in whitelist
+                    if not is_allowed_file(match, allowed_extensions):
+                        continue
                     paths.append(match)
         except OSError:
             # Handle invalid glob patterns gracefully
@@ -444,20 +608,20 @@ def find_files(inputs: Sequence[str], ignore: Sequence[str]) -> List[Path]:
 
 def _diff(before: str, after: str, filename: str) -> str:
     """Return unified diff between before and after as a single string.
-    
+
     Args:
         before: Original text content.
         after: Modified text content.
         filename: Name of the file for diff headers.
-        
+
     Returns:
         Unified diff string, empty if no differences.
-        
+
     Examples:
         >>> diff_output = _diff('old line', 'new line', 'test.txt')
         >>> 'test.txt:before' in diff_output
         True
-        >>> 'test.txt:after' in diff_output  
+        >>> 'test.txt:after' in diff_output
         True
         >>> _diff('same', 'same', 'test.txt')
         ''
@@ -474,13 +638,13 @@ def _diff(before: str, after: str, filename: str) -> str:
 
 def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Define and parse all CLI arguments.
-    
+
     Args:
         argv: Command line arguments. If None, uses sys.argv.
-        
+
     Returns:
         Parsed argument namespace.
-        
+
     Examples:
         >>> args = _parse_args(['file.py'])
         >>> args.inputs
@@ -513,7 +677,18 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Disable built-in ignore rules.",
     )
-    p.add_argument("--dry-run", action="store_true", help="Do not write files.")
+    p.add_argument(
+        "--allowed-extensions",
+        action="append",
+        default=[],
+        help="Additional allowed file extensions (e.g., '.custom').",
+    )
+    p.add_argument(
+        "--no-default-extensions",
+        action="store_true",
+        help="Disable built-in allowed extensions whitelist.",
+    )
+    p.add_argument("--dry-run", action="store_true", help="Do not write files (disabled by default).")
     p.add_argument("--diff", action="store_true", help="Show unified diff.")
     p.add_argument(
         "--backup-ext",
@@ -540,13 +715,13 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> None:  # noqa: C901
     """Entry-point function for normalize-characters CLI.
-    
+
     Processes files according to command line arguments, normalizing characters
     and generating appropriate output/warnings.
-    
+
     Args:
         argv: Command line arguments. If None, uses sys.argv.
-        
+
     Examples:
         >>> import sys
         >>> from io import StringIO
@@ -567,7 +742,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:  # noqa: C901
     ignore = [] if args.no_default_ignore else list(DEFAULT_IGNORES)
     ignore.extend(args.ignore)
 
-    files = find_files(args.inputs, ignore)
+    allowed_extensions = [] if args.no_default_extensions else list(DEFAULT_ALLOWED_EXTENSIONS)
+    allowed_extensions.extend(args.allowed_extensions)
+
+    files = find_files(args.inputs, ignore, allowed_extensions)
     if not files:
         _LOG.warning("No files matched.")
         sys.exit(0)
