@@ -31,10 +31,10 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 
 ??? summary "Features"
 
-    * **Auto-discovery** – DNS-SD (`_mcp._tcp.local.`) or static peer list
-    * **Health checks** – fail-over + removal of unhealthy gateways
-    * **Capability sync** – merges remote tool catalogs into the local DB
-    * **Request forwarding** – automatic routing to the correct gateway
+    * **Auto-discovery** - DNS-SD (`_mcp._tcp.local.`) or static peer list
+    * **Health checks** - fail-over + removal of unhealthy gateways
+    * **Capability sync** - merges remote tool catalogs into the local DB
+    * **Request forwarding** - automatic routing to the correct gateway
 
 ??? diagram "Architecture"
 
@@ -130,7 +130,7 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 ??? info "Storage options"
 
     * **SQLite** (default dev)
-    * **PostgreSQL**, **MySQL/MariaDB**, **MongoDB** — via `DATABASE_URL`
+    * **PostgreSQL**, **MySQL/MariaDB**, **MongoDB** - via `DATABASE_URL`
 
 ??? example "Redis cache"
 
@@ -142,8 +142,8 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 ??? abstract "Observability"
 
     * Structured JSON logs (tap with `jq`)
-    * `/metrics` – Prometheus-friendly counters (`tool_calls_total`, `gateway_up`)
-    * `/health` – readiness + dependency checks
+    * `/metrics` - Prometheus-friendly counters (`tool_calls_total`, `gateway_up`)
+    * `/health` - readiness + dependency checks
 
 ---
 
@@ -151,10 +151,10 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 
 ??? summary "Highlights"
 
-    * **Makefile targets** – `make dev`, `make test`, `make lint`
-    * **400+ unit tests** – Pytest + HTTPX TestClient
-    * **VS Code Dev Container** – Python 3.11 + Docker/Podman CLI
-    * **Plug-in friendly** – drop-in FastAPI routers or Pydantic models
+    * **Makefile targets** - `make dev`, `make test`, `make lint`
+    * **400+ unit tests** - Pytest + HTTPX TestClient
+    * **VS Code Dev Container** - Python 3.11 + Docker/Podman CLI
+    * **Plug-in friendly** - drop-in FastAPI routers or Pydantic models
 
 ---
 
@@ -165,4 +165,4 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 * **Admin UI deep dive** → [UI Guide](ui.md)
 
 !!! success "Ready to explore"
-    With transports, federation, and security handled for you, focus on building great **MCP tools, prompts, and agents**—the gateway has your back.
+    With transports, federation, and security handled for you, focus on building great **MCP tools, prompts, and agents**-the gateway has your back.

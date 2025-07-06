@@ -57,7 +57,7 @@ class WebSocketTransport(Transport):
             return
 
         if loop.is_closed():
-            # The loop is already closed – further asyncio calls are illegal
+            # The loop is already closed - further asyncio calls are illegal
             return
 
         ping_task = getattr(self, "_ping_task", None)

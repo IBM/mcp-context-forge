@@ -13,16 +13,16 @@ then rolls out the MCP Gateway container via Helm.
 ## Quick Start
 
 ```bash
-# 1 – configure your region / prefix
+# 1 - configure your region / prefix
 export TF_VAR_region="eu-gb"
 export TF_VAR_prefix="demo"
 
-# 2 – kick the tyres
+# 2 - kick the tyres
 terraform init
 terraform plan -out tfplan
 terraform apply tfplan   # ~15 mins
 
-# 3 – hit the app 🎉
+# 3 - hit the app 🎉
 terraform output -raw gateway_url
 ```
 
@@ -30,7 +30,7 @@ terraform output -raw gateway_url
 
 | Task                  | Where / How                                       |
 | --------------------- | ------------------------------------------------- |
-| Scale pods            | `helm upgrade mcpgateway … --set replicaCount=N`  |
+| Scale pods            | `helm upgrade mcpgateway ... --set replicaCount=N`  |
 | Rotate DB credentials | `terraform taint ibm_resource_key.pg_key` → apply |
 | View cluster          | `ibmcloud ks cluster config --cluster <id>`       |
 | Destroy everything    | `terraform destroy`                               |

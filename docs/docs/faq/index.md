@@ -1,4 +1,4 @@
-# ContextForge MCP Gateway – Frequently Asked Questions
+# ContextForge MCP Gateway - Frequently Asked Questions
 
 ## ⚡ Quickstart
 
@@ -13,7 +13,7 @@
     uvenv run mcp-contextforge-gateway --port 4444
     ```
 
-    OCI image (Docker/Podman) – shares host network so localhost works:
+    OCI image (Docker/Podman) - shares host network so localhost works:
 
     ```bash
     podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:latest
@@ -29,12 +29,12 @@
 ## 🤔 What is MCP (Model Context Protocol)?
 
 ???+ info "💡 What is MCP in a nutshell?"
-    MCP is an open‑source protocol released by Anthropic in Nov 2024 that lets language models invoke external tools via a typed JSON‑RPC envelope. Community folks call it "USB‑C for AI"—one connector for many models.
+    MCP is an open-source protocol released by Anthropic in Nov 2024 that lets language models invoke external tools via a typed JSON-RPC envelope. Community folks call it "USB-C for AI"-one connector for many models.
 
 ???+ info "🌍 Who supports MCP and what's the ecosystem like?"
     - Supported by GitHub & Microsoft Copilot, AWS Bedrock, Google Cloud Vertex AI, IBM watsonx, AgentBee, LangChain, CrewAI and 15,000+ community servers.
     - Contracts enforced via JSON Schema.
-    - Multiple transports (STDIO, SSE, HTTP) — still converging.
+    - Multiple transports (STDIO, SSE, HTTP) - still converging.
 
 ---
 
@@ -44,7 +44,7 @@
     See the provided [media kit](../media/index.md)
 
 ???+ tip "📄 How do I describe the gateway in boilerplate copy?"
-    > "ContextForge MCP Gateway is an open‑source reverse‑proxy that unifies MCP and REST tool servers under a single secure HTTPS endpoint with discovery, auth and observability baked in."
+    > "ContextForge MCP Gateway is an open-source reverse-proxy that unifies MCP and REST tool servers under a single secure HTTPS endpoint with discovery, auth and observability baked in."
 
 ---
 
@@ -118,7 +118,7 @@
 ## 🔐 Security & Auth
 
 ???+ danger "🆓 How do I disable authentication for development?"
-    Set `AUTH_REQUIRED=false` — disables login for local testing.
+    Set `AUTH_REQUIRED=false` - disables login for local testing.
 
 ???+ example "🔑 How do I generate and use a JWT token?"
     ```bash
@@ -191,7 +191,7 @@
 ## 🧪 Smoke Tests & Troubleshooting
 
 ???+ example "🛫 Is there a full test script I can run?"
-    Yes — see `docs/basic.md`.
+    Yes - see `docs/basic.md`.
 
 ???+ example "🚨 What common errors should I watch for?"
     | Symptom               | Resolution                             |
@@ -244,16 +244,16 @@
 ## ❓ Rarely Asked Questions (RAQ)
 
 ???+ example "🐙 Does MCP Gateway work on a Raspberry Pi?"
-    Yes — build as `arm64` and reduce RAM/workers.
+    Yes - build as `arm64` and reduce RAM/workers.
 
 ---
 
 ## 🤝 Contributing & Community
 
-???+ tip "👩‍💻 How can I file issues or contribute?"
+???+ tip "👩💻 How can I file issues or contribute?"
     Use [GitHub Issues](https://github.com/IBM/mcp-context-forge/issues) and `CONTRIBUTING.md`.
 
-???+ tip "🧑‍🎓 What code style and CI tools are used?"
+???+ tip "🧑🎓 What code style and CI tools are used?"
     - Pre-commit: `ruff`, `black`, `mypy`, `isort`
     - Run `make lint` before PRs
 

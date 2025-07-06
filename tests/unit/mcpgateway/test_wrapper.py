@@ -44,7 +44,7 @@ def _install_fake_mcp(monkeypatch) -> None:
     models_mod = ModuleType("mcp.server.models")
     types_mod = ModuleType("mcp.types")
 
-    # ––– minimalist Server façade –––––––––––––––––––––––––––––––––––––––– #
+    # --- minimalist Server façade ---------------------------------------- #
     class _FakeServer:
         was_run: bool = False  # class-level flag
 
@@ -82,7 +82,7 @@ def _install_fake_mcp(monkeypatch) -> None:
     server_mod.models = models_mod
     mcp.server = server_mod  # type: ignore[attr-defined]
 
-    # ––– stdio helper used by wrapper.main() –––––––––––––––––––––––––––––– #
+    # --- stdio helper used by wrapper.main() ------------------------------ #
     class _DummyStdIOServer:
         async def __aenter__(self):
             return "reader", "writer"
@@ -92,14 +92,14 @@ def _install_fake_mcp(monkeypatch) -> None:
 
     stdio_mod.stdio_server = lambda: _DummyStdIOServer()  # type: ignore[attr-defined]
 
-    # ––– pydantic placeholder that *accepts* any kwargs ––––––––––––––––––– #
+    # --- pydantic placeholder that *accepts* any kwargs ------------------- #
     class _InitOpts:
         def __init__(self, *_, **__):  # swallow anything
             pass
 
     models_mod.InitializationOptions = _InitOpts
 
-    # ––– ultra-thin DTOs referenced by wrapper's handlers –––––––––––––––– #
+    # --- ultra-thin DTOs referenced by wrapper's handlers ---------------- #
     class _Tool:
         def __init__(self, name: str, description: str, inputSchema: dict, annotations: dict = None):
             self.name, self.description, self.inputSchema = name, description, inputSchema
@@ -235,7 +235,7 @@ def _json_fetcher(payload: Any):
 # Unit tests
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ––– _extract_base_url happy-path parametrised –––––––––––––––––––––––––––– #
+# --- _extract_base_url happy-path parametrised ---------------------------- #
 
 
 @pytest.mark.parametrize(
@@ -251,7 +251,7 @@ def test_extract_base_url(raw, expected, wrapper):
     assert wrapper._extract_base_url(raw) == expected
 
 
-# ––– _extract_base_url error branch –––––––––––––––––––––––––––––––––––––––– #
+# --- _extract_base_url error branch ---------------------------------------- #
 
 
 def test_extract_base_url_invalid(wrapper):
@@ -259,7 +259,7 @@ def test_extract_base_url_invalid(wrapper):
         wrapper._extract_base_url("just-text-no-scheme")
 
 
-# ––– fetch_url success / error paths ––––––––––––––––––––––––––––––––––––––– #
+# --- fetch_url success / error paths --------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -329,7 +329,7 @@ async def test_fetch_url_http_status(monkeypatch, wrapper):
         await wrapper.fetch_url("u")
 
 
-# ––– handle_call_tool –––––––––––––––––––––––––––––––––––––––––––––––––––––– #
+# --- handle_call_tool ------------------------------------------------------ #
 
 
 @pytest.mark.asyncio
@@ -356,7 +356,7 @@ async def test_handle_call_tool_timeout(monkeypatch, wrapper):
         await wrapper.handle_call_tool("x", {})
 
 
-# ––– handle_read_resource –––––––––––––––––––––––––––––––––––––––––––––––––– #
+# --- handle_read_resource -------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -368,7 +368,7 @@ async def test_read_resource(monkeypatch, wrapper):
     assert await wrapper.handle_read_resource("u") == "body"
 
 
-# ––– handle_get_prompt –––––––––––––––––––––––––––––––––––––––––––––––––––– #
+# --- handle_get_prompt ---------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -391,7 +391,7 @@ async def test_get_prompt_missing(monkeypatch, wrapper):
         await wrapper.handle_get_prompt("greet", {})
 
 
-# ––– handle_list_tools branch –––––––––––––––––––––––––––––––––––––––––––––– #
+# --- handle_list_tools branch ---------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -408,7 +408,7 @@ async def test_handle_list_tools(monkeypatch, wrapper):
     assert tools and tools[0].name == "A"
 
 
-# ––– get_tools_from_mcp_server & tools_metadata branches ––––––––––––––––––– #
+# --- get_tools_from_mcp_server & tools_metadata branches ------------------- #
 
 
 @pytest.mark.asyncio
@@ -435,7 +435,7 @@ async def test_get_tools_and_metadata(monkeypatch, wrapper):
     assert everything == tools_payload
 
 
-# ––– get_resources_from_mcp_server & get_prompts_from_mcp_server ––––––––––– #
+# --- get_resources_from_mcp_server & get_prompts_from_mcp_server ----------- #
 
 
 @pytest.mark.asyncio
@@ -453,7 +453,7 @@ async def test_get_resources_and_prompts(monkeypatch, wrapper):
     assert p_ids == ["p1"]
 
 
-# ––– resources_metadata & prompts_metadata branches –––––––––––––––––––––––– #
+# --- resources_metadata & prompts_metadata branches ------------------------ #
 
 
 @pytest.mark.asyncio
@@ -475,7 +475,7 @@ async def test_resources_and_prompts_metadata(monkeypatch, wrapper):
     assert await wrapper.prompts_metadata(["0"]) == prompts_payload
 
 
-# ––– handle_list_resources – skip invalid URI & keep good one –––––––––––––– #
+# --- handle_list_resources - skip invalid URI & keep good one -------------- #
 
 
 @pytest.mark.asyncio
@@ -496,7 +496,7 @@ async def test_handle_list_resources(monkeypatch, wrapper):
     assert len(out) == 1 and str(out[0].uri).rstrip("/") == "https://valid.com"
 
 
-# ––– handle_list_prompts happy path –––––––––––––––––––––––––––––––––––––––– #
+# --- handle_list_prompts happy path ---------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -514,7 +514,7 @@ async def test_handle_list_prompts(monkeypatch, wrapper):
     assert res and res[0].name == "Hello"
 
 
-# ––– wrapper.main wiring (ensures Server.run invoked) –––––––––––––––––––––– #
+# --- wrapper.main wiring (ensures Server.run invoked) ---------------------- #
 
 
 def test_main_runs_ok(wrapper):

@@ -1,16 +1,16 @@
 # 🦫 Fast Time Server
 
 > Author: Mihai Criveti
-> A minimal Go service that streams or returns the current UTC time over **stdio**, **HTTP/JSON-RPC**, or **Server‑Sent Events (SSE)**.
+> A minimal Go service that streams or returns the current UTC time over **stdio**, **HTTP/JSON-RPC**, or **Server-Sent Events (SSE)**.
 
-[![Go Version](https://img.shields.io/badge/go-1.23–1.27-blue)]()
-[![License: Apache‑2.0](https://img.shields.io/badge/license-Apache%202.0-blue)]()
+[![Go Version](https://img.shields.io/badge/go-1.23-1.27-blue)]()
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue)]()
 
 ---
 
 ## Features
 
-- Three transports: `stdio`, `http` (JSON‑RPC 2.0), and `sse`
+- Three transports: `stdio`, `http` (JSON-RPC 2.0), and `sse`
 - Single static binary (~2 MiB)
 - Build-time version & date via `main.appVersion`, `main.buildDate`
 - Cross-platform builds via `make cross`
@@ -28,7 +28,7 @@ cd fast-time-server
 # Build & run over stdio
 make run
 
-# HTTP JSON‑RPC on port 8080
+# HTTP JSON-RPC on port 8080
 make run-http
 
 # SSE endpoint on port 8080
@@ -56,7 +56,7 @@ Also available as releases.
 
 ## API Reference
 
-### HTTP (JSON‑RPC 2.0)
+### HTTP (JSON-RPC 2.0)
 
 **POST** `/http`
 
@@ -111,7 +111,7 @@ make docker-build
 make docker-run           # HTTP mode
 ```
 
-## Cross‑Compilation
+## Cross-Compilation
 
 ```bash
 make cross
@@ -125,7 +125,7 @@ Binaries appear under `dist/fast-time-server-<os>-<arch>`.
 | -------------------- | --------------------------- |
 | Format & tidy        | `make fmt tidy`             |
 | Lint & vet           | `make lint staticcheck vet` |
-| Run pre‑commit hooks | `make pre-commit`           |
+| Run pre-commit hooks | `make pre-commit`           |
 
 ## Testing & Benchmarking
 

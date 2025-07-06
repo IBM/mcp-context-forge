@@ -60,7 +60,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
 
 # ---------------------------------------------------------------------------
-# 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", …)
+# 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", ...)
 #    and the specific driver ("psycopg2", "asyncpg", empty string = default).
 # ---------------------------------------------------------------------------
 url = make_url(settings.database_url)
@@ -85,7 +85,7 @@ if backend == "postgresql" and driver in ("psycopg2", "default", ""):
     )
 
 # ---------------------------------------------------------------------------
-# 3. SQLite (optional) – only one extra flag and it is *SQLite-specific*.
+# 3. SQLite (optional) - only one extra flag and it is *SQLite-specific*.
 # ---------------------------------------------------------------------------
 elif backend == "sqlite":
     # Allow pooled connections to hop across threads.

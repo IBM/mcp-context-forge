@@ -472,11 +472,11 @@ class FileUrl(AnyUrl):
 
     Key characteristics
     -------------------
-    * Scheme restricted – only the "file" scheme is permitted
+    * Scheme restricted - only the "file" scheme is permitted
       (e.g. file:///path/to/file.txt).
-    * No host required – "file" URLs typically omit a network host;
+    * No host required - "file" URLs typically omit a network host;
       therefore, the host component is not mandatory.
-    * String-friendly equality – developers naturally expect
+    * String-friendly equality - developers naturally expect
       FileUrl("file:///data") == "file:///data" to evaluate True.
       AnyUrl (Pydantic) does not implement that, so we override
       __eq__ to compare against plain strings transparently.

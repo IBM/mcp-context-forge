@@ -6,7 +6,7 @@ OpenShift (both **OKD** and **Red Hat OpenShift Container Platform**) adds opini
 
 ## 📋 Prerequisites
 
-* `oc` CLI — log in as a developer to a project/namespace you can create objects in.
+* `oc` CLI - log in as a developer to a project/namespace you can create objects in.
 * A storage class for PVCs (or local PVs) to back the Postgres template.
 * Either **Podman** or **Docker** on your workstation **if you build locally**.
 * Access to an image registry that your cluster can pull from (e.g. `quay.io`).
@@ -15,7 +15,7 @@ OpenShift (both **OKD** and **Red Hat OpenShift Container Platform**) adds opini
 
 ## 🛠️ Build & push images
 
-### Option A — Use Make
+### Option A - Use Make
 
 | Target             | Builds                  | Dockerfile             | Notes                    |
 | ------------------ | ----------------------- | ---------------------- | ------------------------ |
@@ -31,9 +31,9 @@ podman tag mcpgateway:latest quay.io/YOUR_NS/mcpgateway:latest
 podman push quay.io/YOUR_NS/mcpgateway:latest
 ```
 
-> **Apple-silicon note** – `Containerfile.lite` uses `ubi9-micro` (x86\_64). Buildx/QEMU works, but the image will run under emulation on macOS. If you need native arm64 choose the dev image or add `--platform linux/arm64`.
+> **Apple-silicon note** - `Containerfile.lite` uses `ubi9-micro` (x86\_64). Buildx/QEMU works, but the image will run under emulation on macOS. If you need native arm64 choose the dev image or add `--platform linux/arm64`.
 
-### Option B — Raw CLI equivalents
+### Option B - Raw CLI equivalents
 
 ```bash
 # Dev (Containerfile)
@@ -222,7 +222,7 @@ The Postgres template already generates a PVC; you can create extra PVCs manuall
 
 ## 📚 Further reading
 
-1. [OpenShift Route documentation – creation & TLS](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/networking/configuring-routes)
+1. [OpenShift Route documentation - creation & TLS](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/networking/configuring-routes)
 2. [SCC and **restricted-v2 / nonroot-v2** behaviour](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/authentication_and_authorization/managing-pod-security-policies)
 3. [ConfigMap envFrom patterns](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/building_applications/config-maps)
 4. [Postgres persistent template example](https://github.com/sclorg/postgresql-container/blob/master/examples/postgresql-persistent-template.json)

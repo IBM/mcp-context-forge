@@ -1,13 +1,13 @@
 # ===============================================================
-# 🧪  PyTest & Coverage – Quality Gate
+# 🧪  PyTest & Coverage - Quality Gate
 # ===============================================================
 #
-#   • runs the full test-suite across three Python versions
-#   • measures branch + line coverage (fails < 40 %)
-#   • uploads the XML/HTML coverage reports as build artifacts
-#   • (optionally) generates / commits an SVG badge — kept disabled
-#   • posts a concise per-file coverage table to the job summary
-#   • executes on every push / PR to *main*  ➕  a weekly cron
+#   - runs the full test-suite across three Python versions
+#   - measures branch + line coverage (fails < 40 %)
+#   - uploads the XML/HTML coverage reports as build artifacts
+#   - (optionally) generates / commits an SVG badge - kept disabled
+#   - posts a concise per-file coverage table to the job summary
+#   - executes on every push / PR to *main*  ➕  a weekly cron
 # ---------------------------------------------------------------
 
 name: Tests & Coverage
@@ -66,7 +66,7 @@ jobs:
           # install the project itself in *editable* mode so tests import the same codebase
           # and pull in every dev / test extra declared in pyproject.toml
           pip install -e .[dev]
-          # belt-and-braces – keep the core test tool-chain pinned here too
+          # belt-and-braces - keep the core test tool-chain pinned here too
           pip install pytest pytest-cov pytest-asyncio coverage[toml]
 
       # -----------------------------------------------------------
@@ -84,7 +84,7 @@ jobs:
 
     # -----------------------------------------------------------
     # 4️⃣  Upload coverage artifacts (XML + HTML)
-    #       ––– keep disabled unless you need them –––
+    #       --- keep disabled unless you need them ---
     # -----------------------------------------------------------
     # - name: 📤  Upload coverage.xml
     #   uses: actions/upload-artifact@v4
@@ -100,7 +100,7 @@ jobs:
 
     # -----------------------------------------------------------
     # 5️⃣  Generate + commit badge (main branch, highest Python)
-    #       ––– intentionally commented-out –––
+    #       --- intentionally commented-out ---
     # -----------------------------------------------------------
     # - name: 📊  Create coverage badge
     #   if: matrix.python == '3.11' && github.ref == 'refs/heads/main'
@@ -126,7 +126,7 @@ jobs:
 #     - name: 📝  Coverage summary
 #       if: always()
 #       run: |
-#         echo "### Coverage – Python ${{ matrix.python }}" >> "$GITHUB_STEP_SUMMARY"
+#         echo "### Coverage - Python ${{ matrix.python }}" >> "$GITHUB_STEP_SUMMARY"
 #         echo "| File | Stmts | Miss | Branch | BrMiss | Cover |" >> "$GITHUB_STEP_SUMMARY"
 #         echo "|------|------:|-----:|-------:|-------:|------:|" >> "$GITHUB_STEP_SUMMARY"
 #         coverage json -q -o cov.json

@@ -3,19 +3,19 @@
 # ===============================================================
 #
 # This workflow:
-#   • Builds and tags the container image (`latest` + timestamp)
-#   • Re-uses a BuildKit layer cache for faster rebuilds
-#   • Lints the Dockerfile with **Hadolint** (CLI) → SARIF
-#   • Lints the finished image with **Dockle** (CLI) → SARIF
-#   • Generates an SPDX SBOM with **Syft**
-#   • Scans the image for CRITICAL CVEs with **Trivy**
-#   • Uploads Hadolint, Dockle and Trivy results as SARIF files
-#   • Pushes the image to **GitHub Container Registry (GHCR)**
-#   • Signs & attests the image with **Cosign (key-less OIDC)**
+#   - Builds and tags the container image (`latest` + timestamp)
+#   - Re-uses a BuildKit layer cache for faster rebuilds
+#   - Lints the Dockerfile with **Hadolint** (CLI) → SARIF
+#   - Lints the finished image with **Dockle** (CLI) → SARIF
+#   - Generates an SPDX SBOM with **Syft**
+#   - Scans the image for CRITICAL CVEs with **Trivy**
+#   - Uploads Hadolint, Dockle and Trivy results as SARIF files
+#   - Pushes the image to **GitHub Container Registry (GHCR)**
+#   - Signs & attests the image with **Cosign (key-less OIDC)**
 #
 # Triggers:
-#   • Every push / PR to `main`
-#   • Weekly scheduled run (Tue 18:17 UTC) to catch new CVEs
+#   - Every push / PR to `main`
+#   - Weekly scheduled run (Tue 18:17 UTC) to catch new CVEs
 # ---------------------------------------------------------------
 
 name: Secure Docker Build
@@ -29,7 +29,7 @@ on:
     - cron: "17 18 * * 2" # Tuesday @ 18:17 UTC
 
 # -----------------------------------------------------------------
-# Minimal permissions – keep the principle of least privilege
+# Minimal permissions - keep the principle of least privilege
 # -----------------------------------------------------------------
 permissions:
   contents: read
@@ -197,7 +197,7 @@ jobs:
           done
 
       # -------------------------------------------------------------
-      # 9️⃣  Single gate – fail job on any scanner error
+      # 9️⃣  Single gate - fail job on any scanner error
       # -------------------------------------------------------------
       - name: ⛔  Enforce lint & vuln gates
         if: |

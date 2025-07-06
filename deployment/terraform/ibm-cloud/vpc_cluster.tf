@@ -1,5 +1,5 @@
 ######################
-# IBM Cloud – VPC IKS
+# IBM Cloud - VPC IKS
 ######################
 resource "ibm_container_vpc_cluster" "iks" {
   name            = "${var.prefix}-iks"

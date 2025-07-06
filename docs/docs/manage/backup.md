@@ -102,7 +102,7 @@ MCP Gateway uses a relational database (e.g. SQLite or PostgreSQL) to persist al
 These only appear when session/messaging backend is set to `database`:
 
 - **`mcp_sessions`**: Each record is an open session ID (used for SSE streams and client context).
-- **`mcp_messages`**: Stores streamed messages (text, image, resource) linked to a session—useful for debugging or offline playback.
+- **`mcp_messages`**: Stores streamed messages (text, image, resource) linked to a session-useful for debugging or offline playback.
 
 You can query active sessions:
 

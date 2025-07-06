@@ -1,20 +1,20 @@
 # ===============================================================
-# 🔍 Dependency-Review Workflow – Vulnerabilities ⬧ Licenses
+# 🔍 Dependency-Review Workflow - Vulnerabilities ⬧ Licenses
 # ===============================================================
 #
 # This workflow:
-#   • Diffs any dependency changes introduced by pushes or PRs to `main`
-#   • **Fails** when a change introduces either of the following:
+#   - Diffs any dependency changes introduced by pushes or PRs to `main`
+#   - **Fails** when a change introduces either of the following:
 #       ↳ A vulnerability of severity ≥ MODERATE
 #       ↳ A dependency under a "strong-copyleft" license incompatible
 #         with this project's Apache-2.0 license (see deny-list below)
-#   • Uploads a SARIF report to "Security → Dependency review"
-#   • Adds (or overwrites) a comment on the PR **only on failure**
+#   - Uploads a SARIF report to "Security → Dependency review"
+#   - Adds (or overwrites) a comment on the PR **only on failure**
 #
 # References
 # ──────────
-#   • Marketplace:  https://github.com/marketplace/actions/dependency-review
-#   • Source code:  https://github.com/github/dependency-review-action  (MIT)
+#   - Marketplace:  https://github.com/marketplace/actions/dependency-review
+#   - Source code:  https://github.com/github/dependency-review-action  (MIT)
 #
 # NOTE ▸ The action is designed for PR events, but it can also run on
 #        push & schedule if you supply explicit `base-ref` / `head-ref`
@@ -28,13 +28,13 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
-  # Weekly safety-net run — useful for catching newly-disclosed CVEs
+  # Weekly safety-net run - useful for catching newly-disclosed CVEs
   # or upstream license changes even when no PR is open.
   schedule:
     - cron: "31 12 * * 6" # Saturday @ 12:31 UTC
 
 # -----------------------------------------------------------------
-# Minimal permissions – principle of least privilege
+# Minimal permissions - principle of least privilege
 # -----------------------------------------------------------------
 permissions:
   contents: read # for actions/checkout
@@ -66,7 +66,7 @@ jobs:
           # ───────── License policy ─────────
           # Hard-deny strong- or service-copyleft licenses that would
           # "infect" an Apache-2.0 project.  (LGPL/MPL/EPL are *not*
-          # listed — they're weak/file-level copyleft.  Add them here
+          # listed - they're weak/file-level copyleft.  Add them here
           # if your org chooses to forbid them outright.)
           deny-licenses: >
             GPL-1.0, GPL-2.0, GPL-3.0,

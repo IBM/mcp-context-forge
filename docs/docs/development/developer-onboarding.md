@@ -83,7 +83,7 @@
 
 ???+ check "SonarQube analysis"
     - [ ] `make sonar-up-docker`
-    - [ ] `make sonar-submit-docker` — ensure no critical violations
+    - [ ] `make sonar-submit-docker` - ensure no critical violations
 
 ---
 

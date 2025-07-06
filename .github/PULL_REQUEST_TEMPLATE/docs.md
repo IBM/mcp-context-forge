@@ -12,7 +12,7 @@ Closes #
 
 ---
 
-## 📝 Summary (1–2 sentences)
+## 📝 Summary (1-2 sentences)
 _What section of the docs is changing and why?_
 
 ---

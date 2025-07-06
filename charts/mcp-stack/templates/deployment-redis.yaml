@@ -1,9 +1,9 @@
 {{/* -------------------------------------------------------------------
-     DEPLOYMENT — Redis
+     DEPLOYMENT - Redis
      -------------------------------------------------------------------
-     • Name + labels templated with <release>-mcp-stack-redis.
-     • Adds exec-based readiness & liveness probes (redis-cli PING).
-     • Adds resource requests / limits pulled from values.yaml.
+     - Name + labels templated with <release>-mcp-stack-redis.
+     - Adds exec-based readiness & liveness probes (redis-cli PING).
+     - Adds resource requests / limits pulled from values.yaml.
      ------------------------------------------------------------------- */}}
 
 {{- if .Values.redis.enabled }}

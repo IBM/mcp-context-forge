@@ -1,6 +1,6 @@
 # Deployment Overview
 
-This section explains how to deploy MCP Gateway in various environments — from local development to cloud-native platforms like Kubernetes, IBM Code Engine, AWS, and Azure.
+This section explains how to deploy MCP Gateway in various environments - from local development to cloud-native platforms like Kubernetes, IBM Code Engine, AWS, and Azure.
 
 ---
 

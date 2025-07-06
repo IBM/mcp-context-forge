@@ -1,9 +1,9 @@
 {{- /*
 Ingress
-• Routes:
+- Routes:
    - /           → mcp-context-forge (Gateway)
    - /fast-time  → mcp-fast-time-server   (optional)
-• All service names use the same helper so they follow the
+- All service names use the same helper so they follow the
   <release>-mcp-stack-* naming convention.
 */ -}}
 {{- if .Values.mcpContextForge.ingress.enabled }}

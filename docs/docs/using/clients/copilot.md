@@ -23,9 +23,9 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
 
 ---
 
-## 🔗 Option 1 · Direct SSE (best for prod / remote)
+## 🔗 Option 1 - Direct SSE (best for prod / remote)
 
-### 1 · Create `.vscode/mcp.json`
+### 1 - Create `.vscode/mcp.json`
 
 ```json
 {
@@ -41,15 +41,15 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
 }
 ```
 
-> **Tip – generate a token**
+> **Tip - generate a token**
 
 ```bash
 python -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-test-key
 ```
 
-## 🔗 Option 2 · Streamable HTTP (best for prod / remote)
+## 🔗 Option 2 - Streamable HTTP (best for prod / remote)
 
-### 2 · Create `.vscode/mcp.json`
+### 2 - Create `.vscode/mcp.json`
 
 ```json
 {
@@ -67,14 +67,14 @@ python -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-tes
 
 ---
 
-## 🔗 Option 3 · Local stdio bridge (`mcpgateway.wrapper`)
+## 🔗 Option 3 - Local stdio bridge (`mcpgateway.wrapper`)
 
 Perfect when:
 
 * the IDE cannot add HTTP headers, or
 * you're offline / behind a corp proxy.
 
-### 1 · Install the wrapper (one-liner)
+### 1 - Install the wrapper (one-liner)
 
 ```bash
 pipx install --include-deps mcp-contextforge-gateway          # isolates in ~/.local/pipx/venvs
@@ -82,7 +82,7 @@ pipx install --include-deps mcp-contextforge-gateway          # isolates in ~/.l
 uv pip install mcp-contextforge-gateway                       # inside any uv/venv you like
 ```
 
-### 2 · Create `.vscode/mcp.json`
+### 2 - Create `.vscode/mcp.json`
 
 ```json
 {
@@ -101,7 +101,7 @@ uv pip install mcp-contextforge-gateway                       # inside any uv/ve
 }
 ```
 
-That's it – VS Code spawns the stdio process, pipes JSON-RPC, and you're ready to roll.
+That's it - VS Code spawns the stdio process, pipes JSON-RPC, and you're ready to roll.
 
 <details>
 <summary><strong>🐳 Docker alternative</strong></summary>
@@ -126,7 +126,7 @@ That's it – VS Code spawns the stdio process, pipes JSON-RPC, and you're ready
 ## 🧪 Verify inside Copilot
 
 1. Open **Copilot Chat** → switch to *Agent* mode.
-2. Click **Tools** – your Gateway tools should list.
+2. Click **Tools** - your Gateway tools should list.
 3. Try:
 
 ```

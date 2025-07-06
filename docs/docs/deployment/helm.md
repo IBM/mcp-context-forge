@@ -5,7 +5,7 @@ This guide walks you through installing, upgrading, and removing the full **MCP 
 * 🧠 MCP Context Forge (the gateway)
 * 🗄 PostgreSQL database
 * ⚡ Redis cache
-* 🧑‍💻 PgAdmin UI (optional)
+* 🧑💻 PgAdmin UI (optional)
 * 🧰 Redis Commander UI (optional)
 
 Everything is deployable via Helm on any Kubernetes cluster (Minikube, kind, EKS, AKS, GKE, OpenShift, etc.).
@@ -555,7 +555,7 @@ flowchart TD
 
 ## 🧾 values.yaml - Common Keys
 
-???+ info "🧾 values.yaml – Common Keys Reference"
+???+ info "🧾 values.yaml - Common Keys Reference"
 
     Most frequently used keys in `values.yaml` and what they control.
 

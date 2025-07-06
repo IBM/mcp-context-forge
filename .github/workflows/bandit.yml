@@ -3,14 +3,14 @@
 # ===============================================================
 #
 # This workflow:
-#   • Runs **Bandit** (PyCQA) against ONLY the `mcpgateway/` package
-#   • Reports findings with **severity ≥ MEDIUM** and **confidence = HIGH**
-#   • Uploads results as SARIF so they appear in the Security → Code scanning tab
-#   • Executes on every push / PR to `main` + a weekly scheduled run
+#   - Runs **Bandit** (PyCQA) against ONLY the `mcpgateway/` package
+#   - Reports findings with **severity ≥ MEDIUM** and **confidence = HIGH**
+#   - Uploads results as SARIF so they appear in the Security → Code scanning tab
+#   - Executes on every push / PR to `main` + a weekly scheduled run
 #
 # References:
-#   • Action: https://github.com/marketplace/actions/bandit-scan  (ISC lic.)
-#   • CLI:    https://pypi.org/project/bandit/                   (Apache-2.0)
+#   - Action: https://github.com/marketplace/actions/bandit-scan  (ISC lic.)
+#   - CLI:    https://pypi.org/project/bandit/                   (Apache-2.0)
 # ---------------------------------------------------------------
 
 name: Bandit
@@ -21,7 +21,7 @@ on:
   pull_request:
     branches: ["main"] # must be a subset of the push branches
   schedule:
-    - cron: "26 11 * * 6" # Saturday @ 11:26 UTC – catch new CVEs
+    - cron: "26 11 * * 6" # Saturday @ 11:26 UTC - catch new CVEs
 
 jobs:
   bandit:

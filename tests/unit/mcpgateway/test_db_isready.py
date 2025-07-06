@@ -48,12 +48,12 @@ class _DummyEngine:
 
     # Expose attempts for assertions
     @property
-    def attempts(self):  # noqa: D401 – simple accessor
+    def attempts(self):  # noqa: D401 - simple accessor
         return self._attempts
 
 
 # ---------------------------------------------------------------------------
-# Unit-tests – utilities first, then public API
+# Unit-tests - utilities first, then public API
 # ---------------------------------------------------------------------------
 
 

@@ -91,8 +91,8 @@ When the test completes, look at:
 | Metric             | Interpretation                                          |
 | ------------------ | ------------------------------------------------------- |
 | Requests/sec (RPS) | Raw throughput capability                               |
-| 95/99th percentile | Tail latency — tune `timeout`, workers, or DB pooling   |
-| Non-2xx responses  | Failures under load — common with CPU/memory starvation |
+| 95/99th percentile | Tail latency - tune `timeout`, workers, or DB pooling   |
+| Non-2xx responses  | Failures under load - common with CPU/memory starvation |
 
 ---
 

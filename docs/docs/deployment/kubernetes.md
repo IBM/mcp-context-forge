@@ -1,6 +1,6 @@
 # ☸️ Kubernetes / OpenShift Deployment
 
-You can deploy MCP Gateway to any K8s-compliant platform — including vanilla Kubernetes, OpenShift, and managed clouds like GKE, AKS, and EKS.
+You can deploy MCP Gateway to any K8s-compliant platform - including vanilla Kubernetes, OpenShift, and managed clouds like GKE, AKS, and EKS.
 
 ---
 

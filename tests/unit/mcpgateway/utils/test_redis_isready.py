@@ -41,7 +41,7 @@ class MockRedis:
             raise ConnectionError("Redis not ready")
         return True
 
-    # Async methods — included for compatibility with other parts of codebase
+    # Async methods - included for compatibility with other parts of codebase
     async def setex(self, key, ttl, value):
         if self.should_fail:
             raise Exception("Redis connection failed")

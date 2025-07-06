@@ -1368,11 +1368,11 @@ async def create_prompt(
         user (str): Authenticated username.
 
     Returns:
-        PromptRead: The newly–created prompt.
+        PromptRead: The newly-created prompt.
 
     Raises:
-        HTTPException: * **409 Conflict** – another prompt with the same name already exists.
-            * **400 Bad Request** – validation or persistence error raised
+        HTTPException: * **409 Conflict** - another prompt with the same name already exists.
+            * **400 Bad Request** - validation or persistence error raised
                 by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
@@ -1452,8 +1452,8 @@ async def update_prompt(
         PromptRead: The updated prompt object.
 
     Raises:
-        HTTPException: * **409 Conflict** – a different prompt with the same *name* already exists and is still active.
-            * **400 Bad Request** – validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
+        HTTPException: * **409 Conflict** - a different prompt with the same *name* already exists and is still active.
+            * **400 Bad Request** - validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
     logger.debug(f"User: {user} requested to update prompt: {name} with data={prompt}")
     try:
@@ -1902,8 +1902,8 @@ async def utility_message_endpoint(request: Request, user: str = Depends(require
         JSONResponse: ``{"status": "success"}`` with HTTP 202 on success.
 
     Raises:
-        HTTPException: * **400 Bad Request** – ``session_id`` query parameter is missing or the payload cannot be parsed as JSON.
-            * **500 Internal Server Error** – An unexpected error occurs while broadcasting the message.
+        HTTPException: * **400 Bad Request** - ``session_id`` query parameter is missing or the payload cannot be parsed as JSON.
+            * **500 Internal Server Error** - An unexpected error occurs while broadcasting the message.
     """
     try:
         logger.debug("User %s sent a message to SSE session", user)
@@ -2107,7 +2107,7 @@ if UI_ENABLED:
         logger.info("Static assets served from %s", settings.static_dir)
     except RuntimeError as exc:
         logger.warning(
-            "Static dir %s not found – Admin UI disabled (%s)",
+            "Static dir %s not found - Admin UI disabled (%s)",
             settings.static_dir,
             exc,
         )

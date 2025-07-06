@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# scripts/os_deps.sh – install/verify Graphviz, Pandoc, Trivy, SCC
+# scripts/os_deps.sh - install/verify Graphviz, Pandoc, Trivy, SCC
 # Supports macOS (Intel/Apple-Silicon), Debian/Ubuntu, RHEL/Fedora,
 #          generic Linux, Windows (prints manual steps).
 # ──────────────────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ install_scc() {
 }
 
 install_trivy_deb() {
-  echo "📦  Setting up Aqua Security Trivy APT repo…"
+  echo "📦  Setting up Aqua Security Trivy APT repo..."
   $(sudo_if) apt-get update -qq
   $(sudo_if) apt-get install -y wget gnupg lsb-release
   wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
@@ -44,7 +44,7 @@ generic main" \
 }
 
 install_trivy_rpm() {
-  echo "📦  Setting up Aqua Security Trivy YUM/DNF repo…"
+  echo "📦  Setting up Aqua Security Trivy YUM/DNF repo..."
   cat << 'EOF' | $(sudo_if) tee /etc/yum.repos.d/trivy.repo >/dev/null
 [trivy]
 name=Trivy repository
@@ -63,7 +63,7 @@ EOF
 }
 
 # ───────────────────────── main logic ─────────────────────────
-echo "🔍  Checking platform prerequisites …"
+echo "🔍  Checking platform prerequisites ..."
 MISSING=()
 for cmd in dot pandoc trivy scc; do
   need "$cmd" && MISSING+=("$cmd")
@@ -106,19 +106,19 @@ elif [[ "$OS" == "Linux" ]]; then
        need pandoc   && $INSTALL pandoc
        if need trivy; then install_trivy_rpm; fi
   else
-       echo "❌  Unsupported Linux package manager – please install Graphviz, Pandoc, and Trivy manually."
+       echo "❌  Unsupported Linux package manager - please install Graphviz, Pandoc, and Trivy manually."
   fi
   need scc && install_scc "Linux" "$ARCH_TAG"
 
 elif [[ "$OS" =~ MINGW|MSYS|CYGWIN ]]; then
   echo "ℹ️  On Windows please install:"
-  echo "    • Graphviz (https://graphviz.org)"
-  echo "    • Pandoc   (https://pandoc.org/installing.html)"
-  echo "    • Trivy    (https://aquasecurity.github.io/trivy/)"
+  echo "    - Graphviz (https://graphviz.org)"
+  echo "    - Pandoc   (https://pandoc.org/installing.html)"
+  echo "    - Trivy    (https://aquasecurity.github.io/trivy/)"
   need scc && install_scc "Windows" "$ARCH_TAG"
 
 else
-  echo "❌  Unsupported OS – manual install required."
+  echo "❌  Unsupported OS - manual install required."
   exit 1
 fi
 

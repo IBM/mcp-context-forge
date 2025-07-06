@@ -4,7 +4,7 @@ This section focuses on how to use MCP Gateway effectively as a developer, integ
 
 ---
 
-## 👨‍💻 Typical Use Cases
+## 👨💻 Typical Use Cases
 
 - You want to expose tools, prompts, or resources via MCP.
 - You want to use `mcpgateway-wrapper` to connect to any MCP Gateway service using `stdio`, while still supporting authentication to the gateway.

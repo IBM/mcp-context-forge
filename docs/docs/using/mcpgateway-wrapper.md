@@ -11,10 +11,10 @@ while connecting securely to the gateway using `SSE` + `JWT`.
 
 ## 🔑 Key Highlights
 
-* **Dynamic catalog** – auto-syncs from one or more `…/servers/{id}` Virtual Server endpoints
-* **Full MCP protocol** – `initialize`, `ping`, `tools/call`, streaming content, resources and prompts/template rendering
-* **Transparent proxy** – stdio → Gateway → tool, results stream back to stdout
-* **Secure** – wrapper keeps using your **JWT** to talk to the Gateway
+* **Dynamic catalog** - auto-syncs from one or more `.../servers/{id}` Virtual Server endpoints
+* **Full MCP protocol** - `initialize`, `ping`, `tools/call`, streaming content, resources and prompts/template rendering
+* **Transparent proxy** - stdio → Gateway → tool, results stream back to stdout
+* **Secure** - wrapper keeps using your **JWT** to talk to the Gateway
 
 ---
 
@@ -32,7 +32,7 @@ Configure the wrapper via ENV variables:
 ```bash
 export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
 export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/1'  # select a virtual server
-export MCP_TOOL_CALL_TIMEOUT=120          # tool call timeout in seconds (optional – default 90)
+export MCP_TOOL_CALL_TIMEOUT=120          # tool call timeout in seconds (optional - default 90)
 export MCP_WRAPPER_LOG_LEVEL=INFO         # DEBUG | INFO | OFF
 ```
 
@@ -83,10 +83,10 @@ The wrapper now waits for JSON-RPC on **stdin** and emits replies on **stdout**.
 
 | Variable                  | Purpose                                      | Default |
 | ------------------------- | -------------------------------------------- | ------- |
-| `MCP_SERVER_CATALOG_URLS` | Comma-sep list of `/servers/{id}` endpoints  | —       |
-| `MCP_AUTH_TOKEN`          | Bearer token the wrapper forwards to Gateway | —       |
+| `MCP_SERVER_CATALOG_URLS` | Comma-sep list of `/servers/{id}` endpoints  | -       |
+| `MCP_AUTH_TOKEN`          | Bearer token the wrapper forwards to Gateway | -       |
 | `MCP_TOOL_CALL_TIMEOUT`   | Per-tool timeout (seconds)                   | `90`    |
-| `MCP_WRAPPER_LOG_LEVEL`   | `OFF`, `INFO`, `DEBUG`, …                    | `INFO`  |
+| `MCP_WRAPPER_LOG_LEVEL`   | `OFF`, `INFO`, `DEBUG`, ...                    | `INFO`  |
 
 ---
 
@@ -223,7 +223,7 @@ npx @modelcontextprotocol/inspector \
 ## 🧪 Manual JSON-RPC Smoke-test
 
 The wrapper speaks plain JSON-RPC over **stdin/stdout**, so you can exercise it from any
-terminal—no GUI required.
+terminal-no GUI required.
 Open two shells or use a tool like `jq -c | nc -U` to pipe messages in and view replies.
 
 ??? example "Step-by-step request sequence"
@@ -269,7 +269,7 @@ Open two shells or use a tool like `jq -c | nc -U` to pipe messages in and view 
     # Empty tool list
     {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
 
-    # …after adding tools (example)
+    # ...after adding tools (example)
     {"jsonrpc":"2.0","id":2,"result":{
       "tools":[
         {

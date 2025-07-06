@@ -47,7 +47,7 @@ ISSUES_JSON=$(gh issue list --state closed \
 
 echo "$ISSUES_JSON" | jq -r '
   sort_by(.closedAt)[]
-  | "#\(.number) – \(.title) (closed: \(.closedAt))"
+  | "#\(.number) - \(.title) (closed: \(.closedAt))"
 ' >>"$OUT"
 
 ###############################################################################

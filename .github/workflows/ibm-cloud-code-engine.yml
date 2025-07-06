@@ -3,10 +3,10 @@
 # ===============================================================
 #
 # This workflow:
-#   • Restores / updates a local **BuildKit layer cache**  ❄️
-#   • Builds the Docker image from **Containerfile.lite**  🏗️
-#   • Pushes the image to **IBM Container Registry (ICR)** 📤
-#   • Creates / updates an **IBM Cloud Code Engine** app   🚀
+#   - Restores / updates a local **BuildKit layer cache**  ❄️
+#   - Builds the Docker image from **Containerfile.lite**  🏗️
+#   - Pushes the image to **IBM Container Registry (ICR)** 📤
+#   - Creates / updates an **IBM Cloud Code Engine** app   🚀
 #
 # ---------------------------------------------------------------
 # Required repository **secret**
@@ -34,8 +34,8 @@
 # * Note: CODE_ENGINE_REGISTRY_SECRET is the name of the secret,
 #         not the secret value.
 # Triggers:
-#   • Every push to `main`
-#   • Expects a secret called `mcpgateway-dev` in Code Engine. Ex:
+#   - Every push to `main`
+#   - Expects a secret called `mcpgateway-dev` in Code Engine. Ex:
 #      ibmcloud ce secret create \
 #        --name mcpgateway-dev \
 #        --from-env-file .env
@@ -155,7 +155,7 @@ jobs:
       - name: 🚀  Deploy to Code Engine
         run: |
           if ibmcloud ce application get --name "$CODE_ENGINE_APP_NAME" > /dev/null 2>&1; then
-            echo "🔁 Updating existing application…"
+            echo "🔁 Updating existing application..."
             ibmcloud ce application update \
               --name  "$CODE_ENGINE_APP_NAME" \
               --image "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
@@ -163,7 +163,7 @@ jobs:
               --env-from-secret mcpgateway-dev \
               --cpu 1 --memory 2G
           else
-            echo "🆕 Creating new application…"
+            echo "🆕 Creating new application..."
             ibmcloud ce application create \
               --name  "$CODE_ENGINE_APP_NAME" \
               --image "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \

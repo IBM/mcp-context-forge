@@ -13,14 +13,14 @@
 #    deletion modes to help you keep the container registry clean.
 #
 #    Features:
-#    • Dry-run by default to avoid accidental deletion
-#    • Tag whitelisting with regular expression matching
-#    • GitHub CLI integration with scope validation
-#    • CI/CD-compatible via environment overrides
+#    - Dry-run by default to avoid accidental deletion
+#    - Tag whitelisting with regular expression matching
+#    - GitHub CLI integration with scope validation
+#    - CI/CD-compatible via environment overrides
 #
 #  Requirements:
-#    • GitHub CLI (gh) v2.x with appropriate scopes
-#    • jq (command-line JSON processor)
+#    - GitHub CLI (gh) v2.x with appropriate scopes
+#    - jq (command-line JSON processor)
 #
 #  Required Token Scopes:
 #    delete:packages
@@ -79,7 +79,7 @@ if scopes=$(gh auth status --show-token 2>/dev/null | grep -oP 'Token scopes: \K
   fi
 
   if [[ ${#missing_scopes[@]} -gt 0 ]]; then
-    echo "⚠️  Your token scopes are [$scopes] – but you're missing: [$(IFS=','; echo "${missing_scopes[*]}")]"
+    echo "⚠️  Your token scopes are [$scopes] - but you're missing: [$(IFS=','; echo "${missing_scopes[*]}")]"
     echo "    Run: gh auth refresh -h github.com -s $NEEDED_SCOPES"
     exit 1
   fi
@@ -105,7 +105,7 @@ KEEP_REGEX="^($(IFS='|'; echo "${KEEP_TAGS[*]}"))$"
 ##############################################################################
 delete_ids=()
 
-echo "📦  Scanning ghcr.io/${ORG}/${PKG} …"
+echo "📦  Scanning ghcr.io/${ORG}/${PKG} ..."
 
 # Process versions and collect IDs to delete
 while IFS= read -r row; do
@@ -144,9 +144,9 @@ if [[ $DRY_RUN == true ]]; then
   if [[ $ASK_CONFIRM == true ]]; then
     echo
     read -rp "Proceed to delete the ${#delete_ids[@]} versions listed above? (y/N) " reply
-    [[ $reply =~ ^[Yy]$ ]] || { echo "Aborted – nothing deleted."; exit 0; }
+    [[ $reply =~ ^[Yy]$ ]] || { echo "Aborted - nothing deleted."; exit 0; }
   fi
-  echo "🚀  Re-running in destructive mode …"
+  echo "🚀  Re-running in destructive mode ..."
   DRY_RUN=false exec "$0" --yes
 else
   echo "🗑️  Deleting ${#delete_ids[@]} versions..."

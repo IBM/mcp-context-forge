@@ -17,7 +17,7 @@ Minikube provides a self-contained environment, enabling you to replicate produc
 | **CPU / RAM**        | Minimum **2 vCPU + 2 GiB**; recommended 4 vCPU / 6 GiB for smoother operation.                             |
 | **Disk**             | At least 20 GiB of free space.                                                                             |
 | **Container driver** | Docker 20.10+ or Podman 4.7+; Docker is the simplest choice on macOS and Windows.                          |
-| **kubectl**          | Automatically configured by `minikube start`; alternatively, use `minikube kubectl -- …` if not installed. |
+| **kubectl**          | Automatically configured by `minikube start`; alternatively, use `minikube kubectl -- ...` if not installed. |
 
 ## Architecture
 
@@ -41,7 +41,7 @@ Minikube provides a self-contained environment, enabling you to replicate produc
 
 ---
 
-## 🚀 Step 1 – Install Minikube and kubectl
+## 🚀 Step 1 - Install Minikube and kubectl
 
 > **Make target**
 
@@ -86,7 +86,7 @@ choco install -y minikube kubernetes-cli
 
 ---
 
-## ⚙️ Step 2 – Start the cluster
+## ⚙️ Step 2 - Start the cluster
 
 > **Make target**
 
@@ -123,7 +123,7 @@ kubectl get pods -n ingress-nginx
 
 ---
 
-## 🏗 Step 3 – Load the Gateway image
+## 🏗 Step 3 - Load the Gateway image
 
 > **Make target**
 
@@ -150,7 +150,7 @@ This target builds the `ghcr.io/ibm/mcp-context-forge:latest` image and loads it
 
 ---
 
-## 📄 Step 4 – Apply Kubernetes manifests
+## 📄 Step 4 - Apply Kubernetes manifests
 
 > **Make target**
 
@@ -185,12 +185,12 @@ If you've enabled `ingress-dns`, set the Ingress `host:` to `gateway.local`. Oth
 ```bash
 kubectl config use-context minikube
 # or:
-minikube kubectl -- apply -f …
+minikube kubectl -- apply -f ...
 ```
 
 ---
 
-## 🧪 Step 5 – Verify deployment status
+## 🧪 Step 5 - Verify deployment status
 
 Before hitting your endpoint, confirm the application is up and healthy.
 
@@ -264,7 +264,7 @@ You may want to add this to `/etc/hosts`. Ex:
 
 ---
 
-## 🌐 Step 6 – Test access
+## 🌐 Step 6 - Test access
 
 ```bash
 # Via NodePort:
@@ -282,7 +282,7 @@ curl http://gateway.local/health
 | ------------------- | ---------------------- | ------------------------------------------------------------ |
 | Pause cluster       | `make minikube-stop`   | `minikube stop -p mcpgw`                                     |
 | Delete cluster      | `make minikube-delete` | `minikube delete -p mcpgw`                                   |
-| Remove cached image | —                      | `minikube cache delete ghcr.io/ibm/mcp-context-forge:latest` |
+| Remove cached image | -                      | `minikube cache delete ghcr.io/ibm/mcp-context-forge:latest` |
 
 ---
 
@@ -326,4 +326,4 @@ curl http://gateway.local/health
 
 ---
 
-Minikube gives you the fastest, vendor-neutral sandbox for experimenting with MCP Gateway—and everything above doubles as CI instructions for self-hosted GitHub runners or ephemeral integration tests.
+Minikube gives you the fastest, vendor-neutral sandbox for experimenting with MCP Gateway-and everything above doubles as CI instructions for self-hosted GitHub runners or ephemeral integration tests.

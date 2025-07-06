@@ -1,4 +1,4 @@
-# MCP Context-Forge – Ansible Deployment
+# MCP Context-Forge - Ansible Deployment
 
 This folder spins up:
 
@@ -9,7 +9,7 @@ This folder spins up:
 
 ## Prerequisites
 
-* **IBM Cloud CLI** authenticated (`ibmcloud login …`)
+* **IBM Cloud CLI** authenticated (`ibmcloud login ...`)
 * Ansible ≥ 2.12 with the Galaxy collections in `requirements.yml`
 * `helm`, `kubectl`, and `ibmcloud ks` binaries in `$PATH`
 

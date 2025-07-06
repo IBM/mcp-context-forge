@@ -1,24 +1,24 @@
 # 🧰 Media Kit
 
-Everything you need to write about **[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)**—assets, ready-to-use copy, badges, images, and quick-start commands.
+Everything you need to write about **[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)**-assets, ready-to-use copy, badges, images, and quick-start commands.
 
 ---
 
 ## 🤔 What is MCP (Model Context Protocol)?
 
-[MCP](https://modelcontextprotocol.io/introduction) is an open-source protocol released by Anthropic in **November 2024** that lets AI agents communicate with external tools through a standard JSON-RPC envelope. It's often described as the "USB-C of AI"—a universal connector for language models.
+[MCP](https://modelcontextprotocol.io/introduction) is an open-source protocol released by Anthropic in **November 2024** that lets AI agents communicate with external tools through a standard JSON-RPC envelope. It's often described as the "USB-C of AI"-a universal connector for language models.
 
 It's widely supported by GitHub Copilot, Microsoft Copilot, AWS Bedrock, Google Cloud AI, IBM watsonx, and **15,000+ servers** in the community.
 
 ### ⚡ Why it matters
 
 - ✅ Standardized interface contracts via typed JSON Schema
-- ✅ Supported across the ecosystem — GitHub/Microsoft Copilot, AWS Bedrock, Google Cloud AI, IBM watsonx, AgentBee, LangChain, CrewAI, and more
+- ✅ Supported across the ecosystem - GitHub/Microsoft Copilot, AWS Bedrock, Google Cloud AI, IBM watsonx, AgentBee, LangChain, CrewAI, and more
 - ✅ Strong ecosystem - **15,000+** MCP-compatible servers and multiple clients, with announcements from multiple major vendors
 
 ### ❌ Current challenges
 
-- ❌ Fragmented transports: STDIO, SSE, HTTP — with some methods already deprecated
+- ❌ Fragmented transports: STDIO, SSE, HTTP - with some methods already deprecated
 - ❌ Inconsistent authentication: none, JWT, OAuth
 - ❌ Operational overhead: managing endpoints, credentials, retries, and logs for each tool
 - ❌ Version mismatch: clients and servers may support different MCP versions
@@ -52,11 +52,11 @@ And is readily available as open source, published a container image and as a Py
 ???+ "📣 Non-Technical Post"
     ### Meet ContextForge MCP Gateway: Simplify AI Tool Connections
 
-    Building AI agents should be easy—but each tool speaks a different dialect.
+    Building AI agents should be easy-but each tool speaks a different dialect.
 
     **[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)** is a universal hub: one secure endpoint that discovers your tools and works seamlessly with Copilot, CrewAI, LangChain, and more.
 
-    > "What should be simple often becomes a debugging nightmare. The ContextForge MCP Gateway solves that." — Mihai Criveti
+    > "What should be simple often becomes a debugging nightmare. The ContextForge MCP Gateway solves that." - Mihai Criveti
 
     **Try it in 60 seconds:**
     ```bash
@@ -100,7 +100,7 @@ And is readily available as open source, published a container image and as a Py
 
     ### Connect your Cline extension to MCP Gateway
 
-    **[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)** offers a unified HTTPS + JSON‑RPC endpoint for AI tools, making integration seamless—including with **Cline**, a VS Code extension that supports MCP.
+    **[ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)** offers a unified HTTPS + JSON-RPC endpoint for AI tools, making integration seamless-including with **Cline**, a VS Code extension that supports MCP.
 
     **Start the Gateway (Docker):**
     ```bash
@@ -142,7 +142,7 @@ And is readily available as open source, published a container image and as a Py
     }
     ```
 
-    Enable the server in Cline—you should see a green "connected" indicator when authentication succeeds.
+    Enable the server in Cline-you should see a green "connected" indicator when authentication succeeds.
 
     ---
 
@@ -158,7 +158,7 @@ And is readily available as open source, published a container image and as a Py
       ```
     * Display results and JSON output directly within the VS Code interface
 
-    Try it yourself—and don't forget to ⭐ the project at [ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)!
+    Try it yourself-and don't forget to ⭐ the project at [ContextForge MCP Gateway](https://github.com/IBM/mcp-context-forge)!
 
 
 ## 🖼️ Logo & Images
@@ -181,7 +181,7 @@ And is readily available as open source, published a container image and as a Py
 **LinkedIn**
 
 !!! example
-    Thrilled to share **ContextForge MCP Gateway**—an open-source hub that turns fragmented AI-tool integrations into a single secure interface with discovery, observability, and a live catalog UI. Check it out on GitHub and leave us a star ⭐!
+    Thrilled to share **ContextForge MCP Gateway**-an open-source hub that turns fragmented AI-tool integrations into a single secure interface with discovery, observability, and a live catalog UI. Check it out on GitHub and leave us a star ⭐!
     `#mcp #ai #tools`
 
 !!! tip Examples Posts

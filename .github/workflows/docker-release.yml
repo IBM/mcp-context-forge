@@ -87,7 +87,7 @@ jobs:
             | jq -r '.state')
           echo "Combined status: $STATUS"
           if [ "$STATUS" != "success" ]; then
-            echo "Required workflows have not all succeeded – aborting." >&2
+            echo "Required workflows have not all succeeded - aborting." >&2
             exit 1
           fi
 

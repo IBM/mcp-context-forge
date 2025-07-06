@@ -3,11 +3,11 @@
 ![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.2.0](https://img.shields.io/badge/AppVersion-0.2.0-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
-& Registry — Context-Forge**.  It bundles:
-  • MCP Gateway application (HTTP / WebSocket server)
-  • PostgreSQL database with persistent storage
-  • Redis cache for sessions & completions
-  • Optional PgAdmin and Redis-Commander web UIs
+& Registry - Context-Forge**.  It bundles:
+  - MCP Gateway application (HTTP / WebSocket server)
+  - PostgreSQL database with persistent storage
+  - Redis cache for sessions & completions
+  - Optional PgAdmin and Redis-Commander web UIs
 
 **Homepage:** <https://github.com/IBM/mcp-context-forge>
 

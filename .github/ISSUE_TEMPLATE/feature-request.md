@@ -34,7 +34,7 @@ Please select the most appropriate category:
 
 ---
 
-### 🙋‍♂️ User Story 1
+### 🙋♂️ User Story 1
 
 **As a:** <type of user>
 **I want:** <some goal>
@@ -55,7 +55,7 @@ Scenario: Second scenario title
 
 ---
 
-### 🙋‍♂️ User Story 2
+### 🙋♂️ User Story 2
 
 **As a:** <another type of user>
 **I want:** <a different goal>

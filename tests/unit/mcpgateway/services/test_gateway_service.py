@@ -47,8 +47,8 @@ def _make_execute_result(*, scalar=None, scalars_list=None):
     Return a MagicMock that behaves like the SQLAlchemy Result object the
     service expects after ``Session.execute``:
 
-        • .scalar_one_or_none()  -> *scalar*
-        • .scalars().all()      -> *scalars_list*  (defaults to [])
+        - .scalar_one_or_none()  -> *scalar*
+        - .scalars().all()      -> *scalars_list*  (defaults to [])
 
     This lets us emulate both the "fetch one" path and the "fetch many"
     path with a single helper.

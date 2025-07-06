@@ -1,19 +1,19 @@
 # GitHub Workflow Guide
 
-This mini‑handbook covers the daily Git tasks we use on **mcp-context-forge** - from the first clone to the last merge.
+This mini-handbook covers the daily Git tasks we use on **mcp-context-forge** - from the first clone to the last merge.
 
 ---
 
-## 1. One‑Time Setup
+## 1. One-Time Setup
 
 ```bash
 # Fork on GitHub from https://github.com/IBM/mcp-context-forge.git first, then:
-git clone https://github.com/<your‑user>/mcp-context-forge.git
+git clone https://github.com/<your-user>/mcp-context-forge.git
 cd mcp-context-forge
 
 # Add the canonical repo so you can pull upstream changes
 git remote add upstream https://github.com/IBM/mcp-context-forge.git
-git remote -v   # sanity‑check remotes
+git remote -v   # sanity-check remotes
 ```
 
 ---
@@ -57,7 +57,7 @@ sudo dnf install 'https://github.com/cli/cli/releases/download/v2.74.0/gh_2.74.0
 
 > **Tip:** Replace the version number (`2.74.0`) with the latest release from [https://github.com/cli/cli/releases](https://github.com/cli/cli/releases).
 
-### First‑time authentication
+### First-time authentication
 
 ```bash
 gh auth login             # follow the interactive prompts
@@ -72,7 +72,7 @@ Choose:
 ### Verify configuration
 
 ```bash
-gh auth status            # should say "Logged in to github.com as <your‑user>"
+gh auth status            # should say "Logged in to github.com as <your-user>"
 gh repo view              # shows repo info if run inside a clone
 ```
 
@@ -89,11 +89,11 @@ gh repo view              # shows repo info if run inside a clone
 
 ## 1.6 Personal Git Configuration (Recommended)
 
-Setting a few global Git options makes everyday work friction‑free and guarantees that every commit passes DCO checks.
+Setting a few global Git options makes everyday work friction-free and guarantees that every commit passes DCO checks.
 
 ### 1.6.1 Commit template
 
-Create a single‑line template that Git pre‑pends to every commit message so you never forget the sign‑off:
+Create a single-line template that Git pre-pends to every commit message so you never forget the sign-off:
 
 ```bash
 echo 'Signed-off-by: <Your Name> <you@example.com>' > ~/.git-commit-template
@@ -118,13 +118,13 @@ Put this in `~/.gitconfig` (or append the bits you're missing):
 
 [alias]
     cm = commit -s -m      # `git cm "message"` → signed commit
-    ca = commit --amend -s # `git ca` → amend + sign‑off
+    ca = commit --amend -s # `git ca` → amend + sign-off
 
 [commit]
     template = ~/.git-commit-template
 ```
 
-Or run the one‑liners:
+Or run the one-liners:
 
 ```bash
 git config --global user.name  "Your Name"
@@ -155,10 +155,10 @@ git push origin main             # keep your fork up to date
 
 ```bash
 git switch -c feat/my-great-idea
-# …hack away…
+# ...hack away...
 git add .
 # Always sign your commits for DCO compliance:
-git commit -s -m "feat: explain context‑merging algorithm"
+git commit -s -m "feat: explain context-merging algorithm"
 
 git push -u origin HEAD          # publishes the branch
 # Then open a Pull Request (PR) on GitHub.
@@ -185,11 +185,11 @@ gh pr checkout 29
 
 ---
 
-## 5. Smoke‑Testing Every PR **Before** You Comment 🌋
+## 5. Smoke-Testing Every PR **Before** You Comment 🌋
 
 > **Hard rule:** No PR gets a "Looks good to me" without passing both the **local** and **container** builds below.
 
-### 5.1 Local build (SQLite + self‑signed HTTPS)
+### 5.1 Local build (SQLite + self-signed HTTPS)
 
 ```bash
 make venv install install-dev serve-ssl
@@ -207,7 +207,7 @@ make compose-up
 
 * Spins up the full Docker Compose stack
 * Uses PostgreSQL for persistence and Redis for queueing
-* Rebuilds images so you catch Docker‑specific issues
+* Rebuilds images so you catch Docker-specific issues
 
 ### 5.3 Gateway JWT (local API access)
 
@@ -258,7 +258,7 @@ If **any** of the above steps fail, leave a review requesting fixes and paste th
 
 ## 6. Squashing Commits 🥞
 
-Keeping a clean, single‑commit history per PR makes `git bisect` and blame easier.
+Keeping a clean, single-commit history per PR makes `git bisect` and blame easier.
 
 ### 6.1 Squash interactively (local, recommended)
 
@@ -269,21 +269,21 @@ git fetch upstream  # make sure refs are fresh
 git rebase -i upstream/main
 ```
 
-In the interactive list, mark the first commit as **`pick`** and every subsequent one as **`squash`** (or **`fixup`** for no extra message). Save & quit; Git opens an editor so you can craft the final commit message—remember to keep the `Signed-off-by` line!
+In the interactive list, mark the first commit as **`pick`** and every subsequent one as **`squash`** (or **`fixup`** for no extra message). Save & quit; Git opens an editor so you can craft the final commit message-remember to keep the `Signed-off-by` line!
 
-If the branch is already on GitHub and you've squashed locally, force‑push the updated, single‑commit branch:
+If the branch is already on GitHub and you've squashed locally, force-push the updated, single-commit branch:
 
 ```bash
 git push --force-with-lease
 ```
 
-### 6.2 Squash via GitHub UI (simple, but last‑minute)
+### 6.2 Squash via GitHub UI (simple, but last-minute)
 
 1. In the PR, click **"Merge" → "Squash and merge."**
 2. Tweak the commit title/description as needed.
 3. Ensure the `Signed-off-by:` trailer is present (GitHub adds it automatically if you enabled DCO in the repo).
 
-Use the UI method only if reviewers are done—every push re‑triggers CI.
+Use the UI method only if reviewers are done-every push re-triggers CI.
 
 ---
 
@@ -292,7 +292,7 @@ Use the UI method only if reviewers are done—every push re‑triggers CI.
 | Check                          | Why it matters                                  |
 | ------------------------------ | ----------------------------------------------- |
 | **Does it build locally?**     | Fastest signal that the code even compiles.     |
-| **Does it build in Docker?**   | Catches missing OS packages or env‑var mishaps. |
+| **Does it build in Docker?**   | Catches missing OS packages or env-var mishaps. |
 | **Unit tests green?**          | Ensures regressions are caught immediately.     |
 | **No new lint errors?**        | Keeps the CI pipeline and codebase clean.       |
 | **Commits squashed & signed?** | One commit history + DCO compliance.            |
@@ -302,9 +302,9 @@ Use the UI method only if reviewers are done—every push re‑triggers CI.
 
 ## 8. Merging the PR
 
-* **Squash‑and‑merge** is the default merge strategy.
+* **Squash-and-merge** is the default merge strategy.
 * Confirm the final commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) and retains a `Signed-off-by:` trailer.
-* GitHub automatically deletes the source branch after a successful merge—no manual cleanup required.
+* GitHub automatically deletes the source branch after a successful merge-no manual cleanup required.
 
 **Verify GitHub CI status checks**
 
@@ -328,7 +328,7 @@ Travis CI - Pull Request                        ✅  Build Passed
 
 If anything is red or still running, wait or push a **fix in the same PR** until every line is green. Ensure that a CODEOWNER is assigned to review the PR.
 
-Once the PR is merged, double‑check that the CI/CD pipeline deploys the change to all environments without errors.
+Once the PR is merged, double-check that the CI/CD pipeline deploys the change to all environments without errors.
 
 If **any** of the above steps fail after the PR is merged or cannot deploy, leave a review requesting fixes and paste the relevant logs inline or as a gist.
 
@@ -368,7 +368,7 @@ These aliases are optional, but they save time and make Git commands easier to t
 | ------------------------ | ---------------------------------------------------------------------- |
 | `error: cannot lock ref` | Run `git gc --prune=now` and retry.                                    |
 | `docker: no space left`  | `docker system prune -af && docker volume prune`                       |
-| Unit tests hang on macOS | Ensure you aren't on an Apple‑Silicon image that needs platform flags. |
+| Unit tests hang on macOS | Ensure you aren't on an Apple-Silicon image that needs platform flags. |
 
 ---
 

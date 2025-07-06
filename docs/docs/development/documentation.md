@@ -6,7 +6,7 @@ Follow this guide when you need to add or update markdown pages under `docs/` an
 
 ## 🧩 Prerequisites
 
-* **Python ≥ 3.10** (only for the initial virtual env – *not* required if you already have one)
+* **Python ≥ 3.10** (only for the initial virtual env - *not* required if you already have one)
 * `make` (GNU Make 4+)
 * (First-time only) **[`mkdocs-material`](https://squidfunk.github.io/mkdocs-material/)** and plugins are installed automatically by the *docs* `Makefile`.
 * One-time GitHub setup, e.g. [gitconfig setup](./github.md#16-personal-git-configuration-recommended)
@@ -34,13 +34,13 @@ repo-root/
 │  │  └─ ...
 │  ├─ mkdocs.yml      # MkDocs config & navigation
 │  └─ Makefile        # build / serve / clean targets
-└─ Makefile           # repo-wide helper targets (lint, spellcheck, …)
+└─ Makefile           # repo-wide helper targets (lint, spellcheck, ...)
 ```
 
-* **Add new pages** inside `docs/docs/` – organise them in folders that make sense for navigation.
+* **Add new pages** inside `docs/docs/` - organise them in folders that make sense for navigation.
 * **Update navigation**: edit `.pages` for your section so your page shows up in the left-hand nav.
 
-> **Tip:** MkDocs Material auto-generates "Edit this page" links – keep file names lowercase-hyphen-case.
+> **Tip:** MkDocs Material auto-generates "Edit this page" links - keep file names lowercase-hyphen-case.
 
 ---
 
@@ -55,7 +55,7 @@ repo-root/
 
 ## ✏️ Writing docs
 
-Start each new Markdown file with a clear **`# Heading 1`** title – this becomes the visible page title and is required for proper rendering in MkDocs.
+Start each new Markdown file with a clear **`# Heading 1`** title - this becomes the visible page title and is required for proper rendering in MkDocs.
 
 Follow the conventions and layout guidelines from the official **[MkDocs Material reference](https://squidfunk.github.io/mkdocs-material/reference/)** for callouts, tables, code blocks, and more. This ensures consistent formatting across the docs.
 
@@ -70,16 +70,16 @@ For directories that contain multiple Markdown files, we rely on the [awesome-pa
 Creating a `.pages` file inside a folder lets you:
 
 * **Set the section title** (different from the folder name).
-* **Control the left‑nav order** without touching the root `mkdocs.yml`.
+* **Control the left-nav order** without touching the root `mkdocs.yml`.
 * **Hide** specific files from the navigation.
 
-We do **not** auto-generate the `nav:` structure – you must create `.pages` manually.
+We do **not** auto-generate the `nav:` structure - you must create `.pages` manually.
 
-Example – *docs for the **development** section:*
+Example - *docs for the **development** section:*
 
 ```yaml
 # docs/docs/development/.pages
-# This file affects ONLY this folder and its sub‑folders
+# This file affects ONLY this folder and its sub-folders
 
 # Optional: override the title shown in the nav
 # title: Development Guide
@@ -95,10 +95,10 @@ Guidelines:
 
 1. Always include `index.md` first so the folder has a clean landing URL.
 2. List files **in the exact order** you want them to appear; anything omitted is still built but won't show in the nav.
-3. You can nest `.pages` files in deeper folders – rules apply hierarchically.
+3. You can nest `.pages` files in deeper folders - rules apply hierarchically.
 4. Avoid circular references: do **not** include files from *other* directories.
 
-After saving a `.pages` file, simply refresh the browser running `make serve`; MkDocs will hot‑reload and the navigation tree will update instantly.
+After saving a `.pages` file, simply refresh the browser running `make serve`; MkDocs will hot-reload and the navigation tree will update instantly.
 
 ---
 
@@ -125,7 +125,7 @@ make pre-commit           # Run all configured pre-commit hooks
 cd docs
 make clean       # remove generated site/
 make git-clean   # remove ignored files per .gitignore
-make git-scrub   # blow away *all* untracked files – use with care!
+make git-scrub   # blow away *all* untracked files - use with care!
 ```
 
 ---
@@ -153,4 +153,4 @@ Publishing is done manually by repo maintainers with `make deploy` which publish
 
 ## 🔗 Related reading
 
-* [Building Locally](building.md) – how to run the gateway itself
+* [Building Locally](building.md) - how to run the gateway itself

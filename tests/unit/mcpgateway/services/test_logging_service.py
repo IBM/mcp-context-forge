@@ -48,7 +48,7 @@ async def test_should_log_default_levels():
 async def test_get_logger_sets_level_and_reuses_instance():
     service = LoggingService()
 
-    # First call – default level INFO
+    # First call - default level INFO
     logger1 = service.get_logger("test")
     assert logger1.level == logging.INFO
 
@@ -117,7 +117,7 @@ async def test_notify_and_subscribe_receive_message_with_metadata():
 
     The tiny ``await asyncio.sleep(0)`` after creating the task ensures the
     subscriber has entered its coroutine and registered its queue before
-    ``notify`` is called – otherwise the message could be lost.
+    ``notify`` is called - otherwise the message could be lost.
     """
     service = LoggingService()
     events = []

@@ -321,7 +321,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         "th{background:#f7f7f7;width:25%;}"
         "</style>"
     )
-    header = f"<h1>MCP Gateway diagnostics</h1><p>Generated {payload['timestamp']} • Host {payload['host']} • Uptime {payload['uptime_seconds']}s</p>"
+    header = f"<h1>MCP Gateway diagnostics</h1><p>Generated {payload['timestamp']} - Host {payload['host']} - Uptime {payload['uptime_seconds']}s</p>"
     sections = ""
     for title, key in (
         ("App", "app"),

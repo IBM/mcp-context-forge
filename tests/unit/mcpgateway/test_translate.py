@@ -11,7 +11,7 @@ exercises:
 
 * `_PubSub` fan-out logic, including the QueueFull subscriber-removal path.
 * `StdIOEndpoint.start/stop/send/_pump_stdout` via a fully faked subprocess.
-* `_build_fastapi` — the `/sse`, `/message`, and `/healthz` routes, keep-alive
+* `_build_fastapi` - the `/sse`, `/message`, and `/healthz` routes, keep-alive
   frames, and request forwarding.
 * `_parse_args` on the happy path (`--stdio` / `--sse`) **and** the
   *NotImplemented* `--streamableHttp` branch.

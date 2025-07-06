@@ -56,7 +56,7 @@ from mcpgateway import __version__
 # Configuration
 # -----------------------------------------------------------------------------
 ENV_SERVER_CATALOGS = "MCP_SERVER_CATALOG_URLS"
-ENV_AUTH_TOKEN = "MCP_AUTH_TOKEN"  # nosec B105 – this is an *environment variable name*, not a secret
+ENV_AUTH_TOKEN = "MCP_AUTH_TOKEN"  # nosec B105 - this is an *environment variable name*, not a secret
 ENV_TIMEOUT = "MCP_TOOL_CALL_TIMEOUT"
 ENV_LOG_LEVEL = "MCP_WRAPPER_LOG_LEVEL"
 
@@ -89,7 +89,7 @@ def _extract_base_url(url: str) -> str:
 
     Returns:
         str: Clean base URL suitable for building `/tools/`, `/prompts/`,
-        or `/resources/` endpoints—for example
+        or `/resources/` endpoints-for example
         `https://host.com/gateway`.
 
     Raises:

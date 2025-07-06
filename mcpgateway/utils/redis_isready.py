@@ -182,7 +182,7 @@ def _parse_cli() -> argparse.Namespace:
     )
     parser.add_argument("--max-retries", type=int, default=REDIS_MAX_RETRIES, help="Maximum connection attempts")
     parser.add_argument("--retry-interval-ms", type=int, default=REDIS_RETRY_INTERVAL_MS, help="Delay between attempts in milliseconds")
-    parser.add_argument("--log-level", default=LOG_LEVEL, help="Logging level (DEBUG, INFO, …)")
+    parser.add_argument("--log-level", default=LOG_LEVEL, help="Logging level (DEBUG, INFO, ...)")
     return parser.parse_args()
 
 

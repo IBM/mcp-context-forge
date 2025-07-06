@@ -4,16 +4,16 @@ This repository comes with a **three-tier test-suite**:
 
 | layer                | location              | what it covers                                                                        |
 | -------------------- | --------------------- | ------------------------------------------------------------------------------------- |
-| **Unit**             | `tests/unit/…`        | Fast, isolated tests for individual functions, services, models and handlers.         |
-| **Integration**      | `tests/integration/…` | Happy-path flows that stitch several endpoints together with `TestClient`.            |
-| **End-to-End (E2E)** | `tests/e2e/…`         | Full, high-level workflows that drive the running server (admin, federation, client). |
+| **Unit**             | `tests/unit/...`        | Fast, isolated tests for individual functions, services, models and handlers.         |
+| **Integration**      | `tests/integration/...` | Happy-path flows that stitch several endpoints together with `TestClient`.            |
+| **End-to-End (E2E)** | `tests/e2e/...`         | Full, high-level workflows that drive the running server (admin, federation, client). |
 
 ```
 tests/
 ├── conftest.py               # shared fixtures
-├── e2e/            … 3 files
-├── integration/    … 8 files
-└── unit/           … 60+ files
+├── e2e/            ... 3 files
+├── integration/    ... 8 files
+└── unit/           ... 60+ files
 ```
 
 ---
@@ -73,17 +73,17 @@ tests/
 | fixture        | scope                                        | description                                      |
 | -------------- | -------------------------------------------- | ------------------------------------------------ |
 | `test_client`  | function                                     | A FastAPI `TestClient` with JWT auth overridden. |
-| `auth_headers` | function                                     | A ready-made `Authorization: Bearer …` header.   |
+| `auth_headers` | function                                     | A ready-made `Authorization: Bearer ...` header.   |
 | Extra helpers  | module-level `conftest.py` files per folder. |                                                  |
 
 ---
 
 ## Makefile targets
 
-| target         | does…                                                                  |
+| target         | does...                                                                  |
 | -------------- | ---------------------------------------------------------------------- |
 | `make test`    | Runs `pytest --cov --cov-report=term` across the whole repo.           |
 | `make htmlcov` | Re-runs tests and generates an **HTML coverage report** in `htmlcov/`. |
-| `make lint`    | Static analysis (ruff, mypy, etc.) — optional in CI.                   |
+| `make lint`    | Static analysis (ruff, mypy, etc.) - optional in CI.                   |
 
 ---

@@ -9,7 +9,7 @@ All paths are exercised, including:
 * CLI helpers: `_payload_from_cli`, `_parse_args`, and `main()` in both
   encode (`--pretty`) and decode (`--decode`) modes.
 
-No subprocesses – we invoke `main()` directly, patching ``sys.argv`` and
+No subprocesses - we invoke `main()` directly, patching ``sys.argv`` and
 capturing stdout with ``capsys``.
 
 Running:

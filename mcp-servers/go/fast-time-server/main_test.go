@@ -99,7 +99,7 @@ func TestVersionAndHealthJSON(t *testing.T) {
         t.Errorf("version JSON unexpected: %+v", v)
     }
 
-    // health – only check stable fields
+    // health - only check stable fields
     var h struct {
         Status string `json:"status"`
     }
@@ -256,7 +256,7 @@ func TestAuthMiddleware(t *testing.T) {
 }
 
 /* ------------------------------------------------------------------
-   loggingHTTPMiddleware – smoke test (no assertions on log output)
+   loggingHTTPMiddleware - smoke test (no assertions on log output)
 ------------------------------------------------------------------ */
 
 func TestLoggingHTTPMiddleware(t *testing.T) {

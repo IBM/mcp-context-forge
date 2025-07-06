@@ -1,21 +1,21 @@
 # ===============================================================
-# 🛡️  OSV-Scanner – Open-Source Vulnerability Scan Workflow
+# 🛡️  OSV-Scanner - Open-Source Vulnerability Scan Workflow
 # ===============================================================
 #
 # This workflow:
-#   • **scan-pr** ─ Diffs dependency changes in every PR / merge-queue
+#   - **scan-pr** ─ Diffs dependency changes in every PR / merge-queue
 #                   and fails only if the PR introduces *new* vulns.
-#   • **scan-scheduled** ─ Runs a full scan of the default branch
+#   - **scan-scheduled** ─ Runs a full scan of the default branch
 #                   on pushes & weekly cron to catch newly-published CVEs.
-#   • Uploads SARIF results to "Security → Code scanning".
+#   - Uploads SARIF results to "Security → Code scanning".
 #
 # Action reference:
-#   • Docs:  https://google.github.io/osv-scanner/github-action/
-#   • Repo:  https://github.com/google/osv-scanner-action  (Apache-2.0)
+#   - Docs:  https://google.github.io/osv-scanner/github-action/
+#   - Repo:  https://github.com/google/osv-scanner-action  (Apache-2.0)
 #
 # Tips:
-#   • Ignore a CVE by creating .osv-scanner.toml or using --ignore-vuln.
-#   • Add "--skip-git" so the scan isn't cluttered with .git metadata.
+#   - Ignore a CVE by creating .osv-scanner.toml or using --ignore-vuln.
+#   - Add "--skip-git" so the scan isn't cluttered with .git metadata.
 # ===============================================================
 
 name: OSV-Scanner

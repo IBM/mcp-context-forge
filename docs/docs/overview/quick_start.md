@@ -134,7 +134,7 @@ Pick an install method below, generate an auth token, then walk through a real t
         ```bash
         # Uses podman or docker automatically
         make compose-up
-        # —or— raw CLI
+        # -or- raw CLI
         docker compose -f podman-compose.yml up -d
         ```
 
@@ -219,7 +219,7 @@ For more information see [MCP Clients](../using/index.md)
 
 ---
 
-## 4 · Useful URLs
+## 4 - Useful URLs
 
 | URL                             | Description                                 |
 | ------------------------------- | ------------------------------------------- |
@@ -231,13 +231,13 @@ For more information see [MCP Clients](../using/index.md)
 
 ---
 
-## 5 · Next Steps
+## 5 - Next Steps
 
-* [Features Overview](features.md) – deep dive on transports, federation, caching
+* [Features Overview](features.md) - deep dive on transports, federation, caching
 * [Admin UI Guide](ui.md)
 * [Deployment to K8s / AWS / GCP / Azure](../deployment/index.md)
 * [Wrap any client via `mcpgateway-wrapper`](../using/mcpgateway-wrapper.md)
-* Tweak **`.env`** – see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
+* Tweak **`.env`** - see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
 
 !!! success "Gateway is ready!"
 You now have an authenticated MCP Gateway proxying a live tool, exposed via SSE **and** stdio.
