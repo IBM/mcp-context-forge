@@ -46,15 +46,17 @@ The script is intentionally opinionated but easy to fork - simply adjust
 ``DEFAULT_MAPPING``, ``DEFAULT_REGEX_REMOVE``, etc. to taste.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
 import difflib
 import fnmatch
 import logging
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Pattern, Sequence
 
 __all__ = [
