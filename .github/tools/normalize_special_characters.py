@@ -115,7 +115,7 @@ DEFAULT_ALLOWED_EXTENSIONS: List[str] = [
     ".m",           # Objective-C/MATLAB
     ".pl",          # Perl
     ".pm",          # Perl Module
-    
+
     # Shell and scripts
     ".sh",          # Shell script
     ".bash",        # Bash script
@@ -124,7 +124,7 @@ DEFAULT_ALLOWED_EXTENSIONS: List[str] = [
     ".ps1",         # PowerShell
     ".bat",         # Batch file
     ".cmd",         # Command file
-    
+
     # Data and config files
     ".json",        # JSON
     ".yaml",        # YAML
@@ -136,7 +136,7 @@ DEFAULT_ALLOWED_EXTENSIONS: List[str] = [
     ".conf",        # Config file
     ".properties",  # Properties file
     ".env",         # Environment file
-    
+
     # Documentation and text
     ".md",          # Markdown
     ".rst",         # reStructuredText
@@ -144,17 +144,17 @@ DEFAULT_ALLOWED_EXTENSIONS: List[str] = [
     ".rtf",         # Rich text
     ".tex",         # LaTeX
     ".org",         # Org-mode
-    
+
     # Database
     ".sql",         # SQL
     ".sqlite",      # SQLite
     ".psql",        # PostgreSQL
-    
+
     # Web and markup
     ".svg",         # SVG (text-based)
     ".vue",         # Vue.js
     ".svelte",      # Svelte
-    
+
     # Build and project files
     ".dockerfile",  # Dockerfile
     ".makefile",    # Makefile
@@ -163,11 +163,11 @@ DEFAULT_ALLOWED_EXTENSIONS: List[str] = [
     ".cmake",       # CMake
     ".gyp",         # GYP
     ".gypi",        # GYP
-    
+
     # Version control
     ".gitignore",   # Git ignore
     ".gitattributes", # Git attributes
-    
+
     # Without extension (common script files)
     "Dockerfile",
     "Makefile",
@@ -207,6 +207,7 @@ DEFAULT_MAPPING: Dict[str, str] = {
     # "Smart" single quotes & apos-like glyphs → plain apostrophe
     "'": "'",   # U+2018 LEFT SINGLE QUOTATION MARK
     "'": "'",   # U+2019 RIGHT SINGLE QUOTATION MARK
+    "’": "'",   # APOSTROPHE SINGLE QUOTATION MARK
     "‚": "'",   # U+201A SINGLE LOW-9 QUOTATION MARK
     "‛": "'",   # U+201B SINGLE HIGH-REVERSED-9 QUOTATION MARK
     "ʼ": "'",   # U+02BC MODIFIER LETTER APOSTROPHE
@@ -534,15 +535,15 @@ def is_allowed_file(path: Path, allowed_extensions: Optional[Sequence[str]] = No
         True
     """
     extensions = allowed_extensions if allowed_extensions is not None else DEFAULT_ALLOWED_EXTENSIONS
-    
+
     # Check exact filename matches (for files like Dockerfile, Makefile, etc.)
     if path.name in extensions:
         return True
-    
+
     # Check file extension
     if path.suffix.lower() in [ext.lower() for ext in extensions]:
         return True
-    
+
     return False
 
 
