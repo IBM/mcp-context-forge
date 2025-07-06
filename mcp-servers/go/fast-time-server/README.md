@@ -22,8 +22,8 @@
 ## Quick Start
 
 ```bash
-git clone https://github.com/yourorg/fast-time-server.git
-cd fast-time-server
+git clone git@github.com:IBM/mcp-context-forge.git
+cd mcp-servers/go/fast-time-server
 
 # Build & run over stdio
 make run
@@ -40,7 +40,8 @@ make run-sse
 **Requires Go 1.23+.**
 
 ```bash
-go install github.com/yourorg/fast-time-server@latest
+git clone git@github.com:IBM/mcp-context-forge.git
+go install mcp-servers/go/fast-time-server
 ```
 
 Also available as releases.
