@@ -10,11 +10,8 @@ Create Date: 2025-06-27 21:45:35.099713
 from typing import Sequence, Union
 
 # Third-Party
-import sqlalchemy as sa
-from sqlalchemy.orm import Session
-
-# First-Party
 from alembic import op
+import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'e4fc04d1a442'
@@ -32,7 +29,6 @@ def upgrade() -> None:
     that existing rows get a non-null default value.
     """
     bind = op.get_bind()
-    sess = Session(bind=bind)
     inspector = sa.inspect(bind)
 
     if not inspector.has_table("gateways"):
@@ -50,7 +46,6 @@ def downgrade() -> None:
     'annotations' column from the 'tool' table.
     """
     bind = op.get_bind()
-    sess = Session(bind=bind)
     inspector = sa.inspect(bind)
 
     if not inspector.has_table("gateways"):
