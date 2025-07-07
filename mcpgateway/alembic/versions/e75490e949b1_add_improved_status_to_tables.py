@@ -26,11 +26,11 @@ def upgrade():
     Renames 'is_active' to 'enabled' and adds a new 'reachable' column (default True)
     in both 'tools' and 'gateways' tables.
     """
-    op.alter_column('tools', 'is_active', new_column_name='enabled')
-    op.add_column('tools', sa.Column('reachable', sa.Boolean(), nullable=False, server_default=sa.true()))
+    op.alter_column("tools", "is_active", new_column_name="enabled")
+    op.add_column("tools", sa.Column("reachable", sa.Boolean(), nullable=False, server_default=sa.true()))
 
-    op.alter_column('gateways', 'is_active', new_column_name='enabled')
-    op.add_column('gateways', sa.Column('reachable', sa.Boolean(), nullable=False, server_default=sa.true()))
+    op.alter_column("gateways", "is_active", new_column_name="enabled")
+    op.add_column("gateways", sa.Column("reachable", sa.Boolean(), nullable=False, server_default=sa.true()))
 
 
 def downgrade():
@@ -38,8 +38,8 @@ def downgrade():
     Reverts the changes by renaming 'enabled' back to 'is_active'
     and dropping the 'reachable' column in both 'tools' and 'gateways' tables.
     """
-    op.alter_column('tools', 'enabled', new_column_name='is_active')
-    op.drop_column('tools', 'reachable')
+    op.alter_column("tools", "enabled", new_column_name="is_active")
+    op.drop_column("tools", "reachable")
 
-    op.alter_column('gateways', 'enabled', new_column_name='is_active')
-    op.drop_column('gateways', 'reachable')
+    op.alter_column("gateways", "enabled", new_column_name="is_active")
+    op.drop_column("gateways", "reachable")
