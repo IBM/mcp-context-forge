@@ -3,11 +3,12 @@
 from logging.config import fileConfig
 
 # Third-Party
+from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 # First-Party
-from alembic import context
 from mcpgateway.config import settings
+from mcpgateway.db import Base
 
 # from mcpgateway.db import get_metadata
 # target_metadata = get_metadata()
@@ -28,7 +29,6 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 # from myapp import mymodel
-from mcpgateway.db import Base
 
 target_metadata = Base.metadata
 
@@ -81,9 +81,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

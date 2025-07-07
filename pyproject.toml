@@ -199,7 +199,12 @@ mcpgateway = [
   "py.typed",
   "static/*.css",
   "static/*.js",
-  "templates/*.html"
+  "templates/*.html",
+  "alembic.ini",
+  "alembic/*.py",
+  "alembic/*.mako",
+  "alembic/*.md",
+  "alembic/versions/*.py",
 ]
 
 # --------------------------------------------------------------------
