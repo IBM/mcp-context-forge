@@ -13,14 +13,8 @@ Exposes components for MCP Gateway federation including:
 
 from mcpgateway.federation.discovery import DiscoveryService
 from mcpgateway.federation.forward import ForwardingService
-from mcpgateway.federation.manager import (
-    FederationError,
-    FederationManager,
-)
 
 __all__ = [
     "DiscoveryService",
     "ForwardingService",
-    "FederationManager",
-    "FederationError",
 ]
