@@ -27,8 +27,8 @@ Implement two health-check levels:
 
 2. **Federated peer liveness**:
    - Every `HEALTH_CHECK_INTERVAL`, we ping all registered peers via HTTP
-   - If a peer fails `UNHEALTHY_THRESHOLD` times consecutively, it's temporarily deactivated
-   - A separate background task handles this (see `FederationManager`)
+   - If a peer fails `UNHEALTHY_THRESHOLD` times consecutively, it's tagged as 'Offline' i.e. The gateway is unreachable. Once its back online, it's automatically tagged as 'Active'
+   - A separate background task handles this (see `GatewayService`)
 
 Health info is also published to `/metrics` in Prometheus format.
 
@@ -50,4 +50,4 @@ Health info is also published to `/metrics` in Prometheus format.
 
 ## Status
 
-This is implemented as part of the `FederationManager` and exposed via `/health` and `/metrics` endpoints.
+This is implemented as part of the `GatewayService` and exposed via `/health` and `/metrics` endpoints.
