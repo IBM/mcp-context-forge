@@ -11,16 +11,16 @@ from typing import Sequence, Union
 import uuid
 
 # Third-Party
+from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 # First-Party
-from alembic import op
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
 
 # revision identifiers, used by Alembic.
-revision: str = 'b77ca9d2de7e'
+revision: str = "b77ca9d2de7e"
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -70,7 +70,6 @@ def upgrade() -> None:
     op.add_column("server_resource_association", sa.Column("server_id_new", sa.String(36), nullable=True))
     op.add_column("server_prompt_association", sa.Column("server_id_new", sa.String(36), nullable=True))
 
-
     # ── STAGE 2: POPULATE THE NEW COLUMNS (DATA MIGRATION) ───────────────
     gateways = sess.execute(sa.select(sa.text("id, name")).select_from(sa.text("gateways"))).all()
     for gid, gname in gateways:
@@ -80,9 +79,7 @@ def upgrade() -> None:
             {"u": g_uuid, "s": slugify(gname), "i": gid},
         )
 
-    tools = sess.execute(
-        sa.select(sa.text("id, name, gateway_id")).select_from(sa.text("tools"))
-    ).all()
+    tools = sess.execute(sa.select(sa.text("id, name, gateway_id")).select_from(sa.text("tools"))).all()
     for tid, tname, g_old in tools:
         t_uuid = uuid.uuid4().hex
         tool_slug = slugify(tname)
@@ -102,8 +99,12 @@ def upgrade() -> None:
                 """
             ),
             {
-                "u": t_uuid, "on": tname, "ons": tool_slug,
-                "sep": settings.gateway_tool_name_separator, "g": g_old, "i": tid,
+                "u": t_uuid,
+                "on": tname,
+                "ons": tool_slug,
+                "sep": settings.gateway_tool_name_separator,
+                "g": g_old,
+                "i": tid,
             },
         )
 
@@ -123,7 +124,10 @@ def upgrade() -> None:
         sess.execute(sa.text("UPDATE prompts SET gateway_id_new=(SELECT id_new FROM gateways WHERE id=:g) WHERE id=:i"), {"g": g_old, "i": pid})
     sta = sess.execute(sa.select(sa.text("server_id, tool_id")).select_from(sa.text("server_tool_association"))).all()
     for s_old, t_old in sta:
-        sess.execute(sa.text("UPDATE server_tool_association SET server_id_new=(SELECT id_new FROM servers WHERE id=:s), tool_id_new=(SELECT id_new FROM tools WHERE id=:t) WHERE server_id=:s AND tool_id=:t"), {"s": s_old, "t": t_old})
+        sess.execute(
+            sa.text("UPDATE server_tool_association SET server_id_new=(SELECT id_new FROM servers WHERE id=:s), tool_id_new=(SELECT id_new FROM tools WHERE id=:t) WHERE server_id=:s AND tool_id=:t"),
+            {"s": s_old, "t": t_old},
+        )
     tool_metrics = sess.execute(sa.select(sa.text("id, tool_id")).select_from(sa.text("tool_metrics"))).all()
     for tmid, t_old in tool_metrics:
         sess.execute(sa.text("UPDATE tool_metrics SET tool_id_new=(SELECT id_new FROM tools WHERE id=:t) WHERE id=:i"), {"t": t_old, "i": tmid})
@@ -219,6 +223,7 @@ def upgrade() -> None:
         batch_op.create_foreign_key("fk_server_resource_association_server_id", "servers", ["server_id"], ["id"])
     with op.batch_alter_table("server_prompt_association") as batch_op:
         batch_op.create_foreign_key("fk_server_prompt_association_server_id", "servers", ["server_id"], ["id"])
+
 
 # def upgrade() -> None:
 #     bind = op.get_bind()
