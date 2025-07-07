@@ -70,7 +70,7 @@ alembic/
 ### Other Common Commands
 
 ```bash
-alembic current             # Show current DB revision
+alembic -c mcpgateway/alembic.ini current             # Show current DB revision
 alembic history --verbose   # Show all migrations and their order
 alembic downgrade -1        # Roll back one revision
 alembic downgrade <rev>     # Roll back to a specific revision hash
@@ -158,7 +158,7 @@ make db-history
 | **`Can't locate revision ...`**    | You deleted or renamed a revision file that the DB is pointing to. Either restore it or run `alembic stamp base` and recreate the revision.           |
 | **`script.py.mako` missing**       | This file is required. Run `alembic init alembic` in a temp folder and copy the missing template into your project.                                   |
 | **SQLite foreign key limitations** | SQLite doesn't allow dropping constraints. Use `create table → copy → drop` flow manually, or plan around it.                                         |
-| **DB not updating**                | Did you forget to run `alembic upgrade head`? Check with `alembic current`.                                                                           |
+| **DB not updating**                | Did you forget to run `alembic upgrade head`? Check with `alembic -c mcpgateway/alembic.ini current`.                                                                           |
 | **Wrong DB URL or config errors**  | Confirm `settings.database_url` is valid. Check `env.py` and your `.env`/config settings. Alembic ignores `alembic.ini` for URLs in your setup.       |
 | **Model changes not detected**     | Alembic only picks up declarative models in `Base.metadata`. Ensure all models are imported and not behind `if TYPE_CHECKING:` or other lazy imports. |
 
