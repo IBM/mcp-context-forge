@@ -1,505 +1,370 @@
-# Roadmap
+# MCP Gateway Roadmap
+
+!!! info "Release Overview"
+    This roadmap outlines the planned development milestones for MCP Gateway, organized by release version with completion status and due dates.
+
+## Release Status Summary
+
+| Release | Due Date    | Completion | Status     | Description |
+| ------- | ----------- | ---------- | ---------- | ----------- |
+| 1.6.0   | 06 Jan 2026 | 0 %        | Open       | TBD |
+| 1.5.0   | 23 Dec 2025 | 0 %        | Open       | TBD |
+| 1.4.0   | 09 Dec 2025 | 0 %        | Open       | TBD |
+| 1.3.0   | 25 Nov 2025 | 0 %        | Open       | Catalog Improvements, A2A Improvements, MCP Standard Review and Sync, Technical Debt |
+| 1.2.0   | 11 Nov 2025 | 0 %        | Open       | Catalog Enhancements, Ratings, experience and UI |
+| 1.1.0   | 28 Oct 2025 | 0 %        | Open       | Post-GA Testing, Bugfixing, Documentation, Performance and Scale |
+| 1.0.0   | 14 Oct 2025 | 0 %        | Open       | General Availability & Release Candidate Hardening - stable & audited |
+| 0.9.0   | 30 Sep 2025 | 7 %        | Open       | Interoperability, marketplaces & advanced connectivity |
+| 0.8.0   | 16 Sep 2025 | 0 %        | Open       | Enterprise Security & Policy Guardrails |
+| 0.7.0   | 02 Sep 2025 | 0 %        | Open       | Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A) |
+| 0.6.0   | 19 Aug 2025 | 0 %        | Open       | Security, Scale & Smart Automation |
+| 0.5.0   | 05 Aug 2025 | 0 %        | Open       | Enterprise Operability, Auth, Configuration & Observability |
+| 0.4.0   | 22 Jul 2025 | 0 %        | Open       | Bugfixes, Resilience (retry with exponential backoff), code quality and technical debt |
+| 0.3.0   | 08 Jul 2025 | 63 %       | **Closed** | Annotations and multi-server tool federations |
+| 0.2.0   | 24 Jun 2025 | 100 %      | **Closed** | Streamable HTTP, Infra-as-Code, Dark Mode |
+| 0.1.0   | 05 Jun 2025 | 100 %      | **Closed** | Initial release |
 
 ---
 
-## 🌐 Federation & Routing
+## Release 0.1.0 - Initial Release
 
-### ✅ 🧭 Epic: Streamable HTTP Transport (Protocol Revision 2025-03-26)
+!!! success "Release 0.1.0 - Completed (100%)"
+    **Due:** June 5, 2025 | **Status:** Closed  
+    Initial release with core functionality and basic deployment support.
 
-> ✅ This feture is now implemented, and streamable HTTP is fully supported in Tools and Virtual Servers.
+???+ check "✨ Features (3)"
+    - [**#27**](https://github.com/IBM/mcp-context-forge/issues/27) - Add /ready endpoint for readiness probe
+    - [**#24**](https://github.com/IBM/mcp-context-forge/issues/24) - Publish Helm chart for Kubernetes deployment  
+    - [**#23**](https://github.com/IBM/mcp-context-forge/issues/23) - Add VS Code Devcontainer support for instant onboarding
 
-> **Note:** stdio and the legacy HTTP+SSE transports are already supported; this epic adds the new Streamable HTTP transport per the 2025-03-26 spec.
+???+ check "🐛 Bugs (3)"
+    - [**#49**](https://github.com/IBM/mcp-context-forge/issues/49) - Make venv install serve fails with "python: command not found"
+    - [**#37**](https://github.com/IBM/mcp-context-forge/issues/37) - Issues with the gateway Container Image
+    - [**#35**](https://github.com/IBM/mcp-context-forge/issues/35) - Error when running in Docker Desktop for Windows
 
-* **HTTP POST Messaging**
-  **As** an MCP client
-  **I want** to send every JSON-RPC request, notification, or batch in a separate HTTP POST to the MCP endpoint, with `Accept: application/json, text/event-stream`
-  **So that** the server can choose between immediate JSON replies or initiating an SSE stream.
-
-* **SSE-Backed Streaming on POST**
-  **As** a developer
-  **I want** the server, upon receiving request-bearing POSTs, to return `Content-Type: text/event-stream` and open an SSE stream-emitting JSON-RPC responses, server-to-client requests, and notifications until complete-before closing the stream
-  **So that** clients can consume large or real-time payloads incrementally without buffering.
-
-* **Unsolicited Server Notifications via GET**
-  **As** a client
-  **I want** to open an SSE stream with a GET (using `Accept: text/event-stream`) to the same MCP endpoint
-  **So that** I can receive unsolicited server-to-client messages independently of POST calls.
-
-* **Session Management & Resumability**
-  **As** an operator
-  **I want** the server to issue a secure `Mcp-Session-Id` on Initialize, require it on subsequent calls (400 if missing), allow DELETE to terminate, and support SSE resumability via `Last-Event-ID` headers
-  **So that** clients can manage, resume, and explicitly end long-running sessions robustly.
-
-* **Security & Compatibility**
-  **As** a platform admin
-  **I want** to validate `Origin` headers, bind to localhost by default, and enforce authentication against DNS rebinding-while optionally preserving the legacy HTTP+SSE endpoints for backward compatibility with 2024-11-05 clients
-  **So that** we uphold security best practices and maintain dual-transport support.
+???+ check "📚 Documentation (2)"
+    - [**#50**](https://github.com/IBM/mcp-context-forge/issues/50) - Virtual env location is incorrect
+    - [**#30**](https://github.com/IBM/mcp-context-forge/issues/30) - Deploying to Google Cloud Run
 
 ---
 
-## 🌐 Federation & Routing
+## Release 0.2.0 - Streamable HTTP, Infra-as-Code, Dark Mode
 
-### 🧭 Epic: A2A Transport Support
+!!! success "Release 0.2.0 - Completed (100%)"
+    **Due:** June 24, 2025 | **Status:** Closed  
+    Enhanced transport capabilities and improved user experience.
 
-> Partial support.
+???+ check "✨ Features (3)"
+    - [**#125**](https://github.com/IBM/mcp-context-forge/issues/125) - Add Streamable HTTP MCP servers to Gateway
+    - [**#109**](https://github.com/IBM/mcp-context-forge/issues/109) - Implement Streamable HTTP Transport for Client Connections to MCP Gateway
+    - [**#25**](https://github.com/IBM/mcp-context-forge/issues/25) - Add "Version and Environment Info" tab to Admin UI
 
-Enable full-duplex, application-to-application (A2A) integration so that virtual servers and gateways can speak A2A natively.
+???+ check "🐛 Bugs (2)"
+    - [**#85**](https://github.com/IBM/mcp-context-forge/issues/85) - Internal server error comes if there is any error while adding an entry or any crud operation is happening
+    - [**#51**](https://github.com/IBM/mcp-context-forge/issues/51) - Internal server running when running gunicorn after install
 
-* **A2A Gateway Registration**
-  **As** a platform admin
-  **I want** to register A2A-enabled servers as gateways (in addition to HTTP/SSE/WS)
-  **So that** I can federate A2A backends alongside standard MCP peers.
-
-* **A2A Tool Invocation**
-  **As** a developer
-  **I want** to call A2A servers as tools via the A2A protocol
-  **So that** A2A-native services appear in my tool catalog and handle messages over A2A transports.
-
-* **Expose Virtual Servers via A2A**
-  **As** an operator
-  **I want** to expose virtual servers (i.e. REST-wrapped MCP servers) over the A2A transport
-  **So that** clients that only support A2A can invoke those servers transparently.
+???+ check "📚 Documentation (3)"
+    - [**#98**](https://github.com/IBM/mcp-context-forge/issues/98) - Add additional information for using the mcpgateway with Claude desktop
+    - [**#71**](https://github.com/IBM/mcp-context-forge/issues/71) - Documentation Over Whelming Cannot figure out the basic task of adding an MCP server
+    - [**#21**](https://github.com/IBM/mcp-context-forge/issues/21) - Deploying to Fly.io
 
 ---
 
-## ⚙️ Lifecycle & Management
+## Release 0.3.0 - Annotations and Multi-Server Tool Federations
 
-### 🧭 Epic: Virtual Server Protocol Version Selection
+!!! warning "Release 0.3.0 - Partially Complete (63%)"
+    **Due:** July 8, 2025 | **Status:** Closed  
+    Focus on tool federation and server management improvements.
 
-> While this is possible through ENV variables, this should be DYNAMIC.
+???+ warning "🐛 Open Bugs (2)"
+    - [**#303**](https://github.com/IBM/mcp-context-forge/issues/303) - Update manager.py and admin.js removed `is_active` field - replace with separate `enabled` and `reachable` fields from migration
+    - [**#302**](https://github.com/IBM/mcp-context-forge/issues/302) - Alembic configuration not packaged with pip wheel, `pip install . && mcpgateway` fails on db migration
 
-Allow choosing which MCP protocol version each virtual server uses.
+???+ warning "✨ Open Features (4)"
+    - [**#265**](https://github.com/IBM/mcp-context-forge/issues/265) - Sample MCP Server - Go (fast-time-server)
+    - [**#177**](https://github.com/IBM/mcp-context-forge/issues/177) - Persistent Admin UI Filter State
+    - [**#172**](https://github.com/IBM/mcp-context-forge/issues/172) - Enable Auto Refresh and Reconnection for MCP Servers in Gateways
+    - [**#94**](https://github.com/IBM/mcp-context-forge/issues/94) - Transport-Translation Bridge (`mcpgateway.translate`) any to any protocol conversion cli tool
 
-* **Per-Server Protocol Version**
-  **As** a platform admin
-  **I want** to specify the MCP protocol version (e.g. 2025-03-26 or earlier) on each virtual server
-  **So that** clients requiring legacy behavior can continue to work without affecting others.
+???+ warning "📚 Open Documentation (2)"
+    - [**#46**](https://github.com/IBM/mcp-context-forge/issues/46) - Add documentation for using mcp-cli with MCP Gateway
+    - [**#19**](https://github.com/IBM/mcp-context-forge/issues/19) - Add Developer Guide for MCP CLI Integration and Usage
+    - [**#18**](https://github.com/IBM/mcp-context-forge/issues/18) - Add Developer Workstation Setup Guide for Mac (Intel/ARM), Linux, and Windows
 
-* **Protocol Compatibility Testing**
-  **As** a developer
-  **I want** to validate a virtual server's behavior against multiple protocol versions in the Admin UI
-  **So that** I can catch breaking changes before rolling out new servers.
+???+ check "✨ Completed Features (6)"
+    - [**#159**](https://github.com/IBM/mcp-context-forge/issues/159) - Add auto activation of mcp-server, when it goes up back again
+    - [**#154**](https://github.com/IBM/mcp-context-forge/issues/154) - Export connection strings to various clients from UI and via API
+    - [**#135**](https://github.com/IBM/mcp-context-forge/issues/135) - Dynamic UI Picker for Tool, Resource, and Prompt Associations
+    - [**#116**](https://github.com/IBM/mcp-context-forge/issues/116) - Namespace Composite Key & UUIDs for Tool Identity
+    - [**#100**](https://github.com/IBM/mcp-context-forge/issues/100) - Add path parameter or replace value in input payload for a REST API
+    - [**#26**](https://github.com/IBM/mcp-context-forge/issues/26) - Add dark mode toggle to Admin UI
 
----
-
-## 📈 Observability & Telemetry
-
-### 🧭 Epic: OpenTelemetry Tracing & Metrics Export
-
-???+ "Trace & Metric Visibility"
-    **Distributed Tracing:** As a developer, I want traces spanning tools, prompts, and gateways so I can understand multi-step flows.
-
-    **Metrics Scraping:** As an SRE, I want a Prometheus-compatible `/metrics` endpoint so I can alert on latency and error rate.
-
-### 🧭 Epic: Structured JSON Logging with Correlation IDs
-
-???+ "Context-Rich Logging"
-    **Correlation IDs:** As a DevOps user, I want logs with correlation and trace IDs so I can trace a request across services.
-
----
-
-## ⚙️ Lifecycle & Management
-
-### 🧭 Epic: Hot Configuration Reload
-
-???+ "Dynamic Config Updates"
-    **In-Place Reload:** As a system admin, I want to apply config changes (tools, servers, resources) without restarts so I maintain zero-downtime.
-
-### 🧭 Epic: CLI Enhancements for Admin Operations
-
-???+ "Automated Admin Commands"
-    **Admin CLI:** As a DevOps engineer, I want CLI subcommands to register tools, flush caches, and export configs so I can integrate with CI/CD.
-
-### 🧭 Epic: Config Import/Export (JSON Gateways & Virtual Servers)
-
-???+ "JSON Config Portability"
-    **Individual Entity Export/Import:** As a platform admin, I want to export or import a single gateway or virtual server's config in JSON so I can backup or migrate that one entity.
-
-    **Bulk Export/Import:** As a platform admin, I want to export or import the full configuration (all gateways, virtual servers, prompts, resources) at once so I can replicate environments or perform large-scale updates.
-
-    **Encrypted Credentials:** As a security-conscious operator, I want passwords and sensitive fields in exported JSON to be encrypted so my backups remain secure.
-
-???+ "Automated Admin Commands"
-    **Admin CLI:** As a DevOps engineer, I want CLI subcommands to register tools, flush caches, and export configs so I can integrate with CI/CD.
-
-### 🧭 Epic: Cache Management API
-
-???+ "Cache Control"
-    **Cache Inspection & Flush:** As a site admin, I want endpoints to view cache stats and clear entries so I can manage data freshness.
+???+ check "🐛 Completed Bugs (3)"
+    - [**#197**](https://github.com/IBM/mcp-context-forge/issues/197) - Pytest run exposes warnings from outdated Pydantic patterns, deprecated stdlib functions
+    - [**#189**](https://github.com/IBM/mcp-context-forge/issues/189) - Close button for parameter input scheme does not work
+    - [**#179**](https://github.com/IBM/mcp-context-forge/issues/179) - Configurable Connection Retries for DB and Redis
+    - [**#152**](https://github.com/IBM/mcp-context-forge/issues/152) - Not able to add Github Remote Server
+    - [**#132**](https://github.com/IBM/mcp-context-forge/issues/132) - SBOM Generation Failure
+    - [**#131**](https://github.com/IBM/mcp-context-forge/issues/131) - Documentation Generation fails due to error in Makefile's image target
+    - [**#28**](https://github.com/IBM/mcp-context-forge/issues/28) - Reactivating a gateway logs warning due to 'dict' object used as Pydantic model
 
 ---
 
-## 🌐 Federation & Routing
+## Release 0.4.0 - Bugfixes, Resilience & Code Quality
 
-### 🧭 Epic: Dynamic Federation Management
+!!! danger "Release 0.4.0 - Open (0%)"
+    **Due:** July 22, 2025 | **Status:** Open  
+    Focus on bugfixes, resilience (retry with exponential backoff), code quality and technical debt (test coverage, linting, security scans, GitHub Actions, Makefile, Helm improvements).
 
-???+ "Peer Gateway Management"
-    **Register/Remove Peers:** As a platform admin, I want to add or remove federated gateways at runtime so I can scale and maintain federation.
+???+ danger "🐛 Open Bugs (2)"
+    - [**#232**](https://github.com/IBM/mcp-context-forge/issues/232) - Leaving Auth to None fails
+    - [**#213**](https://github.com/IBM/mcp-context-forge/issues/213) - Can't use `STREAMABLEHTTP`
 
-### 🧭 Epic: Circuit Breakers for Unstable Backends
+???+ danger "✨ Open Features (4)"
+    - [**#258**](https://github.com/IBM/mcp-context-forge/issues/258) - Universal Client Retry Mechanisms with Exponential Backoff & Random Jitter
+    - [**#234**](https://github.com/IBM/mcp-context-forge/issues/234) - 🧠 Protocol Feature – Elicitation Support (MCP 2025-06-18)
+    - [**#233**](https://github.com/IBM/mcp-context-forge/issues/233) - Contextual Hover-Help Tooltips in UI
+    - [**#217**](https://github.com/IBM/mcp-context-forge/issues/217) - Graceful-Shutdown Hooks for API & Worker Containers (SIGTERM-safe rollouts, DB-pool cleanup, zero-drop traffic)
+    - [**#181**](https://github.com/IBM/mcp-context-forge/issues/181) - Test MCP Server Connectivity Debugging Tool
 
-???+ "Backend Isolation"
-    **Circuit Breaker:** As the gateway, I want to trip circuits for backends after repeated failures so I prevent cascading retries.
-
-### 🧭 Epic: Intelligent Load Balancing for Redundant Servers
-
-???+ "Smart Request Routing"
-    **Adaptive Balancing:** As an orchestrator, I want to route to the fastest healthy backend instance so I optimize response times.
-
----
-
-## 🛠️ Developer Experience
-
-### 🧭 Epic: Prompt Template Tester & Validator
-
-???+ "Prompt Validation"
-    **Template Linting:** As a prompt engineer, I want to preview and validate Jinja2 templates with sample data so I avoid runtime errors.
-
-### 🧭 Epic: System Diagnostics & Self-Check Report
-
-???+ "Diagnostics Bundle"
-    **Diagnostic Export:** As an operator, I want a self-contained system report (config, health, metrics) so I can troubleshoot effectively.
-
-### 🧭 Epic: Auto-Tuning of Timeout & Retry Policies
-
-???+ "Adaptive Policy Tuning"
-    **Auto-Tuning:** As the gateway, I want to adjust timeouts and retry intervals based on observed latencies so I balance reliability and speed.
-
----
-
-## 📦 Resilience & Runtime
-
-### 🧭 Epic: Graceful Startup and Shutdown
-
-???+ "Graceful Lifecycle"
-    **In-Flight Draining:** As the gateway, I want to complete active requests before shutdown so I prevent dropped connections.
-
-### 🧭 Epic: High Availability via Stateless Clustering
-
-???+ "Clustered Scaling"
-    **Stateless Instances:** As an architect, I want multiple interchangeable gateway nodes so I can load-balance and ensure failover.
+???+ danger "🔧 Open Chores (18)"
+    - [**#292**](https://github.com/IBM/mcp-context-forge/issues/292) - Enable AI Alliance Analytics Stack Integration
+    - [**#281**](https://github.com/IBM/mcp-context-forge/issues/281) - Set up contract testing with Pact (pact-python) including Makefile and GitHub Actions targets
+    - [**#280**](https://github.com/IBM/mcp-context-forge/issues/280) - Add mutation testing with mutmut for test quality validation
+    - [**#279**](https://github.com/IBM/mcp-context-forge/issues/279) - Implement security audit and vulnerability scanning with grype in Makefile and GitHub Actions
+    - [**#261**](https://github.com/IBM/mcp-context-forge/issues/261) - Implement 90% Test Coverage Quality Gate and automatic badge and coverage html / markdown report publication
+    - [**#260**](https://github.com/IBM/mcp-context-forge/issues/260) - Manual security testing plan and template for release validation and production deployments
+    - [**#259**](https://github.com/IBM/mcp-context-forge/issues/259) - SAST (Semgrep) and DAST (OWASP ZAP) automated security testing Makefile targets and GitHub Actions
+    - [**#256**](https://github.com/IBM/mcp-context-forge/issues/256) - Implement comprehensive fuzz testing automation and Makefile targets (hypothesis, atheris, schemathesis , RESTler)
+    - [**#255**](https://github.com/IBM/mcp-context-forge/issues/255) - Implement comprehensive Playwright test automation for the entire MCP Gateway Admin UI with Makefile targets and GitHub Actions
+    - [**#254**](https://github.com/IBM/mcp-context-forge/issues/254) - Async Code Testing and Performance Profiling Makefile targets (flake8-async, cprofile, snakeviz, aiomonitor)
+    - [**#253**](https://github.com/IBM/mcp-context-forge/issues/253) - Implement chaos engineering tests for fault tolerance validation (network partitions, service failures)
+    - [**#252**](https://github.com/IBM/mcp-context-forge/issues/252) - Establish database migration testing pipeline with rollback validation across SQLite, Postgres, and Redis
+    - [**#251**](https://github.com/IBM/mcp-context-forge/issues/251) - Automatic performance testing and tracking for every build (hey) including SQLite and Postgres / Redis configurations
+    - [**#250**](https://github.com/IBM/mcp-context-forge/issues/250) - Implement automatic API documentation generation using mkdocstrings and update Makefile
+    - [**#249**](https://github.com/IBM/mcp-context-forge/issues/249) - Achieve 100% doctest coverage and add Makefile and CI/CD targets for doctest and coverage
+    - [**#223**](https://github.com/IBM/mcp-context-forge/issues/223) - Helm Chart Test Harness & Red Hat chart-verifier
+    - [**#222**](https://github.com/IBM/mcp-context-forge/issues/222) - Helm chart build Makefile with lint and values.schema.json validation + CODEOWNERS, CHANGELOG.md, .helmignore and CONTRIBUTING.md
+    - [**#216**](https://github.com/IBM/mcp-context-forge/issues/216) - Add spec-validation targets and make the OpenAPI build go green
+    - [**#212**](https://github.com/IBM/mcp-context-forge/issues/212) - Achieve zero flagged Bandit / SonarQube issues
+    - [**#211**](https://github.com/IBM/mcp-context-forge/issues/211) - Achieve Zero Static-Type Errors Across All Checkers (mypy, ty, pyright, pyrefly)
+    - [**#210**](https://github.com/IBM/mcp-context-forge/issues/210) - Raise pylint from 9.16/10 -> 10/10
 
 ---
 
-## 🧭 Namespaces & Catalog Integrity
+## Release 0.5.0 - Enterprise Operability, Auth, Configuration & Observability
 
-### 🧭 Epic: Name Collision Handling in Federated Catalogs
+!!! danger "Release 0.5.0 - Open (0%)"
+    **Due:** August 5, 2025 | **Status:** Open  
+    Enterprise-grade authentication, configuration management, and comprehensive observability.
 
-???+ "Unified Naming"
-    **Namespaced Tools:** As an operator, I want to distinguish identical tool names from different servers (e.g. `ServerA/toolX` vs `ServerB/toolX`) so I avoid conflicts.
-
----
-
-## 🔐 Secrets & Sensitive Data
-
-### 🧭 Epic: Secure Secrets Management & Masking
-
-???+ "Externalized Secrets"
-    **Secret Store Integration:** As an operator, I want to fetch credentials from a secrets manager so I avoid storing secrets in static configs.
-
-    **Log Scrubbing:** As a compliance officer, I want sensitive data masked in logs and metrics so I maintain data security.
-
----
-
-
-## 🛠️ Developer Experience
+???+ danger "✨ Open Features (10)"
+    - [**#284**](https://github.com/IBM/mcp-context-forge/issues/284) - LDAP / Active-Directory Integration
+    - [**#278**](https://github.com/IBM/mcp-context-forge/issues/278) - Authentication & Authorization - Google SSO Integration Tutorial (Depends on #220)
+    - [**#277**](https://github.com/IBM/mcp-context-forge/issues/277) - Authentication & Authorization - GitHub SSO Integration Tutorial (Depends on #220)
+    - [**#272**](https://github.com/IBM/mcp-context-forge/issues/272) - Observability - Pre-built Grafana Dashboards & Loki Log Export
+    - [**#220**](https://github.com/IBM/mcp-context-forge/issues/220) - Authentication & Authorization - SSO + Identity-Provider Integration
+    - [**#218**](https://github.com/IBM/mcp-context-forge/issues/218) - Prometheus Metrics Instrumentation using prometheus-fastapi-instrumentator
+    - [**#186**](https://github.com/IBM/mcp-context-forge/issues/186) - Granular Configuration Export & Import (via UI & API)
+    - [**#185**](https://github.com/IBM/mcp-context-forge/issues/185) - Portable Configuration Export & Import CLI (registry, virtual servers and prompts)
+    - [**#138**](https://github.com/IBM/mcp-context-forge/issues/138) - View & Export Logs from Admin UI
+    - [**#137**](https://github.com/IBM/mcp-context-forge/issues/137) - Track Creator & Timestamp Metadata for Servers, Tools, and Resources
+    - [**#136**](https://github.com/IBM/mcp-context-forge/issues/136) - Downloadable JSON Client Config Generator from Admin UI
+    - [**#87**](https://github.com/IBM/mcp-context-forge/issues/87) - Epic: JWT Token Catalog with Per-User Expiry and Revocation
+    - [**#80**](https://github.com/IBM/mcp-context-forge/issues/80) - Publish a multi-architecture container (including ARM64) support
 
 ---
 
-### 🧭 Epic: Chrome MCP Plugin Integration
+## Release 0.6.0 - Security, Scale & Smart Automation
 
-???+ "Browser-Based MCP Management"
-    **Plugin Accessibility:**
-    As a developer, I want a Chrome extension to manage MCP configurations, servers, and connections directly from the browser
-    **So that** I can reduce dependency on local CLI tools and improve accessibility.
+!!! danger "Release 0.6.0 - Open (0%)"
+    **Due:** August 19, 2025 | **Status:** Open  
+    Advanced security features, scalability improvements, and intelligent automation capabilities.
 
-    **Key Features:**
-    - **Real-Time Session Control:** Monitor and interact with MCP sessions via a browser UI.
-    - **Cross-Platform Compatibility:** Ensure the plugin works seamlessly across devices and operating systems.
-    - **Secure API Proxy:** Route requests securely via `mcpgateway.translate` or `mcpgateway.wrapper` for token-based access.
-
-    **Implementation Notes:**
-    - Distributed via the Chrome Web Store.
-    - Uses JWT tokens stored in extension config or injected from Admin UI.
-    - Interfaces with public `/servers`, `/tools`, `/resources`, and `/message` endpoints.
-
----
-
-### 🧭 Epic: Transport-Translation Bridge (`mcpgateway.translate`)
-
-> Partial supprot - stdio -> SSE currently supported as per: https://github.com/IBM/mcp-context-forge/issues/94
-
-???+ "CLI Bridge for Any-to-Any Transport"
-    **Goal:** As a CLI user or integrator, I want to bridge stdio-only MCP servers to modern transports like SSE, WS, or Streamable HTTP
-
-    **So that** I can use legacy binaries in web clients or tunnel remote services locally.
-
-    **Scenarios:**
-    - **Stdio ➜ SSE:**
-      Expose a local binary (e.g., `uvx mcp-server-git`) at `http://localhost:9000/sse`.
-
-    - **SSE ➜ Stdio:**
-      Tunnel a remote SSE server to `stdin/stdout` so CLI tools can talk to it natively.
-
-    - **Health & CORS:**
-      Add `/healthz` and CORS allowlist for reverse proxies and browser integrations.
-
-    - **Dockerized:**
-      Run the bridge as a standalone container from GHCR with no Python installed.
-
-    **Example CLI Usage:**
-
-    ```bash
-    mcpgateway.translate \
-      --stdio "uvx mcp-server-git" \
-      --port 9000 \
-      --ssePath /sse \
-      --messagePath /message \
-      --healthEndpoint /healthz \
-      --cors "https://app.example.com"
-    ```
-
-    **Design:**
-
-    - Uses async pumps between transport pairs (e.g., `Stdio ↔ SSE`, `SSE ↔ WS`).
-    - Maintains JSON-RPC fidelity and session state.
-    - Adapts message framing (e.g., Base64 for binary over SSE).
-    - Secure headers injected via `--header` or `--oauth2Bearer`.
-
-    **Docker:**
-
-    ```bash
-    docker run --rm -p 9000:9000 \
-      ghcr.io/ibm/mcp-context-forge:translate
-    ```
-
-    **Acceptance Criteria:**
-
-    - CLI and Docker bridge exposes `/sse` and `/message` for bidirectional MCP.
-    - Session ID and keep-alives handled automatically.
-    - Fully observable (`--logLevel`, Prometheus metrics, JWT headers, etc).
-    - Invalid flag combinations yield clean error output.
-
-    **Security:**
-
-    - Honors `MCP_AUTH_TOKEN` and CORS allowlist.
-    - Redacts tokens in logs.
-    - Supports TLS verification toggle (`--skipSSLVerify`).
-
-    ---
-
+???+ danger "✨ Open Features (11)"
+    - [**#301**](https://github.com/IBM/mcp-context-forge/issues/301) - Full Circuit Breakers for Unstable MCP Server Backends support (extend existing healthchecks with half-open state)
+    - [**#289**](https://github.com/IBM/mcp-context-forge/issues/289) - Multi-Layer Caching System (Memory + Redis)
+    - [**#287**](https://github.com/IBM/mcp-context-forge/issues/287) - API Path Versioning /v1 and /experimental prefix
+    - [**#286**](https://github.com/IBM/mcp-context-forge/issues/286) - Dynamic Configuration UI & Admin API (store config in database after db init)
+    - [**#282**](https://github.com/IBM/mcp-context-forge/issues/282) - Per-Virtual-Server API Keys with Scoped Access
+    - [**#276**](https://github.com/IBM/mcp-context-forge/issues/276) - Terraform Module – "mcp-gateway-ibm-cloud" supporting IKS, ROKS, Code Engine targets
+    - [**#275**](https://github.com/IBM/mcp-context-forge/issues/275) - Terraform Module - "mcp-gateway-gcp" supporting GKE and Cloud Run
+    - [**#274**](https://github.com/IBM/mcp-context-forge/issues/274) - Terraform Module - "mcp-gateway-azure" supporting AKS and ACA
+    - [**#273**](https://github.com/IBM/mcp-context-forge/issues/273) - Terraform Module - "mcp-gateway-aws" supporting both EKS and ECS Fargate targets
+    - [**#257**](https://github.com/IBM/mcp-context-forge/issues/257) - Gateway-Level Rate Limiting, DDoS Protection & Abuse Detection
+    - [**#221**](https://github.com/IBM/mcp-context-forge/issues/221) - Gateway-Level Input Validation & Output Sanitization (prevent traversal)
+    - [**#208**](https://github.com/IBM/mcp-context-forge/issues/208) - HTTP Header Passthrough
 
 ---
 
-### 🧭 Epic: One-Click Download of Ready-to-Use Client Config
+## Release 0.7.0 - Multitenancy and RBAC
 
-???+ "Copy Config for Claude or CLI"
-    **Goal:**
-    As a user viewing a virtual server in the Admin UI, I want a button to **download a pre-filled Claude JSON config**
+!!! danger "Release 0.7.0 - Open (0%)"
+    **Due:** September 2, 2025 | **Status:** Open  
+    Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A).
 
-    **So that** I can immediately use the selected server in `Claude Desktop`, `mcpgateway.wrapper`, or any stdio/SSE-based client.
-
-    **Use Cases:**
-
-    - **Claude Desktop (stdio wrapper):**
-      Download a `.json` config that launches the wrapper with correct `MCP_SERVER_CATALOG_URLS` and token pre-set.
-    - **Browser / SSE Client:**
-      Download a `.json` or `.env` snippet with `Authorization` header, SSE URL, and ready-to-paste curl/Javascript.
-
-    **Implementation Details:**
-
-    - Button appears in the Admin UI under each virtual server's **View** panel.
-    - Config supports:
-        - `mcpgateway.wrapper` (for stdio clients)
-        - `/sse` endpoint with token (for browser / curl)
-    - JWT token is generated or reused on demand.
-    - Filled-in config includes:
-        - Virtual server ID
-        - Base gateway URL
-        - Short-lived token (`MCP_AUTH_TOKEN`)
-        - Optional Docker or pipx run command
-    - Claude Desktop format includes `command`, `args`, and `env` block.
-
-    **API Support:**
-
-    - Add endpoint:
-      ```http
-      GET /servers/{id}/client-config
-      ```
-    - Optional query params:
-        - `type=claude` (default)
-        - `type=sse`
-    - Returns JSON config with headers:
-      ```
-      Content-Disposition: attachment; filename="claude-config.json"
-      Content-Type: application/json
-      ```
-
-    **Example (Claude-style JSON):**
-
-    ```json
-    {
-      "mcpServers": {
-        "server-alias": {
-          "command": "python3",
-          "args": ["-m", "mcpgateway.wrapper"],
-          "env": {
-            "MCP_AUTH_TOKEN": "example-token",
-            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/3",
-            "MCP_TOOL_CALL_TIMEOUT": "120"
-          }
-        }
-      }
-    }
-    ```
-
-    **Example (curl-ready SSE config):**
-
-    ```bash
-    curl -H "Authorization: ..." \
-        http://localhost:4444/servers/3/sse
-    ```
-
-    **Acceptance Criteria:**
-
-    - UI exposes a single **Download Config** button per server.
-    - Endpoint `/servers/{id}/client-config` returns fully populated config.
-    - Tokens are scoped, short-lived, or optionally ephemeral.
-    - Claude Desktop accepts the file without user edits.
-
-    **Security:**
-
-    - JWT token is only included if the requester is authenticated.
-    - Download links are protected behind user auth and audit-logged.
-    - Expiry and scope settings match user profile or server defaults.
-
-    **Stretch goal:**
-
-    - Toggle to choose between Claude, curl, or Docker styles.
-    - QR code output or "Copy to Clipboard" button. QR might work with the phone app, etc.
-
-    ---
-
-
-
-
-
-
-
-### 🧭 Epic: LDAP & External Identity Integration
-
-???+ "Corporate Directory Auth"
-    **LDAP Authentication:** As a platform admin, I want to configure LDAP/Active Directory so that users authenticate with corporate credentials.
-
-    **Group Sync:** As a platform admin, I want to sync LDAP/AD groups into gateway roles so I can manage permissions via directory groups.
-
-    **SSO Integration:** As a platform admin, I want to support SAML/OIDC so that teams can use existing single sign-on.
+???+ danger "✨ Open Features (8)"
+    - [**#300**](https://github.com/IBM/mcp-context-forge/issues/300) - Structured JSON Logging with Correlation IDs
+    - [**#283**](https://github.com/IBM/mcp-context-forge/issues/283) - Role-Based Access Control (RBAC) - User/Team/Global Scopes for full multi-tenancy support
+    - [**#270**](https://github.com/IBM/mcp-context-forge/issues/270) - MCP Server – Go Implementation ("libreoffice-server")
+    - [**#269**](https://github.com/IBM/mcp-context-forge/issues/269) - MCP Server - Go Implementation (LaTeX Service)
+    - [**#263**](https://github.com/IBM/mcp-context-forge/issues/263) - Sample Agent - CrewAI Integration (OpenAI & A2A Endpoints)
+    - [**#262**](https://github.com/IBM/mcp-context-forge/issues/262) - Sample Agent - LangChain Integration (OpenAI & A2A Endpoints)
+    - [**#175**](https://github.com/IBM/mcp-context-forge/issues/175) - Add OpenLLMetry Integration for Observability
 
 ---
 
-## 🔐 Authentication, Authorization, Security & Identity
+## Release 0.8.0 - Enterprise Security & Policy Guardrails
 
-### 🧭 [#87 Epic: JWT Token Catalog with Per-User Expiry and Revocation](https://github.com/IBM/mcp-context-forge/issues/87)
+!!! danger "Release 0.8.0 - Open (0%)"
+    **Due:** September 16, 2025 | **Status:** Open  
+    Comprehensive enterprise security features and policy enforcement mechanisms.
 
-???+ "Token Lifecycle Management"
-    - **Generate Tokens:**
-        As a platform admin, I want to generate one-time API tokens so I can issue short-lived credentials.
-    - **Revoke Tokens:**
-        As a platform admin, I want to revoke tokens so I can disable exposed or obsolete tokens.
-    - **API Token Management:**
-        As a user or automation client, I want to list, create, and revoke tokens via API so I can automate credential workflows.
+???+ danger "✨ Open Features (5)"
+    - [**#285**](https://github.com/IBM/mcp-context-forge/issues/285) - Configuration Validation & Schema Enforcement using Pydantic V2 models, config validator cli flag
+    - [**#271**](https://github.com/IBM/mcp-context-forge/issues/271) - Policy-as-Code Engine - Rego Prototype
+    - [**#230**](https://github.com/IBM/mcp-context-forge/issues/230) - Cryptographic Request & Response Signing
+    - [**#229**](https://github.com/IBM/mcp-context-forge/issues/229) - Guardrails - Input/Output Sanitization & PII Masking
+    - [**#182**](https://github.com/IBM/mcp-context-forge/issues/182) - Semantic tool auto-filtering
 
----
-
-### 🧭 Epic: Per-Virtual-Server API Keys
-
-???+ "Scoped Server Access"
-    - **Server-Scoped Keys:**
-        As a platform admin, I want to create API keys tied to a specific virtual server so that credentials are limited in scope.
-    - **Key Rotation & Revocation:**
-        As a platform admin, I want to rotate or revoke a virtual server's API keys so I can maintain security without affecting other servers.
-    - **API Management UI & API:**
-        As a developer, I want to list, create, rotate, and revoke server API keys via the Admin UI and REST API so I can automate credential lifecycle for each virtual server.
+???+ danger "🔧 Open Chores (1)"
+    - [**#291**](https://github.com/IBM/mcp-context-forge/issues/291) - Comprehensive Scalability & Soak-Test Harness (Long-term Stability & Load) - locust, pytest-benchmark, smocker mocked MCP servers
 
 ---
 
-### 🧭 Epic: Role-Based Access Control (User/Team/Global Scopes)
+## Release 0.9.0 - Interoperability, Marketplaces & Advanced Connectivity
 
-???+ "RBAC & Scoping - Overview"
-    - **User-Level Scopes:**
-        As a platform admin, I want to assign permissions at the individual-user level so that I can grant fine-grained access.
-    - **Team-Level Scopes:**
-        As a platform admin, I want to define teams and grant scopes to teams so that I can manage permissions for groups of users.
-    - **Global Scopes:**
-        As a platform admin, I want to set global default scopes so that baseline permissions apply to all users.
+!!! danger "Release 0.9.0 - Open (7%)"
+    **Due:** September 30, 2025 | **Status:** Open  
+    Enhanced interoperability, marketplace features, and advanced connectivity options.
 
-???+ "1️⃣ Core Role / Permission Model"
-    - **Define Canonical Roles:**
-        Built-in `Owner`, `Admin`, `Developer`, `Read-Only`, and `Service` roles.
-        *Acceptance Criteria:*
-        - Roles stored in `roles` table, seeded by migration
-        - Each role maps to a JSON list of named permissions (e.g. `tools:list`)
-        - Unit tests prove `Read-Only` cannot mutate anything
-    - **Fine-Grained Permission Catalog:**
-        - Full CRUD coverage for `tools`, `servers`, `resources`, `prompts`, `gateways`
-        - Meta-permissions like `metrics:view`, `admin:impersonate`
-        - All FastAPI routes must declare a permission via decorator
+???+ danger "✨ Open Features (11)"
+    - [**#298**](https://github.com/IBM/mcp-context-forge/issues/298) - A2A Initial Support - Add A2A Servers as Tools
+    - [**#295**](https://github.com/IBM/mcp-context-forge/issues/295) - MCP Server Marketplace
+    - [**#294**](https://github.com/IBM/mcp-context-forge/issues/294) - Automated MCP Server Testing and Certification
+    - [**#288**](https://github.com/IBM/mcp-context-forge/issues/288) - MariaDB Support Testing, Documentation, CI/CD (alongside PostgreSQL & SQLite)
+    - [**#268**](https://github.com/IBM/mcp-context-forge/issues/268) - Sample MCP Server - Haskell Implementation ("pandoc-server") (html, docx, pptx, latex conversion)
+    - [**#267**](https://github.com/IBM/mcp-context-forge/issues/267) - Sample MCP Server – Java Implementation ("plantuml-server")
+    - [**#266**](https://github.com/IBM/mcp-context-forge/issues/266) - Sample MCP Server - Rust Implementation ("filesystem-server")
+    - [**#209**](https://github.com/IBM/mcp-context-forge/issues/209) - Anthropic Desktop Extensions DTX directory/marketplace
+    - [**#130**](https://github.com/IBM/mcp-context-forge/issues/130) - Dynamic LLM-Powered Tool Generation via Prompt
+    - [**#123**](https://github.com/IBM/mcp-context-forge/issues/123) - Dynamic Server Catalog via Rule, Regexp, Tags - or LLM-Based Selection
+    - [**#114**](https://github.com/IBM/mcp-context-forge/issues/114) - Connect to Dockerized MCP Servers via STDIO
 
-???+ "2️⃣ Scope Hierarchy & Resolution"
-    - **Precedence:**
-        Global → Team → User; resolution returns union of allow rules minus any denies.
-    - **Wildcards:**
-        Support `tools:*`, `admin:*` and expand dynamically into specific scopes.
+???+ danger "🔧 Open Chores (1)"
+    - [**#290**](https://github.com/IBM/mcp-context-forge/issues/290) - Enhance Gateway Tuning Guide with PostgreSQL Deep-Dive
 
-???+ "3️⃣ Teams & Membership"
-    - **Team CRUD APIs & UI:**
-        Admin panel and REST API for team management (`GET/POST/PATCH/DELETE`), plus CSV/JSON import with dry-run mode.
-    - **Nested Teams (Optional v2):**
-        Support hierarchical teams with depth-first inheritance and first-match-wins precedence.
+???+ check "✨ Completed Features (1)"
+    - [**#243**](https://github.com/IBM/mcp-context-forge/issues/243) - a2a compatibility?
 
-???+ "4️⃣ OAuth 2.1 / OIDC Integration"
-    - **External IdP Mapping:**
-        SSO/OIDC `groups` and `roles` claims map to gateway teams via a `team_mappings` table.
-    - **PKCE Auth Code Flow:**
-        Public clients get redirected to IdP; receive gateway-signed JWT with scopes in `scp` claim.
-    - **Refresh-Token Rotation & Revocation List:**
-        Short-lived access tokens (≤15 min), refresh token rotation, revocation checked per request.
+???+ danger "📚 Open Documentation (1)"
+    - [**#22**](https://github.com/IBM/mcp-context-forge/issues/22) - Add BeeAI Framework client integration (Python & TypeScript)
 
-???+ "5️⃣ Service / Machine Credentials"
-    - **Client-Credentials Grant:**
-        CI systems and automation can obtain scoped access tokens using client ID and secret.
-    - **Signed JWT Actor Tokens:**
-        Internal components can impersonate users or declare service identities via signed JWTs with `act` and `sub`.
+---
 
-???+ "6️⃣ Enforcement Middleware"
-    - **FastAPI Dependency:**
-        `require_scope("...")` uses JWT and Redis permission cache; 403 on scope mismatch.
-    - **Transport-Level Guards:**
-        HTTP/SSE/A2A transports reject missing or invalid scopes early (401/403).
+## Release 1.0.0 - General Availability & Release Candidate Hardening
 
-???+ "7️⃣ Delegated (On-Behalf-Of) Flow"
-    - **User-Delegated Tokens:**
-        Users can mint scoped, short-lived tokens for agents to act on their behalf (e.g. tool calls); modal in Admin UI allows setting scopes and expiry.
+!!! danger "Release 1.0.0 - Open (0%)"
+    **Due:** October 14, 2025 | **Status:** Open  
+    Stable and audited release for general availability.
 
-???+ "8️⃣ Audit & Observability"
-    - **RBAC Audit Log:**
-        Logs every grant/revoke/login with full metadata (who, what, when, IP, UA); exports to JSON Lines and Prometheus metrics (`authz_denied_total`).
-    - **Correlation IDs:**
-        403s include `correlation_id` header for traceability in logs and dashboards.
+???+ danger "📚 Open Documentation (1)"
+    - [**#264**](https://github.com/IBM/mcp-context-forge/issues/264) - GA Documentation Review & End-to-End Validation Audit
 
-???+ "9️⃣ Self-Service Permission Inspector"
-    - **Why-Denied Endpoint:**
-        `POST /authz/explain` returns an evaluation trace (role → scope → result); Admin UI visualizes graph with colored indicators.
+---
 
-???+ "🔟 Migration & Back-Compat"
-    - **Mixed-Mode Auth Toggle:**
-        Support `AUTH_MODE=legacy|rbac`; legacy JWTs fallback to a `compat` role.
-    - **Data Migration Scripts:**
-        Alembic sets up `roles`, `permissions`, `teams`; CLI `mcpgateway migrate-rbac` assigns global admins from legacy data.
+## Release 1.1.0 - Post-GA Testing, Bugfixing, Documentation, Performance and Scale
 
-???+ "✅ Definition of Done"
-    - All HTTP/SSE/WS/A2A routes enforce scopes; fuzz tests confirm no bypass
-    - Full Admin UI coverage for role, team, and permission management
-    - End-to-end: IdP login → group-to-team mapping → scope-enforced tool access
-    - Regression tests for scope resolution, wildcard expansion, token lifecycles, delegated access, and audit logging
-    - Upgrade guide and SDK usage examples available in documentation
+!!! danger "Release 1.1.0 - Open (0%)"
+    **Due:** October 28, 2025 | **Status:** Open  
+    Post-launch improvements and performance optimizations.
+
+???+ danger "✨ Open Features (1)"
+    - [**#293**](https://github.com/IBM/mcp-context-forge/issues/293) - Intelligent Load Balancing for Redundant MCP Servers
+
+---
+
+## Release 1.2.0 - Catalog Enhancements, Ratings, Experience and UI
+
+!!! danger "Release 1.2.0 - Open (0%)"
+    **Due:** November 11, 2025 | **Status:** Open  
+    Enhanced catalog features and improved user experience.
+
+???+ danger "✨ Open Features (1)"
+    - [**#296**](https://github.com/IBM/mcp-context-forge/issues/296) - MCP Server Rating and Review System
+
+---
+
+## Release 1.3.0 - Catalog Improvements, A2A Improvements, MCP Standard Review and Sync, Technical Debt
+
+!!! danger "Release 1.3.0 - Open (0%)"
+    **Due:** November 25, 2025 | **Status:** Open  
+    Catalog improvements, A2A enhancements, and technical debt resolution.
+
+???+ danger "✨ Open Features (1)"
+    - [**#299**](https://github.com/IBM/mcp-context-forge/issues/299) - A2A Ecosystem Integration & Marketplace (Extends A2A support)
+
+---
+
+## Release 1.4.0
+
+!!! danger "Release 1.4.0 - Open (0%)"
+    **Due:** December 9, 2025 | **Status:** Open  
+    TBD
+
+*No issues currently assigned to this release.*
+
+---
+
+## Release 1.5.0
+
+!!! danger "Release 1.5.0 - Open (0%)"
+    **Due:** December 23, 2025 | **Status:** Open  
+    TBD
+
+*No issues currently assigned to this release.*
+
+---
+
+## Release 1.6.0
+
+!!! danger "Release 1.6.0 - Open (0%)"
+    **Due:** January 6, 2026 | **Status:** Open  
+    TBD
+
+*No issues currently assigned to this release.*
+
+---
+
+## Legend
+
+- ✨ **Feature Request** - New functionality or enhancement
+- 🐛 **Bug** - Issues that need to be fixed
+- 🔧 **Chore** - Maintenance, tooling, or infrastructure work
+- 📚 **Documentation** - Documentation improvements or additions
+
+!!! tip "Contributing"
+    Want to contribute to any of these features? Check out the individual GitHub issues for more details and discussion!
+
+    
+## Pending Issue Creation
+
+### ⚙️ Lifecycle & Management
+1. **Virtual Server Protocol Version Selection** - Allow choosing which MCP protocol version each virtual server uses dynamically (mentioned as possible through ENV variables but should be dynamic)
+
+2. **CLI Enhancements for Admin Operations** - CLI subcommands for registering tools, flushing caches, exporting configs for CI/CD integration
+
+3. **Cache Management API** - Endpoints to view cache stats and clear entries for data freshness management
+
+### 🛠️ Developer Experience
+4. **Prompt Template Tester & Validator** - Preview and validate Jinja2 templates with sample data to avoid runtime errors
+
+5. **System Diagnostics & Self-Check Report** - Self-contained system report (config, health, metrics) for troubleshooting
+
+6. **Auto-Tuning of Timeout & Retry Policies** - Automatically adjust timeouts and retry intervals based on observed latencies
+
+7. **Chrome MCP Plugin Integration** - Browser extension for managing MCP configurations, servers, and connections
+
+### 🔐 Secrets & Sensitive Data
+8. **Secure Secrets Management & Masking** - External secrets store integration (Vault)
+
