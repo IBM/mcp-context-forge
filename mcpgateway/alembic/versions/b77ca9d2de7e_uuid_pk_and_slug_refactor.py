@@ -6,16 +6,17 @@ Revises:
 Create Date: 2025-06-26 21:29:59.117140
 
 """
+
 # Standard
 from typing import Sequence, Union
 import uuid
 
 # Third-Party
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 # First-Party
+from alembic import op
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
 

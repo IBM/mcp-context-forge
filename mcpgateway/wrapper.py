@@ -216,7 +216,7 @@ async def tools_metadata(tool_ids: List[str]) -> List[Dict[str, Any]]:
     if tool_ids == ["0"]:
         return data
 
-    return [tool for tool in data if tool["id"] in tool_ids]
+    return [tool for tool in data if tool["name"] in tool_ids]
 
 
 async def get_prompts_from_mcp_server(catalog_urls: List[str]) -> List[str]:
