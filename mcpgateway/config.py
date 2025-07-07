@@ -167,7 +167,7 @@ class Settings(BaseSettings):
     # Health Checks
     health_check_interval: int = 60  # seconds
     health_check_timeout: int = 10  # seconds
-    unhealthy_threshold: int = 10
+    unhealthy_threshold: int = 5  # after this many failures, mark as Offline
 
     filelock_path: str = "tmp/gateway_service_leader.lock"
 
