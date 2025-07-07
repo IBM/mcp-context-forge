@@ -345,7 +345,7 @@ class TestToolService:
         """Test tool registration with name conflict."""
         # Mock DB to return existing tool
         mock_scalar = Mock()
-        mock_tool.is_active = False
+        mock_tool.enabled = False
         mock_scalar.scalar_one_or_none.return_value = mock_tool
         test_db.execute = Mock(return_value=mock_scalar)
 
@@ -454,7 +454,7 @@ class TestToolService:
         """Test listing tools."""
         # Mock DB to return a list of tools
         mock_scalars = MagicMock()
-        mock_tool.is_active = False
+        mock_tool.enabled = False
         mock_scalars.all.return_value = [mock_tool]
         mock_scalar_result = MagicMock()
         mock_scalar_result.scalars.return_value = mock_scalars
@@ -477,7 +477,8 @@ class TestToolService:
             jsonpath_filter="",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=False,
+            enabled=False,
+            reachable=True,
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
@@ -511,7 +512,7 @@ class TestToolService:
     async def test_list_server_tools_active_only(self):
         mock_db = Mock()
         mock_scalars = Mock()
-        mock_tool = Mock(is_active=True)
+        mock_tool = Mock(enabled=True)
         mock_scalars.all.return_value = [mock_tool]
 
         mock_db.execute.return_value.scalars.return_value = mock_scalars
@@ -528,8 +529,8 @@ class TestToolService:
     async def test_list_server_tools_include_inactive(self):
         mock_db = Mock()
         mock_scalars = Mock()
-        active_tool = Mock(is_active=True)
-        inactive_tool = Mock(is_active=False)
+        active_tool = Mock(enabled=True, reachable=True)
+        inactive_tool = Mock(enabled=False, reachable=True)
         mock_scalars.all.return_value = [active_tool, inactive_tool]
 
         mock_db.execute.return_value.scalars.return_value = mock_scalars
@@ -687,7 +688,7 @@ class TestToolService:
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
-        result = await tool_service.toggle_tool_status(test_db, 1, activate=False, reachable=False)
+        result = await tool_service.toggle_tool_status(test_db, 1, activate=False, reachable=True)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
@@ -713,7 +714,7 @@ class TestToolService:
         test_db.refresh = Mock()
 
         with pytest.raises(ToolError) as exc:
-            await tool_service.toggle_tool_status(test_db, "1", activate=False)
+            await tool_service.toggle_tool_status(test_db, "1", activate=False, reachable=True)
 
         assert f"Tool not found: 1" in str(exc.value)
 
@@ -724,14 +725,14 @@ class TestToolService:
     async def test_toggle_tool_status_activate_tool(self, tool_service, test_db, mock_tool, monkeypatch):
         """Test toggling tool active status."""
         # Mock DB get to return tool
-        mock_tool.is_active = False
+        mock_tool.enabled = False
         test_db.get = Mock(return_value=mock_tool)
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
         tool_service._notify_tool_activated = AsyncMock()
 
-        result = await tool_service.toggle_tool_status(test_db, "1", activate=True)
+        result = await tool_service.toggle_tool_status(test_db, "1", activate=True, reachable=True)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, "1")
@@ -740,7 +741,7 @@ class TestToolService:
             mock_tool
         )
 
-        assert result.is_active is True
+        assert result.enabled is True
     
     @pytest.mark.asyncio
     async def test_notify_tool_publish_event(self, tool_service, mock_tool, monkeypatch):
@@ -763,7 +764,7 @@ class TestToolService:
                         "data": {
                             "id": mock_tool.id,
                             "name": mock_tool.name,
-                            "is_active": True,
+                            "enabled": True,
                         },
                         "timestamp": ANY,
                     }
@@ -774,7 +775,7 @@ class TestToolService:
                         "data": {
                             "id": mock_tool.id,
                             "name": mock_tool.name,
-                            "is_active": False,
+                            "enabled": False,
                         },
                         "timestamp": ANY,
                     }
@@ -785,7 +786,7 @@ class TestToolService:
                         "data": {
                             "id": mock_tool.id,
                             "name": mock_tool.name,
-                            "is_active": False,
+                            "enabled": False,
                         },
                         "timestamp": ANY,
                     }
@@ -845,7 +846,8 @@ class TestToolService:
             jsonpath_filter="",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=True,
+            enabled=True,
+            reachable=True,
             gateway_id=None,
             execution_count=0,
             auth=None,  # Add auth field
@@ -864,7 +866,7 @@ class TestToolService:
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
-        result = await tool_service.toggle_tool_status(test_db, 1, activate=True)
+        result = await tool_service.toggle_tool_status(test_db, 1, activate=True, reachable=True)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
@@ -872,7 +874,7 @@ class TestToolService:
         test_db.refresh.assert_not_called()
 
         # Verify properties were updated
-        assert mock_tool.is_active is True
+        assert mock_tool.enabled is True
 
         # Verify notification
         tool_service._notify_tool_deactivated.assert_not_called()
@@ -1343,7 +1345,8 @@ class TestToolService:
             name="test_gateway",
             slug="test-gateway",
             url="http://fake-mcp:8080/sse",
-            is_active=True,
+            enabled=True,
+            reachable=True,
             auth_type="bearer",         #  ←← attribute your error complained about
             auth_value="Bearer abc123",
         )
@@ -1448,7 +1451,8 @@ class TestToolService:
             name="test_gateway",
             slug="test-gateway",
             url="http://fake-mcp:8080/sse",
-            is_active=True,
+            enabled=True,
+            reachable=True,
             auth_type="bearer",         #  ←← attribute your error complained about
             auth_value="Bearer abc123",
         )
@@ -1557,7 +1561,8 @@ class TestToolService:
         mock_tool.integration_type = "MCP"
         mock_tool.request_type = "SSE"
         mock_tool.jsonpath_filter = ""
-        mock_tool.is_active = True
+        mock_tool.enabled = True
+        mock_tool.reachable = True
         mock_tool.auth_type = "basic"
         mock_tool.auth_value = basic_auth_value
         mock_tool.url = "http://example.com/sse"
@@ -1571,7 +1576,8 @@ class TestToolService:
         mock_scalar_2 = Mock()
         mock_gateway.auth_type = "basic"
         mock_gateway.auth_value = basic_auth_value
-        mock_gateway.is_active = True
+        mock_gateway.enabled = True
+        mock_gateway.reachable = True
         mock_gateway.id = mock_tool.gateway_id
         mock_scalar_2.scalar_one_or_none.return_value = mock_gateway
 
