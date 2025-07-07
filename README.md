@@ -1625,7 +1625,6 @@ make lint            # Run lint tools
 │   │   ├── __init__.py
 │   │   ├── discovery.py            # Peer-gateway discovery
 │   │   ├── forward.py              # RPC forwarding
-│   │   └── manager.py              # Orchestration & health checks
 │   ├── handlers
 │   │   ├── __init__.py
 │   │   └── sampling.py             # Streaming sampling handler
