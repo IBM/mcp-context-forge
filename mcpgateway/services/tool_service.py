@@ -375,7 +375,7 @@ class ToolService:
                     await self._notify_tool_activated(tool)
                 else:
                     await self._notify_tool_deactivated(tool)
-                logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else 'but inaccessible'}")
+                logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
 
             return self._convert_tool_to_read(tool)
         except Exception as e:
