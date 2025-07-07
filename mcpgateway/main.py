@@ -145,7 +145,13 @@ logging.basicConfig(
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
 # Create database tables
-asyncio.run(bootstrap_db())
+try:
+    loop = asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.run(bootstrap_db())
+else:
+    loop.create_task(bootstrap_db())
+
 
 # Initialize services
 tool_service = ToolService()

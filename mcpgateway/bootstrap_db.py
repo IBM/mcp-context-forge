@@ -21,15 +21,15 @@ directly with ``python mcpgateway/bootstrap_db.py``.
 
 # Standard
 import asyncio
+from importlib.resources import files
 import logging
-from pathlib import Path
 
 # Third-Party
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine, inspect
 
 # First-Party
-from alembic import command
-from alembic.config import Config
 from mcpgateway.config import settings
 from mcpgateway.db import Base
 
@@ -47,9 +47,8 @@ async def main() -> None:
         None
     """
     engine = create_engine(settings.database_url)
-    project_root = Path(__file__).resolve().parents[1]
-    ini_path = project_root / "alembic.ini"
-    cfg = Config(ini_path)  # path in container
+    ini_path = files("mcpgateway").joinpath("alembic.ini")
+    cfg = Config(str(ini_path))  # path in container
     cfg.attributes["configure_logger"] = False
 
     command.ensure_version(cfg)

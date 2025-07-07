@@ -10,15 +10,12 @@ Create Date: 2025-06-27 21:45:35.099713
 from typing import Sequence, Union
 
 # Third-Party
-import sqlalchemy as sa
-from sqlalchemy.orm import Session
-
-# First-Party
 from alembic import op
+import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = 'e4fc04d1a442'
-down_revision: Union[str, Sequence[str], None] = 'b77ca9d2de7e'
+revision: str = "e4fc04d1a442"
+down_revision: Union[str, Sequence[str], None] = "b77ca9d2de7e"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -32,14 +29,13 @@ def upgrade() -> None:
     that existing rows get a non-null default value.
     """
     bind = op.get_bind()
-    sess = Session(bind=bind)
     inspector = sa.inspect(bind)
 
     if not inspector.has_table("gateways"):
         print("Fresh database detected. Skipping migration.")
         return
 
-    op.add_column('tools', sa.Column('annotations', sa.JSON(), server_default=sa.text("'{}'"), nullable=False))
+    op.add_column("tools", sa.Column("annotations", sa.JSON(), server_default=sa.text("'{}'"), nullable=False))
 
 
 def downgrade() -> None:
@@ -50,11 +46,10 @@ def downgrade() -> None:
     'annotations' column from the 'tool' table.
     """
     bind = op.get_bind()
-    sess = Session(bind=bind)
     inspector = sa.inspect(bind)
 
     if not inspector.has_table("gateways"):
         print("Fresh database detected. Skipping migration.")
         return
 
-    op.drop_column('tools', 'annotations')
+    op.drop_column("tools", "annotations")
