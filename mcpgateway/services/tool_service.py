@@ -413,7 +413,8 @@ class ToolService:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")
 
-        is_reachable = db.execute(select(DbTool.reachable).where(slug_expr == name)).scalar_one_or_none()
+        # is_reachable = db.execute(select(DbTool.reachable).where(slug_expr == name)).scalar_one_or_none()
+        is_reachable = tool.reachable
 
         if not is_reachable:
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")

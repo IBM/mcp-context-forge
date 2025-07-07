@@ -55,6 +55,7 @@ Python ::
     await wait_for_db_ready()          # asynchronous
     wait_for_db_ready(sync=True)       # synchronous / blocking
 """
+
 # Future
 from __future__ import annotations
 

@@ -9,31 +9,30 @@ Tests for tool service implementation.
 """
 
 # Standard
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch, call
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import logging
+import re
+from unittest.mock import ANY, AsyncMock, call, MagicMock, Mock, patch
 
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, AuthenticationValues
+from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
+    TextContent,
     ToolError,
     ToolInvocationError,
     ToolNotFoundError,
-    ToolService,
     ToolResult,
-    TextContent,
+    ToolService,
 )
 from mcpgateway.utils.services_auth import encode_auth
-import logging
-import re
 
 # Third-Party
 import pytest
 from sqlalchemy.exc import IntegrityError
-from contextlib import asynccontextmanager
-import asyncio
-
-from datetime import datetime, timezone
 
 
 @pytest.fixture
@@ -135,7 +134,6 @@ class TestToolService:
 
         assert "Initializing tool service" in caplog.text
 
-
     @pytest.mark.asyncio
     async def test_shutdown_service(self, caplog):
         """Shutdown service and check logs"""
@@ -145,7 +143,6 @@ class TestToolService:
 
         assert "Tool service shutdown complete" in caplog.text
 
-    
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_basic_auth(self, tool_service, mock_tool):
         """Check auth for basic auth"""
@@ -156,10 +153,10 @@ class TestToolService:
         # password = "test_password"
         mock_tool.auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"
         tool_read = tool_service._convert_tool_to_read(mock_tool)
-        
-        assert tool_read.auth.auth_type=="basic"
-        assert tool_read.auth.username=="test_user"
-        assert tool_read.auth.password=="********"
+
+        assert tool_read.auth.auth_type == "basic"
+        assert tool_read.auth.username == "test_user"
+        assert tool_read.auth.password == "********"
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_bearer_auth(self, tool_service, mock_tool):
@@ -170,9 +167,9 @@ class TestToolService:
         # bearer token ABC123
         mock_tool.auth_value = "--vbQRQCYlgdUh5FYvtRUH874sc949BP5rRVRRyh3KzahgBIQpjJOKz0BJ2xATUAhyxHUwkMG6ZM2OPLHc4"
         tool_read = tool_service._convert_tool_to_read(mock_tool)
-        
-        assert tool_read.auth.auth_type=="bearer"
-        assert tool_read.auth.token=="********"
+
+        assert tool_read.auth.auth_type == "bearer"
+        assert tool_read.auth.token == "********"
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_authheaders_auth(self, tool_service, mock_tool):
@@ -183,10 +180,10 @@ class TestToolService:
         # {"test-api-key": "test-api-value"}
         mock_tool.auth_value = "8pvPTCegaDhrx0bmBf488YvGg9oSo4cJJX68WCTvxjMY-C2yko_QSPGVggjjNt59TPvlGLsotTZvAiewPRQ"
         tool_read = tool_service._convert_tool_to_read(mock_tool)
-        
-        assert tool_read.auth.auth_type=="authheaders"
-        assert tool_read.auth.auth_header_key=="test-api-key"
-        assert tool_read.auth.auth_header_value=="********"
+
+        assert tool_read.auth.auth_type == "authheaders"
+        assert tool_read.auth.auth_header_key == "test-api-key"
+        assert tool_read.auth.auth_header_value == "********"
 
     @pytest.mark.asyncio
     async def test_register_tool(self, tool_service, mock_tool, test_db):
@@ -279,7 +276,7 @@ class TestToolService:
             description="A new tool",
             integration_type="MCP",
             request_type="POST",
-            gateway_id="1", 
+            gateway_id="1",
         )
 
         # Should raise ToolError wrapping ToolNameConflictError
@@ -296,15 +293,11 @@ class TestToolService:
         token = "token"
         auth_value = encode_auth({"Authorization": f"Bearer {token}"})
 
-        tool_input = ToolCreate(
-            name="no_auth_tool",
-            gateway_id=None,
-            auth=AuthenticationValues(auth_type="bearer", auth_value=auth_value)
-        )
+        tool_input = ToolCreate(name="no_auth_tool", gateway_id=None, auth=AuthenticationValues(auth_type="bearer", auth_value=auth_value))
 
         # Run the function
         result = await tool_service.register_tool(test_db, tool_input)
-        
+
         assert result.original_name == "no_auth_tool"
         # assert result.auth_type is None
         # assert result.auth_value is None
@@ -314,7 +307,6 @@ class TestToolService:
         assert db_tool is not None
         assert db_tool.auth_type == "bearer"
         assert db_tool.auth_value == auth_value
-
 
     @pytest.mark.asyncio
     async def test_register_tool_name_conflict(self, tool_service, mock_tool, test_db):
@@ -507,7 +499,6 @@ class TestToolService:
         assert result[0] == tool_read
         tool_service._convert_tool_to_read.assert_called_once_with(mock_tool)
 
-    
     @pytest.mark.asyncio
     async def test_list_server_tools_active_only(self):
         mock_db = Mock()
@@ -542,7 +533,7 @@ class TestToolService:
 
         assert tools == ["active_converted", "inactive_converted"]
         assert service._convert_tool_to_read.call_count == 2
-    
+
     @pytest.mark.asyncio
     async def test_get_tool(self, tool_service, mock_tool, test_db):
         """Test getting a tool by ID."""
@@ -737,21 +728,26 @@ class TestToolService:
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, "1")
 
-        tool_service._notify_tool_activated.assert_called_once_with(
-            mock_tool
-        )
+        tool_service._notify_tool_activated.assert_called_once_with(mock_tool)
 
         assert result.enabled is True
-    
+
     @pytest.mark.asyncio
     async def test_notify_tool_publish_event(self, tool_service, mock_tool, monkeypatch):
         # Arrange – freeze the publish method so we can inspect the call
         publish_mock = AsyncMock()
         monkeypatch.setattr(tool_service, "_publish_event", publish_mock)
 
+        mock_tool.enabled = True
         await tool_service._notify_tool_activated(mock_tool)
+
+        mock_tool.enabled = False
         await tool_service._notify_tool_deactivated(mock_tool)
+
+        mock_tool.enabled = False
         await tool_service._notify_tool_removed(mock_tool)
+
+        mock_tool.enabled = False
         await tool_service._notify_tool_deleted({"id": mock_tool.id, "name": mock_tool.name})
 
         assert publish_mock.await_count == 4
@@ -797,7 +793,7 @@ class TestToolService:
                         "data": {"id": mock_tool.id, "name": mock_tool.name},
                         "timestamp": ANY,
                     }
-                )
+                ),
             ],
             any_order=False,
         )
@@ -806,7 +802,7 @@ class TestToolService:
     async def test_publish_event_with_real_queue(self, tool_service):
         # Arrange
         q = asyncio.Queue()
-        tool_service._event_subscribers = [q]        # seed one subscriber
+        tool_service._event_subscribers = [q]  # seed one subscriber
         event = {"type": "test", "data": 123}
 
         # Act
@@ -816,7 +812,6 @@ class TestToolService:
         queued_event = await q.get()
         assert queued_event == event
         assert q.empty()
-
 
     @pytest.mark.asyncio
     async def test_toggle_tool_status_no_change(self, tool_service, mock_tool, test_db):
@@ -1008,7 +1003,6 @@ class TestToolService:
 
         assert "Tool not found: 999" in str(exc_info.value)
 
-    
     @pytest.mark.asyncio
     async def test_update_tool_none_name(self, tool_service, mock_tool, test_db):
         """Test updating a tool with no name."""
@@ -1023,7 +1017,7 @@ class TestToolService:
             await tool_service.update_tool(test_db, 999, tool_update)
 
         assert "Failed to update tool" in str(exc_info.value)
-    
+
     @pytest.mark.asyncio
     async def test_update_tool_extra_fields(self, tool_service, mock_tool, test_db):
         """Test updating extra fields in an existing tool."""
@@ -1035,25 +1029,19 @@ class TestToolService:
 
         # Create update request
         tool_update = ToolUpdate(
-            integration_type="MCP",
-            request_type="STREAMABLEHTTP",
-            headers={"key": "value"},
-            input_schema={"key2": "value2"},
-            annotations={"key3": "value3"},
-            jsonpath_filter="test_filter"
+            integration_type="MCP", request_type="STREAMABLEHTTP", headers={"key": "value"}, input_schema={"key2": "value2"}, annotations={"key3": "value3"}, jsonpath_filter="test_filter"
         )
 
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
 
-        assert result.integration_type=="MCP"
-        assert result.request_type=="STREAMABLEHTTP"
-        assert result.headers=={"key": "value"}
-        assert result.input_schema=={"key2": "value2"}
-        assert result.annotations=={"key3": "value3"}
-        assert result.jsonpath_filter=="test_filter"
+        assert result.integration_type == "MCP"
+        assert result.request_type == "STREAMABLEHTTP"
+        assert result.headers == {"key": "value"}
+        assert result.input_schema == {"key2": "value2"}
+        assert result.annotations == {"key3": "value3"}
+        assert result.jsonpath_filter == "test_filter"
 
-    
     @pytest.mark.asyncio
     async def test_update_tool_basic_auth(self, tool_service, mock_tool, test_db):
         """Test updating auth in an existing tool."""
@@ -1069,17 +1057,14 @@ class TestToolService:
         # password = "test_password"
         basic_auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"
 
-
         # Create update request
-        tool_update = ToolUpdate(
-            auth=AuthenticationValues(auth_type="basic", auth_value=basic_auth_value)
-        )
+        tool_update = ToolUpdate(auth=AuthenticationValues(auth_type="basic", auth_value=basic_auth_value))
 
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
 
-        assert result.auth==AuthenticationValues(auth_type="basic", username="test_user", password="********")
-    
+        assert result.auth == AuthenticationValues(auth_type="basic", username="test_user", password="********")
+
     @pytest.mark.asyncio
     async def test_update_tool_bearer_auth(self, tool_service, mock_tool, test_db):
         """Test updating auth in an existing tool."""
@@ -1095,14 +1080,12 @@ class TestToolService:
         basic_auth_value = "OrZImykkCmMkfNETfO-tk_ZNv9QSUKBZUEKC81-OzdnZqnAslksS7rhvpty41-kHLc42TfKF9sIYr1Q2W4GhXAz_"
 
         # Create update request
-        tool_update = ToolUpdate(
-            auth=AuthenticationValues(auth_type="bearer", auth_value=basic_auth_value)
-        )
+        tool_update = ToolUpdate(auth=AuthenticationValues(auth_type="bearer", auth_value=basic_auth_value))
 
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
 
-        assert result.auth==AuthenticationValues(auth_type="bearer", token="********")
+        assert result.auth == AuthenticationValues(auth_type="bearer", token="********")
 
     @pytest.mark.asyncio
     async def test_update_tool_empty_auth(self, tool_service, mock_tool, test_db):
@@ -1114,15 +1097,12 @@ class TestToolService:
         test_db.refresh = AsyncMock()
 
         # Create update request
-        tool_update = ToolUpdate(
-            auth=AuthenticationValues()
-        )
+        tool_update = ToolUpdate(auth=AuthenticationValues())
 
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
 
         assert result.auth is None
-
 
     @pytest.mark.asyncio
     async def test_invoke_tool_not_found(self, tool_service, test_db):
@@ -1163,9 +1143,9 @@ class TestToolService:
     async def test_invoke_tool_rest_get(self, tool_service, mock_tool, test_db):
         # ----------------  DB  -----------------
         mock_tool.integration_type = "REST"
-        mock_tool.request_type     = "GET"
-        mock_tool.jsonpath_filter  = ""
-        mock_tool.auth_value       = None
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
 
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
@@ -1174,7 +1154,7 @@ class TestToolService:
         # --------------- HTTP ------------------
         mock_response = AsyncMock()
         mock_response.raise_for_status = AsyncMock()
-        mock_response.status_code      = 200
+        mock_response.status_code = 200
         # <-- make json() *synchronous*
         mock_response.json = Mock(return_value={"result": "REST tool response"})
 
@@ -1190,18 +1170,16 @@ class TestToolService:
         # ------------- asserts -----------------
         tool_service._http_client.get.assert_called_once_with(
             mock_tool.url,
-            params={},                # payload is empty
-            headers=mock_tool.headers
+            params={},  # payload is empty
+            headers=mock_tool.headers,
         )
         assert result.content[0].text == '{\n  "result": "REST tool response"\n}'
-        tool_service._record_tool_metric.assert_called_once_with(
-            test_db, mock_tool, ANY, True, None
-        )
+        tool_service._record_tool_metric.assert_called_once_with(test_db, mock_tool, ANY, True, None)
 
         # Test 204 status
         mock_response = AsyncMock()
         mock_response.raise_for_status = AsyncMock()
-        mock_response.status_code      = 204
+        mock_response.status_code = 204
         mock_response.json = Mock(return_value=ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")]))
 
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
@@ -1217,7 +1195,7 @@ class TestToolService:
         # Test 205 status
         mock_response = AsyncMock()
         mock_response.raise_for_status = AsyncMock()
-        mock_response.status_code      = 205
+        mock_response.status_code = 205
         mock_response.json = Mock(return_value=ToolResult(content=[TextContent(type="text", text="Tool error encountered")]))
 
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
@@ -1229,7 +1207,7 @@ class TestToolService:
         result = await tool_service.invoke_tool(test_db, "test_tool", {})
 
         assert result.content[0].text == "Tool error encountered"
-    
+
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_post(self, tool_service, mock_tool, test_db):
         """Test invoking a REST tool."""
@@ -1279,7 +1257,7 @@ class TestToolService:
             True,  # Success
             None,  # No error
         )
-        
+
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_parameter_substitution(self, tool_service, mock_tool, test_db):
         """Test invoking a REST tool."""
@@ -1289,7 +1267,7 @@ class TestToolService:
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_value = None  # No auth
         mock_tool.url = "http://example.com/resource/{id}/detail/{type}"
-        
+
         payload = {"id": 123, "type": "summary", "other_param": "value"}
 
         # Mock DB to return the tool
@@ -1322,7 +1300,7 @@ class TestToolService:
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_value = None  # No auth
         mock_tool.url = "http://example.com/resource/{id}/detail/{type}"
-        
+
         payload = {"id": 123, "other_param": "value"}
 
         # Mock DB to return the tool
@@ -1338,16 +1316,17 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp(self, tool_service, mock_tool, test_db):
         """Test invoking a REST tool."""
+        # Standard
         from types import SimpleNamespace
 
         mock_gateway = SimpleNamespace(
             id="42",
             name="test_gateway",
             slug="test-gateway",
-            url="http://fake-mcp:8080/sse",
+            url="http://fake-mcp:8080/mcp",
             enabled=True,
             reachable=True,
-            auth_type="bearer",         #  ←← attribute your error complained about
+            auth_type="bearer",  #  ←← attribute your error complained about
             auth_value="Bearer abc123",
         )
         # Configure tool as REST
@@ -1358,9 +1337,9 @@ class TestToolService:
         mock_tool.auth_value = None  # No auth
         mock_tool.original_name = "dummy_tool"
         mock_tool.headers = {}
-        mock_tool.name='test-gateway-dummy-tool'
-        mock_tool.gateway_slug='test-gateway'
-        mock_tool.gateway_id=mock_gateway.id
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
 
         returns = [mock_tool, mock_gateway, mock_gateway]
 
@@ -1373,12 +1352,10 @@ class TestToolService:
             m = Mock()
             m.scalar_one_or_none.return_value = value
             return m
-        
+
         test_db.execute = Mock(side_effect=execute_side_effect)
 
-        expected_result = ToolResult(
-            content=[TextContent(type="text", text="MCP response")]
-        )
+        expected_result = ToolResult(content=[TextContent(type="text", text="MCP response")])
 
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
@@ -1388,25 +1365,20 @@ class TestToolService:
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
 
-
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
             yield ("read", "write", None)
 
-        with patch(
-            "mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client
-        ), patch(
-            "mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm
-        ), patch(
-            "mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}
-        ), patch(
-            "mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data
+        with (
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             # ------------------------------------------------------------------
             # 4.  Act
             # ------------------------------------------------------------------
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"})
-
 
         session_mock.initialize.assert_awaited_once()
         session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"})
@@ -1415,7 +1387,7 @@ class TestToolService:
         assert result.content[0].text == "MCP response"
 
         # Set a concrete ID
-        mock_tool.id = '1'
+        mock_tool.id = "1"
 
         # Final mock object with tool_id
         mock_metric = Mock()
@@ -1444,6 +1416,7 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_non_standard(self, tool_service, mock_tool, test_db):
         """Test invoking a REST tool."""
+        # Standard
         from types import SimpleNamespace
 
         mock_gateway = SimpleNamespace(
@@ -1453,7 +1426,7 @@ class TestToolService:
             url="http://fake-mcp:8080/sse",
             enabled=True,
             reachable=True,
-            auth_type="bearer",         #  ←← attribute your error complained about
+            auth_type="bearer",  #  ←← attribute your error complained about
             auth_value="Bearer abc123",
         )
         # Configure tool as REST
@@ -1464,9 +1437,9 @@ class TestToolService:
         mock_tool.auth_value = None  # No auth
         mock_tool.original_name = "dummy_tool"
         mock_tool.headers = {}
-        mock_tool.name='test-gateway-dummy-tool'
-        mock_tool.gateway_slug='test-gateway'
-        mock_tool.gateway_id=mock_gateway.id
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
 
         returns = [mock_tool, mock_gateway, mock_gateway]
 
@@ -1479,17 +1452,14 @@ class TestToolService:
             m = Mock()
             m.scalar_one_or_none.return_value = value
             return m
-        
+
         test_db.execute = Mock(side_effect=execute_side_effect)
 
-        expected_result = ToolResult(
-            content=[TextContent(type="text", text="")]
-        )
+        expected_result = ToolResult(content=[TextContent(type="text", text="")])
 
-        with patch(
-            "mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}
-        ), patch(
-            "mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             # ------------------------------------------------------------------
             # 4.  Act
@@ -1500,7 +1470,7 @@ class TestToolService:
         assert result.content[0].text == ""
 
         # Set a concrete ID
-        mock_tool.id = '1'
+        mock_tool.id = "1"
 
         # Final mock object with tool_id
         mock_metric = Mock()
@@ -1526,7 +1496,6 @@ class TestToolService:
         assert metric.error_message is None
         assert metric.response_time >= 0  # You can check with a tolerance if needed
 
-
     @pytest.mark.asyncio
     async def test_invoke_tool_invalid_tool_type(self, tool_service, mock_tool, test_db):
         """Test invoking an invalid tool type."""
@@ -1536,7 +1505,7 @@ class TestToolService:
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_value = None  # No auth
         mock_tool.url = "http://example.com/"
-        
+
         payload = {"param": "value"}
 
         # Mock DB to return the tool
@@ -1566,7 +1535,7 @@ class TestToolService:
         mock_tool.auth_type = "basic"
         mock_tool.auth_value = basic_auth_value
         mock_tool.url = "http://example.com/sse"
-        
+
         payload = {"param": "value"}
 
         # Mock DB to return the tool
@@ -1583,9 +1552,7 @@ class TestToolService:
 
         test_db.execute = Mock(side_effect=[mock_scalar_1, mock_scalar_1, mock_scalar_2])
 
-        expected_result = ToolResult(
-            content=[TextContent(type="text", text="MCP response")]
-        )
+        expected_result = ToolResult(content=[TextContent(type="text", text="MCP response")])
 
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
@@ -1595,7 +1562,6 @@ class TestToolService:
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
 
-
         # @asynccontextmanager
         # async def mock_sse_client(*_args, **_kwargs):
         #     yield ("read", "write")
@@ -1603,28 +1569,24 @@ class TestToolService:
         sse_ctx = AsyncMock()
         sse_ctx.__aenter__.return_value = ("read", "write")
 
-
-        with patch(
-            "mcpgateway.services.tool_service.sse_client", return_value=sse_ctx
-        ) as sse_client_mock, patch(
-            "mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm
-        ), patch(
-            "mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data
+        with (
+            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx) as sse_client_mock,
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             # ------------------------------------------------------------------
             # 4.  Act
             # ------------------------------------------------------------------
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"})
 
-
         session_mock.initialize.assert_awaited_once()
         session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"})
 
         sse_ctx.__aenter__.assert_awaited_once()
-        
+
         sse_client_mock.assert_called_once_with(
             url=mock_gateway.url,
-            headers={'Authorization': 'Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ='},
+            headers={"Authorization": "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="},
         )
 
     @pytest.mark.asyncio

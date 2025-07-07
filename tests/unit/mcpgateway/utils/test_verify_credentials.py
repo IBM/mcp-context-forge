@@ -191,10 +191,11 @@ async def test_require_auth_override(monkeypatch):
     res2 = await vc.require_auth_override(auth_header=None, jwt_token=cookie_token)
     assert res2["c"] == 2
 
+
 @pytest.mark.asyncio
 async def test_require_auth_override_non_bearer(monkeypatch):
     # Arrange
-    header = "Basic Zm9vOmJhcg=="       # non-Bearer scheme
+    header = "Basic Zm9vOmJhcg=="  # non-Bearer scheme
     monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
 
     # Act
