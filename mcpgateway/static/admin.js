@@ -1006,28 +1006,47 @@ async function viewGateway(gatewayId) {
       authHTML = `<p><strong>Authentication Type:</strong> None</p>`;
     }
 
-    document.getElementById("gateway-details").innerHTML = `
-        <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
-          <p><strong>Name:</strong> ${gateway.name}</p>
-          <p><strong>URL:</strong> ${gateway.url}</p>
-          <p><strong>Description:</strong> ${gateway.description || "N/A"}</p>
-          <p><strong>Transport:</strong>
-            ${gateway.transport === "STREAMABLEHTTP" ? "Streamable HTTP" :
-              gateway.transport === "SSE" ? "SSE" : "N/A"}
-          </p>
-          <p><strong>Status:</strong>
-            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${gateway.isActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}">
-              ${gateway.isActive ? "Active" : "Inactive"}
-            </span>
-          </p>
-          <p><strong>Last Seen:</strong> ${gateway.lastSeen || "Never"}</p>
-          ${authHTML}
-          <div>
-            <strong>Capabilities:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(gateway.capabilities || {}, null, 2)}</pre>
+  document.getElementById("gateway-details").innerHTML = `
+    <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
+      <p><strong>Name:</strong> ${gateway.name}</p>
+      <p><strong>URL:</strong> ${gateway.url}</p>
+      <p><strong>Description:</strong> ${gateway.description || "N/A"}</p>
+      <p><strong>Transport:</strong>
+        ${gateway.transport === "STREAMABLEHTTP" ? "Streamable HTTP" :
+          gateway.transport === "SSE" ? "SSE" : "N/A"}
+      </p>
+      <p class="flex items-center">
+      <div class="relative group inline-block">
+        <strong class="mr-2">Status:</strong>
+        
+          <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full 
+            ${gateway.enabled ? (gateway.reachable ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800") : "bg-red-100 text-red-800"}">
+            ${gateway.enabled ? (gateway.reachable ? "Active" : "Offline") : "Inactive"}
+            ${gateway.enabled ? (gateway.reachable ? 
+              `<svg class="ml-1 h-4 w-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd" />
+              </svg>` : 
+              `<svg class="ml-1 h-4 w-4 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd" />
+              </svg>`) : 
+              `<svg class="ml-1 h-4 w-4 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+              </svg>`
+            }
+          </span>
+          <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">
+            ${!gateway.enabled ? "Gateway is Manually Deactivated" : !gateway.reachable ? "Gateway is Not Reachable" : "Everything stable."}
           </div>
         </div>
-      `;
+      </p>
+      <p><strong>Last Seen:</strong> ${gateway.lastSeen || "Never"}</p>
+      ${authHTML}
+      <div>
+        <strong>Capabilities:</strong>
+        <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(gateway.capabilities || {}, null, 2)}</pre>
+      </div>
+    </div>
+  `;
 
     openModal("gateway-modal");
   } catch (error) {
