@@ -6,12 +6,15 @@ Revises: b77ca9d2de7e
 Create Date: 2025-06-27 21:45:35.099713
 
 """
+
 # Standard
 from typing import Sequence, Union
 
 # Third-Party
-from alembic import op
 import sqlalchemy as sa
+
+# First-Party
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "e4fc04d1a442"

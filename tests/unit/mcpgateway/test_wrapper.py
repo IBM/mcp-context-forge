@@ -415,12 +415,12 @@ async def test_handle_list_tools(monkeypatch, wrapper):
 async def test_get_tools_and_metadata(monkeypatch, wrapper):
     # fake catalog → two servers with associated tools
     catalog = [
-        {"id": "1", "associatedTools": ["10", "11"]},
-        {"id": "2", "associatedTools": ["20"]},
+        {"id": "1", "associatedTools": ["tool1", "tool2"]},
+        {"id": "2", "associatedTools": ["tool3"]},
     ]
     monkeypatch.setattr(wrapper, "fetch_url", _json_fetcher(catalog))
     out = await wrapper.get_tools_from_mcp_server(["https://host.com/servers/1"])
-    assert out == ["10", "11"]
+    assert out == ["tool1", "tool2"]
 
     # now cover tools_metadata *filter* & *all* paths
     tools_payload = [
@@ -428,7 +428,7 @@ async def test_get_tools_and_metadata(monkeypatch, wrapper):
         {"id": "11", "name": "B"},
     ]
     monkeypatch.setattr(wrapper, "fetch_url", _json_fetcher(tools_payload))
-    subset = await wrapper.tools_metadata(["10"])
+    subset = await wrapper.tools_metadata(["A"])
     assert subset == [{"id": "10", "name": "A"}]
 
     everything = await wrapper.tools_metadata(["0"])
