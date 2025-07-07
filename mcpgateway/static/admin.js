@@ -532,6 +532,38 @@ function toggleInactiveItems(type) {
   window.location = url;
 }
 
+// Function to check if the "Show Inactive" checkbox is checked
+function isInactiveChecked(type) {
+  const checkbox = document.getElementById(`show-inactive-${type}`);
+  if (checkbox.checked) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+function handleToggleSubmit(event, type) {
+  // Prevent form from submitting immediately
+  event.preventDefault();
+
+  // Get the value of 'is_inactive_checked' from the function
+  const is_inactive_checked = isInactiveChecked(type);  
+
+  // Dynamically add the 'is_inactive_checked' value to the form
+  const form = event.target;
+  const hiddenField = document.createElement('input');
+  hiddenField.type = 'hidden';
+  hiddenField.name = 'is_inactive_checked';
+  hiddenField.value = is_inactive_checked;
+
+  form.appendChild(hiddenField);
+
+  // Now submit the form
+  form.submit();
+}
+
+
+
 // Tool CRUD operations
 /**
  * Fetches detailed tool information from the backend and renders all properties,
@@ -2007,6 +2039,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 window.toggleInactiveItems = toggleInactiveItems;
+window.handleToggleSubmit = handleToggleSubmit
 window.viewTool = viewTool;
 window.editTool = editTool;
 window.testTool = testTool;

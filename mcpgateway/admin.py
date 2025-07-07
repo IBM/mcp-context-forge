@@ -256,12 +256,15 @@ async def admin_toggle_server(
     form = await request.form()
     logger.debug(f"User {user} is toggling server ID {server_id} with activate: {form.get('activate')}")
     activate = form.get("activate", "true").lower() == "true"
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         await server_service.toggle_server_status(db, server_id, activate)
     except Exception as e:
         logger.error(f"Error toggling server status: {e}")
 
     root_path = request.scope.get("root_path", "")
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
     return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
 
 
@@ -398,12 +401,16 @@ async def admin_toggle_gateway(
     logger.debug(f"User {user} is toggling gateway ID {gateway_id}")
     form = await request.form()
     activate = form.get("activate", "true").lower() == "true"
+    is_inactive_checked = form.get("is_inactive_checked", "false")
+
     try:
         await gateway_service.toggle_gateway_status(db, gateway_id, activate)
     except Exception as e:
         logger.error(f"Error toggling gateway status: {e}")
 
     root_path = request.scope.get("root_path", "")
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
     return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
 
 
@@ -711,12 +718,15 @@ async def admin_toggle_tool(
     logger.debug(f"User {user} is toggling tool ID {tool_id}")
     form = await request.form()
     activate = form.get("activate", "true").lower() == "true"
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
     except Exception as e:
         logger.error(f"Error toggling tool status: {e}")
 
     root_path = request.scope.get("root_path", "")
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
 
 
@@ -999,12 +1009,15 @@ async def admin_toggle_resource(
     logger.debug(f"User {user} is toggling resource ID {resource_id}")
     form = await request.form()
     activate = form.get("activate", "true").lower() == "true"
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         await resource_service.toggle_resource_status(db, resource_id, activate)
     except Exception as e:
         logger.error(f"Error toggling resource status: {e}")
 
     root_path = request.scope.get("root_path", "")
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
 
 
@@ -1155,12 +1168,15 @@ async def admin_toggle_prompt(
     logger.debug(f"User {user} is toggling prompt ID {prompt_id}")
     form = await request.form()
     activate = form.get("activate", "true").lower() == "true"
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         await prompt_service.toggle_prompt_status(db, prompt_id, activate)
     except Exception as e:
         logger.error(f"Error toggling prompt status: {e}")
 
     root_path = request.scope.get("root_path", "")
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 

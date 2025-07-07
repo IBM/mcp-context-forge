@@ -270,6 +270,7 @@
                       action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate: This will temporarily disable the server without deleting it."
+                      onsubmit="return handleToggleSubmit(event, 'servers')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -285,6 +286,7 @@
                       action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
                       class="inline mr-2"
                       title="Activate: This will re-enable the server."
+                      onsubmit="return handleToggleSubmit(event, 'servers')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
@@ -610,6 +612,7 @@
                       action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate"
+                      onsubmit="return handleToggleSubmit(event, 'tools')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -625,6 +628,7 @@
                       action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
                       class="inline mr-2"
                       title="Activate"
+                      onsubmit="return handleToggleSubmit(event, 'tools')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
@@ -973,6 +977,7 @@
                       action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate: This will temporarily disable the resource without deleting it."
+                      onsubmit="return handleToggleSubmit(event, 'resources')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -988,6 +993,7 @@
                       action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
                       class="inline mr-2"
                       title="Activate: This will re-enable the resource."
+                      onsubmit="return handleToggleSubmit(event, 'resources')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
@@ -1193,6 +1199,7 @@
                       action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate: This will temporarily disable the prompt without deleting it."
+                      onsubmit="return handleToggleSubmit(event, 'prompts')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -1208,6 +1215,7 @@
                       action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle"
                       class="inline mr-2"
                       title="Activate: This will re-enable the prompt."
+                      onsubmit="return handleToggleSubmit(event, 'prompts')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
@@ -1442,6 +1450,7 @@
                       action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate: This will temporarily disable the gateway without deleting it."
+                      onsubmit="return handleToggleSubmit(event, 'gateways')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -1457,6 +1466,7 @@
                       action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
                       class="inline mr-2"
                       title="Activate: This will re-enable the gateway."
+                      onsubmit="return handleToggleSubmit(event, 'gateways')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
