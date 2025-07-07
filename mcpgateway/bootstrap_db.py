@@ -32,6 +32,7 @@ from alembic import command
 from alembic.config import Config
 from mcpgateway.config import settings
 from mcpgateway.db import Base
+from importlib.resources import files
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,8 @@ async def main() -> None:
     """
     engine = create_engine(settings.database_url)
     project_root = Path(__file__).resolve().parents[1]
-    ini_path = project_root / "alembic.ini"
-    cfg = Config(ini_path)  # path in container
+    ini_path = files("mcpgateway").joinpath("alembic.ini")
+    cfg = Config(str(ini_path))  # path in container
     cfg.attributes["configure_logger"] = False
 
     command.ensure_version(cfg)
