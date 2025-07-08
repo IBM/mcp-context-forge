@@ -1242,3 +1242,17 @@ class ServerRead(BaseModelWithConfigDict):
         if "associated_prompts" in values and values["associated_prompts"]:
             values["associated_prompts"] = [prompt.id if hasattr(prompt, "id") else prompt for prompt in values["associated_prompts"]]
         return values
+
+
+class GatewayTestRequest(BaseModelWithConfigDict):
+    method: str = Field(..., description="HTTP method to test (GET, POST, etc.)")
+    base_url: AnyHttpUrl = Field(..., description="Base URL of the gateway to test")
+    path: str = Field(..., description="Path to append to the base URL")
+    headers: Optional[Dict[str, str]] = Field(None, description="Optional headers for the request")
+    body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Optional body for the request, can be a string or JSON object")
+
+
+class GatewayTestResponse(BaseModelWithConfigDict):
+    status_code: int = Field(..., description="HTTP status code returned by the gateway")
+    latency_ms: int = Field(..., description="Latency of the request in milliseconds")
+    body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")

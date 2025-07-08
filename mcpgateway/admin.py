@@ -21,11 +21,13 @@ underlying data.
 import json
 import logging
 from typing import Any, Dict, List, Union
+import time
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
+import httpx
 
 # First-Party
 from mcpgateway.config import settings
@@ -63,6 +65,7 @@ from mcpgateway.services.tool_service import (
 )
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
+from mcpgateway.schemas import GatewayTestRequest, GatewayTestResponse
 
 # Initialize services
 server_service = ServerService()
@@ -1348,3 +1351,38 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user: str = Depends
     await server_service.reset_metrics(db)
     await prompt_service.reset_metrics(db)
     return {"message": "All metrics reset successfully", "success": True}
+
+"""
+curl http://localhost:4444/admin/gateways/test
+    -H "Content-Type: application/json"
+    -d '{"base_url": "http://localhost:8080", "path": "/health", "method": "GET"}'
+"""
+@admin_router.post("/gateways/test", response_model=GatewayTestResponse)
+async def admin_test_gateway(request: GatewayTestRequest, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayTestResponse:
+    full_url = request.base_url.rstrip("/") + "/" + request.path.lstrip("/")
+    logger.debug(f"User {user} testing server: {full_url} with method {request.method}")
+    try:
+        async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
+            start_time = time.monotonic()
+            response = await client.request(
+                method=request.method.upper(),
+                url=full_url,
+                headers=request.headers,
+                json=request.body
+            )
+            latency_ms = int((time.monotonic() - start_time) * 1000)
+
+        try:
+            response_body: Union[dict, str] = response.json()
+        except json.JSONDecodeError:
+            response_body = response.text
+
+        return GatewayTestResponse(
+            status_code=response.status_code,
+            latency_ms=latency_ms,
+            body=response_body
+        )
+
+    except httpx.RequestError as e:
+        logger.warning(f"Gateway test failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Request failed: {str(e)}")
