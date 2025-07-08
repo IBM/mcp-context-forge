@@ -160,6 +160,17 @@ async def test_require_basic_auth_optional(monkeypatch):
     assert result == "anonymous"
 
 
+@pytest.mark.asyncio
+async def test_require_basic_auth_raises_when_credentials_missing(monkeypatch):
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_basic_auth(None)
+
+    err = exc.value
+    assert err.status_code == status.HTTP_401_UNAUTHORIZED
+    assert err.detail == "Not authenticated"
+    assert err.headers["WWW-Authenticate"] == "Basic"
+
+
 # ---------------------------------------------------------------------------
 # require_auth_override
 # ---------------------------------------------------------------------------
@@ -179,3 +190,16 @@ async def test_require_auth_override(monkeypatch):
     # Only cookie present
     res2 = await vc.require_auth_override(auth_header=None, jwt_token=cookie_token)
     assert res2["c"] == 2
+
+
+@pytest.mark.asyncio
+async def test_require_auth_override_non_bearer(monkeypatch):
+    # Arrange
+    header = "Basic Zm9vOmJhcg=="  # non-Bearer scheme
+    monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
+
+    # Act
+    result = await vc.require_auth_override(auth_header=header)
+
+    # Assert
+    assert result == await vc.require_auth(credentials=None, jwt_token=None)
