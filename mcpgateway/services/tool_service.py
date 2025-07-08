@@ -413,7 +413,8 @@ class ToolService:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")
 
-        is_reachable = db.execute(select(DbTool.reachable).where(slug_expr == name)).scalar_one_or_none()
+        # is_reachable = db.execute(select(DbTool.reachable).where(slug_expr == name)).scalar_one_or_none()
+        is_reachable = tool.reachable
 
         if not is_reachable:
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
@@ -472,10 +473,7 @@ class ToolService:
             elif tool.integration_type == "MCP":
                 transport = tool.request_type.lower()
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
-                if gateway.auth_type == "bearer":
-                    headers = decode_auth(gateway.auth_value)
-                else:
-                    headers = {}
+                headers = decode_auth(gateway.auth_value)
 
                 async def connect_to_sse_server(server_url: str) -> str:
                     """
@@ -527,7 +525,7 @@ class ToolService:
                 filtered_response = extract_using_jq(content, tool.jsonpath_filter)
                 tool_result = ToolResult(content=filtered_response)
             else:
-                return ToolResult(content="Invalid tool type")
+                return ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
             return tool_result
         except Exception as e:
