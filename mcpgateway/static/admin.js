@@ -1146,6 +1146,9 @@ async function viewGateway(gatewayId) {
   }
 }
 
+// Function to test a gateway by sending a request to it
+// This function opens a modal where the user can input the request details
+// and see the response from the gateway.
 let headersEditor, bodyEditor;
 async function testGateway(gatewayURL) {
   openModal("gateway-test-modal");

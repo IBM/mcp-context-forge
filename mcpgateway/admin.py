@@ -1355,6 +1355,17 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user: str = Depends
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
 async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(require_auth)) -> GatewayTestResponse:
+    """
+    Test a gateway by sending a request to its URL.
+    This endpoint allows administrators to test the connectivity and response
+
+    Args:
+        request (GatewayTestRequest): The request object containing the gateway URL and request details.
+        user (str): Authenticated user dependency.
+    
+    Returns:
+        GatewayTestResponse: The response from the gateway, including status code, latency, and body
+    """
     full_url = str(request.base_url).rstrip("/") + "/" + request.path.lstrip("/")
     logger.debug(f"User {user} testing server at {request.base_url}.")
     try:

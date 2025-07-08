@@ -1245,6 +1245,10 @@ class ServerRead(BaseModelWithConfigDict):
 
 
 class GatewayTestRequest(BaseModelWithConfigDict):
+    """Schema for testing gateway connectivity.
+
+    Includes the HTTP method, base URL, path, optional headers, and body.
+    """
     method: str = Field(..., description="HTTP method to test (GET, POST, etc.)")
     base_url: AnyHttpUrl = Field(..., description="Base URL of the gateway to test")
     path: str = Field(..., description="Path to append to the base URL")
@@ -1253,6 +1257,13 @@ class GatewayTestRequest(BaseModelWithConfigDict):
 
 
 class GatewayTestResponse(BaseModelWithConfigDict):
+    """Schema for the response from a gateway test request.
+
+    Contains:
+    - HTTP status code
+    - Latency in milliseconds
+    - Optional response body, which can be a string or JSON object
+    """
     status_code: int = Field(..., description="HTTP status code returned by the gateway")
     latency_ms: int = Field(..., description="Latency of the request in milliseconds")
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")
