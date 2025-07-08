@@ -193,7 +193,7 @@ mcpContextForge:
     HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
     HEALTH_CHECK_TIMEOUT: "10"       # request timeout per health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
-    FILELOCK_PATH: /tmp/gateway_healthcheck_init.lock # lock file used at start-up
+    FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
 
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features
