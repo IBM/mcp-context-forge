@@ -1146,21 +1146,25 @@ async function viewGateway(gatewayId) {
   }
 }
 
+let headersEditor, bodyEditor;
 async function testGateway(gatewayURL) {
   openModal("gateway-test-modal");
 
-  headersEditor = CodeMirror.fromTextArea(document.getElementById('headers-json'), {
-    mode: "application/json",
-    theme: "monokai",
-    lineNumbers: true,
-  });
-  headersEditor.setSize(null, 100);
-  bodyEditor = CodeMirror.fromTextArea(document.getElementById('body-json'), {
-    mode: "application/json",
-    theme: "monokai",
-    lineNumbers: true
-  });
-  bodyEditor.setSize(null, 100);
+  if (!headersEditor) {
+    headersEditor = CodeMirror.fromTextArea(document.getElementById('headers-json'), {
+      mode: "application/json",
+      lineNumbers: true,
+    });
+    headersEditor.setSize(null, 100);
+  }
+
+  if (!bodyEditor) {
+    bodyEditor = CodeMirror.fromTextArea(document.getElementById('body-json'), {
+      mode: "application/json",
+      lineNumbers: true
+    });
+    bodyEditor.setSize(null, 100);
+  }
 
   document.getElementById("gateway-test-form").action = `${window.ROOT_PATH}/admin/gateways/test`;
   document.getElementById("gateway-test-url").value = gatewayURL;
@@ -1176,6 +1180,7 @@ async function testGateway(gatewayURL) {
     const url = form.action;
 
     // Get form.elements and CodeMirror content
+    const base_url = form.elements["gateway-test-url"].value;
     const method = form.elements["method"].value;
     const path = form.elements["path"].value;
     const headersRaw = headersEditor.getValue();
@@ -1193,7 +1198,7 @@ async function testGateway(gatewayURL) {
     }
 
     const payload = {
-      base_url: gatewayURL,
+      base_url,
       method,
       path,
       headers: headersParsed,
@@ -1208,8 +1213,7 @@ async function testGateway(gatewayURL) {
       });
 
       const result = await response.json();
-      console.log("Test result:", result);
-      document.getElementById("response-json").textContent = JSON.stringify(result);
+      document.getElementById("response-json").textContent = JSON.stringify(result, null, 2);
     } catch (err) {
       document.getElementById("response-json").textContent = `❌ Error: ${err.message}`;
     } finally {
@@ -1218,6 +1222,17 @@ async function testGateway(gatewayURL) {
     }
   });
 
+  // Close the modal and reset the form when the close button is clicked
+  document.getElementById("gateway-test-close").addEventListener("click", function () {
+    closeModal("gateway-test-modal");
+
+    // Reset the form and CodeMirror editors
+    document.getElementById("gateway-test-form").reset();
+    headersEditor.setValue('');
+    bodyEditor.setValue('');
+    document.getElementById("response-json").textContent = '';
+    document.getElementById("test-result").classList.add("hidden");
+  })
 }
 
 async function editGateway(gatewayId) {
