@@ -51,7 +51,7 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.config.FEDERATION_PEERS | string | `"[]"` |  |
 | mcpContextForge.config.FEDERATION_SYNC_INTERVAL | string | `"300"` |  |
 | mcpContextForge.config.FEDERATION_TIMEOUT | string | `"30"` |  |
-| mcpContextForge.config.FILELOCK_PATH | string | `"/tmp/gateway_healthcheck_init.lock"` |  |
+| mcpContextForge.config.FILELOCK_NAME | string | `"gateway_healthcheck_init.lock"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS | string | `"10000"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS_JITTER | string | `"100"` |  |
 | mcpContextForge.config.GUNICORN_PRELOAD_APP | string | `"true"` |  |

@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 import uuid
+import tempfile
+import os
 
 # Third-Party
 from filelock import FileLock, Timeout
@@ -123,7 +125,13 @@ class GatewayService:
         elif settings.cache_type != "none":
             # Fallback: File-based lock
             self._redis_client = None
-            self._lock_path = settings.filelock_path
+
+            temp_dir = tempfile.gettempdir()
+            user_path = os.path.normpath(settings.filelock_name)
+            if os.path.isabs(user_path):
+                user_path = os.path.relpath(user_path, start=os.path.splitdrive(user_path)[0] + os.sep)
+            full_path = os.path.join(temp_dir, user_path)
+            self._lock_path = full_path.replace("\\", "/")
             self._file_lock = FileLock(self._lock_path)
         else:
             self._redis_client = None

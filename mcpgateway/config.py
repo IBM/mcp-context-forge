@@ -169,7 +169,7 @@ class Settings(BaseSettings):
     health_check_timeout: int = 10  # seconds
     unhealthy_threshold: int = 5  # after this many failures, mark as Offline
 
-    filelock_path: str = "tmp/gateway_service_leader.lock"
+    filelock_name: str = "gateway_service_leader.lock"
 
     # Default Roots
     default_roots: List[str] = []
