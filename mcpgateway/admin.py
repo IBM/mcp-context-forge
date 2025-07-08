@@ -1352,15 +1352,11 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user: str = Depends
     await prompt_service.reset_metrics(db)
     return {"message": "All metrics reset successfully", "success": True}
 
-"""
-curl http://localhost:4444/admin/gateways/test
-    -H "Content-Type: application/json"
-    -d '{"base_url": "http://localhost:8080", "path": "/health", "method": "GET"}'
-"""
+
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
-async def admin_test_gateway(request: GatewayTestRequest, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayTestResponse:
-    full_url = request.base_url.rstrip("/") + "/" + request.path.lstrip("/")
-    logger.debug(f"User {user} testing server: {full_url} with method {request.method}")
+async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(require_auth)) -> GatewayTestResponse:
+    full_url = str(request.base_url).rstrip("/") + "/" + request.path.lstrip("/")
+    logger.debug(f"User {user} testing server at {request.base_url}.")
     try:
         async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
             start_time = time.monotonic()
@@ -1371,7 +1367,6 @@ async def admin_test_gateway(request: GatewayTestRequest, db: Session = Depends(
                 json=request.body
             )
             latency_ms = int((time.monotonic() - start_time) * 1000)
-
         try:
             response_body: Union[dict, str] = response.json()
         except json.JSONDecodeError:
