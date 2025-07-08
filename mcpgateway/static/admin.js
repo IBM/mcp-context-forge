@@ -1171,7 +1171,6 @@ async function testGateway(gatewayURL) {
 
     // Show loading
     document.getElementById("loading").classList.remove("hidden");
-    document.getElementById("test-result").textContent = "";
 
     const form = e.target;
     const url = form.action;
@@ -1188,7 +1187,8 @@ async function testGateway(gatewayURL) {
       bodyParsed = bodyRaw ? JSON.parse(bodyRaw) : undefined;
     } catch (err) {
       document.getElementById("loading").classList.add("hidden");
-      document.getElementById("test-result").textContent = "❌ Invalid JSON in headers or body";
+      document.getElementById("response-json").textContent = `❌ Invalid JSON: ${err.message}`;
+      document.getElementById("test-result").classList.remove("hidden");
       return;
     }
 
@@ -1199,7 +1199,7 @@ async function testGateway(gatewayURL) {
       headers: headersParsed,
       body: bodyParsed,
     };
-    console.log("Testing gateway with payload:", payload);
+
     try {
       const response = await fetch(url, {
         method: "POST",
@@ -1208,13 +1208,13 @@ async function testGateway(gatewayURL) {
       });
 
       const result = await response.json();
-
-      document.getElementById("test-result").textContent =
-        `✅ Status: ${result.status_code}\n⏱ Latency: ${result.latency_ms}ms\n📦 Body:\n${JSON.stringify(result.body, null, 2)}`;
+      console.log("Test result:", result);
+      document.getElementById("response-json").textContent = JSON.stringify(result);
     } catch (err) {
-      document.getElementById("test-result").textContent = "❌ Error connecting to server";
+      document.getElementById("response-json").textContent = `❌ Error: ${err.message}`;
     } finally {
       document.getElementById("loading").classList.add("hidden");
+      document.getElementById("test-result").classList.remove("hidden");
     }
   });
 
