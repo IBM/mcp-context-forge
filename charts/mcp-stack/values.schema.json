@@ -521,10 +521,10 @@
               "description": "Unhealthy threshold",
               "default": "3"
             },
-            "FILELOCK_PATH": {
+            "FILELOCK_NAME": {
               "type": "string",
               "description": "File lock path",
-              "default": "/tmp/gateway_healthcheck_init.lock"
+              "default": "gateway_healthcheck_init.lock"
             },
             "DEV_MODE": {
               "type": "string",
