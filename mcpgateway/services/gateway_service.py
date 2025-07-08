@@ -127,7 +127,7 @@ class GatewayService:
             self._redis_client = None
 
             temp_dir = tempfile.gettempdir()
-            user_path = os.path.normpath(settings.filelock_path)
+            user_path = os.path.normpath(settings.filelock_name)
             if os.path.isabs(user_path):
                 user_path = os.path.relpath(user_path, start=os.path.splitdrive(user_path)[0] + os.sep)
             full_path = os.path.join(temp_dir, user_path)
