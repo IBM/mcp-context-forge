@@ -291,8 +291,15 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         await server_service.delete_server(db, server_id)
     except Exception as e:
         logger.error(f"Error deleting server: {e}")
-
+    
+    form = await request.form()
+    is_inactive_checked = form.get("is_inactive_checked", "false")
+    print("IS INACTIVE CHECKED:", is_inactive_checked)
     root_path = request.scope.get("root_path", "")
+    
+  
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
     return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
 
 
@@ -657,6 +664,8 @@ async def admin_edit_tool(
         await tool_service.update_tool(db, tool_id, tool)
 
         root_path = request.scope.get("root_path", "")
+        is_inactive_checked = form.get("is_inactive_checked", "false")
+        print("IS INACTIVE CHECKED:", is_inactive_checked)
         return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
     except ToolNameConflictError as e:
         return JSONResponse(content={"message": str(e), "success": False}, status_code=400)
@@ -686,7 +695,12 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     logger.debug(f"User {user} is deleting tool ID {tool_id}")
     await tool_service.delete_tool(db, tool_id)
 
+    form = await request.form()
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     root_path = request.scope.get("root_path", "")
+
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
 
 
@@ -860,7 +874,12 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     logger.debug(f"User {user} is deleting gateway ID {gateway_id}")
     await gateway_service.delete_gateway(db, gateway_id)
 
+    form = await request.form()
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     root_path = request.scope.get("root_path", "")
+    
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
     return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
 
 
@@ -976,9 +995,15 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
     """
     logger.debug(f"User {user} is deleting resource URI {uri}")
     await resource_service.delete_resource(db, uri)
-
+    
+    form = await request.form()
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     root_path = request.scope.get("root_path", "")
+
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+ 
 
 
 @admin_router.post("/resources/{resource_id}/toggle")
@@ -1136,7 +1161,12 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
     logger.debug(f"User {user} is deleting prompt name {name}")
     await prompt_service.delete_prompt(db, name)
 
+    form = await request.form()
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     root_path = request.scope.get("root_path", "")
+
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
@@ -1226,7 +1256,12 @@ async def admin_delete_root(uri: str, request: Request, user: str = Depends(requ
     logger.debug(f"User {user} is deleting root URI {uri}")
     await root_service.remove_root(uri)
 
+    form = await request.form()
     root_path = request.scope.get("root_path", "")
+    is_inactive_checked = form.get("is_inactive_checked", "false")
+
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
     return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
 
 

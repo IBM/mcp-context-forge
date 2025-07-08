@@ -562,6 +562,18 @@ function handleToggleSubmit(event, type) {
   form.submit();
 }
 
+function handleSubmitWithConfirmation(event, type) {
+  event.preventDefault();
+
+  const confirmationMessage = `Are you sure you want to permanently delete this ${type}? (Deactivation is reversible, deletion is permanent)`;
+  const confirmation = confirm(confirmationMessage);
+  if (!confirmation) {
+    return false; // Prevent form submission
+  }
+
+  return handleToggleSubmit(event, type); // Proceed with your original function
+}
+
 
 
 // Tool CRUD operations
@@ -2039,7 +2051,8 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 window.toggleInactiveItems = toggleInactiveItems;
-window.handleToggleSubmit = handleToggleSubmit
+window.handleToggleSubmit = handleToggleSubmit;
+window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 window.viewTool = viewTool;
 window.editTool = editTool;
 window.testTool = testTool;
