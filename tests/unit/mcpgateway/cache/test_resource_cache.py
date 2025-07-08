@@ -7,31 +7,40 @@ Authors: Mihai Criveti
 
 Unit tests for ResourceCache.
 """
+# Standard
 import asyncio
 import time
+
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.cache.resource_cache import ResourceCache
+
 
 @pytest.fixture
 def cache():
     """Fixture for a ResourceCache with small TTL and size for testing."""
     return ResourceCache(max_size=3, ttl=1)
 
+
 def test_set_and_get(cache):
     """Test setting and getting a cache value."""
     cache.set("foo", "bar")
     assert cache.get("foo") == "bar"
 
+
 def test_get_missing(cache):
     """Test getting a missing key returns None."""
     assert cache.get("missing") is None
+
 
 def test_expiration(cache):
     """Test that cache entry expires after TTL."""
     cache.set("foo", "bar")
     time.sleep(1.1)
     assert cache.get("foo") is None
+
 
 def test_lru_eviction(cache):
     """Test LRU eviction when max_size is reached."""
@@ -47,11 +56,13 @@ def test_lru_eviction(cache):
     assert cache.get("c") == 3
     assert cache.get("d") == 4
 
+
 def test_delete(cache):
     """Test deleting a cache entry."""
     cache.set("foo", "bar")
     cache.delete("foo")
     assert cache.get("foo") is None
+
 
 def test_clear(cache):
     """Test clearing the cache."""
@@ -60,6 +71,7 @@ def test_clear(cache):
     cache.clear()
     assert cache.get("foo") is None
     assert cache.get("baz") is None
+
 
 @pytest.mark.asyncio
 async def test_initialize_and_shutdown_logs(monkeypatch):
@@ -70,6 +82,7 @@ async def test_initialize_and_shutdown_logs(monkeypatch):
     cache.set("foo", "bar")
     await cache.shutdown()
     assert cache.get("foo") is None
+
 
 @pytest.mark.asyncio
 async def test_cleanup_loop_removes_expired(monkeypatch):
@@ -85,7 +98,13 @@ async def test_cleanup_loop_removes_expired(monkeypatch):
             del cache._cache[key]
     assert cache.get("foo") is None
 
+
 class DummyLogger:
-    def info(self, msg): pass
-    def debug(self, msg): pass
-    def error(self, msg): pass
+    def info(self, msg):
+        pass
+
+    def debug(self, msg):
+        pass
+
+    def error(self, msg):
+        pass

@@ -11,9 +11,7 @@ Tests for tool service implementation.
 # Standard
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 import logging
-import re
 from unittest.mock import ANY, AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party

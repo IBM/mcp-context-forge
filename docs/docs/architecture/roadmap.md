@@ -29,12 +29,12 @@
 ## Release 0.1.0 - Initial Release
 
 !!! success "Release 0.1.0 - Completed (100%)"
-    **Due:** June 5, 2025 | **Status:** Closed  
+    **Due:** June 5, 2025 | **Status:** Closed
     Initial release with core functionality and basic deployment support.
 
 ???+ check "✨ Features (3)"
     - [**#27**](https://github.com/IBM/mcp-context-forge/issues/27) - Add /ready endpoint for readiness probe
-    - [**#24**](https://github.com/IBM/mcp-context-forge/issues/24) - Publish Helm chart for Kubernetes deployment  
+    - [**#24**](https://github.com/IBM/mcp-context-forge/issues/24) - Publish Helm chart for Kubernetes deployment
     - [**#23**](https://github.com/IBM/mcp-context-forge/issues/23) - Add VS Code Devcontainer support for instant onboarding
 
 ???+ check "🐛 Bugs (3)"
@@ -51,7 +51,7 @@
 ## Release 0.2.0 - Streamable HTTP, Infra-as-Code, Dark Mode
 
 !!! success "Release 0.2.0 - Completed (100%)"
-    **Due:** June 24, 2025 | **Status:** Closed  
+    **Due:** June 24, 2025 | **Status:** Closed
     Enhanced transport capabilities and improved user experience.
 
 ???+ check "✨ Features (3)"
@@ -73,7 +73,7 @@
 ## Release 0.3.0 - Annotations and Multi-Server Tool Federations
 
 !!! warning "Release 0.3.0 - Partially Complete (63%)"
-    **Due:** July 8, 2025 | **Status:** Closed  
+    **Due:** July 8, 2025 | **Status:** Closed
     Focus on tool federation and server management improvements.
 
 ???+ warning "🐛 Open Bugs (2)"
@@ -113,7 +113,7 @@
 ## Release 0.4.0 - Bugfixes, Resilience & Code Quality
 
 !!! danger "Release 0.4.0 - Open (0%)"
-    **Due:** July 22, 2025 | **Status:** Open  
+    **Due:** July 22, 2025 | **Status:** Open
     Focus on bugfixes, resilience (retry with exponential backoff), code quality and technical debt (test coverage, linting, security scans, GitHub Actions, Makefile, Helm improvements).
 
 ???+ danger "🐛 Open Bugs (2)"
@@ -155,7 +155,7 @@
 ## Release 0.5.0 - Enterprise Operability, Auth, Configuration & Observability
 
 !!! danger "Release 0.5.0 - Open (0%)"
-    **Due:** August 5, 2025 | **Status:** Open  
+    **Due:** August 5, 2025 | **Status:** Open
     Enterprise-grade authentication, configuration management, and comprehensive observability.
 
 ???+ danger "✨ Open Features (10)"
@@ -178,7 +178,7 @@
 ## Release 0.6.0 - Security, Scale & Smart Automation
 
 !!! danger "Release 0.6.0 - Open (0%)"
-    **Due:** August 19, 2025 | **Status:** Open  
+    **Due:** August 19, 2025 | **Status:** Open
     Advanced security features, scalability improvements, and intelligent automation capabilities.
 
 ???+ danger "✨ Open Features (11)"
@@ -200,7 +200,7 @@
 ## Release 0.7.0 - Multitenancy and RBAC
 
 !!! danger "Release 0.7.0 - Open (0%)"
-    **Due:** September 2, 2025 | **Status:** Open  
+    **Due:** September 2, 2025 | **Status:** Open
     Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A).
 
 ???+ danger "✨ Open Features (8)"
@@ -217,7 +217,7 @@
 ## Release 0.8.0 - Enterprise Security & Policy Guardrails
 
 !!! danger "Release 0.8.0 - Open (0%)"
-    **Due:** September 16, 2025 | **Status:** Open  
+    **Due:** September 16, 2025 | **Status:** Open
     Comprehensive enterprise security features and policy enforcement mechanisms.
 
 ???+ danger "✨ Open Features (5)"
@@ -235,7 +235,7 @@
 ## Release 0.9.0 - Interoperability, Marketplaces & Advanced Connectivity
 
 !!! danger "Release 0.9.0 - Open (7%)"
-    **Due:** September 30, 2025 | **Status:** Open  
+    **Due:** September 30, 2025 | **Status:** Open
     Enhanced interoperability, marketplace features, and advanced connectivity options.
 
 ???+ danger "✨ Open Features (11)"
@@ -265,7 +265,7 @@
 ## Release 1.0.0 - General Availability & Release Candidate Hardening
 
 !!! danger "Release 1.0.0 - Open (0%)"
-    **Due:** October 14, 2025 | **Status:** Open  
+    **Due:** October 14, 2025 | **Status:** Open
     Stable and audited release for general availability.
 
 ???+ danger "📚 Open Documentation (1)"
@@ -276,7 +276,7 @@
 ## Release 1.1.0 - Post-GA Testing, Bugfixing, Documentation, Performance and Scale
 
 !!! danger "Release 1.1.0 - Open (0%)"
-    **Due:** October 28, 2025 | **Status:** Open  
+    **Due:** October 28, 2025 | **Status:** Open
     Post-launch improvements and performance optimizations.
 
 ???+ danger "✨ Open Features (1)"
@@ -287,7 +287,7 @@
 ## Release 1.2.0 - Catalog Enhancements, Ratings, Experience and UI
 
 !!! danger "Release 1.2.0 - Open (0%)"
-    **Due:** November 11, 2025 | **Status:** Open  
+    **Due:** November 11, 2025 | **Status:** Open
     Enhanced catalog features and improved user experience.
 
 ???+ danger "✨ Open Features (1)"
@@ -298,7 +298,7 @@
 ## Release 1.3.0 - Catalog Improvements, A2A Improvements, MCP Standard Review and Sync, Technical Debt
 
 !!! danger "Release 1.3.0 - Open (0%)"
-    **Due:** November 25, 2025 | **Status:** Open  
+    **Due:** November 25, 2025 | **Status:** Open
     Catalog improvements, A2A enhancements, and technical debt resolution.
 
 ???+ danger "✨ Open Features (1)"
@@ -309,7 +309,7 @@
 ## Release 1.4.0
 
 !!! danger "Release 1.4.0 - Open (0%)"
-    **Due:** December 9, 2025 | **Status:** Open  
+    **Due:** December 9, 2025 | **Status:** Open
     TBD
 
 *No issues currently assigned to this release.*
@@ -319,7 +319,7 @@
 ## Release 1.5.0
 
 !!! danger "Release 1.5.0 - Open (0%)"
-    **Due:** December 23, 2025 | **Status:** Open  
+    **Due:** December 23, 2025 | **Status:** Open
     TBD
 
 *No issues currently assigned to this release.*
@@ -329,7 +329,7 @@
 ## Release 1.6.0
 
 !!! danger "Release 1.6.0 - Open (0%)"
-    **Due:** January 6, 2026 | **Status:** Open  
+    **Due:** January 6, 2026 | **Status:** Open
     TBD
 
 *No issues currently assigned to this release.*
@@ -346,7 +346,7 @@
 !!! tip "Contributing"
     Want to contribute to any of these features? Check out the individual GitHub issues for more details and discussion!
 
-    
+
 ## Pending Issue Creation
 
 ### ⚙️ Lifecycle & Management
@@ -367,4 +367,3 @@
 
 ### 🔐 Secrets & Sensitive Data
 8. **Secure Secrets Management & Masking** - External secrets store integration (Vault)
-
