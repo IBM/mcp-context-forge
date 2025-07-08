@@ -9,13 +9,13 @@ Tests for the MCP Gateway WebSocket transport implementation.
 """
 
 # Standard
+import asyncio
 import logging
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 # Third-Party
 from fastapi import WebSocket, WebSocketDisconnect
 import pytest
-import asyncio
 
 # First-Party
 from mcpgateway.transports.websocket_transport import WebSocketTransport
@@ -141,10 +141,11 @@ class TestWebSocketTransport:
 
         # Should have sent ping bytes
         mock_websocket.send_bytes.assert_called_once_with(b"ping")
-    
+
     @pytest.mark.asyncio
     async def test_ping_loop_normal(self, monkeypatch):
         """Test _ping_loop with normal pong response."""
+        # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
         mock_ws = AsyncMock()
@@ -161,6 +162,7 @@ class TestWebSocketTransport:
         async def fake_receive_bytes():
             transport._connected = False
             return b"pong"
+
         mock_ws.receive_bytes.side_effect = fake_receive_bytes
 
         await transport._ping_loop()
@@ -169,6 +171,7 @@ class TestWebSocketTransport:
     @pytest.mark.asyncio
     async def test_ping_loop_invalid_pong(self, monkeypatch, caplog):
         """Test _ping_loop logs warning on invalid pong."""
+        # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
         mock_ws = AsyncMock()
@@ -184,6 +187,7 @@ class TestWebSocketTransport:
         async def fake_receive_bytes():
             transport._connected = False
             return b"notpong"
+
         mock_ws.receive_bytes.side_effect = fake_receive_bytes
 
         with caplog.at_level("WARNING"):
@@ -193,6 +197,7 @@ class TestWebSocketTransport:
     @pytest.mark.asyncio
     async def test_ping_loop_timeout(self, monkeypatch, caplog):
         """Test _ping_loop logs warning on timeout."""
+        # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
         mock_ws = AsyncMock()
@@ -202,9 +207,11 @@ class TestWebSocketTransport:
 
         monkeypatch.setattr("mcpgateway.transports.websocket_transport.settings.websocket_ping_interval", 0.01)
         monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
         # Simulate timeout
         async def fake_wait_for(*a, **kw):
             raise asyncio.TimeoutError
+
         monkeypatch.setattr("asyncio.wait_for", fake_wait_for)
 
         with caplog.at_level("WARNING"):
@@ -214,6 +221,7 @@ class TestWebSocketTransport:
     @pytest.mark.asyncio
     async def test_ping_loop_exception(self, monkeypatch, caplog):
         """Test _ping_loop logs error on unexpected exception."""
+        # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
         mock_ws = AsyncMock()
@@ -231,6 +239,7 @@ class TestWebSocketTransport:
     @pytest.mark.asyncio
     async def test_ping_loop_calls_disconnect(self, monkeypatch):
         """Test _ping_loop always calls disconnect in finally."""
+        # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
         mock_ws = AsyncMock()
@@ -240,14 +249,17 @@ class TestWebSocketTransport:
         monkeypatch.setattr("mcpgateway.transports.websocket_transport.settings.websocket_ping_interval", 0.01)
         monkeypatch.setattr("asyncio.sleep", AsyncMock())
         called = {}
+
         async def fake_disconnect():
             called["disconnect"] = True
+
         transport.disconnect = fake_disconnect
 
         # Stop after one iteration
         async def fake_receive_bytes():
             transport._connected = False
             return b"pong"
+
         mock_ws.receive_bytes.side_effect = fake_receive_bytes
 
         await transport._ping_loop()
