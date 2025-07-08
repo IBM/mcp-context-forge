@@ -1488,7 +1488,7 @@
                       View
                     </button>
                     <button
-                      onclick="testGateway()"
+                      onclick="testGateway('{{ gateway.url }}')"
                       class="text-stone-600 hover:text-stone-900 mr-2">
                       Test
                     </button>
@@ -2410,9 +2410,15 @@
 
         <form id="gateway-test-form" class="space-y-4">
           <div>
+            <label class="block text-sm font-medium text-gray-700">Server URL</label>
+            <input name="url" type="text" disabled
+                  id="gateway-test-url"
+                  class="mt-1 block w-full border border-gray-700 rounded-md shadow-sm p-1" />
+          </div>
+          <div>
             <label class="block text-sm font-medium text-gray-700">Method</label>
             <select 
-              name="method" id="method-select"
+              name="method" id="gateway-test-method"
               class="mt-1 block w-full border border-gray-700 rounded-md shadow-sm p-1"
               >
               <option>GET</option>
@@ -2424,7 +2430,7 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700">Path</label>
-            <input name="path" type="text" placeholder="/health"
+            <input id="gateway-test-path" name="path" type="text" placeholder="/health"
                   class="mt-1 block w-full border border-gray-700 rounded-md shadow-sm p-1" />
           </div>
           <div>
@@ -2437,7 +2443,7 @@
             <textarea id="body-json" class="mt-1 block w-full border border-gray-700 rounded-md shadow-sm p-1"></textarea>
           </div>
 
-          <button type="button" onclick="submitTest()"
+          <button type="submit" id="gateway-test-submit"
                   class="w-full text-center px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">
             Send
           </button>

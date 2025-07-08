@@ -1146,28 +1146,78 @@ async function viewGateway(gatewayId) {
   }
 }
 
-async function testGateway() {
-  try {
-    openModal("gateway-test-modal");
+async function testGateway(gatewayURL) {
+  openModal("gateway-test-modal");
 
-    headersEditor = CodeMirror.fromTextArea(document.getElementById('headers-json'), {
-      mode: "application/json",
-      theme: "monokai",
-      lineNumbers: true,
-    });
-    headersEditor.setSize(null, 100);
-    bodyEditor = CodeMirror.fromTextArea(document.getElementById('body-json'), {
-      mode: "application/json",
-      theme: "monokai",
-      lineNumbers: true
-    });
-    bodyEditor.setSize(null, 100);
+  headersEditor = CodeMirror.fromTextArea(document.getElementById('headers-json'), {
+    mode: "application/json",
+    theme: "monokai",
+    lineNumbers: true,
+  });
+  headersEditor.setSize(null, 100);
+  bodyEditor = CodeMirror.fromTextArea(document.getElementById('body-json'), {
+    mode: "application/json",
+    theme: "monokai",
+    lineNumbers: true
+  });
+  bodyEditor.setSize(null, 100);
 
-    
-  } catch (error) {
-    console.error("Error testing gateway:", error);
-    alert("Failed to test gateway");
-  }
+  document.getElementById("gateway-test-form").action = `${window.ROOT_PATH}/admin/gateways/test`;
+  document.getElementById("gateway-test-url").value = gatewayURL;
+
+  // Handle submission of the gateway test form
+  document.getElementById("gateway-test-form").addEventListener("submit", async function (e) {
+    e.preventDefault(); // prevent full page reload
+
+    // Show loading
+    document.getElementById("loading").classList.remove("hidden");
+    document.getElementById("test-result").textContent = "";
+
+    const form = e.target;
+    const url = form.action;
+
+    // Get form.elements and CodeMirror content
+    const method = form.elements["method"].value;
+    const path = form.elements["path"].value;
+    const headersRaw = headersEditor.getValue();
+    const bodyRaw = bodyEditor.getValue();
+
+    let headersParsed, bodyParsed;
+    try {
+      headersParsed = headersRaw ? JSON.parse(headersRaw) : undefined;
+      bodyParsed = bodyRaw ? JSON.parse(bodyRaw) : undefined;
+    } catch (err) {
+      document.getElementById("loading").classList.add("hidden");
+      document.getElementById("test-result").textContent = "❌ Invalid JSON in headers or body";
+      return;
+    }
+
+    const payload = {
+      base_url: gatewayURL,
+      method,
+      path,
+      headers: headersParsed,
+      body: bodyParsed,
+    };
+    console.log("Testing gateway with payload:", payload);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+
+      document.getElementById("test-result").textContent =
+        `✅ Status: ${result.status_code}\n⏱ Latency: ${result.latency_ms}ms\n📦 Body:\n${JSON.stringify(result.body, null, 2)}`;
+    } catch (err) {
+      document.getElementById("test-result").textContent = "❌ Error connecting to server";
+    } finally {
+      document.getElementById("loading").classList.add("hidden");
+    }
+  });
+
 }
 
 async function editGateway(gatewayId) {
