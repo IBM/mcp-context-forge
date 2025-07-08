@@ -1146,6 +1146,30 @@ async function viewGateway(gatewayId) {
   }
 }
 
+async function testGateway() {
+  try {
+    openModal("gateway-test-modal");
+
+    headersEditor = CodeMirror.fromTextArea(document.getElementById('headers-json'), {
+      mode: "application/json",
+      theme: "monokai",
+      lineNumbers: true,
+    });
+    headersEditor.setSize(null, 100);
+    bodyEditor = CodeMirror.fromTextArea(document.getElementById('body-json'), {
+      mode: "application/json",
+      theme: "monokai",
+      lineNumbers: true
+    });
+    bodyEditor.setSize(null, 100);
+
+    
+  } catch (error) {
+    console.error("Error testing gateway:", error);
+    alert("Failed to test gateway");
+  }
+}
+
 async function editGateway(gatewayId) {
   try {
     const response = await fetch(`${window.ROOT_PATH}/admin/gateways/${gatewayId}`);

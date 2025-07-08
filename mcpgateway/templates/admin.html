@@ -1488,6 +1488,11 @@
                       View
                     </button>
                     <button
+                      onclick="testGateway()"
+                      class="text-stone-600 hover:text-stone-900 mr-2">
+                      Test
+                    </button>
+                    <button
                       onclick="editGateway('{{ gateway.id }}')"
                       class="text-green-600 hover:text-green-900 mr-2"
                     >
@@ -2395,6 +2400,62 @@
         </div>
       </div>
     </div>
+
+    <!-- Test Gateway Modal -->
+    <div 
+      id="gateway-test-modal" 
+      class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden">
+      <div  class="bg-white dark:bg-gray-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-lg p-6">
+        <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">Test Server Connectivity</h2>
+
+        <form id="gateway-test-form" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Method</label>
+            <select 
+              name="method" id="method-select"
+              class="mt-1 block w-full border border-gray-700 rounded-md shadow-sm p-1"
+              >
+              <option>GET</option>
+              <option>POST</option>
+              <option>PUT</option>
+              <option>DELETE</option>
+              <option>PATCH</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Path</label>
+            <input name="path" type="text" placeholder="/health"
+                  class="mt-1 block w-full border border-gray-700 rounded-md shadow-sm p-1" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
+            <textarea id="headers-json" class="mt-1 block w-full border border-gray-700 rounded-md shadow-sm p-1"></textarea>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Body (JSON)</label>
+            <textarea id="body-json" class="mt-1 block w-full border border-gray-700 rounded-md shadow-sm p-1"></textarea>
+          </div>
+
+          <button type="button" onclick="submitTest()"
+                  class="w-full text-center px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+            Send
+          </button>
+        </form>
+
+        <div id="loading" class="mt-4 hidden">
+          <div class="spinner border-t-4 border-blue-600 w-6 h-6 rounded-full animate-spin"></div>
+        </div>
+
+        <div id="test-result" class="mt-4 bg-gray-100 p-3 rounded text-sm overflow-auto text-gray-800" style="height: 220px;"></div>
+
+        <div class="mt-6 text-right">
+          <button onclick="closeModal('gateway-test-modal')" class="px-3 py-1 border rounded bg-white text-gray-700 hover:bg-gray-50">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>    
 
     <!-- Gateway Edit Modal -->
     <div
