@@ -331,7 +331,11 @@
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Server</h3>
-          <form method="POST" action="{{ root_path }}/admin/servers" id="add-server-form" onreset="document.getElementById('associatedTools').selectedIndex = -1;">
+          <form method="POST" 
+                action="{{ root_path }}/admin/servers" 
+                id="add-server-form" 
+                onsubmit="return handleToggleSubmit(event, 'servers')"
+                onreset="document.getElementById('associatedTools').selectedIndex = -1;">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -1261,7 +1265,7 @@
 
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Prompt</h3>
-          <form method="POST" action="{{ root_path }}/admin/prompts" id="add-prompt-form">
+          <form method="POST" action="{{ root_path }}/admin/prompts" id="add-prompt-form" onsubmit="return handleToggleSubmit(event, 'prompts')">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -1728,7 +1732,7 @@
         <!-- Add new root -------------------------------------------------------->
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Root</h3>
-          <form method="POST" action="{{ root_path }}/admin/roots" id="add-root-form">
+          <form method="POST" action="{{ root_path }}/admin/roots" id="add-root-form" onsubmit="return handleToggleSubmit(event, 'roots')">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label class="block text-sm font-medium text-gray-700">URI</label>

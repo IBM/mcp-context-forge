@@ -162,6 +162,9 @@ document.addEventListener("DOMContentLoaded", function () {
         status.textContent = "";
         status.classList.remove("error-status");
 
+        const is_inactive_checked = isInactiveChecked('gateways');  
+        formData.append("is_inactive_checked", is_inactive_checked);
+
         try {
           const response = await fetch(`${window.ROOT_PATH}/admin/gateways`, {
             method: "POST",
@@ -172,7 +175,11 @@ document.addEventListener("DOMContentLoaded", function () {
             if (!result.success) {
               alert(result.message || "An error occurred");
             } else {
+              if (is_inactive_checked) {
+                window.location.href = `${window.ROOT_PATH}/admin?include_inactive=true#gateways`; // Redirect on success
+              } else{
               window.location.href = `${window.ROOT_PATH}/admin#gateways`; // Redirect on success
+              }
             }
 
         } catch (error) {
@@ -294,6 +301,8 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       let formData = new FormData(this);
+      const is_inactive_checked = isInactiveChecked('tools');  
+      formData.append("is_inactive_checked", is_inactive_checked); 
       try {
         let response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
           method: "POST",
@@ -303,7 +312,11 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!result.success) {
           alert(result.message || "An error occurred");
         } else {
-          window.location.href = `${window.ROOT_PATH}/admin#tools`; // Redirect on success
+            if (is_inactive_checked) {
+              window.location.href = `${window.ROOT_PATH}/admin?include_inactive=true#tools`; // Redirect on success
+            } else{
+            window.location.href = `${window.ROOT_PATH}/admin#tools`; // Redirect on success
+            }
         }
       } catch (error) {
         console.error("Fetch error:", error);
@@ -758,6 +771,17 @@ async function editTool(toolId) {
     const response = await fetch(`${window.ROOT_PATH}/admin/tools/${toolId}`);
     const tool = await response.json();
 
+    const isInActiveCheckedBool = isInactiveChecked('tools');
+    let hiddenField = document.getElementById("edit-show-inactive");
+    if (!hiddenField) {
+      hiddenField = document.createElement("input");
+      hiddenField.type = "hidden";
+      hiddenField.name = "is_inactive_checked";
+      hiddenField.id = "edit-show-inactive";
+      document.getElementById("edit-tool-form").appendChild(hiddenField);
+    }
+    hiddenField.value = isInActiveCheckedBool;
+
     // Set form action and populate basic fields.
     document.getElementById("edit-tool-form").action =
       `${window.ROOT_PATH}/admin/tools/${toolId}/edit`;
@@ -910,6 +934,17 @@ async function editResource(resourceUri) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     const data = await response.json();
+    const isInActiveCheckedBool = isInactiveChecked('resources');
+    let hiddenField = document.getElementById("edit-show-inactive");
+    if (!hiddenField) {
+      hiddenField = document.createElement("input");
+      hiddenField.type = "hidden";
+      hiddenField.name = "is_inactive_checked";
+      hiddenField.id = "edit-show-inactive";
+      document.getElementById("edit-resource-form").appendChild(hiddenField);
+    }
+    hiddenField.value = isInActiveCheckedBool;
+
     const resource = data.resource;
     // Set the form action for editing
     document.getElementById("edit-resource-form").action =
@@ -997,6 +1032,18 @@ async function editPrompt(promptName) {
       `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}`,
     );
     const prompt = await response.json();
+
+    const isInActiveCheckedBool = isInactiveChecked('resources');
+    let hiddenField = document.getElementById("edit-show-inactive");
+    if (!hiddenField) {
+      hiddenField = document.createElement("input");
+      hiddenField.type = "hidden";
+      hiddenField.name = "is_inactive_checked";
+      hiddenField.id = "edit-show-inactive";
+      document.getElementById("edit-prompt-form").appendChild(hiddenField);
+    }
+    hiddenField.value = isInActiveCheckedBool;
+
     document.getElementById("edit-prompt-form").action =
       `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}/edit`;
     document.getElementById("edit-prompt-name").value = prompt.name;
@@ -1103,6 +1150,18 @@ async function editGateway(gatewayId) {
   try {
     const response = await fetch(`${window.ROOT_PATH}/admin/gateways/${gatewayId}`);
     const gateway = await response.json();
+
+    const isInActiveCheckedBool = isInactiveChecked('gateways');
+    let hiddenField = document.getElementById("edit-show-inactive");
+    if (!hiddenField) {
+      hiddenField = document.createElement("input");
+      hiddenField.type = "hidden";
+      hiddenField.name = "is_inactive_checked";
+      hiddenField.id = "edit-show-inactive";
+      document.getElementById("edit-gateway-form").appendChild(hiddenField);
+    }
+    hiddenField.value = isInActiveCheckedBool;
+
     document.getElementById("edit-gateway-form").action =
       `${window.ROOT_PATH}/admin/gateways/${gatewayId}/edit`;
     document.getElementById("edit-gateway-name").value = gateway.name;
@@ -1220,6 +1279,17 @@ async function editServer(serverId) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     const server = await response.json();
+
+    const isInActiveCheckedBool = isInactiveChecked('servers');
+    let hiddenField = document.getElementById("edit-show-inactive");
+    if (!hiddenField) {
+      hiddenField = document.createElement("input");
+      hiddenField.type = "hidden";
+      hiddenField.name = "is_inactive_checked";
+      hiddenField.id = "edit-show-inactive";
+      document.getElementById("edit-server-form").appendChild(hiddenField);
+    }
+    hiddenField.value = isInActiveCheckedBool;
     // Set the form action for editing
     document.getElementById("edit-server-form").action =
       `${window.ROOT_PATH}/admin/servers/${serverId}/edit`;

@@ -154,8 +154,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         RedirectResponse: A redirect to the admin dashboard catalog section
     """
     form = await request.form()
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
+        
         server = ServerCreate(
             name=form.get("name"),
             description=form.get("description"),
@@ -167,11 +169,15 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         await server_service.register_server(db, server)
 
         root_path = request.scope.get("root_path", "")
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
         return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
     except Exception as e:
         logger.error(f"Error adding server: {e}")
 
         root_path = request.scope.get("root_path", "")
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
         return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
 
 
@@ -207,6 +213,7 @@ async def admin_edit_server(
         RedirectResponse: A redirect to the admin dashboard catalog section with a status code of 303
     """
     form = await request.form()
+    is_inactive_checked = form.get("is_inactive_checked","false")
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
@@ -220,11 +227,16 @@ async def admin_edit_server(
         await server_service.update_server(db, server_id, server)
 
         root_path = request.scope.get("root_path", "")
+        
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
         return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
     except Exception as e:
         logger.error(f"Error editing server: {e}")
 
         root_path = request.scope.get("root_path", "")
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
         return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
 
 
@@ -294,10 +306,8 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
     
     form = await request.form()
     is_inactive_checked = form.get("is_inactive_checked", "false")
-    print("IS INACTIVE CHECKED:", is_inactive_checked)
     root_path = request.scope.get("root_path", "")
     
-  
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
     return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
@@ -665,7 +675,8 @@ async def admin_edit_tool(
 
         root_path = request.scope.get("root_path", "")
         is_inactive_checked = form.get("is_inactive_checked", "false")
-        print("IS INACTIVE CHECKED:", is_inactive_checked)
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
         return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
     except ToolNameConflictError as e:
         return JSONResponse(content={"message": str(e), "success": False}, status_code=400)
@@ -849,6 +860,10 @@ async def admin_edit_gateway(
     await gateway_service.update_gateway(db, gateway_id, gateway)
 
     root_path = request.scope.get("root_path", "")
+    is_inactive_checked = form.get("is_inactive_checked", "false")
+
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
     return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
 
 
@@ -971,6 +986,10 @@ async def admin_edit_resource(
     await resource_service.update_resource(db, uri, resource)
 
     root_path = request.scope.get("root_path", "")
+    is_inactive_checked = form.get("is_inactive_checked", "false")
+    
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
 
 
@@ -1136,6 +1155,10 @@ async def admin_edit_prompt(
     await prompt_service.update_prompt(db, name, prompt)
 
     root_path = request.scope.get("root_path", "")
+    is_inactive_checked = form.get("is_inactive_checked", "false")
+    
+    if is_inactive_checked.lower() == "true":
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
