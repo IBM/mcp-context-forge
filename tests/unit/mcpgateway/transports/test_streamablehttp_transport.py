@@ -20,12 +20,12 @@ have no heavy dependencies.
 from __future__ import annotations
 
 # Standard
-from typing import List
 from contextlib import asynccontextmanager
+from typing import List
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 from starlette.types import Scope
 
 # First-Party
@@ -86,6 +86,7 @@ async def test_event_store_eviction():
     assert result is None  # event no longer known
     assert sent == []  # callback not invoked
 
+
 @pytest.mark.asyncio
 async def test_event_store_store_event_eviction():
     """Eviction removes from event_index as well."""
@@ -98,6 +99,7 @@ async def test_event_store_store_event_eviction():
     assert eid2 in store.event_index
     assert eid3 in store.event_index
 
+
 @pytest.mark.asyncio
 async def test_event_store_replay_events_after_not_found(caplog):
     """replay_events_after returns None and logs if event not found."""
@@ -106,6 +108,7 @@ async def test_event_store_replay_events_after_not_found(caplog):
     result = await store.replay_events_after("notfound", lambda x: sent.append(x))
     assert result is None
     assert sent == []
+
 
 @pytest.mark.asyncio
 async def test_event_store_replay_events_after_multiple():
@@ -117,16 +120,20 @@ async def test_event_store_replay_events_after_multiple():
     eid3 = await store.store_event(stream_id, {"id": 3})
 
     sent = []
+
     async def collector(msg):
         sent.append(msg)
+
     await store.replay_events_after(eid1, collector)
     assert len(sent) == 2
     assert sent[0].event_id == eid2
     assert sent[1].event_id == eid3
 
+
 # ---------------------------------------------------------------------------
 # get_db, call_tool & list_tools tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_db_context_manager():
@@ -135,6 +142,7 @@ async def test_get_db_context_manager():
         mock_db = MagicMock()
         mock_session_local.return_value = mock_db
 
+        # First-Party
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         async with get_db() as db:
@@ -142,9 +150,11 @@ async def test_get_db_context_manager():
             mock_db.close.assert_not_called()
         mock_db.close.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_call_tool_success(monkeypatch):
     """Test call_tool returns content on success."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
 
     mock_db = MagicMock()
@@ -163,8 +173,10 @@ async def test_call_tool_success(monkeypatch):
     assert result[0].type == "text"
     assert result[0].text == "hello"
 
+
 @pytest.mark.asyncio
 async def test_call_tool_success(monkeypatch):
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
 
     mock_db = MagicMock()
@@ -187,9 +199,11 @@ async def test_call_tool_success(monkeypatch):
     assert result[0].type == "text"
     assert result[0].text == "hello"
 
+
 @pytest.mark.asyncio
 async def test_call_tool_no_content(monkeypatch, caplog):
     """Test call_tool returns [] and logs warning if no content."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     mock_db = MagicMock()
@@ -199,6 +213,7 @@ async def test_call_tool_no_content(monkeypatch, caplog):
     @asynccontextmanager
     async def fake_get_db():
         yield mock_db
+
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
 
@@ -207,14 +222,19 @@ async def test_call_tool_no_content(monkeypatch, caplog):
         assert result == []
         assert "No content returned by tool: mytool" in caplog.text
 
+
 @pytest.mark.asyncio
 async def test_call_tool_exception(monkeypatch, caplog):
     """Test call_tool returns [] and logs exception on error."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
     mock_db = MagicMock()
+
     @asynccontextmanager
     async def fake_get_db():
         yield mock_db
+
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(side_effect=Exception("fail!")))
 
@@ -223,10 +243,12 @@ async def test_call_tool_exception(monkeypatch, caplog):
         assert result == []
         assert "Error calling tool 'mytool': fail!" in caplog.text
 
+
 @pytest.mark.asyncio
 async def test_list_tools_with_server_id(monkeypatch):
     """Test list_tools returns tools for a server_id."""
-    from mcpgateway.transports.streamablehttp_transport import list_tools, tool_service, types, server_id_var
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service
 
     mock_db = MagicMock()
     mock_tool = MagicMock()
@@ -234,9 +256,11 @@ async def test_list_tools_with_server_id(monkeypatch):
     mock_tool.description = "desc"
     mock_tool.input_schema = {"type": "object"}
     mock_tool.annotations = {}
+
     @asynccontextmanager
     async def fake_get_db():
         yield mock_db
+
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "list_server_tools", AsyncMock(return_value=[mock_tool]))
 
@@ -247,10 +271,12 @@ async def test_list_tools_with_server_id(monkeypatch):
     assert result[0].name == "t"
     assert result[0].description == "desc"
 
+
 @pytest.mark.asyncio
 async def test_list_tools_no_server_id(monkeypatch):
     """Test list_tools returns tools when no server_id is set."""
-    from mcpgateway.transports.streamablehttp_transport import list_tools, tool_service, types, server_id_var
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service
 
     mock_db = MagicMock()
     mock_tool = MagicMock()
@@ -262,6 +288,7 @@ async def test_list_tools_no_server_id(monkeypatch):
     @asynccontextmanager
     async def fake_get_db():
         yield mock_db
+
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=[mock_tool]))
 
@@ -273,15 +300,19 @@ async def test_list_tools_no_server_id(monkeypatch):
     assert result[0].name == "t"
     assert result[0].description == "desc"
 
+
 @pytest.mark.asyncio
 async def test_list_tools_exception(monkeypatch, caplog):
     """Test list_tools returns [] and logs exception on error."""
-    from mcpgateway.transports.streamablehttp_transport import list_tools, tool_service, server_id_var
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service
 
     mock_db = MagicMock()
+
     @asynccontextmanager
     async def fake_get_db():
         yield mock_db
+
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "list_tools", AsyncMock(side_effect=Exception("fail!")))
 
@@ -291,6 +322,7 @@ async def test_list_tools_exception(monkeypatch, caplog):
         assert result == []
         assert "Error listing tools:fail!" in caplog.text
     server_id_var.reset(token)
+
 
 # ---------------------------------------------------------------------------
 # streamable_http_auth tests
@@ -303,6 +335,7 @@ async def test_list_tools_exception(monkeypatch, caplog):
 #         "path": path,
 #         "headers": headers or [],
 #     }
+
 
 def _make_scope(path: str, headers: list[tuple[bytes, bytes]] | None = None) -> Scope:
     return {
@@ -363,77 +396,111 @@ async def test_auth_failure(monkeypatch):
     assert sent and sent[0]["type"] == "http.response.start"
     assert sent[0]["status"] == tr.HTTP_401_UNAUTHORIZED
 
+
 @pytest.mark.asyncio
 async def test_streamable_http_auth_skips_non_mcp():
     """Auth returns True for non-/mcp paths."""
     scope = _make_scope("/notmcp")
     called = []
-    async def send(msg): called.append(msg)
+
+    async def send(msg):
+        called.append(msg)
+
     result = await streamable_http_auth(scope, None, send)
     assert result is True
     assert called == []
+
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_no_authorization():
     """Auth returns False and sends 401 if no Authorization header."""
     scope = _make_scope("/servers/1/mcp")
     called = []
-    async def send(msg): called.append(msg)
+
+    async def send(msg):
+        called.append(msg)
+
     result = await streamable_http_auth(scope, None, send)
     assert result is False
     assert called and called[0]["type"] == "http.response.start"
     assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_wrong_scheme(monkeypatch):
     """Auth returns False and sends 401 if Authorization is not Bearer."""
-    async def fake_verify(token): raise AssertionError("Should not be called")
+
+    async def fake_verify(token):
+        raise AssertionError("Should not be called")
+
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Basic foobar")])
     called = []
-    async def send(msg): called.append(msg)
+
+    async def send(msg):
+        called.append(msg)
+
     result = await streamable_http_auth(scope, None, send)
     assert result is False
     assert called and called[0]["type"] == "http.response.start"
     assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_bearer_no_token(monkeypatch):
     """Auth returns False and sends 401 if Bearer but no token."""
-    async def fake_verify(token): raise AssertionError("Should not be called")
+
+    async def fake_verify(token):
+        raise AssertionError("Should not be called")
+
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer")])
     called = []
-    async def send(msg): called.append(msg)
+
+    async def send(msg):
+        called.append(msg)
+
     result = await streamable_http_auth(scope, None, send)
     assert result is False
     assert called and called[0]["type"] == "http.response.start"
     assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
+
 # ---------------------------------------------------------------------------
 # Session Manager tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_session_manager_wrapper_initialization(monkeypatch):
     """Test SessionManagerWrapper initialize and shutdown."""
+    # Standard
     from contextlib import asynccontextmanager
 
     class DummySessionManager:
         @asynccontextmanager
         async def run(self):
             yield self
-        async def __aenter__(self): return self
-        async def __aexit__(self, exc_type, exc, tb): return None
-        async def handle_request(self, scope, receive, send): self.called = True
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def handle_request(self, scope, receive, send):
+            self.called = True
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
     await wrapper.shutdown()
 
+
 @pytest.mark.asyncio
 async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
     """Test handle_streamable_http sets server_id and calls handle_request."""
+    # Standard
     from contextlib import asynccontextmanager
 
     async def send(msg):
@@ -443,8 +510,13 @@ async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
         @asynccontextmanager
         async def run(self):
             yield self
-        async def __aenter__(self): return self
-        async def __aexit__(self, exc_type, exc, tb): return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
         async def handle_request(self, scope, receive, send_func):
             self.called = True
             await send_func("ok")
@@ -458,17 +530,24 @@ async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
     await wrapper.shutdown()
     assert sent == ["ok"]
 
+
 @pytest.mark.asyncio
 async def test_session_manager_wrapper_handle_streamable_http_exception(monkeypatch, caplog):
     """Test handle_streamable_http logs and raises on exception."""
+    # Standard
     from contextlib import asynccontextmanager
 
     class DummySessionManager:
         @asynccontextmanager
         async def run(self):
             yield self
-        async def __aenter__(self): return self
-        async def __aexit__(self, exc_type, exc, tb): return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
         async def handle_request(self, scope, receive, send):
             self.called = True
             raise RuntimeError("fail")
@@ -477,7 +556,10 @@ async def test_session_manager_wrapper_handle_streamable_http_exception(monkeypa
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
     scope = _make_scope("/servers/123/mcp")
-    async def send(msg): pass
+
+    async def send(msg):
+        pass
+
     with pytest.raises(RuntimeError):
         await wrapper.handle_streamable_http(scope, None, send)
     await wrapper.shutdown()
