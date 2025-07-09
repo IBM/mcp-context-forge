@@ -2,12 +2,12 @@
 
 This guide covers two supported deployment paths for the **MCP Gateway**:
 
-1. **Makefile automation** – a single-command workflow that wraps `ibmcloud` CLI.
-2. **Manual IBM Cloud CLI** – the raw commands the Makefile executes, for fine-grained control.
+1. **Makefile automation** - a single-command workflow that wraps `ibmcloud` CLI.
+2. **Manual IBM Cloud CLI** - the raw commands the Makefile executes, for fine-grained control.
 
 ---
 
-## 1 · Prerequisites
+## 1 - Prerequisites
 
 | Requirement          | Details                                                            |
 | -------------------- | ------------------------------------------------------------------ |
@@ -20,7 +20,7 @@ This guide covers two supported deployment paths for the **MCP Gateway**:
 
 ---
 
-## 2 · Environment files
+## 2 - Environment files
 
 Both files are already in **`.gitignore`**.
 Template named **`.env.example`** **`.env.ce.example`** and are included; copy them:
@@ -30,7 +30,7 @@ cp .env.example .env         # runtime settings (inside the container)
 cp .env.ce.example .env.ce   # deployment credentials (CLI only)
 ```
 
-### `.env` – runtime settings
+### `.env` - runtime settings
 
 This file is **mounted into the container** (via `--env-file=.env`), so its keys live inside Code Engine at runtime. Treat it as an application secret store.
 
@@ -47,15 +47,15 @@ PORT=4444
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Database configuration  – choose ONE block
+#  Database configuration  - choose ONE block
 # ─────────────────────────────────────────────────────────────────────────────
 
 ## (A) Local SQLite  (good for smoke-tests / CI only)
 ## --------------------------------------------------
-## • SQLite lives on the container's ephemeral file system.
-## • On Code Engine every new instance starts fresh; scale-out, restarts or
+## - SQLite lives on the container's ephemeral file system.
+## - On Code Engine every new instance starts fresh; scale-out, restarts or
 ##   deploys will wipe data.  **Not suitable for production.**
-## • If you still need file persistence, attach Code Engine's file-system
+## - If you still need file persistence, attach Code Engine's file-system
 ##   mount or an external filesystem / COS bucket.
 #CACHE_TYPE=database
 #DATABASE_URL=sqlite:////tmp/mcp.db
@@ -63,9 +63,9 @@ PORT=4444
 
 ## (B) Managed PostgreSQL on IBM Cloud  (recommended for staging/production)
 ## --------------------------------------------------------------------------
-## • Provision an IBM Cloud Databases for PostgreSQL instance (see below).
-## • Use the service credentials to build the URL.
-## • sslmode=require is mandatory for IBM Cloud databases.
+## - Provision an IBM Cloud Databases for PostgreSQL instance (see below).
+## - Use the service credentials to build the URL.
+## - sslmode=require is mandatory for IBM Cloud databases.
 CACHE_TYPE=database
 DATABASE_URL=postgresql://pguser:pgpass@my-pg-host.databases.appdomain.cloud:32727/mcpgwdb?sslmode=require
 #            │ │      │                                   │           │
@@ -85,7 +85,7 @@ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u
 echo ${MCPGATEWAY_BEARER_TOKEN} # Check that the key was generated
 ```
 
-### `.env.ce` – Code Engine deployment settings
+### `.env.ce` - Code Engine deployment settings
 
 These keys are **only** consumed by Makefile / CLI. They never reach the running container.
 
@@ -105,7 +105,7 @@ IBMCLOUD_IMG_PROD=mcpgateway/mcpgateway                  # local tag produced by
 # Authentication
 IBMCLOUD_API_KEY=***your-api-key***    # leave blank to use SSO flow at login
 
-# Resource combo – see https://cloud.ibm.com/docs/codeengine?topic=codeengine-mem-cpu-combo
+# Resource combo - see https://cloud.ibm.com/docs/codeengine?topic=codeengine-mem-cpu-combo
 IBMCLOUD_CPU=1                         # vCPU for the container
 IBMCLOUD_MEMORY=4G                     # Memory (must match a valid CPU/MEM pair)
 
@@ -117,21 +117,21 @@ IBMCLOUD_REGISTRY_SECRET=my-regcred
 
 ---
 
-## 3 · Workflow A – Makefile targets
+## 3 - Workflow A - Makefile targets
 
 | Target                      | Action it performs                                                                   |
 | --------------------------- | ------------------------------------------------------------------------------------ |
 | **`podman`** / **`docker`** | Build the production image (`$IBMCLOUD_IMG_PROD`).                                   |
 | `ibmcloud-cli-install`      | Install IBM Cloud CLI + **container-registry** and **code-engine** plugins.          |
 | `ibmcloud-check-env`        | Ensure all `IBMCLOUD_*` vars exist in `.env.ce`; abort if any are missing.           |
-| `ibmcloud-login`            | `ibmcloud login` – uses API key or interactive SSO.                                  |
+| `ibmcloud-login`            | `ibmcloud login` - uses API key or interactive SSO.                                  |
 | `ibmcloud-ce-login`         | `ibmcloud ce project select --name $IBMCLOUD_PROJECT`.                               |
 | `ibmcloud-list-containers`  | Show ICR images and existing Code Engine apps.                                       |
 | `ibmcloud-tag`              | `podman tag $IBMCLOUD_IMG_PROD $IBMCLOUD_IMAGE_NAME`.                                |
 | `ibmcloud-push`             | `ibmcloud cr login` + `podman push` to ICR.                                          |
 | `ibmcloud-deploy`           | Create **or** update the app, set CPU/MEM, attach registry secret, expose port 4444. |
-| `ibmcloud-ce-status`        | `ibmcloud ce application get` – see route URL, revisions, health.                    |
-| `ibmcloud-ce-logs`          | `ibmcloud ce application logs --follow` – live log stream.                           |
+| `ibmcloud-ce-status`        | `ibmcloud ce application get` - see route URL, revisions, health.                    |
+| `ibmcloud-ce-logs`          | `ibmcloud ce application logs --follow` - live log stream.                           |
 | `ibmcloud-ce-rm`            | Delete the application entirely.                                                     |
 
 **Typical first deploy**
@@ -155,40 +155,40 @@ make podman ibmcloud-tag ibmcloud-push ibmcloud-deploy
 
 ---
 
-## 4 · Workflow B – Manual IBM Cloud CLI
+## 4 - Workflow B - Manual IBM Cloud CLI
 
 ```bash
-# 1 · Install CLI + plugins
+# 1 - Install CLI + plugins
 curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
 ibmcloud plugin install container-registry -f
 ibmcloud plugin install code-engine      -f
 
-# 2 · Login
+# 2 - Login
 ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r "$IBMCLOUD_REGION" -g "$IBMCLOUD_RESOURCE_GROUP"
 ibmcloud resource groups # list resource groups
 
-# 3 · Target Code Engine project
+# 3 - Target Code Engine project
 ibmcloud ce project list # list current projects
 ibmcloud ce project select --name "$IBMCLOUD_PROJECT"
 
-# 4 · Build + tag image
+# 4 - Build + tag image
 podman build -t "$IBMCLOUD_IMG_PROD" .
 podman tag "$IBMCLOUD_IMG_PROD" "$IBMCLOUD_IMAGE_NAME"
 
-# 5 · Push image to ICR
+# 5 - Push image to ICR
 ibmcloud cr login
 ibmcloud cr namespaces       # Ensure your namespace exists
 podman push "$IBMCLOUD_IMAGE_NAME"
 ibmcloud cr images # list images
 
-# 6 · Create registry secret (first time)
+# 6 - Create registry secret (first time)
 ibmcloud ce registry create-secret --name "$IBMCLOUD_REGISTRY_SECRET" \
     --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
     --username iamapikey --password "$IBMCLOUD_API_KEY"
 ibmcloud ce secret list # list every secret (generic, registry, SSH, TLS, etc.)
 ibmcloud ce secret get --name "$IBMCLOUD_REGISTRY_SECRET"         # add --decode to see clear-text values
 
-# 7 · Deploy / update
+# 7 - Deploy / update
 if ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" >/dev/null 2>&1; then
   ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
       --image "$IBMCLOUD_IMAGE_NAME" \
@@ -202,7 +202,7 @@ else
       --registry-secret "$IBMCLOUD_REGISTRY_SECRET"
 fi
 
-# 8 · Status & logs
+# 8 - Status & logs
 ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP"
 ibmcloud ce application events --name "$IBMCLOUD_CODE_ENGINE_APP"
 ibmcloud ce application get   --name "$IBMCLOUD_CODE_ENGINE_APP"
@@ -211,7 +211,7 @@ ibmcloud ce application logs  --name "$IBMCLOUD_CODE_ENGINE_APP" --follow
 
 ---
 
-## 5 · Accessing the gateway
+## 5 - Accessing the gateway
 
 ```bash
 ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" --output url
@@ -236,7 +236,7 @@ make ibmcloud-ce-logs
 
 ---
 
-## 6 · Cleanup
+## 6 - Cleanup
 
 ```bash
 # via Makefile
@@ -248,13 +248,13 @@ ibmcloud ce application delete --name "$IBMCLOUD_CODE_ENGINE_APP" -f
 
 ---
 
-## 7 · Using IBM Cloud Databases for PostgreSQL
+## 7 - Using IBM Cloud Databases for PostgreSQL
 
 Need durable data, high availability, and automated backups? Provision **IBM Cloud Databases for PostgreSQL** and connect MCP Gateway to it.
 
 ```bash
 ###############################################################################
-# 1 · Provision PostgreSQL
+# 1 - Provision PostgreSQL
 ###############################################################################
 # Choose a plan:  standard (shared) or enterprise (dedicated). For small
 # workloads start with: standard / 1 member / 4 GB RAM.
@@ -262,13 +262,13 @@ ibmcloud resource service-instance-create mcpgw-db \
     databases-for-postgresql standard $IBMCLOUD_REGION
 
 ###############################################################################
-# 2 · Create service credentials
+# 2 - Create service credentials
 ###############################################################################
 ibmcloud resource service-key-create mcpgw-db-creds Administrator \
     --instance-name mcpgw-db
 
 ###############################################################################
-# 3 · Retrieve credentials & craft DATABASE_URL
+# 3 - Retrieve credentials & craft DATABASE_URL
 ###############################################################################
 creds_json=$(ibmcloud resource service-key mcpgw-db-creds --output json)
 host=$(echo "$creds_json" | jq -r '.[0].credentials.connection.postgres.hosts[0].hostname')
@@ -280,13 +280,13 @@ db=$(echo "$creds_json"   | jq -r '.[0].credentials.connection.postgres.database
 DATABASE_URL="postgresql://${user}:${pass}@${host}:${port}/${db}?sslmode=require"
 
 ###############################################################################
-# 4 · Store DATABASE_URL as a Code Engine secret
+# 4 - Store DATABASE_URL as a Code Engine secret
 ###############################################################################
 ibmcloud ce secret create --name mcpgw-db-url \
     --from-literal DATABASE_URL="$DATABASE_URL"
 
 ###############################################################################
-# 5 · Mount the secret into the application
+# 5 - Mount the secret into the application
 ###############################################################################
 ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
     --env-from-secret mcpgw-db-url
@@ -320,7 +320,7 @@ The gateway will reconnect transparently because the host name remains stable. S
 
 | Aspect          | Local SQLite (`sqlite:////tmp/mcp.db`)  | Managed PostgreSQL   |
 | --------------- | --------------------------------------- | -------------------- |
-| Persistence     | **None** – lost on restarts / scale-out | Durable & backed-up  |
+| Persistence     | **None** - lost on restarts / scale-out | Durable & backed-up  |
 | Concurrency     | Single-writer lock                      | Multiple writers     |
 | Scale-out ready | No - state is per-pod                   | Yes                  |
 | Best for        | Unit tests, CI pipelines                | Staging & production |
@@ -329,27 +329,27 @@ For production workloads you **must** switch to a managed database or mount a pe
 
 ---
 
-## 8 · Adding IBM Cloud Databases for Redis (optional cache layer)
+## 8 - Adding IBM Cloud Databases for Redis (optional cache layer)
 
 Need a high-performance shared cache? Provision **IBM Cloud Databases for Redis**
 and point MCP Gateway at it.
 
 ```bash
 ###############################################################################
-# 1 · Provision Redis
+# 1 - Provision Redis
 ###############################################################################
 # Choose a plan: standard (shared) or enterprise (dedicated).
 ibmcloud resource service-instance-create mcpgw-redis \
     databases-for-redis standard $IBMCLOUD_REGION
 
 ###############################################################################
-# 2 · Create service credentials
+# 2 - Create service credentials
 ###############################################################################
 ibmcloud resource service-key-create mcpgw-redis-creds Administrator \
     --instance-name mcpgw-redis
 
 ###############################################################################
-# 3 · Retrieve credentials & craft REDIS_URL
+# 3 - Retrieve credentials & craft REDIS_URL
 ###############################################################################
 creds_json=$(ibmcloud resource service-key mcpgw-redis-creds --output json)
 host=$(echo "$creds_json" | jq -r '.[0].credentials.connection.rediss.hosts[0].hostname')
@@ -359,13 +359,13 @@ pass=$(echo "$creds_json" | jq -r '.[0].credentials.connection.rediss.authentica
 REDIS_URL="rediss://:${pass}@${host}:${port}/0"   # rediss = TLS-secured Redis
 
 ###############################################################################
-# 4 · Store REDIS_URL as a Code Engine secret
+# 4 - Store REDIS_URL as a Code Engine secret
 ###############################################################################
 ibmcloud ce secret create --name mcpgw-redis-url \
     --from-literal REDIS_URL="$REDIS_URL"
 
 ###############################################################################
-# 5 · Mount the secret and switch cache backend
+# 5 - Mount the secret and switch cache backend
 ###############################################################################
 ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
     --env-from-secret mcpgw-redis-url \
@@ -407,7 +407,7 @@ Docs: https://docs.gunicorn.org/en/stable/settings.html
 bind = "0.0.0.0:4444"        # Listen on all interfaces, port 4444
 
 # Worker processes ──────────────────────────────────────────────────────
-workers = 8                  # Rule of thumb: 2–4 × NUM_CPU_CORES
+workers = 8                  # Rule of thumb: 2-4 × NUM_CPU_CORES
 
 # Request/worker life-cycle ─────────────────────────────────────────────
 timeout = 600                # Kill a worker after 600 s of no response

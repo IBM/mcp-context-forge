@@ -6,8 +6,8 @@ and forwards messages to a local StdIO process.
 
 Supported modes:
 
-1. StdIO to SSE – serve a local subprocess over HTTP with SSE output
-2. SSE to StdIO – subscribe to a remote SSE stream and forward messages to a local process
+1. StdIO to SSE - serve a local subprocess over HTTP with SSE output
+2. SSE to StdIO - subscribe to a remote SSE stream and forward messages to a local process
 
 ---
 
@@ -32,7 +32,7 @@ Supported modes:
 
 ```bash
 python3 -m mcpgateway.translate \
-  --stdio "uvenv run mcp-server-git" \
+  --stdio "uvx mcp-server-git" \
   --port 9000
 ```
 
@@ -91,9 +91,9 @@ python3 -m mcpgateway.translate [--stdio CMD | --sse URL | --streamableHttp URL]
 
 Streams JSON-RPC responses as SSE. Each connection receives:
 
-* `event: endpoint` – the URL for backchannel POST
-* `event: keepalive` – periodic keepalive signal
-* `event: message` – forwarded output from subprocess
+* `event: endpoint` - the URL for backchannel POST
+* `event: keepalive` - periodic keepalive signal
+* `event: message` - forwarded output from subprocess
 
 ### POST /message
 
@@ -111,7 +111,7 @@ Health check endpoint. Always responds with `ok`.
 
 ```bash
 python3 -m mcpgateway.translate \
-  --stdio "uvenv run mcp-server-git" \
+  --stdio "uvx mcp-server-git" \
   --port 9000 \
   --cors "https://myapp.com"
 ```

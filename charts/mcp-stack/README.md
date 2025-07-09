@@ -1,13 +1,13 @@
 # mcp-stack
 
-![Version: 0.2.0](https://img.shields.io/badge/Version-0.2.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.2.0](https://img.shields.io/badge/AppVersion-0.2.0-informational?style=flat-square)
+![Version: 0.3.0](https://img.shields.io/badge/Version-0.3.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.3.0](https://img.shields.io/badge/AppVersion-0.3.0-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
-& Registry — Context-Forge**.  It bundles:
-  • MCP Gateway application (HTTP / WebSocket server)
-  • PostgreSQL database with persistent storage
-  • Redis cache for sessions & completions
-  • Optional PgAdmin and Redis-Commander web UIs
+& Registry - Context-Forge**.  It bundles:
+  - MCP Gateway application (HTTP / WebSocket server)
+  - PostgreSQL database with persistent storage
+  - Redis cache for sessions & completions
+  - Optional PgAdmin and Redis-Commander web UIs
 
 **Homepage:** <https://github.com/IBM/mcp-context-forge>
 
@@ -51,7 +51,7 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.config.FEDERATION_PEERS | string | `"[]"` |  |
 | mcpContextForge.config.FEDERATION_SYNC_INTERVAL | string | `"300"` |  |
 | mcpContextForge.config.FEDERATION_TIMEOUT | string | `"30"` |  |
-| mcpContextForge.config.FILELOCK_PATH | string | `"/tmp/gateway_healthcheck_init.lock"` |  |
+| mcpContextForge.config.FILELOCK_NAME | string | `"gateway_healthcheck_init.lock"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS | string | `"10000"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS_JITTER | string | `"100"` |  |
 | mcpContextForge.config.GUNICORN_PRELOAD_APP | string | `"true"` |  |
@@ -147,7 +147,7 @@ Kubernetes: `>=1.21.0`
 | mcpFastTimeServer.enabled | bool | `true` |  |
 | mcpFastTimeServer.image.pullPolicy | string | `"IfNotPresent"` |  |
 | mcpFastTimeServer.image.repository | string | `"ghcr.io/ibm/fast-time-server"` |  |
-| mcpFastTimeServer.image.tag | string | `"0.2.0"` |  |
+| mcpFastTimeServer.image.tag | string | `"0.3.0"` |  |
 | mcpFastTimeServer.ingress.enabled | bool | `true` |  |
 | mcpFastTimeServer.ingress.path | string | `"/fast-time"` |  |
 | mcpFastTimeServer.ingress.pathType | string | `"Prefix"` |  |

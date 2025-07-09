@@ -57,10 +57,19 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router
+from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import Base, engine, SessionLocal
+from mcpgateway.db import SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.models import (
+    InitializeRequest,
+    InitializeResult,
+    ListResourceTemplatesResult,
+    LogLevel,
+    ResourceContent,
+    Root,
+)
 from mcpgateway.schemas import (
     GatewayCreate,
     GatewayRead,
@@ -111,14 +120,6 @@ from mcpgateway.transports.streamablehttp_transport import (
     SessionManagerWrapper,
     streamable_http_auth,
 )
-from mcpgateway.types import (
-    InitializeRequest,
-    InitializeResult,
-    ListResourceTemplatesResult,
-    LogLevel,
-    ResourceContent,
-    Root,
-)
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.verify_credentials import require_auth, require_auth_override
@@ -144,7 +145,13 @@ logging.basicConfig(
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
 # Create database tables
-Base.metadata.create_all(bind=engine)
+try:
+    loop = asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.run(bootstrap_db())
+else:
+    loop.create_task(bootstrap_db())
+
 
 # Initialize services
 tool_service = ToolService()
@@ -936,7 +943,7 @@ async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str
         logger.debug(f"User {user} is creating a new tool")
         return await tool_service.register_tool(db, tool)
     except ToolNameConflictError as e:
-        if not e.is_active and e.tool_id:
+        if not e.enabled and e.tool_id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Tool name already exists but is inactive. Consider activating it with ID: {e.tool_id}",
@@ -1059,7 +1066,7 @@ async def toggle_tool_status(
     """
     try:
         logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
-        tool = await tool_service.toggle_tool_status(db, tool_id, activate)
+        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
@@ -1367,11 +1374,11 @@ async def create_prompt(
         user (str): Authenticated username.
 
     Returns:
-        PromptRead: The newly–created prompt.
+        PromptRead: The newly-created prompt.
 
     Raises:
-        HTTPException: * **409 Conflict** – another prompt with the same name already exists.
-            * **400 Bad Request** – validation or persistence error raised
+        HTTPException: * **409 Conflict** - another prompt with the same name already exists.
+            * **400 Bad Request** - validation or persistence error raised
                 by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
@@ -1451,8 +1458,8 @@ async def update_prompt(
         PromptRead: The updated prompt object.
 
     Raises:
-        HTTPException: * **409 Conflict** – a different prompt with the same *name* already exists and is still active.
-            * **400 Bad Request** – validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
+        HTTPException: * **409 Conflict** - a different prompt with the same *name* already exists and is still active.
+            * **400 Bad Request** - validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
     logger.debug(f"User: {user} requested to update prompt: {name} with data={prompt}")
     try:
@@ -1662,7 +1669,7 @@ async def list_roots(
 @root_router.post("", response_model=Root)
 @root_router.post("/", response_model=Root)
 async def add_root(
-    root: Root,  # Accept JSON body using the Root model from types.py
+    root: Root,  # Accept JSON body using the Root model from models.py
     user: str = Depends(require_auth),
 ) -> Root:
     """
@@ -1901,8 +1908,8 @@ async def utility_message_endpoint(request: Request, user: str = Depends(require
         JSONResponse: ``{"status": "success"}`` with HTTP 202 on success.
 
     Raises:
-        HTTPException: * **400 Bad Request** – ``session_id`` query parameter is missing or the payload cannot be parsed as JSON.
-            * **500 Internal Server Error** – An unexpected error occurs while broadcasting the message.
+        HTTPException: * **400 Bad Request** - ``session_id`` query parameter is missing or the payload cannot be parsed as JSON.
+            * **500 Internal Server Error** - An unexpected error occurs while broadcasting the message.
     """
     try:
         logger.debug("User %s sent a message to SSE session", user)
@@ -2106,7 +2113,7 @@ if UI_ENABLED:
         logger.info("Static assets served from %s", settings.static_dir)
     except RuntimeError as exc:
         logger.warning(
-            "Static dir %s not found – Admin UI disabled (%s)",
+            "Static dir %s not found - Admin UI disabled (%s)",
             settings.static_dir,
             exc,
         )

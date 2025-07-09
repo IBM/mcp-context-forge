@@ -1,4 +1,4 @@
-# Build-only workflow — runs `make dist` to create sdist & wheel, no lint/tests
+# Build-only workflow - runs `make dist` to create sdist & wheel, no lint/tests
 # Docs: https://docs.github.com/en/actions  |  PyPA build: https://pypi.org/project/build
 
 name: Build Python Package

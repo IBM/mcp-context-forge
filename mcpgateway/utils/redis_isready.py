@@ -54,7 +54,6 @@ Python ::
     wait_for_redis_ready(sync=True)        # synchronous / blocking
 """
 
-
 # Standard
 import argparse
 import asyncio
@@ -64,15 +63,9 @@ import sys
 import time
 from typing import Any, Optional
 
-# ---------------------------------------------------------------------------
-# Third-party imports - abort early if redis is missing
-# ---------------------------------------------------------------------------
-try:
-    # Third-Party
-    from redis import Redis
-except ImportError:  # pragma: no cover - handled at runtime for the CLI
-    sys.stderr.write("redis library not installed - aborting (pip install redis)\n")
-    sys.exit(2)
+# First-Party
+# First Party imports
+from mcpgateway.config import settings
 
 # Environment variables
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -139,6 +132,14 @@ def wait_for_redis_ready(
         Raises:
             RuntimeError: Forwarded after exhausting ``max_retries`` attempts.
         """
+        try:
+            # Import redis here to avoid dependency issues if not used
+            # Third-Party
+            from redis import Redis
+        except ImportError:  # pragma: no cover - handled at runtime for the CLI
+            sys.stderr.write("redis library not installed - aborting (pip install redis)\n")
+            sys.exit(2)
+
         redis_client = Redis.from_url(redis_url)
         for attempt in range(1, max_retries + 1):
             try:
@@ -181,7 +182,7 @@ def _parse_cli() -> argparse.Namespace:
     )
     parser.add_argument("--max-retries", type=int, default=REDIS_MAX_RETRIES, help="Maximum connection attempts")
     parser.add_argument("--retry-interval-ms", type=int, default=REDIS_RETRY_INTERVAL_MS, help="Delay between attempts in milliseconds")
-    parser.add_argument("--log-level", default=LOG_LEVEL, help="Logging level (DEBUG, INFO, …)")
+    parser.add_argument("--log-level", default=LOG_LEVEL, help="Logging level (DEBUG, INFO, ...)")
     return parser.parse_args()
 
 
@@ -220,4 +221,9 @@ def main() -> None:  # pragma: no cover
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    if settings.cache_type == "redis":
+        # Ensure Redis is ready before proceeding
+        main()
+    else:
+        # If not using Redis, just exit with success
+        sys.exit(0)

@@ -14,13 +14,13 @@ from __future__ import annotations
 import base64
 from typing import Dict
 
-# First-Party
-from mcpgateway.config import settings
-from mcpgateway.main import app
-
 # Third-Party
 import pytest
 from starlette.testclient import TestClient
+
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.main import app
 
 
 # --------------------------------------------------------------------------- #
@@ -61,7 +61,7 @@ def auth_headers() -> Dict[str, str]:
 #     assert "text/html" in resp.headers["content-type"]
 
 #     html = resp.text
-#     # Very loose sanity checks – we only care that it is an HTML fragment
+#     # Very loose sanity checks - we only care that it is an HTML fragment
 #     # and that some well-known marker exists.
 #     assert "<div" in html
 #     assert "App:" in html or "Application:" in html

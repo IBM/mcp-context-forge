@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     skip_ssl_verify: bool = False
 
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
-    # Tell pydantic *not* to touch this env var – our validator will.
+    # Tell pydantic *not* to touch this env var - our validator will.
     allowed_origins: Annotated[Set[str], NoDecode] = {
         "http://localhost",
         "http://localhost:4444",
@@ -167,9 +167,9 @@ class Settings(BaseSettings):
     # Health Checks
     health_check_interval: int = 60  # seconds
     health_check_timeout: int = 10  # seconds
-    unhealthy_threshold: int = 10
+    unhealthy_threshold: int = 5  # after this many failures, mark as Offline
 
-    filelock_path: str = "tmp/gateway_service_leader.lock"
+    filelock_name: str = "gateway_service_leader.lock"
 
     # Default Roots
     default_roots: List[str] = []

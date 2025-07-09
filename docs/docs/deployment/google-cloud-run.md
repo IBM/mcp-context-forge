@@ -1,6 +1,6 @@
 # ☁️ Deploying MCP Gateway on Google Cloud Run
 
-MCP Gateway can be deployed to [Google Cloud Run](https://cloud.google.com/run), a fully managed, autoscaling platform for containerized applications. This guide provides step-by-step instructions to provision PostgreSQL and Redis backends, deploy the container, configure environment variables, authenticate using JWT, and monitor logs—all optimized for cost-efficiency.
+MCP Gateway can be deployed to [Google Cloud Run](https://cloud.google.com/run), a fully managed, autoscaling platform for containerized applications. This guide provides step-by-step instructions to provision PostgreSQL and Redis backends, deploy the container, configure environment variables, authenticate using JWT, and monitor logs-all optimized for cost-efficiency.
 
 ---
 

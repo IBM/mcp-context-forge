@@ -2,8 +2,8 @@
 # 📄 CodeQL Configuration
 # ===============================================================
 # This configuration:
-#   • Utilizes standard 'security-extended' and 'security-and-quality' query suites
-#   • Excludes 'tests' and 'docs' directories from analysis
+#   - Utilizes standard 'security-extended' and 'security-and-quality' query suites
+#   - Excludes 'tests' and 'docs' directories from analysis
 # ---------------------------------------------------------------
 
 name: "CodeQL Configuration"

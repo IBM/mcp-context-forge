@@ -12,14 +12,14 @@ import asyncio
 import os
 from unittest.mock import AsyncMock, patch
 
-# First-Party
-from mcpgateway.config import Settings
-from mcpgateway.db import Base
-
 # Third-Party
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+# First-Party
+from mcpgateway.config import Settings
+from mcpgateway.db import Base
 
 
 @pytest.fixture(scope="session")

@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------
 # 💡 Build system (PEP 517)
-#     • setuptools ≥ 77 gives SPDX licence support (PEP 639)
-#     • wheel is needed by most build front-ends
+#     - setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     - wheel is needed by most build front-ends
 # ----------------------------------------------------------------
 [build-system]
 requires = ["setuptools>=77", "wheel"]
@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "0.2.0"
+version = "0.3.0"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -24,13 +24,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Framework :: FastAPI",
     "Framework :: AsyncIO",
     "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.14"
 
 # SPDX licence expression + explicit licence file (PEP 639)
 license = "Apache-2.0"
@@ -45,9 +46,9 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "alembic>=1.16.2",
-    "cryptography>=45.0.4",
-    "fastapi>=0.115.14",
+    "alembic>=1.16.3",
+    "cryptography>=45.0.5",
+    "fastapi>=0.116.0",
     "filelock>=3.18.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
@@ -62,7 +63,7 @@ dependencies = [
     "pydantic-settings>=2.10.1",
     "pyjwt>=2.10.1",
     "sqlalchemy>=2.0.41",
-    "sse-starlette>=2.3.6",
+    "sse-starlette>=2.4.1",
     "starlette>=0.46.2",
     "uvicorn>=0.35.0",
     "zeroconf>=0.147.0",
@@ -83,7 +84,7 @@ postgres = [
 ]
 
 alembic = [
-    "alembic>=1.16.2",
+    "alembic>=1.16.3",
 ]
 
 # Async SQLite Driver (optional)
@@ -100,13 +101,13 @@ asyncpg = [
 dev = [
     "argparse-manpage>=4.6",
     "autoflake>=2.3.1",
-    "bandit>=1.8.5",
+    "bandit>=1.8.6",
     "black>=25.1.0",
     "bump2version>=1.0.1",
     "check-manifest>=0.50",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
-    "coverage>=7.9.1",
+    "coverage>=7.9.2",
     "coverage-badge>=1.1.2",
     "darglint>=1.8.1",
     "fawltydeps>=0.20.0",
@@ -122,10 +123,10 @@ dev = [
     "pydocstyle>=6.3.0",
     "pylint>=3.3.7",
     "pylint-pydantic>=0.3.5",
-    "pyre-check>=0.9.23",
-    "pyrefly>=0.21.0",
+    "pyre-check>=0.9.25",
+    "pyrefly>=0.23.1",
     "pyright>=1.1.402",
-    "pyroma>=4.2",
+    "pyroma>=4.3.3",
     "pyspelling>=2.10",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
@@ -133,20 +134,20 @@ dev = [
     "pytest-examples>=0.0.18",
     "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=15.1",
-    "pytest-xdist>=3.7.0",
+    "pytest-xdist>=3.8.0",
     "pytype>=2024.10.11",
     "radon>=6.0.1",
     "redis>=6.2.0",
-    "ruff>=0.12.1",
+    "ruff>=0.12.2",
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "tomlcheck>=0.2.3",
     "tox>=4.27.0",
     "tox-uv>=1.26.1",
     "twine>=6.1.0",
-    "ty>=0.0.1a12",
+    "ty>=0.0.1a14",
     "types-tabulate>=0.9.0.20241207",
-    "uv>=0.7.17",
+    "uv>=0.7.19",
     "yamllint>=1.37.1",
 ]
 
@@ -198,7 +199,12 @@ mcpgateway = [
   "py.typed",
   "static/*.css",
   "static/*.js",
-  "templates/*.html"
+  "templates/*.html",
+  "alembic.ini",
+  "alembic/*.py",
+  "alembic/*.mako",
+  "alembic/*.md",
+  "alembic/versions/*.py",
 ]
 
 # --------------------------------------------------------------------
@@ -236,7 +242,7 @@ from_first                 = true         # place all "from ... import ..." befo
 ###############################################################################
 # Section ordering & headings
 ###############################################################################
-sections                   = ["FUTURE", "STDLIB", "FIRSTPARTY", "THIRDPARTY", "LOCALFOLDER"]
+sections                   = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
 import_heading_future      = "Future"       # header above FUTURE imports (if headings enabled)
 import_heading_stdlib      = "Standard"     # header for built-in Stdlib imports
 import_heading_thirdparty  = "Third-Party"  # header for pip-installed packages

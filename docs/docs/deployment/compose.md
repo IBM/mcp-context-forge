@@ -133,7 +133,7 @@ ss -tlnp | grep 4444        # modern tool
 netstat -anp | grep 4444    # legacy fallback
 ```
 
-> A line like `:::4444 LISTEN rootlessport` is **normal** – the IPv6
+> A line like `:::4444 LISTEN rootlessport` is **normal** - the IPv6
 > wildcard socket (`::`) also accepts IPv4 when `net.ipv6.bindv6only=0`
 > (the default on Linux).
 
@@ -151,9 +151,9 @@ service reachable from Windows and the LAN.
 
 ## 📚 References
 
-* Docker Compose CLI (`up`, `logs`, `down`) – official docs
-* Podman's integrated **compose** wrapper – man page
-* `podman-compose` rootless implementation – GitHub project
+* Docker Compose CLI (`up`, `logs`, `down`) - official docs
+* Podman's integrated **compose** wrapper - man page
+* `podman-compose` rootless implementation - GitHub project
 * Health-check gating with `depends_on: condition: service_healthy`
 * [UBI9 runtime on Apple Silicon limitations (`x86_64-v2` glibc)](https://github.com/containers/podman/issues/15456)
 * General Containerfile build guidance (Fedora/Red Hat)

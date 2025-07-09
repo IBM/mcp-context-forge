@@ -25,11 +25,11 @@ import sys
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# First-Party
-from mcpgateway.transports.stdio_transport import logger, StdioTransport
-
 # Third-Party
 import pytest
+
+# First-Party
+from mcpgateway.transports.stdio_transport import logger, StdioTransport
 
 # ---------------------------------------------------------------------------
 # Simple in-memory stand-ins for asyncio streams

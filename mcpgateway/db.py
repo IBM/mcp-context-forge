@@ -60,7 +60,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
 
 # ---------------------------------------------------------------------------
-# 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", …)
+# 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", ...)
 #    and the specific driver ("psycopg2", "asyncpg", empty string = default).
 # ---------------------------------------------------------------------------
 url = make_url(settings.database_url)
@@ -85,7 +85,7 @@ if backend == "postgresql" and driver in ("psycopg2", "default", ""):
     )
 
 # ---------------------------------------------------------------------------
-# 3. SQLite (optional) – only one extra flag and it is *SQLite-specific*.
+# 3. SQLite (optional) - only one extra flag and it is *SQLite-specific*.
 # ---------------------------------------------------------------------------
 elif backend == "sqlite":
     # Allow pooled connections to hop across threads.
@@ -110,12 +110,12 @@ engine = create_engine(
 # ---------------------------------------------------------------------------
 # 6. Function to return UTC timestamp
 # ---------------------------------------------------------------------------
-def utc_now():
-    """
-    Get the current time in UTC.
+def utc_now() -> datetime:
+    """Return the current Coordinated Universal Time (UTC).
 
     Returns:
-        datetime: The current UTC date and time as a timezone-aware datetime object.
+        datetime: A timezone-aware `datetime` whose `tzinfo` is
+        `datetime.timezone.utc`.
     """
     return datetime.now(timezone.utc)
 
@@ -128,6 +128,7 @@ class Base(DeclarativeBase):
     """Base class for all models."""
 
 
+# TODO: cleanup, not sure why this is commented out?
 # # Association table for tools and gateways (federation)
 # tool_gateway_table = Table(
 #     "tool_gateway_association",
@@ -329,7 +330,8 @@ class Tool(Base):
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    reachable: Mapped[bool] = mapped_column(default=True)
     jsonpath_filter: Mapped[str] = mapped_column(default="")
 
     # Request type and authentication fields
@@ -1031,7 +1033,8 @@ class Gateway(Base):
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]]
 
     # Relationship with local tools this gateway provides

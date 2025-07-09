@@ -15,7 +15,7 @@
 #
 set -euo pipefail
 
-TAG=${1:-v0.1.1}
+TAG=${1:-v0.2.0}
 OUT=${2:-changelog_info.txt}
 
 ###############################################################################
@@ -47,7 +47,7 @@ ISSUES_JSON=$(gh issue list --state closed \
 
 echo "$ISSUES_JSON" | jq -r '
   sort_by(.closedAt)[]
-  | "#\(.number) – \(.title) (closed: \(.closedAt))"
+  | "#\(.number) - \(.title) (closed: \(.closedAt))"
 ' >>"$OUT"
 
 ###############################################################################

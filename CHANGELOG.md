@@ -6,37 +6,162 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
-## [0.3.0] - 2025-07-08 (pending)
+## [0.3.0] - 2025-07-08
 
+### Added
 
-## [0.2.1] - 2025-07-01 (pending)
+* **Transport-Translation Bridge (`mcpgateway.translate`)** - bridges local JSON-RPC/stdio servers to HTTP/SSE and vice versa:
+  * Expose local stdio MCP servers over SSE endpoints with session management
+  * Bridge remote SSE endpoints to local stdio for seamless integration
+  * Built-in keepalive mechanisms and unique session identifiers
+  * Full CLI support: `python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000`
 
-* Allow tool federation across gateways by **allowing tools of same names** from different MCP servers to be added.
-* **Fix tool list refresh** from Deactivate/Activate cycles and Edit Gateway screen.
-* **Improve tool selection experience for servers** by allowing selection based on name from a dropdown.
+* **Tool Annotations & Metadata** - comprehensive tool annotation system:
+  * New `annotations` JSON column in tools table for storing rich metadata
+  * UI support for viewing and managing tool annotations
+  * Alembic migration scripts for smooth database upgrades (`e4fc04d1a442`)
 
+* **Multi-server Tool Federations** - resolved tool name conflicts across gateways (#116):
+  * **Composite Key & UUIDs for Tool Identity** - tools now uniquely identified by `(gateway_id, name)` instead of global name uniqueness
+  * Generated `qualified_name` field (`gateway.tool`) for human-readable tool references
+  * UUID primary keys for Gateways, Tools, and Servers for future-proof references
+  * Enables adding multiple gateways with same-named tools (e.g., multiple `google` tools)
+
+* **Auto-healing & Visibility** - enhanced gateway and tool status management (#159):
+  * **Separated `is_active` into `enabled` and `reachable` fields** for better status granularity (#303)
+  * Auto-activation of MCP servers when they come back online after being marked unreachable
+  * Improved status visibility in Admin UI with proper enabled/reachable indicators
+
+* **Export Connection Strings** - one-click client integration (#154):
+  * Generate ready-made configs for LangChain, Claude Desktop, and other MCP clients
+  * `/servers/{id}/connect` API endpoint for programmatic access
+  * Download connection strings directly from Admin UI
+
+* **Configurable Connection Retries** - resilient startup behavior (#179):
+  * `DB_MAX_RETRIES` and `DB_RETRY_INTERVAL_MS` for database connections
+  * `REDIS_MAX_RETRIES` and `REDIS_RETRY_INTERVAL_MS` for Redis connections
+  * Prevents gateway crashes during slow service startup in containerized environments
+  * Sensible defaults (3 retries × 2000ms) with full configurability
+
+* **Dynamic UI Picker** - enhanced tool/resource/prompt association (#135):
+  * Searchable multi-select dropdowns replace raw CSV input fields
+  * Preview tool metadata (description, request type, integration type) in picker
+  * Maintains API compatibility with CSV backend format
+
+* **Developer Experience Improvements**:
+  * **Developer Workstation Setup Guide** for Mac (Intel/ARM), Linux, and Windows (#18)
+  * Comprehensive environment setup instructions including Docker/Podman, WSL2, and common gotchas
+  * Signing commits guide with proper gitconfig examples
+
+* **Infrastructure & DevOps**:
+  * **Enhanced Helm charts** with health probes, HPA support, and migration jobs
+  * **Fast Go MCP server example** (`mcp-fast-time-server`) for high-performance demos (#265)
+  * Database migration management with proper Alembic integration
+  * Init containers for database readiness checks
+
+### Changed
+
+* **Database Schema Evolution**:
+  * `tools.name` no longer globally unique - now uses composite key `(gateway_id, name)`
+  * Migration from single `is_active` field to separate `enabled` and `reachable` boolean fields
+  * Added UUID primary keys for better federation support and URL-safe references
+  * Moved Alembic configuration inside `mcpgateway` package for proper wheel packaging
+
+* **Enhanced Federation Manager**:
+  * Updated to use new `enabled` and `reachable` fields instead of deprecated `is_active`
+  * Improved gateway synchronization and health check logic
+  * Better error handling for offline tools and gateways
+
+* **Improved Code Quality**:
+  * **Fixed Pydantic v2 compatibility** - replaced deprecated patterns:
+    * `Field(..., env=...)` → `model_config` with BaseSettings
+    * `class Config` → `model_config = ConfigDict(...)`
+    * `@validator` → `@field_validator`
+    * `.dict()` → `.model_dump()`, `.parse_obj()` → `.model_validate()`
+  * **Replaced deprecated stdlib functions** - `datetime.utcnow()` → `datetime.now(timezone.utc)`
+  * **Pylint improvements** across codebase with better configuration and reduced warnings
+
+* **File System & Deployment**:
+  * **Fixed file lock path** - now correctly uses `/tmp/gateway_service_leader.lock` instead of current directory (#316)
+  * Improved Docker and Helm deployment with proper health checks and resource limits
+  * Better CI/CD integration with updated linting and testing workflows
+
+### Fixed
+
+* **UI/UX Fixes**:
+  * **Close button for parameter input** in Global Tools tab now works correctly (#189)
+  * **Gateway modal status display** - fixed `isActive` → `enabled && reachable` logic (#303)
+  * Dark mode improvements and consistent theme application (#26)
+
+* **API & Backend Fixes**:
+  * **Gateway reactivation warnings** - fixed 'dict' object Pydantic model errors (#28)
+  * **GitHub Remote Server addition** - resolved server registration flow issues (#152)
+  * **REST path parameter substitution** - improved payload handling for REST APIs (#100)
+  * **Missing await on coroutine** - fixed async response handling in tool service
+
+* **Build & Packaging**:
+  * **Alembic configuration packaging** - migration scripts now properly included in pip wheels (#302)
+  * **SBOM generation failure** - fixed documentation build issues (#132)
+  * **Makefile image target** - resolved Docker build and documentation generation (#131)
+
+* **Testing & Quality**:
+  * **Improved test coverage** - especially in `test_tool_service.py` reaching 90%+ coverage
+  * **Redis connection handling** - better error handling and lazy imports
+  * **Fixed flaky tests** and improved stability across test suite
+  * **Pydantic v2 compatibility warnings** - resolved deprecated patterns and stdlib functions (#197)
+
+### Security
+
+* **Enhanced connection validation** with configurable retry mechanisms
+* **Improved credential handling** in Basic Auth and JWT implementations
+* **Better error handling** to prevent information leakage in federation scenarios
+
+---
+
+### 🙌 New contributors in 0.3.0
+
+Thanks to the **first-time contributors** who delivered features in 0.3.0:
+
+| Contributor              | Contributions                                                               |
+| ------------------------ | --------------------------------------------------------------------------- |
+| **Irusha Basukala**      | Comprehensive Developer Workstation Setup Guide for Mac, Linux, and Windows |
+| **Michael Moyles**       | Fixed close button functionality for parameter input scheme in UI           |
+| **Reeve Barreto**        | Configurable connection retries for DB and Redis with extensive testing     |
+| **Chris PC-39**          | Major pylint improvements and code quality enhancements                     |
+| **Ruslan Magana**        | Watsonx.ai Agent documentation and integration guides                       |
+| **Shaikh Quader**        | macOS-specific setup documentation                                          |
+| **Mohan Lakshmaiah**     | Test case updates and coverage improvements                                 |
+
+### 🙏 Returning contributors who delivered in 0.3.0
+
+| Contributor          | Key contributions                                                                                                                                                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Mihai Criveti**    | **Release coordination**, code reviews, mcpgateway.translate stdio ↔ SSE, overall architecture, Issue Creation, Helm chart enhancements, HPA support, pylint configuration, documentation updates, isort cleanup, and infrastructure improvements                                                                         |
+| **Manav Gupta**      | **Transport-Translation Bridge** mcpgateway.translate Reverse SSE ↔ stdio bridging,                                                                                                                |
+| **Madhav Kandukuri** | **Composite Key & UUIDs migration**, Alembic integration, extensive test coverage improvements, database schema evolution, and tool service enhancements                                                                            |
+| **Keval Mahajan**    | **Auto-healing capabilities**, enabled/reachable status migration, federation UI improvements, file lock path fixes, and wrapper functionality                                                                                      |
 
 ## [0.2.0] - 2025-06-24
 
 ### Added
 
-* **Streamable HTTP transport** – full first-class support for MCP's new default transport (deprecated SSE):
+* **Streamable HTTP transport** - full first-class support for MCP's new default transport (deprecated SSE):
 
   * gateway accepts Streamable HTTP client connections (stateful & stateless). SSE support retained.
   * UI & API allow registering Streamable HTTP MCP servers with health checks, auth & time-outs
   * UI now shows a *transport* column for each gateway/tool;
 * **Authentication & stateful sessions** for Streamable HTTP clients/servers (Basic/Bearer headers, session persistence).
-* **Gateway hardening** – connection-level time-outs and smarter health-check retries to avoid UI hangs
-* **Fast Go MCP server example** – high-performance reference server for benchmarking/demos.
-* **Exportable connection strings** – one-click download & `/servers/{id}/connect` API that generates ready-made configs for LangChain, Claude Desktop, etc. (closed #154).
-* **Infrastructure as Code** – initial Terraform & Ansible scripts for cloud installs.
+* **Gateway hardening** - connection-level time-outs and smarter health-check retries to avoid UI hangs
+* **Fast Go MCP server example** - high-performance reference server for benchmarking/demos.
+* **Exportable connection strings** - one-click download & `/servers/{id}/connect` API that generates ready-made configs for LangChain, Claude Desktop, etc. (closed #154).
+* **Infrastructure as Code** - initial Terraform & Ansible scripts for cloud installs.
 * **Developer tooling & UX**
 
   * `tox`, GH Actions *pytest + coverage* workflow
   * pre-commit linters (ruff, flake8, yamllint) & security scans
   * dark-mode theme and compact version-info panel in Admin UI
   * developer onboarding checklist in docs.
-* **Deployment assets** – Helm charts now accept external secrets/Redis; Fly.io guide; Docker-compose local-image switch; Helm deployment walkthrough.
+* **Deployment assets** - Helm charts now accept external secrets/Redis; Fly.io guide; Docker-compose local-image switch; Helm deployment walkthrough.
 
 ### Changed
 
@@ -68,7 +193,7 @@ Thanks to the new **first-time contributors** who jumped in between 0.1.1 → 0.
 | **Shoumi Mukherjee**     | General documentation clean-ups and quick-start clarifications                    |
 | **Thong Bui**            | REST adapter: path-parameter (`{id}`) support, `PATCH` handling and 204 responses |
 
-Welcome aboard—your PRs made 0.2.0 measurably better! 🎉
+Welcome aboard-your PRs made 0.2.0 measurably better! 🎉
 
 ---
 
@@ -78,13 +203,13 @@ Welcome aboard—your PRs made 0.2.0 measurably better! 🎉
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Mihai Criveti**    | Release management & 0.2.0 version bump, Helm-chart refactor + deployment guide, full CI revamp (pytest + coverage, pre-commit linters, tox), **333 green unit tests**, security updates, build updates, fully automated deployment to Code Engine, improved helm stack, doc & GIF refresh                                                                                                                                                    |
 | **Keval Mahajan**    | Implemented **Streamable HTTP** transport (client + server) with auth & stateful sessions, transport column in UI, gateway time-outs, extensive test fixes and linting                                                                                                                                                                                    |
-| **Madhav Kandukuri** |• Wrote **ADRs for tool-federation & dropdown UX** <br>• Polished the new **dark-mode** theme<br>• Authored **Issue #154** that specified the connection-string export feature<br>• Plus multiple stability fixes (async DB, gateway add/del, UV sync, Basic-Auth headers) |
+| **Madhav Kandukuri** |- Wrote **ADRs for tool-federation & dropdown UX** <br>- Polished the new **dark-mode** theme<br>- Authored **Issue #154** that specified the connection-string export feature<br>- Plus multiple stability fixes (async DB, gateway add/del, UV sync, Basic-Auth headers) |
 | **Manav Gupta**      | Fixed SBOM generation & license verification, repaired Makefile image/doc targets, improved Docker quick-start and Fly.io deployment docs                                                                                                                                                                                                                 |
 
 *Huge thanks for keeping the momentum going! 🚀*
 
 
-## [0.1.1] - 2025‑06-14
+## [0.1.1] - 2025-06-14
 
 ### Added
 
@@ -102,21 +227,21 @@ Welcome aboard—your PRs made 0.2.0 measurably better! 🎉
 * Improved logging by capturing ExceptionGroups correctly and showing specific errors
 * Fixed headers for basic authorization in tools and gateways
 
-## [0.1.0] - 2025‑06‑01
+## [0.1.0] - 2025-06-01
 
 ### Added
 
-Initial public release of MCP Gateway — a FastAPI‑based gateway and federation layer for the Model Context Protocol (MCP). This preview brings a fully‑featured core, production‑grade deployment assets and an opinionated developer experience.
+Initial public release of MCP Gateway - a FastAPI-based gateway and federation layer for the Model Context Protocol (MCP). This preview brings a fully-featured core, production-grade deployment assets and an opinionated developer experience.
 
 Setting up GitHub repo, CI/CD with GitHub Actions, templates, `good first issue`, etc.
 
 #### 🚪 Core protocol & gateway
-* 📡 **MCP protocol implementation** – initialise, ping, completion, sampling, JSON-RPC fallback
+* 📡 **MCP protocol implementation** - initialise, ping, completion, sampling, JSON-RPC fallback
 * 🌐 **Gateway layer** in front of multiple MCP servers with peer discovery & federation
 
 #### 🔄 Adaptation & transport
 * 🧩 **Virtual-server wrapper & REST-to-MCP adapter** with JSON-Schema validation, retry & rate-limit policies
-* 🔌 **Multi-transport support** – HTTP/JSON-RPC, WebSocket, Server-Sent Events and stdio
+* 🔌 **Multi-transport support** - HTTP/JSON-RPC, WebSocket, Server-Sent Events and stdio
 
 #### 🖥️ User interface & security
 * 📊 **Web-based Admin UI** (HTMX + Alpine.js + Tailwind) with live metrics
@@ -124,11 +249,11 @@ Setting up GitHub repo, CI/CD with GitHub Actions, templates, `good first issue`
 
 #### 📦 Packaging & deployment recipes
 * 🐳 **Container images** on GHCR, self-signed TLS recipe, health-check endpoint
-* 🚀 **Deployment recipes** – Gunicorn config, Docker/Podman/Compose, Kubernetes, Helm, IBM Cloud Code Engine, AWS, Azure, Google Cloud Run
+* 🚀 **Deployment recipes** - Gunicorn config, Docker/Podman/Compose, Kubernetes, Helm, IBM Cloud Code Engine, AWS, Azure, Google Cloud Run
 
 #### 🛠️ Developer & CI tooling
 * 📝 **Comprehensive Makefile** (80 + targets), linting, > 400 tests, CI pipelines & badges
-* ⚙️ **Dev & CI helpers** – hot-reload dev server, Ruff/Black/Mypy/Bandit, Trivy image scan, SBOM generation, SonarQube helpers
+* ⚙️ **Dev & CI helpers** - hot-reload dev server, Ruff/Black/Mypy/Bandit, Trivy image scan, SBOM generation, SonarQube helpers
 
 #### 🗄️ Persistence & performance
 * 🐘 **SQLAlchemy ORM** with pluggable back-ends (SQLite default; PostgreSQL, MySQL, etc.)
@@ -138,12 +263,12 @@ Setting up GitHub repo, CI/CD with GitHub Actions, templates, `good first issue`
 * 📜 **Structured JSON logs** and **/metrics endpoint** with per-tool / per-gateway counters
 
 ### 📚 Documentation
-* 🔗 **Comprehensive MkDocs site** – [https://ibm.github.io/mcp-context-forge/deployment/](https://ibm.github.io/mcp-context-forge/deployment/)
+* 🔗 **Comprehensive MkDocs site** - [https://ibm.github.io/mcp-context-forge/deployment/](https://ibm.github.io/mcp-context-forge/deployment/)
 
 
 ### Changed
 
-* *Nothing – first tagged version.*
+* *Nothing - first tagged version.*
 
 ### Fixed
 

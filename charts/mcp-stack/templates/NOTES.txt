@@ -1,9 +1,9 @@
 {{- /*
    NOTES.txt for the "mcp-stack" Helm chart
-   • Rendered after every install/upgrade.
-   • Surfaces endpoints, credentials and helper commands so you can
+   - Rendered after every install/upgrade.
+   - Surfaces endpoints, credentials and helper commands so you can
      start interacting with the stack right away.
-   • Set showSecrets to show secrets.
+   - Set showSecrets to show secrets.
 */ -}}
 
 {{- $ns       := .Release.Namespace }}
@@ -52,96 +52,96 @@
 ═══════════════════════════════════════════════════════════════════════════════
 
 📋 **Deployment Summary**
-  • Release Name   : {{ .Release.Name }}
-  • Namespace      : {{ $ns }}
-  • Chart Version  : {{ .Chart.Version }}
-  • App Version    : {{ .Chart.AppVersion }}
-  • Deployed At    : {{ $timestamp }}
-  • Revision       : {{ .Release.Revision }}
-  • Kubernetes    : {{ $k8sVersion }}
-  • Helm Version   : {{ $helmVersion }}
+  - Release Name   : {{ .Release.Name }}
+  - Namespace      : {{ $ns }}
+  - Chart Version  : {{ .Chart.Version }}
+  - App Version    : {{ .Chart.AppVersion }}
+  - Deployed At    : {{ $timestamp }}
+  - Revision       : {{ .Release.Revision }}
+  - Kubernetes    : {{ $k8sVersion }}
+  - Helm Version   : {{ $helmVersion }}
   {{- with .Values.global.nameOverride }}
-  • Name Override  : {{ . }}
+  - Name Override  : {{ . }}
   {{- end }}
   {{- with .Values.global.fullnameOverride }}
-  • Full Override  : {{ . }}
+  - Full Override  : {{ . }}
   {{- end }}
 
 🏗️ **Infrastructure Stack**
-  • MCP Gateway    : {{ .Values.mcpContextForge.replicaCount }} replica(s) - {{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}
+  - MCP Gateway    : {{ .Values.mcpContextForge.replicaCount }} replica(s) - {{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}
   {{- if .Values.mcpFastTimeServer.enabled }}
-  • Fast Time Srv  : {{ .Values.mcpFastTimeServer.replicaCount }} replica(s) - {{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}
+  - Fast Time Srv  : {{ .Values.mcpFastTimeServer.replicaCount }} replica(s) - {{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}
   {{- end }}
   {{- if .Values.postgres.enabled }}
-  • PostgreSQL     : {{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}
+  - PostgreSQL     : {{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}
     {{- if .Values.postgres.persistence.enabled }} ({{ .Values.postgres.persistence.size }} storage){{ end }}
   {{- end }}
   {{- if .Values.redis.enabled }}
-  • Redis Cache    : {{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}
+  - Redis Cache    : {{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}
   {{- end }}
   {{- if .Values.pgadmin.enabled }}
-  • PgAdmin UI     : {{ .Values.pgadmin.image.repository }}:{{ .Values.pgadmin.image.tag }}
+  - PgAdmin UI     : {{ .Values.pgadmin.image.repository }}:{{ .Values.pgadmin.image.tag }}
   {{- end }}
   {{- if .Values.redisCommander.enabled }}
-  • Redis UI       : {{ .Values.redisCommander.image.repository }}:{{ .Values.redisCommander.image.tag }}
+  - Redis UI       : {{ .Values.redisCommander.image.repository }}:{{ .Values.redisCommander.image.tag }}
   {{- end }}
 
 🔧 **Configuration**
   {{- if .Values.mcpContextForge.hpa.enabled }}
-  • Auto-Scaling   : {{ .Values.mcpContextForge.hpa.minReplicas }} - {{ .Values.mcpContextForge.hpa.maxReplicas }} replicas (CPU: {{ .Values.mcpContextForge.hpa.targetCPUUtilizationPercentage }}%)
+  - Auto-Scaling   : {{ .Values.mcpContextForge.hpa.minReplicas }} - {{ .Values.mcpContextForge.hpa.maxReplicas }} replicas (CPU: {{ .Values.mcpContextForge.hpa.targetCPUUtilizationPercentage }}%)
   {{- end }}
   {{- if .Values.mcpContextForge.ingress.enabled }}
-  • Ingress        : {{ .Values.mcpContextForge.ingress.className }} @ {{ .Values.mcpContextForge.ingress.host }}
+  - Ingress        : {{ .Values.mcpContextForge.ingress.className }} @ {{ .Values.mcpContextForge.ingress.host }}
   {{- end }}
-  • Migration      : {{ if .Values.migration.enabled }}✅ Enabled{{ else }}❌ Disabled{{ end }}
-  • Dev Mode       : {{ if eq (.Values.mcpContextForge.config.DEV_MODE | default "false") "true" }}⚠️ ENABLED{{ else }}✅ Production{{ end }}
+  - Migration      : {{ if .Values.migration.enabled }}✅ Enabled{{ else }}❌ Disabled{{ end }}
+  - Dev Mode       : {{ if eq (.Values.mcpContextForge.config.DEV_MODE | default "false") "true" }}⚠️ ENABLED{{ else }}✅ Production{{ end }}
 
 ═══════════════════════════════════════════════════════════════════════════════
 
 {{- /* ════════════  Migration Status  ════════════ */}}
 {{- if .Values.migration.enabled }}
 📊 **Database Migration**
-  • Status         : `kubectl get jobs -n {{ $ns }} -l app.kubernetes.io/component=migration`
-  • Logs           : `kubectl logs -n {{ $ns }} -l app.kubernetes.io/component=migration`
-  • Job Details    : `kubectl describe job -n {{ $ns }} {{ $fullName }}-migration`
+  - Status         : `kubectl get jobs -n {{ $ns }} -l app.kubernetes.io/component=migration`
+  - Logs           : `kubectl logs -n {{ $ns }} -l app.kubernetes.io/component=migration`
+  - Job Details    : `kubectl describe job -n {{ $ns }} {{ $fullName }}-migration`
   {{- with (lookup "batch/v1" "Job" $ns (printf "%s-migration" $fullName)) }}
     {{- if .status.conditions }}
       {{- range .status.conditions }}
         {{- if eq .type "Complete" }}
           {{- if eq .status "True" }}
-  • ✅ Migration completed successfully at {{ .lastTransitionTime }}
+  - ✅ Migration completed successfully at {{ .lastTransitionTime }}
           {{- else }}
-  • ⏳ Migration in progress...
+  - ⏳ Migration in progress...
           {{- end }}
         {{- else if eq .type "Failed" }}
           {{- if eq .status "True" }}
-  • ❌ Migration failed at {{ .lastTransitionTime }} - check logs above
+  - ❌ Migration failed at {{ .lastTransitionTime }} - check logs above
           {{- end }}
         {{- end }}
       {{- end }}
     {{- else }}
-  • ⏳ Migration job starting...
+  - ⏳ Migration job starting...
     {{- end }}
   {{- else }}
-  • ⏳ Migration job not found - may still be creating...
+  - ⏳ Migration job not found - may still be creating...
   {{- end }}
 
 {{- else }}
 📊 **Database Migration**
-  • Database migrations are **disabled** (migration.enabled=false)
-  • To enable: `helm upgrade {{ .Release.Name }} --set migration.enabled=true -n {{ $ns }}`
+  - Database migrations are **disabled** (migration.enabled=false)
+  - To enable: `helm upgrade {{ .Release.Name }} --set migration.enabled=true -n {{ $ns }}`
 {{- end }}
 
 {{- /* ════════════  MCP Gateway  ════════════ */}}
 🔗 **MCP Gateway**
 {{- if .Values.mcpContextForge.ingress.enabled }}
-  • Primary URL    : https://{{ .Values.mcpContextForge.ingress.host }}{{ .Values.mcpContextForge.ingress.path | default "/" }}
-  • Health Check   : https://{{ .Values.mcpContextForge.ingress.host }}/health
+  - Primary URL    : https://{{ .Values.mcpContextForge.ingress.host }}{{ .Values.mcpContextForge.ingress.path | default "/" }}
+  - Health Check   : https://{{ .Values.mcpContextForge.ingress.host }}/health
 {{- else }}
-  • Service URL    : http://{{ $gatewaySvc }}.{{ $ns }}.svc.cluster.local:{{ $gwPort }}
-  • Health Check   : http://{{ $gatewaySvc }}.{{ $ns }}.svc.cluster.local:{{ $gwPort }}/health
+  - Service URL    : http://{{ $gatewaySvc }}.{{ $ns }}.svc.cluster.local:{{ $gwPort }}
+  - Health Check   : http://{{ $gatewaySvc }}.{{ $ns }}.svc.cluster.local:{{ $gwPort }}/health
 {{- end }}
-  • Basic-Auth :
+  - Basic-Auth :
       user      = {{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}
 {{- if $showSecrets }}
       password  = {{ $basicAuthPass }}
@@ -150,60 +150,60 @@
 {{- end }}
       (kubectl  = `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.BASIC_AUTH_PASSWORD}" | base64 -d`)
 {{- if $showSecrets }}
-  • JWT signing key (JWT_SECRET_KEY) = {{ $jwtKey }}
+  - JWT signing key (JWT_SECRET_KEY) = {{ $jwtKey }}
 {{- else }}
-  • JWT signing key (JWT_SECRET_KEY) : <hidden>
+  - JWT signing key (JWT_SECRET_KEY) : <hidden>
 {{- end }}
       (kubectl  = `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.JWT_SECRET_KEY}" | base64 -d`)
-  • Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }}`
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }}`
 
 {{- /* ════════════  Fast-Time-Server  ════════════ */}}
 {{- if .Values.mcpFastTimeServer.enabled }}
 🔗 **Fast-Time-Server (SSE)**
-  • Cluster URL  : http://{{ $ftSvc }}.{{ $ns }}.svc.cluster.local
-  • Via Gateway  : {{- if .Values.mcpContextForge.ingress.enabled }} https://{{ .Values.mcpContextForge.ingress.host }}/fast-time {{- else }} http://localhost:4444/fast-time {{- end }}
-  • Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $ftSvc }} 8080:80`
+  - Cluster URL  : http://{{ $ftSvc }}.{{ $ns }}.svc.cluster.local
+  - Via Gateway  : {{- if .Values.mcpContextForge.ingress.enabled }} https://{{ .Values.mcpContextForge.ingress.host }}/fast-time {{- else }} http://localhost:4444/fast-time {{- end }}
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $ftSvc }} 8080:80`
 {{- end }}
 
 {{- /* ════════════  Datastores  ════════════ */}}
 {{- if .Values.postgres.enabled }}
 💾 **PostgreSQL Database**
-  • Host / Port  : {{ $postgresSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgPort }}
-  • Database     : {{ .Values.postgres.credentials.database }}
-  • Username     : {{ .Values.postgres.credentials.user }}
+  - Host / Port  : {{ $postgresSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgPort }}
+  - Database     : {{ .Values.postgres.credentials.database }}
+  - Username     : {{ .Values.postgres.credentials.user }}
 {{- if $showSecrets }}
-  • Password     : {{ $pgPass | default "<secret-not-yet-created>" }}
+  - Password     : {{ $pgPass | default "<secret-not-yet-created>" }}
 {{- else }}
-  • Password     : <hidden>
+  - Password     : <hidden>
 {{- end }}
       (kubectl  = `kubectl -n {{ $ns }} get secret {{ $pgSecret }} -o jsonpath="{.data.POSTGRES_PASSWORD}" | base64 -d`)
   {{- if .Values.postgres.persistence.enabled }}
-  • Storage      : {{ .Values.postgres.persistence.size }} ({{ .Values.postgres.persistence.storageClassName }})
+  - Storage      : {{ .Values.postgres.persistence.size }} ({{ .Values.postgres.persistence.storageClassName }})
   {{- end }}
-  • Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $postgresSvc }} 5432:{{ $pgPort }}`
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $postgresSvc }} 5432:{{ $pgPort }}`
 {{- end }}
 
 {{- if .Values.redis.enabled }}
 🔑 **Redis Cache**
-  • Host / Port  : {{ $redisSvc }}.{{ $ns }}.svc.cluster.local:{{ $redisPort }}
-  • Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $redisSvc }} 6379:{{ $redisPort }}`
+  - Host / Port  : {{ $redisSvc }}.{{ $ns }}.svc.cluster.local:{{ $redisPort }}
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $redisSvc }} 6379:{{ $redisPort }}`
 {{- end }}
 
 {{- /* ════════════  Management UIs  ════════════ */}}
 {{- if .Values.pgadmin.enabled }}
 📊 **PgAdmin (Database UI)**
-  • Internal URL : http://{{ $pgadminSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgAdminPort }}
-  • Login Email  : {{ .Values.pgadmin.env.email }}
-  • Password     : (same as PostgreSQL password above)
-  • Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $pgadminSvc }} 8080:{{ $pgAdminPort }}`
-  • Local Access: http://localhost:8080 (after port-forward)
+  - Internal URL : http://{{ $pgadminSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgAdminPort }}
+  - Login Email  : {{ .Values.pgadmin.env.email }}
+  - Password     : (same as PostgreSQL password above)
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $pgadminSvc }} 8080:{{ $pgAdminPort }}`
+  - Local Access: http://localhost:8080 (after port-forward)
 {{- end }}
 
 {{- if .Values.redisCommander.enabled }}
 📊 **Redis Commander (Cache UI)**
-  • Internal URL : http://{{ $redisSvc }}-commander.{{ $ns }}.svc.cluster.local:8081
-  • Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $fullName }}-redis-commander 8081:8081`
-  • Local Access: http://localhost:8081 (after port-forward)
+  - Internal URL : http://{{ $redisSvc }}-commander.{{ $ns }}.svc.cluster.local:8081
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $fullName }}-redis-commander 8081:8081`
+  - Local Access: http://localhost:8081 (after port-forward)
 {{- end }}
 
 {{- /* ════════════  Cluster Information  ════════════ */}}
@@ -302,10 +302,10 @@ curl -s -H "Authorization: Bearer $GW_TOKEN" http://localhost:4444/gateways | jq
 ═══════════════════════════════════════════════════════════════════════════════
 
 📚 **Documentation & Support**
-  • Helm Chart    : https://github.com/IBM/mcp-context-forge/tree/main/charts/mcp-stack
-  • Documentation : https://ibm.github.io/mcp-context-forge/deployment/helm/
-  • API Testing   : https://ibm.github.io/mcp-context-forge/testing/basic/
-  • Issues        : https://github.com/IBM/mcp-context-forge/issues
+  - Helm Chart    : https://github.com/IBM/mcp-context-forge/tree/main/charts/mcp-stack
+  - Documentation : https://ibm.github.io/mcp-context-forge/deployment/helm/
+  - API Testing   : https://ibm.github.io/mcp-context-forge/testing/basic/
+  - Issues        : https://github.com/IBM/mcp-context-forge/issues
 
 📋 **Next Steps**
   1. Verify all pods are Running: `kubectl get pods -n {{ $ns }}`

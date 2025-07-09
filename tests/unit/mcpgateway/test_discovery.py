@@ -12,14 +12,14 @@ Comprehensive unit tests for the discovery service module.
 # tests/test_discovery.py
 import asyncio
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.federation.discovery import (
     DiscoveryService,
     PROTOCOL_VERSION,
 )
-
-# Third-Party
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -35,9 +35,9 @@ async def discovery():
     ds = DiscoveryService()
 
     async def _fake_gateway_info(url: str):  # noqa: D401, ANN001
-        # Return an *empty* capabilities object – structure is unimportant here.
+        # Return an *empty* capabilities object - structure is unimportant here.
         # First-Party
-        from mcpgateway.types import ServerCapabilities
+        from mcpgateway.models import ServerCapabilities
 
         return ServerCapabilities()
 

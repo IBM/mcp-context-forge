@@ -7,17 +7,17 @@ Authors: Mihai Criveti
 
 """
 
+# Third-Party
+import pytest
+
 # First-Party
+from mcpgateway.models import (
+    CompleteResult,
+)
 from mcpgateway.services.completion_service import (
     CompletionError,
     CompletionService,
 )
-from mcpgateway.types import (
-    CompleteResult,
-)
-
-# Third-Party
-import pytest
 
 
 class FakeScalarOneResult:

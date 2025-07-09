@@ -34,7 +34,7 @@ Static peer configuration is still supported for restricted networks.
 ## Consequences
 
 - 🔌 Gateways connect seamlessly on the same local network or overlay mesh
-- 🕵️‍♂️ DNS-SD adds moderate background network traffic, tunable via TTL
+- 🕵️♂️ DNS-SD adds moderate background network traffic, tunable via TTL
 - ⚠️ Firewalls or environments without multicast must use static peer config
 - ♻️ Federated topologies are self-healing and require no orchestration
 

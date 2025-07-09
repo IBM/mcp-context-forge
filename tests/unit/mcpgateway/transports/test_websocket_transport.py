@@ -11,15 +11,14 @@ Tests for the MCP Gateway WebSocket transport implementation.
 # Standard
 import asyncio
 import logging
-import types
 from unittest.mock import AsyncMock
-
-# First-Party
-from mcpgateway.transports.websocket_transport import WebSocketTransport
 
 # Third-Party
 from fastapi import WebSocket, WebSocketDisconnect
 import pytest
+
+# First-Party
+from mcpgateway.transports.websocket_transport import WebSocketTransport
 
 
 @pytest.fixture
@@ -142,6 +141,129 @@ class TestWebSocketTransport:
 
         # Should have sent ping bytes
         mock_websocket.send_bytes.assert_called_once_with(b"ping")
+
+    @pytest.mark.asyncio
+    async def test_ping_loop_normal(self, monkeypatch):
+        """Test _ping_loop with normal pong response."""
+        # First-Party
+        from mcpgateway.transports.websocket_transport import WebSocketTransport
+
+        mock_ws = AsyncMock()
+        mock_ws.receive_bytes.return_value = b"pong"
+        mock_ws.send_bytes = AsyncMock()
+        transport = WebSocketTransport(mock_ws)
+        transport._connected = True
+
+        # Patch settings and asyncio.sleep to run fast
+        monkeypatch.setattr("mcpgateway.transports.websocket_transport.settings.websocket_ping_interval", 0.01)
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+        # Run only one iteration
+        async def fake_receive_bytes():
+            transport._connected = False
+            return b"pong"
+
+        mock_ws.receive_bytes.side_effect = fake_receive_bytes
+
+        await transport._ping_loop()
+        mock_ws.send_bytes.assert_called_with(b"ping")
+
+    @pytest.mark.asyncio
+    async def test_ping_loop_invalid_pong(self, monkeypatch, caplog):
+        """Test _ping_loop logs warning on invalid pong."""
+        # First-Party
+        from mcpgateway.transports.websocket_transport import WebSocketTransport
+
+        mock_ws = AsyncMock()
+        mock_ws.receive_bytes.return_value = b"notpong"
+        mock_ws.send_bytes = AsyncMock()
+        transport = WebSocketTransport(mock_ws)
+        transport._connected = True
+
+        monkeypatch.setattr("mcpgateway.transports.websocket_transport.settings.websocket_ping_interval", 0.01)
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+        # Run only one iteration
+        async def fake_receive_bytes():
+            transport._connected = False
+            return b"notpong"
+
+        mock_ws.receive_bytes.side_effect = fake_receive_bytes
+
+        with caplog.at_level("WARNING"):
+            await transport._ping_loop()
+            assert "Invalid ping response" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_ping_loop_timeout(self, monkeypatch, caplog):
+        """Test _ping_loop logs warning on timeout."""
+        # First-Party
+        from mcpgateway.transports.websocket_transport import WebSocketTransport
+
+        mock_ws = AsyncMock()
+        mock_ws.send_bytes = AsyncMock()
+        transport = WebSocketTransport(mock_ws)
+        transport._connected = True
+
+        monkeypatch.setattr("mcpgateway.transports.websocket_transport.settings.websocket_ping_interval", 0.01)
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+        # Simulate timeout
+        async def fake_wait_for(*a, **kw):
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr("asyncio.wait_for", fake_wait_for)
+
+        with caplog.at_level("WARNING"):
+            await transport._ping_loop()
+            assert "Ping timeout" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_ping_loop_exception(self, monkeypatch, caplog):
+        """Test _ping_loop logs error on unexpected exception."""
+        # First-Party
+        from mcpgateway.transports.websocket_transport import WebSocketTransport
+
+        mock_ws = AsyncMock()
+        mock_ws.send_bytes.side_effect = Exception("fail!")
+        transport = WebSocketTransport(mock_ws)
+        transport._connected = True
+
+        monkeypatch.setattr("mcpgateway.transports.websocket_transport.settings.websocket_ping_interval", 0.01)
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+        with caplog.at_level("ERROR"):
+            await transport._ping_loop()
+            assert "Ping loop error: fail!" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_ping_loop_calls_disconnect(self, monkeypatch):
+        """Test _ping_loop always calls disconnect in finally."""
+        # First-Party
+        from mcpgateway.transports.websocket_transport import WebSocketTransport
+
+        mock_ws = AsyncMock()
+        transport = WebSocketTransport(mock_ws)
+        transport._connected = True
+
+        monkeypatch.setattr("mcpgateway.transports.websocket_transport.settings.websocket_ping_interval", 0.01)
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        called = {}
+
+        async def fake_disconnect():
+            called["disconnect"] = True
+
+        transport.disconnect = fake_disconnect
+
+        # Stop after one iteration
+        async def fake_receive_bytes():
+            transport._connected = False
+            return b"pong"
+
+        mock_ws.receive_bytes.side_effect = fake_receive_bytes
+
+        await transport._ping_loop()
+        assert called.get("disconnect")
 
     @pytest.mark.asyncio
     async def test_send_message_raises_on_send_error(self, websocket_transport, mock_websocket, caplog):

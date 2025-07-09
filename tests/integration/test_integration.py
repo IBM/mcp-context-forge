@@ -26,14 +26,14 @@ from datetime import datetime
 from unittest.mock import ANY, AsyncMock, patch
 import urllib.parse
 
-# First-Party
-from mcpgateway.main import app, require_auth
-from mcpgateway.schemas import ResourceRead, ServerRead, ToolMetrics, ToolRead
-from mcpgateway.types import InitializeResult, ResourceContent, ServerCapabilities
-
 # Third-Party
 from fastapi.testclient import TestClient
 import pytest
+
+# First-Party
+from mcpgateway.main import app, require_auth
+from mcpgateway.models import InitializeResult, ResourceContent, ServerCapabilities
+from mcpgateway.schemas import ResourceRead, ServerRead, ToolMetrics, ToolRead
 
 
 # -----------------------------------------------------------------------------
@@ -83,7 +83,8 @@ MOCK_TOOL = ToolRead(
     auth=None,
     created_at=datetime(2025, 1, 1),
     updated_at=datetime(2025, 1, 1),
-    is_active=True,
+    enabled=True,
+    reachable=True,
     gateway_id=None,
     execution_count=0,
     metrics=ToolMetrics(**MOCK_METRICS),

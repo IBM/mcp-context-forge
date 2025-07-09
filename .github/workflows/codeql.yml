@@ -1,14 +1,14 @@
 # ===============================================================
-# 🔍 CodeQL Advanced – Multi-Language Static Analysis Workflow
+# 🔍 CodeQL Advanced - Multi-Language Static Analysis Workflow
 # ===============================================================
 #
 # This workflow:
-#   • Scans JavaScript/TypeScript, Python, and GitHub Actions workflows
-#   • Detects security vulnerabilities and code quality issues
-#   • Uploads SARIF results to the "Code scanning" tab in GitHub Security
-#   • Caches databases and dependencies to speed up analysis
-#   • Runs on every push/PR to `main` and weekly (Wednesday @ 21:15 UTC)
-#   • Excludes specified directories and suppresses selected queries
+#   - Scans JavaScript/TypeScript, Python, and GitHub Actions workflows
+#   - Detects security vulnerabilities and code quality issues
+#   - Uploads SARIF results to the "Code scanning" tab in GitHub Security
+#   - Caches databases and dependencies to speed up analysis
+#   - Runs on every push/PR to `main` and weekly (Wednesday @ 21:15 UTC)
+#   - Excludes specified directories and suppresses selected queries
 # ---------------------------------------------------------------
 
 name: CodeQL Advanced
@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
 
       # -------------------------------------------------------------
-      # 1️⃣  Optional setup – runtimes for specific languages
+      # 1️⃣  Optional setup - runtimes for specific languages
       # -------------------------------------------------------------
       - name: 🐍 Setup Python
         if: matrix.language == 'python'

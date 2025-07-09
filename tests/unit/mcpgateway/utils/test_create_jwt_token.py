@@ -9,7 +9,7 @@ All paths are exercised, including:
 * CLI helpers: `_payload_from_cli`, `_parse_args`, and `main()` in both
   encode (`--pretty`) and decode (`--decode`) modes.
 
-No subprocesses – we invoke `main()` directly, patching ``sys.argv`` and
+No subprocesses - we invoke `main()` directly, patching ``sys.argv`` and
 capturing stdout with ``capsys``.
 
 Running:
@@ -32,12 +32,12 @@ import sys
 from types import SimpleNamespace
 from typing import Any, Dict
 
-# First-Party
-from mcpgateway.utils import create_jwt_token as jwt_util  # noqa: E402
-
 # Third-Party
 import jwt
 import pytest
+
+# First-Party
+from mcpgateway.utils import create_jwt_token as jwt_util  # noqa: E402
 
 # --------------------------------------------------------------------------- #
 # Patch module-level constants **before** we start calling helpers            #

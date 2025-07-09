@@ -75,7 +75,7 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e JWT_SECRET_KEY=my-test-key \
           -e BASIC_AUTH_USER=admin \
           -e BASIC_AUTH_PASSWORD=changeme \
-          ghcr.io/ibm/mcp-context-forge:0.2.0
+          ghcr.io/ibm/mcp-context-forge:0.3.0
         ```
 
     2. **(Optional) persist the DB**
@@ -89,7 +89,7 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e JWT_SECRET_KEY=my-test-key \
           -e BASIC_AUTH_USER=admin \
           -e BASIC_AUTH_PASSWORD=changeme \
-          ghcr.io/ibm/mcp-context-forge:0.2.0
+          ghcr.io/ibm/mcp-context-forge:0.3.0
         ```
 
     3. **Generate a token inside the container**
@@ -126,7 +126,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     2. **Pull the published image**
 
         ```bash
-        docker pull ghcr.io/ibm/mcp-context-forge:0.2.0
+        docker pull ghcr.io/ibm/mcp-context-forge:0.3.0
         ```
 
     3. **Start the stack**
@@ -134,7 +134,7 @@ Pick an install method below, generate an auth token, then walk through a real t
         ```bash
         # Uses podman or docker automatically
         make compose-up
-        # —or— raw CLI
+        # -or- raw CLI
         docker compose -f podman-compose.yml up -d
         ```
 
@@ -154,8 +154,8 @@ Pick an install method below, generate an auth token, then walk through a real t
 
 ```bash
 # Spin up a sample MCP time server (SSE, port 8002)
-pip install uvenv
-npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002 &
+pip install uv
+npx -y supergateway --stdio "uvx mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002 &
 ```
 
 ```bash
@@ -183,7 +183,7 @@ curl -s -H "Authorization: Bearer $MCP_BEARER_TOKEN" http://localhost:4444/serve
 ```bash
 # Optional: Connect interactively via MCP Inspector
 npx -y @modelcontextprotocol/inspector
-# Transport SSE → URL http://localhost:4444/servers/1/sse
+# Transport SSE → URL http://localhost:4444/servers/UUID_OF_SERVER_1/sse
 # Header Authorization → Bearer $MCP_BEARER_TOKEN
 ```
 
@@ -193,7 +193,7 @@ npx -y @modelcontextprotocol/inspector
 
 ```bash
 export MCP_AUTH_TOKEN=$MCP_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
+export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1
 python -m mcpgateway.wrapper   # behaves as a local MCP stdio server - run from MCP client
 ```
 
@@ -206,7 +206,7 @@ Use this in GUI clients (Claude Desktop, Continue, etc.) that prefer stdio. Exam
       "command": "python3",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
         "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
@@ -219,7 +219,7 @@ For more information see [MCP Clients](../using/index.md)
 
 ---
 
-## 4 · Useful URLs
+## 4 - Useful URLs
 
 | URL                             | Description                                 |
 | ------------------------------- | ------------------------------------------- |
@@ -231,13 +231,13 @@ For more information see [MCP Clients](../using/index.md)
 
 ---
 
-## 5 · Next Steps
+## 5 - Next Steps
 
-* [Features Overview](features.md) – deep dive on transports, federation, caching
+* [Features Overview](features.md) - deep dive on transports, federation, caching
 * [Admin UI Guide](ui.md)
 * [Deployment to K8s / AWS / GCP / Azure](../deployment/index.md)
 * [Wrap any client via `mcpgateway-wrapper`](../using/mcpgateway-wrapper.md)
-* Tweak **`.env`** – see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
+* Tweak **`.env`** - see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
 
 !!! success "Gateway is ready!"
 You now have an authenticated MCP Gateway proxying a live tool, exposed via SSE **and** stdio.

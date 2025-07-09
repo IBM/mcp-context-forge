@@ -3,6 +3,20 @@
 > Coverage from industry publications, press, and news media about MCP Gateway, ACP, and IBM's agentic AI initiatives.
 
 ## Articles
+!!! details "Watsonx.ai Agent to MCP Gateway (ruslanmv.com)"
+**Author:** Ruslan Magana Vsevolodovna | **Publication:** ruslanmv.com | **Date:** July 4, 2025
+[Read the article](https://ruslanmv.com/blog/watsonx-agent-to-mcp-gateway)
+
+    !!! quote
+    This detailed, end-to-end tutorial provides a practical blueprint for developers. It walks through the entire process of building a watsonx.ai-powered agent, registering it with the MCP Gateway using SSE, and connecting it to a custom FastAPI frontend. The post serves as a hands-on guide for creating fully-functional, multi-component AI applications.
+
+!!! details "Getting Started with ContextForge MCP Gateway on macOS (aiarchplaybook.substack.com)"
+**Author:** Shaikh Quader | **Publication:** AI Architect's Playbook | **Date:** June 26, 2025
+[Read the article](https://aiarchplaybook.substack.com/p/getting-started-with-contextforge)
+
+    !!! quote
+    ContextForge MCP Gateway is an open-source IBM middleware that connects AI agents to multiple MCP servers through a single endpoint with centralized login and built-in observability.
+
 !!! details "IBM's MCP Gateway: A Unified FastAPI-Based Model Context Protocol Gateway for Next-Gen AI Toolchains (MarkTechPost)"
     **Author:** Nikhil | **Publication:** MarkTechPost | **Date:** June 21, 2025
     [Read the article](https://www.marktechpost.com/2025/06/21/ibms-mcp-gateway-a-unified-fastapi-based-model-context-protocol-gateway-for-next-gen-ai-toolchains/)
@@ -15,7 +29,7 @@
     [Read the article](https://pitangent.com/ai-ml-development-services/ibm-mcp-gateway-revolutionizing-genai-integration-for-startups-and-enterprises/)
 
     !!! quote
-        "IBM's MCP Gateway is more than a bridge—it's a platform for accelerating GenAI transformation with agility and confidence. For startups and enterprises navigating the complex AI tool landscape, this innovation brings a modular, future-proof path to build smarter, scalable, and context-aware applications."
+        "IBM's MCP Gateway is more than a bridge-it's a platform for accelerating GenAI transformation with agility and confidence. For startups and enterprises navigating the complex AI tool landscape, this innovation brings a modular, future-proof path to build smarter, scalable, and context-aware applications."
 
         The article breaks down the technical benefits of the MCP Gateway and positions it as a game-changer for reducing integration overhead, improving developer productivity, and democratizing AI access for early-stage companies.
 

@@ -1,18 +1,18 @@
 # syntax=docker/dockerfile:1.7
 
 ###############################################################################
-# MCP Gateway (lite) – OCI-compliant container build
+# MCP Gateway (lite) - OCI-compliant container build
 #
 # This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
 # image that automatically tracks the latest Python 3.11.x patch release
 # from the RHEL 9 repositories and is fully patched on each rebuild.
 #
 # Key design points:
-#   • Builder stage has full DNF + devel headers for wheel compilation
-#   • Runtime stage is scratch: only the Python runtime and app
-#   • Both builder and runtime rootfs receive `dnf upgrade -y`
-#   • Development headers are dropped from the final image
-#   • Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
+#   - Builder stage has full DNF + devel headers for wheel compilation
+#   - Runtime stage is scratch: only the Python runtime and app
+#   - Both builder and runtime rootfs receive `dnf upgrade -y`
+#   - Development headers are dropped from the final image
+#   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
 ###############################################################################
 
 ###########################
@@ -24,12 +24,12 @@ ARG PYTHON_VERSION=3.11            # Python major.minor series to track
 ###########################
 # Base image for copying into scratch
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1750858477 AS base
+FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1751962311 AS base
 
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi:9.6-1750786174 AS builder
+FROM registry.access.redhat.com/ubi9/ubi:9.6-1751897624 AS builder
 SHELL ["/bin/bash", "-c"]
 
 ARG PYTHON_VERSION
@@ -106,7 +106,7 @@ LABEL maintainer="Mihai Criveti" \
       org.opencontainers.image.title="mcp/mcpgateway" \
       org.opencontainers.image.description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.version="0.2.0"
+      org.opencontainers.image.version="0.3.0"
 
 # ----------------------------------------------------------------------------
 # Copy the entire prepared root filesystem from the builder stage

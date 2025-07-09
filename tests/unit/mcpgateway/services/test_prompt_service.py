@@ -5,7 +5,7 @@ Unit-tests for PromptService.
 All tests run entirely with `MagicMock` / `AsyncMock`; no live DB or Jinja
 environment is required.  Where `PromptService` returns Pydantic models we
 monkey-patch the `model_validate` method so that it simply echoes the raw
-dict we pass in – that keeps validation out of scope for these pure-unit
+dict we pass in - that keeps validation out of scope for these pure-unit
 tests.
 
 Copyright 2025
@@ -20,19 +20,19 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
+from mcpgateway.models import Message, PromptResult, Role
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
 from mcpgateway.services.prompt_service import (
     PromptError,
     PromptNotFoundError,
     PromptService,
 )
-from mcpgateway.types import Message, PromptResult, Role
-
-# Third-Party
-import pytest
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -43,9 +43,9 @@ def _make_execute_result(*, scalar: Any = None, scalars_list: Optional[list] = N
     """
     Return a MagicMock that mimics the SQLAlchemy Result object:
 
-      • .scalar_one_or_none() → scalar
-      • .scalar()            → scalar
-      • .scalars().all()     → scalars_list
+      - .scalar_one_or_none() → scalar
+      - .scalar()            → scalar
+      - .scalars().all()     → scalars_list
     """
     result = MagicMock()
     result.scalar_one_or_none.return_value = scalar

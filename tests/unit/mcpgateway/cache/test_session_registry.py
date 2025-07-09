@@ -13,9 +13,9 @@ Covered behaviours
 * add_session / get_session / get_session_sync / remove_session
 * broadcast -> respond for **dict**, **list**, **str** payloads
 * generate_response branches:
-  • initialize (result + notifications)
-  • ping
-  • tools/list (with stubbed service + DB)
+  - initialize (result + notifications)
+  - ping
+  - tools/list (with stubbed service + DB)
 * handle_initialize_logic success, and both error branches
 
 
@@ -32,13 +32,13 @@ import re
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, Mock, patch
 
-# First-Party
-from mcpgateway.cache.session_registry import SessionRegistry
-from mcpgateway.config import settings
-
 # Third-Party
 from fastapi import HTTPException
 import pytest
+
+# First-Party
+from mcpgateway.cache.session_registry import SessionRegistry
+from mcpgateway.config import settings
 
 
 # --------------------------------------------------------------------------- #
@@ -176,7 +176,7 @@ async def test_add_get_remove(registry: SessionRegistry):
     assert registry.get_session_sync("A") is tr
     assert await registry.get_session("missing") is None
 
-    # Remove twice – second call must be harmless
+    # Remove twice - second call must be harmless
     await registry.remove_session("A")
     await registry.remove_session("A")
 

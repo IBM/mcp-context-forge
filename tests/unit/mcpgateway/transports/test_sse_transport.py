@@ -12,16 +12,15 @@ Tests for the MCP Gateway SSE transport implementation.
 # Standard
 import asyncio
 import json
-import types
-from unittest.mock import AsyncMock, Mock, patch
-
-# First-Party
-from mcpgateway.transports.sse_transport import SSETransport
+from unittest.mock import Mock, patch
 
 # Third-Party
 from fastapi import Request
 import pytest
 from sse_starlette.sse import EventSourceResponse
+
+# First-Party
+from mcpgateway.transports.sse_transport import SSETransport
 
 
 @pytest.fixture

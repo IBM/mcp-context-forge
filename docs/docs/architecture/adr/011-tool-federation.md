@@ -50,7 +50,7 @@ We implemented this by making the following changes:
 
 ## Consequences
 
-- Two gateways can have the tools with the same native name on the gateway. e.g. `gateway-1-get_current_time` and `gateway-2-get_current_time`.
+- Two gateways can have the tools with the same native name on the gateway. e.g. `gateway-1-get_system_time` and `gateway-2-get_system_time`.
 - If the tools on a gateway change, they will reflect after **Deactivate/Activate** cycle or after **Edit Gateway** action.
 
 ## Alternatives Considered

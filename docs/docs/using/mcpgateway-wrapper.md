@@ -11,10 +11,10 @@ while connecting securely to the gateway using `SSE` + `JWT`.
 
 ## 🔑 Key Highlights
 
-* **Dynamic catalog** – auto-syncs from one or more `…/servers/{id}` Virtual Server endpoints
-* **Full MCP protocol** – `initialize`, `ping`, `tools/call`, streaming content, resources and prompts/template rendering
-* **Transparent proxy** – stdio → Gateway → tool, results stream back to stdout
-* **Secure** – wrapper keeps using your **JWT** to talk to the Gateway
+* **Dynamic catalog** - auto-syncs from one or more `.../servers/{id}` Virtual Server endpoints
+* **Full MCP protocol** - `initialize`, `ping`, `tools/call`, streaming content, resources and prompts/template rendering
+* **Transparent proxy** - stdio → Gateway → tool, results stream back to stdout
+* **Secure** - wrapper keeps using your **JWT** to talk to the Gateway
 
 ---
 
@@ -31,8 +31,8 @@ Configure the wrapper via ENV variables:
 
 ```bash
 export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/1'  # select a virtual server
-export MCP_TOOL_CALL_TIMEOUT=120          # tool call timeout in seconds (optional – default 90)
+export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'  # select a virtual server
+export MCP_TOOL_CALL_TIMEOUT=120          # tool call timeout in seconds (optional - default 90)
 export MCP_WRAPPER_LOG_LEVEL=INFO         # DEBUG | INFO | OFF
 ```
 
@@ -66,7 +66,7 @@ Launching it in your terminal (ex: `python -m mcpgateway.wrapper`) is useful for
     python -m mcpgateway.wrapper
     ```
 
-=== "uv / uvenv (ultra-fast)"
+=== "uv / uvx (ultra-fast)"
 
     ```bash
     curl -Ls https://astral.sh/uv/install.sh | sh
@@ -83,16 +83,16 @@ The wrapper now waits for JSON-RPC on **stdin** and emits replies on **stdout**.
 
 | Variable                  | Purpose                                      | Default |
 | ------------------------- | -------------------------------------------- | ------- |
-| `MCP_SERVER_CATALOG_URLS` | Comma-sep list of `/servers/{id}` endpoints  | —       |
-| `MCP_AUTH_TOKEN`          | Bearer token the wrapper forwards to Gateway | —       |
+| `MCP_SERVER_CATALOG_URLS` | Comma-sep list of `/servers/{id}` endpoints  | -       |
+| `MCP_AUTH_TOKEN`          | Bearer token the wrapper forwards to Gateway | -       |
 | `MCP_TOOL_CALL_TIMEOUT`   | Per-tool timeout (seconds)                   | `90`    |
-| `MCP_WRAPPER_LOG_LEVEL`   | `OFF`, `INFO`, `DEBUG`, …                    | `INFO`  |
+| `MCP_WRAPPER_LOG_LEVEL`   | `OFF`, `INFO`, `DEBUG`, ...                    | `INFO`  |
 
 ---
 
 ## 🖥 GUI Client Config JSON Snippets
 
-You can run `mcpgateway.wrapper` from any MCP client, using either `python3`, `uv`, `uvenv`, `uvx`, `pipx`, `docker`, or `podman` entrypoints.
+You can run `mcpgateway.wrapper` from any MCP client, using either `python3`, `uv`, `uvx`, `uvx`, `pipx`, `docker`, or `podman` entrypoints.
 
 The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-gateway` module installed, able to call `mcpgateway.wrapper` and the right `env` settings exported (`MCP_SERVER_CATALOG_URLS` and `MCP_AUTH_TOKEN` at a minimum).
 
@@ -106,7 +106,7 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
           "args": ["-m", "mcpgateway.wrapper"],
           "env": {
             "MCP_AUTH_TOKEN": "<paste-token>",
-            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1"
+            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
           }
         }
       }
@@ -117,13 +117,13 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
         Replace `/path/to/python` with the exact interpreter in your venv (e.g. `$HOME/.venv/mcpgateway/bin/python3`) - where the `mcp-contextforge-gateway` module is installed.
 
 
-=== "Claude Desktop (uvenv)"
+=== "Claude Desktop (uvx)"
 
     ```json
     {
       "mcpServers": {
         "mcpgateway-wrapper": {
-          "command": "uvenv",
+          "command": "uvx",
           "args": [
             "run",
             "--",
@@ -133,7 +133,7 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
           ],
           "env": {
             "MCP_AUTH_TOKEN": "<paste-token>",
-            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1"
+            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
           }
         }
       }
@@ -151,7 +151,7 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
         "args": ["-m", "mcpgateway.wrapper"],
         "env": {
           "MCP_AUTH_TOKEN": "<token>",
-          "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1"
+          "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
         }
       }
     }
@@ -177,7 +177,7 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
             "mcpgateway.wrapper"
           ],
           "env": {
-            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
             "MCP_AUTH_TOKEN": "REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN",
             "MCP_WRAPPER_LOG_LEVEL": "OFF"
           }
@@ -209,12 +209,12 @@ npx @modelcontextprotocol/inspector \
 
 ```json
 {
-  "method": "get_current_time",
+  "method": "get_system_time",
   "params": { "timezone": "Europe/Dublin" }
 }
 ```
 
-1. Wrapper maps `get_current_time` → tool ID 123 in the catalog.
+1. Wrapper maps `get_system_time` → tool ID 123 in the catalog.
 2. Sends RPC to the Gateway with your JWT token.
 3. Gateway executes the tool and returns JSON → wrapper → stdout.
 
@@ -223,7 +223,7 @@ npx @modelcontextprotocol/inspector \
 ## 🧪 Manual JSON-RPC Smoke-test
 
 The wrapper speaks plain JSON-RPC over **stdin/stdout**, so you can exercise it from any
-terminal—no GUI required.
+terminal-no GUI required.
 Open two shells or use a tool like `jq -c | nc -U` to pipe messages in and view replies.
 
 ??? example "Step-by-step request sequence"
@@ -249,7 +249,7 @@ Open two shells or use a tool like `jq -c | nc -U` to pipe messages in and view 
     # 5️⃣ Tools (list / call)
     {"jsonrpc":"2.0","id":2,"method":"tools/list"}
     {"jsonrpc":"2.0","id":3,"method":"tools/call",
-     "params":{"name":"get_current_time","arguments":{"timezone":"Europe/Dublin"}}}
+     "params":{"name":"get_system_time","arguments":{"timezone":"Europe/Dublin"}}}
     ```
 
 ??? success "Sample responses you should see"
@@ -263,17 +263,17 @@ Open two shells or use a tool like `jq -c | nc -U` to pipe messages in and view 
         "resources":{"subscribe":false,"listChanged":false},
         "tools":{"listChanged":false}
       },
-      "serverInfo":{"name":"mcpgateway-wrapper","version":"0.2.0"}
+      "serverInfo":{"name":"mcpgateway-wrapper","version":"0.3.0"}
     }}
 
     # Empty tool list
     {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
 
-    # …after adding tools (example)
+    # ...after adding tools (example)
     {"jsonrpc":"2.0","id":2,"result":{
       "tools":[
         {
-          "name":"get_current_time",
+          "name":"get_system_time",
           "description":"Get current time in a specific timezone",
           "inputSchema":{
             "type":"object",

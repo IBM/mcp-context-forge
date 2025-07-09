@@ -3,12 +3,12 @@
 import asyncio
 import sys
 
+# Third-Party
+import pytest
+
 # First-Party
 # Import the module under test after patching where necessary
 import mcpgateway.utils.db_isready as db_isready
-
-# Third-Party
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helper test doubles
@@ -48,12 +48,12 @@ class _DummyEngine:
 
     # Expose attempts for assertions
     @property
-    def attempts(self):  # noqa: D401 – simple accessor
+    def attempts(self):  # noqa: D401 - simple accessor
         return self._attempts
 
 
 # ---------------------------------------------------------------------------
-# Unit-tests – utilities first, then public API
+# Unit-tests - utilities first, then public API
 # ---------------------------------------------------------------------------
 
 

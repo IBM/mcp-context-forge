@@ -11,11 +11,12 @@
     - [ ] Node.js and npm, npx (used for testing with `supergateway` and the HTML/JS Admin UI)
     - [ ] Docker, Docker Compose, and Podman
     - [ ] Make, GitHub CLI (`gh`), `curl`, `jq`, `openssl`
-    - [ ] Optional: Visual Studio Code + Dev Containers extension (or WSL2 if on Windows)
+    - [ ] Optional: Visual Studio Code + Dev Containers extension (or WSL2 if on Windows) + Pyrefly
+    - [ ] Optional: On Windows, install the WSL and Remote Development extensions
 
 ???+ check "Python tooling"
     - [ ] `pip install --upgrade pip`
-    - [ ] `uv` and `uvenv` installed - [install uv](https://github.com/astral-sh/uv)
+    - [ ] `uv` and `uvx` installed - [install uv](https://github.com/astral-sh/uv)
     - [ ] `.venv` created with `make venv install install-dev`
 
 ???+ check "Additional tools"
@@ -82,7 +83,7 @@
 
 ???+ check "SonarQube analysis"
     - [ ] `make sonar-up-docker`
-    - [ ] `make sonar-submit-docker` — ensure no critical violations
+    - [ ] `make sonar-submit-docker` - ensure no critical violations
 
 ---
 

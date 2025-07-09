@@ -4,10 +4,10 @@
 # Maintainer: Mihai Criveti
 # Status: Inactive
 # This workflow:
-#   • Restores / updates a local **BuildKit layer cache**  ❄️
-#   • Builds the Docker image from **Containerfile.lite**  🏗️
-#   • Pushes the image to **Google Artifact Registry**     📤
-#   • Deploys to **Google Cloud Run** with autoscale=1     🚀
+#   - Restores / updates a local **BuildKit layer cache**  ❄️
+#   - Builds the Docker image from **Containerfile.lite**  🏗️
+#   - Pushes the image to **Google Artifact Registry**     📤
+#   - Deploys to **Google Cloud Run** with autoscale=1     🚀
 #
 # ---------------------------------------------------------------
 # Prerequisites (one-time setup)
@@ -102,7 +102,7 @@
 #  └────────────────────────────┴─────────────────────────────────────────────────────────────────┘
 #
 # Triggers:
-#   • Every push to `main`
+#   - Every push to `main`
 # ===============================================================
 
 name: Deploy to Google Cloud Run

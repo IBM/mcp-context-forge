@@ -13,6 +13,12 @@ they properly handle server, tool, resource, prompt, gateway and root management
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# Third-Party
+from fastapi import HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+import pytest
+from sqlalchemy.orm import Session
+
 # First-Party
 from mcpgateway.admin import (
     admin_add_gateway,
@@ -58,12 +64,6 @@ from mcpgateway.services.tool_service import (
     ToolNameConflictError,
     ToolService,
 )
-
-# Third-Party
-from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-import pytest
-from sqlalchemy.orm import Session
 
 
 class FakeForm(dict):
@@ -323,7 +323,7 @@ class TestAdminToolRoutes:
         result = await admin_toggle_tool(1, mock_request, mock_db, "test-user")
 
         # Assert
-        mock_toggle_status.assert_called_once_with(mock_db, 1, True)
+        mock_toggle_status.assert_called_once_with(mock_db, 1, True, reachable=True)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "/admin#tools" in result.headers["location"]
@@ -596,6 +596,8 @@ class TestAdminGatewayRoutes:
         result = await admin_toggle_gateway(1, mock_request, mock_db, "test-user")
 
         # Assert
+        print("ACTUAL CALL:", mock_toggle_status.call_args)
+
         mock_toggle_status.assert_called_once_with(mock_db, 1, True)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303

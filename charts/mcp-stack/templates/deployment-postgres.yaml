@@ -1,10 +1,10 @@
 {{/* -------------------------------------------------------------------
-     DEPLOYMENT — Postgres
+     DEPLOYMENT - Postgres
      -------------------------------------------------------------------
-     • Pods are labelled <release>-mcp-stack-postgres so the Service
+     - Pods are labelled <release>-mcp-stack-postgres so the Service
        selector (also templated) matches correctly.
-     • Adds exec-based readiness & liveness probes (pg_isready).
-     • Adds resource requests / limits pulled from values.yaml.
+     - Adds exec-based readiness & liveness probes (pg_isready).
+     - Adds resource requests / limits pulled from values.yaml.
      ------------------------------------------------------------------- */}}
 
 {{- if .Values.postgres.enabled }}
