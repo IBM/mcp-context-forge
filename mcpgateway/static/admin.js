@@ -162,7 +162,7 @@ document.addEventListener("DOMContentLoaded", function () {
         status.textContent = "";
         status.classList.remove("error-status");
 
-        const is_inactive_checked = isInactiveChecked('gateways');  
+        const is_inactive_checked = isInactiveChecked('gateways');
         formData.append("is_inactive_checked", is_inactive_checked);
 
         try {
@@ -301,8 +301,8 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       let formData = new FormData(this);
-      const is_inactive_checked = isInactiveChecked('tools');  
-      formData.append("is_inactive_checked", is_inactive_checked); 
+      const is_inactive_checked = isInactiveChecked('tools');
+      formData.append("is_inactive_checked", is_inactive_checked);
       try {
         let response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
           method: "POST",
@@ -560,7 +560,7 @@ function handleToggleSubmit(event, type) {
   event.preventDefault();
 
   // Get the value of 'is_inactive_checked' from the function
-  const is_inactive_checked = isInactiveChecked(type);  
+  const is_inactive_checked = isInactiveChecked(type);
 
   // Dynamically add the 'is_inactive_checked' value to the form
   const form = event.target;
@@ -1144,6 +1144,98 @@ async function viewGateway(gatewayId) {
     console.error("Error fetching gateway details:", error);
     alert("Failed to load gateway details");
   }
+}
+
+// Function to test a gateway by sending a request to it
+// This function opens a modal where the user can input the request details
+// and see the response from the gateway.
+let headersEditor, bodyEditor;
+async function testGateway(gatewayURL) {
+  openModal("gateway-test-modal");
+
+  if (!headersEditor) {
+    headersEditor = CodeMirror.fromTextArea(document.getElementById('headers-json'), {
+      mode: "application/json",
+      lineNumbers: true,
+    });
+    headersEditor.setSize(null, 100);
+  }
+
+  if (!bodyEditor) {
+    bodyEditor = CodeMirror.fromTextArea(document.getElementById('body-json'), {
+      mode: "application/json",
+      lineNumbers: true
+    });
+    bodyEditor.setSize(null, 100);
+  }
+
+  document.getElementById("gateway-test-form").action = `${window.ROOT_PATH}/admin/gateways/test`;
+  document.getElementById("gateway-test-url").value = gatewayURL;
+
+  // Handle submission of the gateway test form
+  document.getElementById("gateway-test-form").addEventListener("submit", async function (e) {
+    e.preventDefault(); // prevent full page reload
+
+    // Show loading
+    document.getElementById("loading").classList.remove("hidden");
+
+    const form = e.target;
+    const url = form.action;
+
+    // Get form.elements and CodeMirror content
+    const base_url = form.elements["gateway-test-url"].value;
+    const method = form.elements["method"].value;
+    const path = form.elements["path"].value;
+    const headersRaw = headersEditor.getValue();
+    const bodyRaw = bodyEditor.getValue();
+
+    let headersParsed, bodyParsed;
+    try {
+      headersParsed = headersRaw ? JSON.parse(headersRaw) : undefined;
+      bodyParsed = bodyRaw ? JSON.parse(bodyRaw) : undefined;
+    } catch (err) {
+      document.getElementById("loading").classList.add("hidden");
+      document.getElementById("response-json").textContent = `❌ Invalid JSON: ${err.message}`;
+      document.getElementById("test-result").classList.remove("hidden");
+      return;
+    }
+
+    const payload = {
+      base_url,
+      method,
+      path,
+      headers: headersParsed,
+      body: bodyParsed,
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+      document.getElementById("response-json").textContent = JSON.stringify(result, null, 2);
+    } catch (err) {
+      document.getElementById("response-json").textContent = `❌ Error: ${err.message}`;
+    } finally {
+      document.getElementById("loading").classList.add("hidden");
+      document.getElementById("test-result").classList.remove("hidden");
+    }
+  });
+
+  // Close the modal and reset the form when the close button is clicked
+  document.getElementById("gateway-test-close").addEventListener("click", function () {
+    // Reset the form and CodeMirror editors
+    document.getElementById("gateway-test-form").reset();
+    headersEditor.setValue('');
+    bodyEditor.setValue('');
+    document.getElementById("response-json").textContent = '';
+    document.getElementById("test-result").classList.add("hidden");
+
+    closeModal("gateway-test-modal");
+  })
 }
 
 async function editGateway(gatewayId) {
