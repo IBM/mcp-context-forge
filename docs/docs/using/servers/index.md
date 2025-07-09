@@ -40,7 +40,7 @@ make build && make run
 - **System Info Server** - OS and hardware information tools
 - **File Operations Server** - Safe file system operations
 
-### 🟨 JavaScript/TypeScript Samples  
+### 🟨 JavaScript/TypeScript Samples
 - **Web Scraper Server** - URL content extraction and parsing
 - **JSON Transformer Server** - Data transformation and validation
 - **API Client Server** - REST API interaction tools
@@ -61,7 +61,7 @@ make build && make run
 
 ### **🧪 Testing & Development**
 - **Protocol Testing** - Validate MCP client implementations
-- **Performance Benchmarking** - Compare language runtime characteristics  
+- **Performance Benchmarking** - Compare language runtime characteristics
 - **Integration Testing** - Test gateway federation and tool routing
 
 ### **📚 Learning & Reference**
@@ -144,7 +144,7 @@ mcp-servers/
 
 #### **Performance Targets**
 - **Response Time:** < 10ms for simple operations
-- **Memory Usage:** < 50MB baseline memory footprint  
+- **Memory Usage:** < 50MB baseline memory footprint
 - **Startup Time:** < 1 second cold start
 - **Throughput:** > 1000 requests/second under load
 
@@ -166,12 +166,12 @@ mcp-servers/
 
 ## 🤝 Contributing
 
-We welcome contributions of new sample servers! 
+We welcome contributions of new sample servers!
 
 ### **Contribution Process**
 
 1. **Choose a language** and create the directory structure
-2. **Implement core MCP functionality** following our guidelines  
+2. **Implement core MCP functionality** following our guidelines
 3. **Add comprehensive tests** and performance benchmarks
 4. **Create documentation** following the fast-time-server example
 5. **Submit a pull request** with your implementation
@@ -192,7 +192,7 @@ We're particularly interested in:
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
 
-### **Gateway Documentation**  
+### **Gateway Documentation**
 - [MCP Context Forge Gateway](../README.md)
 - [mcpgateway.wrapper Usage](../wrapper.md)
 - [mcpgateway.translate Bridge](../translate.md)

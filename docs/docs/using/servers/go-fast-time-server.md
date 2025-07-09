@@ -93,7 +93,7 @@ docker-compose run wrapper-test
 ## 🔑 Key Features
 
 * **⚡ Ultra-fast** - Written in Go for minimal latency and high throughput
-* **🌍 Timezone-aware** - IANA timezone support with DST handling  
+* **🌍 Timezone-aware** - IANA timezone support with DST handling
 * **🚀 Multiple transports** - stdio, HTTP, SSE, and dual-mode support
 * **🔐 Secure** - Bearer token authentication for SSE endpoints
 * **📊 Production-ready** - Built-in benchmarking, logging, and health checks
@@ -217,7 +217,7 @@ make run
 
 # Run specific transport modes
 make run-http    # HTTP on :8080
-make run-sse     # SSE on :8080  
+make run-sse     # SSE on :8080
 make run-dual    # Both HTTP & SSE on :8080
 ```
 
@@ -297,7 +297,7 @@ curl -X POST http://localhost:8080/http \
 
 ### SSE Transport (`-transport=sse` or `-transport=dual`)
 
-**GET** `/sse` - Server-Sent Events stream  
+**GET** `/sse` - Server-Sent Events stream
 **POST** `/messages` - Send JSON-RPC messages
 
 ```bash
@@ -393,7 +393,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 #### Method 2: Direct SSE Registration
 
 ```bash
-# 1️⃣ Start fast-time-server in SSE mode  
+# 1️⃣ Start fast-time-server in SSE mode
 ./dist/fast-time-server -transport=sse -port=8003
 
 # 2️⃣ Register directly with the gateway
@@ -473,7 +473,7 @@ npx @modelcontextprotocol/inspector python3 -m mcpgateway.wrapper
 # 3️⃣ Inspect SSE endpoint directly
 npx @modelcontextprotocol/inspector
 # Transport: SSE
-# URL: http://localhost:4444/servers/UUID_OF_SERVER_1/sse  
+# URL: http://localhost:4444/servers/UUID_OF_SERVER_1/sse
 # Header: Authorization
 # Value: Bearer <your-token>
 ```
@@ -613,7 +613,7 @@ When testing with the wrapper, you should see responses like:
   }
 }
 
-// Tool execution response  
+// Tool execution response
 {
   "jsonrpc":"2.0","id":3,
   "result":{
@@ -638,7 +638,7 @@ When testing with the wrapper, you should see responses like:
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "get_system_time", 
+  "method": "get_system_time",
   "params": {
     "timezone": "Europe/Dublin"
   }
@@ -758,7 +758,7 @@ Enable verbose logging:
     ```bash
     # Ubuntu/Debian
     sudo apt install nodejs npm
-    
+
     # macOS
     brew install node
     ```
@@ -784,7 +784,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | ./dist/fast-time-server 
 # 2. Test gateway API
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/health
 
-# 3. Test wrapper connectivity  
+# 3. Test wrapper connectivity
 export MCP_WRAPPER_LOG_LEVEL=DEBUG
 python3 -m mcpgateway.wrapper
 ```
