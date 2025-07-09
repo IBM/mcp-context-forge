@@ -1,3 +1,87 @@
+/**
+ * HTML-escape function to prevent XSS attacks
+ * Escapes characters that have special meaning in HTML
+ */
+function escapeHtml(unsafe) {
+  if (unsafe === null || unsafe === undefined) return '';
+  return String(unsafe)
+    .replace(/&/g,  "&amp;")
+    .replace(/</g,  "&lt;")
+    .replace(/>/g,  "&gt;")
+    .replace(/"/g,  "&quot;")
+    .replace(/'/g,  "&#039;")
+    .replace(/`/g, "&#x60;");   // protects template-literal back-ticks
+}
+
+/**
+ * Safely create DOM elements with text content
+ * Use this instead of innerHTML for user data
+ */
+function createSafeElement(tagName, textContent = '', className = '') {
+  const element = document.createElement(tagName);
+  if (textContent) {
+    element.textContent = textContent; // Safe - no HTML interpretation
+  }
+  if (className) {
+    element.className = className;
+  }
+  return element;
+}
+
+/**
+ * Safely set innerHTML with escaped content
+ * For trusted HTML content from our own backend
+ */
+function safeSetInnerHTML(element, htmlContent) {
+  // If the content is from our own trusted backend, we can set it directly
+  // For user-generated content, use textContent instead
+  element.innerHTML = htmlContent;
+}
+
+/**
+ * Build a <table> element safely from an array of rows.
+ * Each row = array of cell values (strings, numbers, etc.).
+ */
+function buildSafeTable(headers, rows) {
+  const table   = document.createElement('table');
+  table.className = 'min-w-full border';
+
+  /* --- header --- */
+  const thead   = table.createTHead();
+  const htr     = thead.insertRow();
+  headers.forEach(h => {
+    const th      = document.createElement('th');
+    th.className  = 'py-1 px-2 border dark:text-gray-300';
+    th.textContent = h;
+    htr.appendChild(th);
+  });
+
+  /* --- body --- */
+  const tbody = table.appendChild(document.createElement('tbody'));
+  rows.forEach(row => {
+    const tr = tbody.insertRow();
+    row.forEach(cellVal => {
+      const td      = tr.insertCell();
+      td.className  = 'py-1 px-2 border dark:text-gray-300';
+      td.textContent = cellVal;        // <- never interprets HTML
+    });
+  });
+
+  return table;
+}
+
+// helper for anything that lands in src, href, action
+function safeUrl(u, allowData = false) {
+  try {
+    const url = new URL(u, document.baseURI);      // honours <base>
+    const ok  = ["http:", "https:"];               // allowed schemes
+    if (allowData) ok.push("data:");
+    return ok.includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";   // malformed → strip it
+  }
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   const hash = window.location.hash;
   if (hash) {
@@ -30,44 +114,8 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   /* ------------------------------------------------------------------
-  * Pre-load the "Version & Environment Info" partial once per page
-  * ------------------------------------------------------------------ */
-   /* Pre-load version-info once */
-  document.addEventListener("DOMContentLoaded", () => {
-    const panel = document.getElementById("version-info-panel");
-    if (!panel || panel.innerHTML.trim() !== "") return; // already loaded
-
-    fetch(`${window.ROOT_PATH}/version?partial=true`)
-      .then((response) => {
-        if (!response.ok) throw new Error("Network response was not ok");
-        return response.text();
-      })
-      .then((html) => {
-        panel.innerHTML = html;
-
-        // If the page was opened at #version-info, show that tab now
-        if (window.location.hash === "#version-info") {
-          showTab("version-info");
-        }
-      })
-      .catch((error) => {
-        console.error("Failed to preload version info:", error);
-        panel.innerHTML =
-          "<p class='text-red-600'>Failed to load version info.</p>";
-      });
-  });
-
-  /* ------------------------------------------------------------------
   * HTMX debug hooks
   * ------------------------------------------------------------------ */
-  document.body.addEventListener("htmx:afterSwap", (event) => {
-    if (event.detail.target.id === "version-info-panel") {
-      console.log("HTMX: Content swapped into version-info-panel");
-    }
-  });
-
-
-  // HTMX event listeners for debugging
   document.body.addEventListener("htmx:beforeRequest", (event) => {
     if (event.detail.elt.id === "tab-version-info") {
       console.log("HTMX: Sending request for version info partial");
@@ -79,6 +127,28 @@ document.addEventListener("DOMContentLoaded", function () {
       console.log("HTMX: Content swapped into version-info-panel");
     }
   });
+
+  // Pre-load version info if that's the initial tab
+  if (window.location.hash === "#version-info") {
+    // Small delay to ensure DOM is ready
+    setTimeout(() => {
+      const panel = document.getElementById("version-info-panel");
+      if (panel && panel.innerHTML.trim() === "") {
+        fetch(`${window.ROOT_PATH}/version?partial=true`)
+          .then((resp) => {
+            if (!resp.ok) throw new Error("Network response was not ok");
+            return resp.text();
+          })
+          .then((html) => {
+            panel.innerHTML = html;
+          })
+          .catch((err) => {
+            console.error("Failed to preload version info:", err);
+            panel.innerHTML = "<p class='text-red-600'>Failed to load version info.</p>";
+          });
+      }
+    }, 100);
+  }
 
   // Authentication toggle
   document.getElementById("auth-type").addEventListener("change", function () {
@@ -397,45 +467,52 @@ document.addEventListener("DOMContentLoaded", function () {
 
 // Tab handling
 function showTab(tabName) {
-  document.querySelectorAll(".tab-panel").forEach((panel) => {
-    panel.classList.add("hidden");
+  /* ---------- navigation styling ---------- */
+  document.querySelectorAll(".tab-panel").forEach((p) => p.classList.add("hidden"));
+  document.querySelectorAll(".tab-link").forEach((l) => {
+    l.classList.remove(
+      "border-indigo-500", "text-indigo-600",
+      "dark:text-indigo-500", "dark:border-indigo-400",
+    );
+    l.classList.add(
+      "border-transparent", "text-gray-500",
+      "dark:text-gray-400",
+    );
   });
-  document.querySelectorAll(".tab-link").forEach((link) => {
-    link.classList.remove("border-indigo-500", "text-indigo-600", "dark:text-indigo-500", "dark:border-indigo-400");
-    link.classList.add("border-transparent", "text-gray-500", "dark:text-gray-400");
-  });
-  document.getElementById(`${tabName}-panel`).classList.remove("hidden");
-  document
-    .querySelector(`[href="#${tabName}"]`)
-    .classList.add("border-indigo-500", "text-indigo-600", "dark:text-indigo-500", "dark:border-indigo-400");
-  document
-    .querySelector(`[href="#${tabName}"]`)
-    .classList.remove("border-transparent", "text-gray-500", "dark:text-gray-400");
 
-  if (tabName === "metrics") {
-    loadAggregatedMetrics();
-  }
+  /* ---------- reveal chosen panel ---------- */
+  document.getElementById(`${tabName}-panel`).classList.remove("hidden");
+  const nav = document.querySelector(`[href="#${tabName}"]`);
+  nav.classList.add(
+    "border-indigo-500", "text-indigo-600",
+    "dark:text-indigo-500", "dark:border-indigo-400",
+  );
+  nav.classList.remove(
+    "border-transparent", "text-gray-500",
+    "dark:text-gray-400",
+  );
+
+  /* ---------- lazy-loaders ---------- */
+  if (tabName === "metrics") loadAggregatedMetrics();
 
   if (tabName === "version-info") {
-    const panel = document.getElementById("version-info-panel");
-    if (panel && panel.innerHTML.trim() === "") {
-      const url = `${window.ROOT_PATH}/version?partial=true`;
-      fetch(url)
-        .then((response) => {
-          if (!response.ok) {
-            throw new Error("Network response was not ok");
-          }
-          return response.text();
-        })
-        .then((html) => {
-          panel.innerHTML = html;
-        })
-        .catch((error) => {
-          console.error("Failed to load version info:", error);
-          panel.innerHTML = "<p class='text-red-600'>Failed to load version info.</p>";
-        });
+      const panel = document.getElementById("version-info-panel");
+      if (panel && panel.innerHTML.trim() === "") {
+        fetch(`${window.ROOT_PATH}/version?partial=true`)
+          .then((resp) => {
+            if (!resp.ok) throw new Error("Network response was not ok");
+            return resp.text();
+          })
+          .then((html) => {
+            panel.innerHTML = html; // Direct assignment for trusted backend content
+          })
+          .catch((err) => {
+            console.error("Failed to load version info:", err);
+            panel.innerHTML =
+              "<p class='text-red-600'>Failed to load version info.</p>";
+          });
+      }
     }
-  }
 }
 
 // handle auth type selection
@@ -602,11 +679,10 @@ async function viewTool(toolId) {
     const tool = await response.json();
 
     let authHTML = "";
-
     if (tool.auth?.username && tool.auth?.password) {
       authHTML = `
         <p><strong>Authentication Type:</strong> Basic</p>
-        <p><strong>Username:</strong> ${tool.auth.username}</p>
+        <p><strong>Username:</strong> ${escapeHtml(tool.auth.username)}</p>
         <p><strong>Password:</strong> ********</p>
       `;
     } else if (tool.auth?.token) {
@@ -617,14 +693,14 @@ async function viewTool(toolId) {
     } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
       authHTML = `
         <p><strong>Authentication Type:</strong> Custom Headers</p>
-        <p><strong>Header Key:</strong> ${tool.auth.authHeaderKey}</p>
+        <p><strong>Header Key:</strong> ${escapeHtml(tool.auth.authHeaderKey)}</p>
         <p><strong>Header Value:</strong> ********</p>
       `;
     } else {
       authHTML = `<p><strong>Authentication Type:</strong> None</p>`;
     }
 
-    // Helper function to create annotation badges
+    // Helper function to create annotation badges - FIXED
     const renderAnnotations = (annotations) => {
       if (!annotations || Object.keys(annotations).length === 0) {
         return '<p><strong>Annotations:</strong> <span class="text-gray-500">None</span></p>';
@@ -632,9 +708,9 @@ async function viewTool(toolId) {
 
       const badges = [];
 
-      // Show title if present
+      // Show title if present - ESCAPED
       if (annotations.title) {
-        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">${annotations.title}</span>`);
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">${escapeHtml(annotations.title)}</span>`);
       }
 
       // Show behavior hints with appropriate colors
@@ -654,11 +730,11 @@ async function viewTool(toolId) {
         badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐 External Access</span>`);
       }
 
-      // Show any other custom annotations
+      // Show any other custom annotations - ESCAPED
       Object.keys(annotations).forEach(key => {
         if (!['title', 'readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'].includes(key)) {
           const value = annotations[key];
-          badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mr-1 mb-1">${key}: ${value}</span>`);
+          badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mr-1 mb-1">${escapeHtml(key)}: ${escapeHtml(value)}</span>`);
         }
       });
 
@@ -674,32 +750,32 @@ async function viewTool(toolId) {
 
     document.getElementById("tool-details").innerHTML = `
       <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
-        <p><strong>Name:</strong> ${tool.name}</p>
-        <p><strong>URL:</strong> ${tool.url}</p>
-        <p><strong>Type:</strong> ${tool.integrationType}</p>
-        <p><strong>Description:</strong> ${tool.description || "N/A"}</p>
-        <p><strong>Request Type:</strong> ${tool.requestType || "N/A"}</p>
+        <p><strong>Name:</strong> ${escapeHtml(tool.name)}</p>
+        <p><strong>URL:</strong> ${escapeHtml(tool.url)}</p>
+        <p><strong>Type:</strong> ${escapeHtml(tool.integrationType)}</p>
+        <p><strong>Description:</strong> ${escapeHtml(tool.description || "N/A")}</p>
+        <p><strong>Request Type:</strong> ${escapeHtml(tool.requestType || "N/A")}</p>
         ${authHTML}
         ${renderAnnotations(tool.annotations)}
         <div>
           <strong>Headers:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(tool.headers || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${escapeHtml(JSON.stringify(tool.headers || {}, null, 2))}</pre>
         </div>
         <div>
           <strong>Input Schema:</strong>
-          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(tool.inputSchema || {}, null, 2)}</pre>
+          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${escapeHtml(JSON.stringify(tool.inputSchema || {}, null, 2))}</pre>
         </div>
         <div>
           <strong>Metrics:</strong>
           <ul class="list-disc list-inside ml-4">
-            <li>Total Executions: ${tool.metrics?.totalExecutions ?? 0}</li>
-            <li>Successful Executions: ${tool.metrics?.successfulExecutions ?? 0}</li>
-            <li>Failed Executions: ${tool.metrics?.failedExecutions ?? 0}</li>
-            <li>Failure Rate: ${tool.metrics?.failureRate ?? 0}</li>
-            <li>Min Response Time: ${tool.metrics?.minResponseTime ?? "N/A"}</li>
-            <li>Max Response Time: ${tool.metrics?.maxResponseTime ?? "N/A"}</li>
-            <li>Average Response Time: ${tool.metrics?.avgResponseTime ?? "N/A"}</li>
-            <li>Last Execution Time: ${tool.metrics?.lastExecutionTime ?? "N/A"}</li>
+            <li>Total Executions: ${escapeHtml(tool.metrics?.totalExecutions ?? 0)}</li>
+            <li>Successful Executions: ${escapeHtml(tool.metrics?.successfulExecutions ?? 0)}</li>
+            <li>Failed Executions: ${escapeHtml(tool.metrics?.failedExecutions ?? 0)}</li>
+            <li>Failure Rate: ${escapeHtml(tool.metrics?.failureRate ?? 0)}</li>
+            <li>Min Response Time: ${escapeHtml(tool.metrics?.minResponseTime ?? "N/A")}</li>
+            <li>Max Response Time: ${escapeHtml(tool.metrics?.maxResponseTime ?? "N/A")}</li>
+            <li>Average Response Time: ${escapeHtml(tool.metrics?.avgResponseTime ?? "N/A")}</li>
+            <li>Last Execution Time: ${escapeHtml(tool.metrics?.lastExecutionTime ?? "N/A")}</li>
           </ul>
         </div>
       </div>
@@ -877,12 +953,17 @@ async function viewResource(resourceUri) {
     const data = await response.json();
     const resource = data.resource;
     const content = data.content;
+    
+    const contentDisplay = typeof content === "object"
+      ? JSON.stringify(content, null, 2)
+      : content;
+    
     document.getElementById("resource-details").innerHTML = `
           <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
-            <p><strong>URI:</strong> ${resource.uri}</p>
-            <p><strong>Name:</strong> ${resource.name}</p>
-            <p><strong>Type:</strong> ${resource.mimeType || "N/A"}</p>
-            <p><strong>Description:</strong> ${resource.description || "N/A"}</p>
+            <p><strong>URI:</strong> ${escapeHtml(resource.uri)}</p>
+            <p><strong>Name:</strong> ${escapeHtml(resource.name)}</p>
+            <p><strong>Type:</strong> ${escapeHtml(resource.mimeType || "N/A")}</p>
+            <p><strong>Description:</strong> ${escapeHtml(resource.description || "N/A")}</p>
             <p><strong>Status:</strong>
               <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                 resource.isActive
@@ -894,26 +975,19 @@ async function viewResource(resourceUri) {
             </p>
             <div>
               <strong>Content:</strong>
-              <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80">
-                ${
-                  typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : content
-                }
-              </pre>
+              <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80">${escapeHtml(contentDisplay)}</pre>
             </div>
-            <!-- ADD THIS: Metrics section -->
             <div>
               <strong>Metrics:</strong>
               <ul class="list-disc list-inside ml-4">
-                <li>Total Executions: ${resource.metrics.totalExecutions}</li>
-                <li>Successful Executions: ${resource.metrics.successfulExecutions}</li>
-                <li>Failed Executions: ${resource.metrics.failedExecutions}</li>
-                <li>Failure Rate: ${resource.metrics.failureRate}</li>
-                <li>Min Response Time: ${resource.metrics.minResponseTime}</li>
-                <li>Max Response Time: ${resource.metrics.maxResponseTime}</li>
-                <li>Average Response Time: ${resource.metrics.avgResponseTime}</li>
-                <li>Last Execution Time: ${resource.metrics.lastExecutionTime || "N/A"}</li>
+                <li>Total Executions: ${escapeHtml(resource.metrics.totalExecutions)}</li>
+                <li>Successful Executions: ${escapeHtml(resource.metrics.successfulExecutions)}</li>
+                <li>Failed Executions: ${escapeHtml(resource.metrics.failedExecutions)}</li>
+                <li>Failure Rate: ${escapeHtml(resource.metrics.failureRate)}</li>
+                <li>Min Response Time: ${escapeHtml(resource.metrics.minResponseTime)}</li>
+                <li>Max Response Time: ${escapeHtml(resource.metrics.maxResponseTime)}</li>
+                <li>Average Response Time: ${escapeHtml(resource.metrics.avgResponseTime)}</li>
+                <li>Last Execution Time: ${escapeHtml(resource.metrics.lastExecutionTime || "N/A")}</li>
               </ul>
             </div>
           </div>
@@ -980,45 +1054,44 @@ async function viewPrompt(promptName) {
       `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}`,
     );
     const prompt = await response.json();
+    
     document.getElementById("prompt-details").innerHTML = `
-          <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
-            <p><strong>Name:</strong> ${prompt.name}</p>
-            <p><strong>Description:</strong> ${prompt.description || "N/A"}</p>
-            <p><strong>Status:</strong>
-              <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                prompt.isActive
-                  ? "bg-green-100 text-green-800"
-                  : "bg-red-100 text-red-800"
-              }">
-                ${prompt.isActive ? "Active" : "Inactive"}
-              </span>
-            </p>
-            <div>
-              <strong>Template:</strong>
-              <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80">
-                ${prompt.template}
-              </pre>
-            </div>
-            <div>
-              <strong>Arguments:</strong>
-              <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(prompt.arguments || [], null, 2)}</pre>
-            </div>
-            <!-- ADD THIS: Metrics section -->
-            <div>
-              <strong>Metrics:</strong>
-              <ul class="list-disc list-inside ml-4">
-                <li>Total Executions: ${prompt.metrics.totalExecutions}</li>
-                <li>Successful Executions: ${prompt.metrics.successfulExecutions}</li>
-                <li>Failed Executions: ${prompt.metrics.failedExecutions}</li>
-                <li>Failure Rate: ${prompt.metrics.failureRate}</li>
-                <li>Min Response Time: ${prompt.metrics.minResponseTime}</li>
-                <li>Max Response Time: ${prompt.metrics.maxResponseTime}</li>
-                <li>Average Response Time: ${prompt.metrics.avgResponseTime}</li>
-                <li>Last Execution Time: ${prompt.metrics.lastExecutionTime || "N/A"}</li>
-              </ul>
-            </div>
-          </div>
-        `;
+      <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
+        <p><strong>Name:</strong> ${escapeHtml(prompt.name)}</p>
+        <p><strong>Description:</strong> ${escapeHtml(prompt.description || "N/A")}</p>
+        <p><strong>Status:</strong>
+          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+            prompt.isActive
+              ? "bg-green-100 text-green-800"
+              : "bg-red-100 text-red-800"
+          }">
+            ${prompt.isActive ? "Active" : "Inactive"}
+          </span>
+        </p>
+        <div>
+          <strong>Template:</strong>
+          <pre class="mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100">${escapeHtml(prompt.template)}</pre>
+        </div>
+        <div>
+          <strong>Arguments:</strong>
+          <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${escapeHtml(JSON.stringify(prompt.arguments || [], null, 2))}</pre>
+        </div>
+        <div>
+          <strong>Metrics:</strong>
+          <ul class="list-disc list-inside ml-4">
+            <li>Total Executions: ${escapeHtml(prompt.metrics?.totalExecutions ?? 0)}</li>
+            <li>Successful Executions: ${escapeHtml(prompt.metrics?.successfulExecutions ?? 0)}</li>
+            <li>Failed Executions: ${escapeHtml(prompt.metrics?.failedExecutions ?? 0)}</li>
+            <li>Failure Rate: ${escapeHtml(prompt.metrics?.failureRate ?? 0)}</li>
+            <li>Min Response Time: ${escapeHtml(prompt.metrics?.minResponseTime ?? "N/A")}</li>
+            <li>Max Response Time: ${escapeHtml(prompt.metrics?.maxResponseTime ?? "N/A")}</li>
+            <li>Average Response Time: ${escapeHtml(prompt.metrics?.avgResponseTime ?? "N/A")}</li>
+            <li>Last Execution Time: ${escapeHtml(prompt.metrics?.lastExecutionTime ?? "N/A")}</li>
+          </ul>
+        </div>
+      </div>
+    `;
+    
     openModal("prompt-modal");
   } catch (error) {
     console.error("Error fetching prompt details:", error);
@@ -1079,7 +1152,7 @@ async function viewGateway(gatewayId) {
     if (gateway.authUsername && gateway.authPassword) {
       authHTML = `
           <p><strong>Authentication Type:</strong> Basic</p>
-          <p><strong>Username:</strong> ${gateway.authUsername}</p>
+          <p><strong>Username:</strong> ${escapeHtml(gateway.authUsername)}</p>
           <p><strong>Password:</strong> ********</p>
         `;
     } else if (gateway.authToken) {
@@ -1090,7 +1163,7 @@ async function viewGateway(gatewayId) {
     } else if (gateway.authHeaderKey && gateway.authHeaderValue) {
       authHTML = `
           <p><strong>Authentication Type:</strong> Custom Header</p>
-          <p><strong>Header Key:</strong> ${gateway.authHeaderKey}</p>
+          <p><strong>Header Key:</strong> ${escapeHtml(gateway.authHeaderKey)}</p>
           <p><strong>Header Value:</strong> ********</p>
         `;
     } else {
@@ -1099,9 +1172,9 @@ async function viewGateway(gatewayId) {
 
   document.getElementById("gateway-details").innerHTML = `
     <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
-      <p><strong>Name:</strong> ${gateway.name}</p>
-      <p><strong>URL:</strong> ${gateway.url}</p>
-      <p><strong>Description:</strong> ${gateway.description || "N/A"}</p>
+      <p><strong>Name:</strong> ${escapeHtml(gateway.name)}</p>
+      <p><strong>URL:</strong> ${escapeHtml(gateway.url)}</p>
+      <p><strong>Description:</strong> ${escapeHtml(gateway.description || "N/A")}</p>
       <p><strong>Transport:</strong>
         ${gateway.transport === "STREAMABLEHTTP" ? "Streamable HTTP" :
           gateway.transport === "SSE" ? "SSE" : "N/A"}
@@ -1109,7 +1182,6 @@ async function viewGateway(gatewayId) {
       <p class="flex items-center">
       <div class="relative group inline-block">
         <strong class="mr-2">Status:</strong>
-
           <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full
             ${gateway.enabled ? (gateway.reachable ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800") : "bg-red-100 text-red-800"}">
             ${gateway.enabled ? (gateway.reachable ? "Active" : "Offline") : "Inactive"}
@@ -1130,11 +1202,11 @@ async function viewGateway(gatewayId) {
           </div>
         </div>
       </p>
-      <p><strong>Last Seen:</strong> ${gateway.lastSeen || "Never"}</p>
+      <p><strong>Last Seen:</strong> ${escapeHtml(gateway.lastSeen || "Never")}</p>
       ${authHTML}
       <div>
         <strong>Capabilities:</strong>
-        <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${JSON.stringify(gateway.capabilities || {}, null, 2)}</pre>
+        <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${escapeHtml(JSON.stringify(gateway.capabilities || {}, null, 2))}</pre>
       </div>
     </div>
   `;
@@ -1268,101 +1340,73 @@ async function editGateway(gatewayId) {
   }
 }
 
-// viewServer
+/* ---------------------------------------------------------------
+ * Function: viewServer  (server detail modal)
+ * ------------------------------------------------------------- */
 async function viewServer(serverId) {
   try {
-    const response = await fetch(`${window.ROOT_PATH}/admin/servers/${serverId}`);
-    const server = await response.json();
+    const resp   = await fetch(`${window.ROOT_PATH}/admin/servers/${serverId}`);
+    const server = await resp.json();
 
-    // Helper function to render an associated item with ID and name
-    const renderAssociatedItem = (item, mapping) => {
-      // if the item is an object, use its properties directly
+    /* badge helper */
+    const badge = (item, map) => {
       if (typeof item === "object") {
-        return `<span class="inline-block px-2 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded">
-                      ${item.id}: ${item.name}
-                    </span>`;
-      } else {
-        // Otherwise, lookup the name using the mapping (fallback to the id itself)
-        const name = mapping[item] || item;
-        return `<span class="inline-block px-2 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded">
-                      ${name}
-                    </span>`;
+        return `<span class="inline-block px-2 py-1 text-xs font-medium
+                       text-blue-800 bg-blue-100 rounded">
+                  ${escapeHtml(item.id)}: ${escapeHtml(item.name)}
+                </span>`;
       }
+      const name = map[item] || item;
+      return `<span class="inline-block px-2 py-1 text-xs font-medium
+                     text-blue-800 bg-blue-100 rounded">
+                ${escapeHtml(name)}
+              </span>`;
     };
 
-    const toolsHTML =
-      Array.isArray(server.associatedTools) && server.associatedTools.length > 0
-        ? server.associatedTools
-            .map((item) => renderAssociatedItem(item, window.toolMapping))
-            .join(" ")
-        : "N/A";
+    const toolsHTML = (server.associatedTools     || []).map(i => badge(i, window.toolMapping)).join(" ") || "N/A";
+    const resHTML   = (server.associatedResources || []).map(i => badge(i, window.resourceMapping)).join(" ") || "N/A";
+    const prmHTML   = (server.associatedPrompts   || []).map(i => badge(i, window.promptMapping)).join(" ") || "N/A";
 
-    const resourcesHTML =
-      Array.isArray(server.associatedResources) &&
-      server.associatedResources.length > 0
-        ? server.associatedResources
-            .map((item) => renderAssociatedItem(item, window.resourceMapping))
-            .join(" ")
-        : "N/A";
-
-    const promptsHTML =
-      Array.isArray(server.associatedPrompts) &&
-      server.associatedPrompts.length > 0
-        ? server.associatedPrompts
-            .map((item) => renderAssociatedItem(item, window.promptMapping))
-            .join(" ")
-        : "N/A";
+    const iconHTML  = server.icon
+      ? `<img src="${safeUrl(server.icon, true)}" alt="${escapeHtml(server.name)} icon" class="h-8 w-8">`
+      : "N/A";
 
     document.getElementById("server-details").innerHTML = `
-          <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
-            <p><strong>Name:</strong> ${server.name}</p>
-            <p><strong>Description:</strong> ${server.description || "N/A"}</p>
-            <p><strong>Status:</strong>
-              <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                server.isActive
-                  ? "bg-green-100 text-green-800"
-                  : "bg-red-100 text-red-800"
-              }">
-                ${server.isActive ? "Active" : "Inactive"}
-              </span>
-            </p>
-            <div>
-              <strong>Icon:</strong>
-              ${server.icon ? `<img src="${server.icon}" alt="${server.name} Icon" class="h-8 w-8">` : "N/A"}
-            </div>
-            <div>
-              <strong>Associated Tools:</strong>
-              <div class="mt-1 space-x-1">${toolsHTML}</div>
-            </div>
-            <div>
-              <strong>Associated Resources:</strong>
-              <div class="mt-1 space-x-1">${resourcesHTML}</div>
-            </div>
-            <div>
-              <strong>Associated Prompts:</strong>
-              <div class="mt-1 space-x-1">${promptsHTML}</div>
-            </div>
-            <div>
-              <strong>Metrics:</strong>
-              <ul class="list-disc list-inside ml-4">
-                <li>Total Executions: ${server.metrics.totalExecutions}</li>
-                <li>Successful Executions: ${server.metrics.successfulExecutions}</li>
-                <li>Failed Executions: ${server.metrics.failedExecutions}</li>
-                <li>Failure Rate: ${server.metrics.failureRate}</li>
-                <li>Min Response Time: ${server.metrics.minResponseTime}</li>
-                <li>Max Response Time: ${server.metrics.maxResponseTime}</li>
-                <li>Average Response Time: ${server.metrics.avgResponseTime}</li>
-                <li>Last Execution Time: ${server.metrics.lastExecutionTime || "N/A"}</li>
-              </ul>
-            </div>
-          </div>
-        `;
+      <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
+        <p><strong>Name:</strong> ${escapeHtml(server.name)}</p>
+        <p><strong>Description:</strong> ${escapeHtml(server.description || "N/A")}</p>
+        <p><strong>Status:</strong>
+          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                ${server.isActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}">
+            ${server.isActive ? "Active" : "Inactive"}
+          </span>
+        </p>
+        <div><strong>Icon:</strong> ${iconHTML}</div>
+        <div><strong>Associated Tools:</strong> <div class="mt-1 space-x-1">${toolsHTML}</div></div>
+        <div><strong>Associated Resources:</strong> <div class="mt-1 space-x-1">${resHTML}</div></div>
+        <div><strong>Associated Prompts:</strong> <div class="mt-1 space-x-1">${prmHTML}</div></div>
+        <div>
+          <strong>Metrics:</strong>
+          <ul class="list-disc list-inside ml-4">
+            <li>Total Executions: ${escapeHtml(server.metrics.totalExecutions)}</li>
+            <li>Successful Executions: ${escapeHtml(server.metrics.successfulExecutions)}</li>
+            <li>Failed Executions: ${escapeHtml(server.metrics.failedExecutions)}</li>
+            <li>Failure Rate: ${escapeHtml(server.metrics.failureRate)}</li>
+            <li>Min RT: ${escapeHtml(server.metrics.minResponseTime)}</li>
+            <li>Max RT: ${escapeHtml(server.metrics.maxResponseTime)}</li>
+            <li>Avg RT: ${escapeHtml(server.metrics.avgResponseTime)}</li>
+            <li>Last Exec Time: ${escapeHtml(server.metrics.lastExecutionTime || "N/A")}</li>
+          </ul>
+        </div>
+      </div>`;
+
     openModal("server-modal");
-  } catch (error) {
-    console.error("Error fetching server details:", error);
+  } catch (err) {
+    console.error("Server-detail error:", err);
     alert("Failed to load server details");
   }
 }
+
 
 async function editServer(serverId) {
   try {
@@ -1583,365 +1627,229 @@ function refreshEditors() {
   }, 100);
 }
 
-// <!-- Function to load aggregated metrics -->
+/* ---------------------------------------------------------------
+ * Function: loadAggregatedMetrics  (aggregated dashboard)
+ * ------------------------------------------------------------- */
 async function loadAggregatedMetrics() {
   try {
-    // Fetch aggregated metrics from the backend
-    const response = await fetch(`${window.ROOT_PATH}/admin/metrics`);
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const data = await response.json();
+    const resp = await fetch(`${window.ROOT_PATH}/admin/metrics`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
 
-    // Use fallback for keys (snake_case vs camelCase)
-    const toolsTotal =
-      data.tools.total_executions ?? data.tools.totalExecutions ?? 0;
-    const toolsSuccess =
-      data.tools.successful_executions ?? data.tools.successfulExecutions ?? 0;
-    const toolsFailed =
-      data.tools.failed_executions ?? data.tools.failedExecutions ?? 0;
-    const toolsFailureRate =
-      data.tools.failure_rate ?? data.tools.failureRate ?? 0;
-    const toolsMin =
-      data.tools.min_response_time ?? data.tools.minResponseTime ?? "N/A";
-    const toolsMax =
-      data.tools.max_response_time ?? data.tools.maxResponseTime ?? "N/A";
-    const toolsAvg =
-      data.tools.avg_response_time ?? data.tools.avgResponseTime ?? "N/A";
-    const toolsLast =
-      data.tools.last_execution_time ?? data.tools.lastExecutionTime ?? "N/A";
+    /* ---------- helpers -------------------------------------- */
+    const camel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    const get   = (cat, k, d = 0) => data[cat][k] ?? data[cat][camel(k)] ?? d;
 
-    const resourcesTotal =
-      data.resources.totalExecutions ?? data.resources.total_executions ?? 0;
-    const resourcesSuccess =
-      data.resources.successfulExecutions ??
-      data.resources.successful_executions ??
-      0;
-    const resourcesFailed =
-      data.resources.failedExecutions ?? data.resources.failed_executions ?? 0;
-    const resourcesFailureRate =
-      data.resources.failureRate ?? data.resources.failure_rate ?? 0;
-    const resourcesMin =
-      data.resources.minResponseTime ??
-      data.resources.min_response_time ??
-      "N/A";
-    const resourcesMax =
-      data.resources.maxResponseTime ??
-      data.resources.max_response_time ??
-      "N/A";
-    const resourcesAvg =
-      data.resources.avgResponseTime ??
-      data.resources.avg_response_time ??
-      "N/A";
-    const resourcesLast =
-      data.resources.lastExecutionTime ??
-      data.resources.last_execution_time ??
-      "N/A";
-
-    const serversTotal =
-      data.servers.totalExecutions ?? data.servers.total_executions ?? 0;
-    const serversSuccess =
-      data.servers.successfulExecutions ??
-      data.servers.successful_executions ??
-      0;
-    const serversFailed =
-      data.servers.failedExecutions ?? data.servers.failed_executions ?? 0;
-    const serversFailureRate =
-      data.servers.failureRate ?? data.servers.failure_rate ?? 0;
-    const serversMin =
-      data.servers.minResponseTime ?? data.servers.min_response_time ?? "N/A";
-    const serversMax =
-      data.servers.maxResponseTime ?? data.servers.max_response_time ?? "N/A";
-    const serversAvg =
-      data.servers.avgResponseTime ?? data.servers.avg_response_time ?? "N/A";
-    const serversLast =
-      data.servers.lastExecutionTime ??
-      data.servers.last_execution_time ??
-      "N/A";
-
-    const promptsTotal =
-      data.prompts.total_executions ?? data.prompts.totalExecutions ?? 0;
-    const promptsSuccess =
-      data.prompts.successful_executions ??
-      data.prompts.successfulExecutions ??
-      0;
-    const promptsFailed =
-      data.prompts.failed_executions ?? data.prompts.failedExecutions ?? 0;
-    const promptsFailureRate =
-      data.prompts.failure_rate ?? data.prompts.failureRate ?? 0;
-    const promptsMin =
-      data.prompts.min_response_time ?? data.prompts.minResponseTime ?? "N/A";
-    const promptsMax =
-      data.prompts.max_response_time ?? data.prompts.maxResponseTime ?? "N/A";
-    const promptsAvg =
-      data.prompts.avg_response_time ?? data.prompts.avgResponseTime ?? "N/A";
-    const promptsLast =
-      data.prompts.last_execution_time ??
-      data.prompts.lastExecutionTime ??
-      "N/A";
-
-    // Build an aggregated metrics table
-    const tableHTML = `
-        <table class="min-w-full bg-white border dark:bg-gray-900 dark:text-gray-100">
-          <thead>
-            <tr>
-              <th class="py-2 px-4 border dark:text-gray-200">Entity</th>
-              <th class="py-2 px-4 border dark:text-gray-200">Total</th>
-              <th class="py-2 px-4 border dark:text-gray-200">Successful</th>
-              <th class="py-2 px-4 border dark:text-gray-200">Failed</th>
-              <th class="py-2 px-4 border dark:text-gray-200">Failure Rate</th>
-              <th class="py-2 px-4 border dark:text-gray-200">Min RT</th>
-              <th class="py-2 px-4 border dark:text-gray-200">Max RT</th>
-              <th class="py-2 px-4 border dark:text-gray-200">Avg RT</th>
-              <th class="py-2 px-4 border dark:text-gray-200">Last Exec</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Tools</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${toolsTotal}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${toolsSuccess}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${toolsFailed}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${toolsFailureRate}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${toolsMin}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${toolsMax}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${toolsAvg}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${toolsLast}</td>
-            </tr>
-            <tr>
-              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Resources</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${resourcesTotal}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${resourcesSuccess}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${resourcesFailed}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${resourcesFailureRate}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${resourcesMin}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${resourcesMax}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${resourcesAvg}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${resourcesLast}</td>
-            </tr>
-            <tr>
-              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Servers</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${serversTotal}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${serversSuccess}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${serversFailed}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${serversFailureRate}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${serversMin}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${serversMax}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${serversAvg}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${serversLast}</td>
-            </tr>
-            <tr>
-              <td class="py-2 px-4 border font-semibold dark:text-gray-200">Prompts</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${promptsTotal}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${promptsSuccess}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${promptsFailed}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${promptsFailureRate}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${promptsMin}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${promptsMax}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${promptsAvg}</td>
-              <td class="py-2 px-4 border dark:text-gray-300">${promptsLast}</td>
-            </tr>
-          </tbody>
-        </table>
-      `;
-    document.getElementById("aggregated-metrics-content").innerHTML = tableHTML;
-
-    // Update overall bar chart (Total Executions)
-    if (window.metricsChartInstance) {
-      window.metricsChartInstance.destroy();
-    }
-    // cma
-    const ctx = document.getElementById("metricsChart").getContext("2d");
-    window.metricsChartInstance = new window.Chart(ctx, {
-      type: "bar",
-      data: {
-        labels: ["Tools", "Resources", "Servers", "Prompts"],
-        datasets: [
-          {
-            label: "Total Executions",
-            data: [toolsTotal, resourcesTotal, serversTotal, promptsTotal],
-            backgroundColor: [
-              "rgba(54, 162, 235, 0.6)",
-              "rgba(75, 192, 192, 0.6)",
-              "rgba(255, 205, 86, 0.6)",
-              "rgba(201, 203, 207, 0.6)",
-            ],
-            borderColor: [
-              "rgb(54, 162, 235)",
-              "rgb(75, 192, 192)",
-              "rgb(255, 205, 86)",
-              "rgb(201, 203, 207)",
-            ],
-            borderWidth: 1,
-          },
-        ],
-      },
-      options: {
-        scales: {
-          y: {
-            beginAtZero: true,
-          },
-        },
-      },
+    const pack = (cat) => ({
+      total : get(cat, "total_executions"),
+      ok    : get(cat, "successful_executions"),
+      fail  : get(cat, "failed_executions"),
+      rate  : get(cat, "failure_rate"),
+      min   : get(cat, "min_response_time",  "N/A"),
+      max   : get(cat, "max_response_time",  "N/A"),
+      avg   : get(cat, "avg_response_time",  "N/A"),
+      last  : get(cat, "last_execution_time","N/A"),
     });
 
-    // Now load top items for each category
+    const tools     = pack("tools");
+    const resources = pack("resources");
+    const servers   = pack("servers");
+    const prompts   = pack("prompts");
+
+    /* ---------- table ---------------------------------------- */
+    const row = (lbl, d) => `
+      <tr>
+        <td class="py-2 px-4 border font-semibold dark:text-gray-200">${lbl}</td>
+        <td class="py-2 px-4 border dark:text-gray-300">${d.total}</td>
+        <td class="py-2 px-4 border dark:text-gray-300">${d.ok}</td>
+        <td class="py-2 px-4 border dark:text-gray-300">${d.fail}</td>
+        <td class="py-2 px-4 border dark:text-gray-300">${d.rate}</td>
+        <td class="py-2 px-4 border dark:text-gray-300">${d.min}</td>
+        <td class="py-2 px-4 border dark:text-gray-300">${d.max}</td>
+        <td class="py-2 px-4 border dark:text-gray-300">${d.avg}</td>
+        <td class="py-2 px-4 border dark:text-gray-300">${d.last}</td>
+      </tr>`;
+
+    document.getElementById("aggregated-metrics-content").innerHTML = `
+      <table class="min-w-full bg-white border dark:bg-gray-900 dark:text-gray-100">
+        <thead>
+          <tr>
+            <th class="py-2 px-4 border dark:text-gray-200">Entity</th>
+            <th class="py-2 px-4 border dark:text-gray-200">Total</th>
+            <th class="py-2 px-4 border dark:text-gray-200">Successful</th>
+            <th class="py-2 px-4 border dark:text-gray-200">Failed</th>
+            <th class="py-2 px-4 border dark:text-gray-200">Failure Rate</th>
+            <th class="py-2 px-4 border dark:text-gray-200">Min RT</th>
+            <th class="py-2 px-4 border dark:text-gray-200">Max RT</th>
+            <th class="py-2 px-4 border dark:text-gray-200">Avg RT</th>
+            <th class="py-2 px-4 border dark:text-gray-200">Last Exec</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${row("Tools",      tools)}
+          ${row("Resources",  resources)}
+          ${row("Servers",    servers)}
+          ${row("Prompts",    prompts)}
+        </tbody>
+      </table>`;
+
+    /* ---------- bar chart (total executions) ----------------- */
+    if (window.metricsChartInstance) window.metricsChartInstance.destroy();
+
+    const ctx = document.getElementById("metricsChart").getContext("2d");
+    window.metricsChartInstance = new Chart(ctx, {
+      type : "bar",
+      data : {
+        labels   : ["Tools", "Resources", "Servers", "Prompts"],
+        datasets : [{
+          label : "Total Executions",
+          data  : [tools.total, resources.total, servers.total, prompts.total],
+          backgroundColor : [
+            "rgba(54,162,235,0.6)",
+            "rgba(75,192,192,0.6)",
+            "rgba(255,205,86,0.6)",
+            "rgba(201,203,207,0.6)",
+          ],
+          borderColor     : [
+            "rgb(54,162,235)",
+            "rgb(75,192,192)",
+            "rgb(255,205,86)",
+            "rgb(201,203,207)",
+          ],
+          borderWidth : 1,
+        }],
+      },
+      options : { scales : { y : { beginAtZero : true } } },
+    });
+
+    /* ---------- sub-tables (unchanged loaders) --------------- */
     loadTopTools();
     loadTopResources();
     loadTopServers();
     loadTopPrompts();
-  } catch (error) {
-    console.error("Error fetching aggregated metrics:", error);
+  } catch (err) {
+    console.error("Aggregated metrics error:", err);
     alert("Failed to load aggregated metrics");
   }
 }
 
+
 async function loadTopTools() {
   try {
     const response = await fetch(`${window.ROOT_PATH}/admin/tools`);
-    const tools = await response.json();
-    // Sort descending by executions
-    tools.sort((a, b) => {
-      const aCount = a.metrics?.totalExecutions ?? a.executionCount ?? 0;
-      const bCount = b.metrics?.totalExecutions ?? b.executionCount ?? 0;
-      return bCount - aCount;
-    });
-    const topTools = tools.slice(0, 5);
-    let html = `<table class="min-w-full border">
-        <thead>
-          <tr>
-            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
-            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
-            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
-          </tr>
-        </thead>
-        <tbody>`;
-    topTools.forEach((tool) => {
-      const count = tool.metrics?.totalExecutions ?? tool.executionCount ?? 0;
-      html += `<tr>
-          <td class="py-1 px-2 border dark:text-gray-300">${tool.id}</td>
-          <td class="py-1 px-2 border dark:text-gray-300">${tool.name}</td>
-          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
-        </tr>`;
-    });
-    html += `</tbody></table>`;
-    document.getElementById("top-tools-content").innerHTML = html;
-  } catch (error) {
-    console.error("Error loading top tools:", error);
-    document.getElementById("top-tools-content").innerHTML =
+    const tools    = await response.json();
+
+    tools.sort((a, b) =>
+      (b.metrics?.totalExecutions ?? 0) - (a.metrics?.totalExecutions ?? 0)
+    );
+
+    const top = tools.slice(0, 5);
+    const rows = top.map(t => [
+      t.id,
+      t.name,                              // ← will be textContent-escaped
+      t.metrics?.totalExecutions ?? 0
+    ]);
+
+    const table = buildSafeTable(['ID', 'Name', 'Executions'], rows);
+    const slot  = document.getElementById('top-tools-content');
+    slot.innerHTML = '';                   // clear previous
+    slot.appendChild(table);
+
+  } catch (err) {
+    console.error('Error loading top tools:', err);
+    document.getElementById('top-tools-content').innerHTML =
       `<p class="text-red-600">Error loading top tools.</p>`;
   }
 }
 
+
 async function loadTopResources() {
   try {
-    const response = await fetch(`${window.ROOT_PATH}/admin/resources`);
+    const response  = await fetch(`${window.ROOT_PATH}/admin/resources`);
     const resources = await response.json();
-    resources.sort((a, b) => {
-      const aCount = a.metrics?.totalExecutions ?? 0;
-      const bCount = b.metrics?.totalExecutions ?? 0;
-      return bCount - aCount;
-    });
-    const topResources = resources.slice(0, 5);
-    let html = `<table class="min-w-full border">
-        <thead>
-          <tr>
-            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
-            <th class="py-1 px-2 border dark:text-gray-300">URI</th>
-            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
-            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
-          </tr>
-        </thead>
-        <tbody>`;
-    topResources.forEach((resource) => {
-      const count = resource.metrics?.totalExecutions ?? 0;
-      html += `<tr>
-          <td class="py-1 px-2 border dark:text-gray-300">${resource.id}</td>
-          <td class="py-1 px-2 border dark:text-gray-300">${resource.uri}</td>
-          <td class="py-1 px-2 border dark:text-gray-300">${resource.name}</td>
-          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
-        </tr>`;
-    });
-    html += `</tbody></table>`;
-    document.getElementById("top-resources-content").innerHTML = html;
-  } catch (error) {
-    console.error("Error loading top resources:", error);
-    document.getElementById("top-resources-content").innerHTML =
+
+    resources.sort((a, b) =>
+      (b.metrics?.totalExecutions ?? 0) - (a.metrics?.totalExecutions ?? 0)
+    );
+
+    const top  = resources.slice(0, 5);
+    const rows = top.map(r => [
+      r.id,
+      r.uri,
+      r.name,
+      r.metrics?.totalExecutions ?? 0
+    ]);
+
+    const table = buildSafeTable(['ID', 'URI', 'Name', 'Executions'], rows);
+    const slot  = document.getElementById('top-resources-content');
+    slot.innerHTML = '';
+    slot.appendChild(table);
+
+  } catch (err) {
+    console.error('Error loading top resources:', err);
+    document.getElementById('top-resources-content').innerHTML =
       `<p class="text-red-600">Error loading top resources.</p>`;
   }
 }
 
+
 async function loadTopServers() {
   try {
     const response = await fetch(`${window.ROOT_PATH}/admin/servers`);
-    const servers = await response.json();
-    servers.sort((a, b) => {
-      const aCount = a.metrics?.totalExecutions ?? 0;
-      const bCount = b.metrics?.totalExecutions ?? 0;
-      return bCount - aCount;
-    });
-    const topServers = servers.slice(0, 5);
-    let html = `<table class="min-w-full border">
-        <thead>
-          <tr>
-            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
-            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
-            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
-          </tr>
-        </thead>
-        <tbody>`;
-    topServers.forEach((server) => {
-      const count = server.metrics?.totalExecutions ?? 0;
-      html += `<tr>
-          <td class="py-1 px-2 border dark:text-gray-300">${server.id}</td>
-          <td class="py-1 px-2 border dark:text-gray-300">${server.name}</td>
-          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
-        </tr>`;
-    });
-    html += `</tbody></table>`;
-    document.getElementById("top-servers-content").innerHTML = html;
-  } catch (error) {
-    console.error("Error loading top servers:", error);
-    document.getElementById("top-servers-content").innerHTML =
+    const servers  = await response.json();
+
+    servers.sort((a, b) =>
+      (b.metrics?.totalExecutions ?? 0) - (a.metrics?.totalExecutions ?? 0)
+    );
+
+    const top  = servers.slice(0, 5);
+    const rows = top.map(s => [
+      s.id,
+      s.name,
+      s.metrics?.totalExecutions ?? 0
+    ]);
+
+    const table = buildSafeTable(['ID', 'Name', 'Executions'], rows);
+    const slot  = document.getElementById('top-servers-content');
+    slot.innerHTML = '';
+    slot.appendChild(table);
+
+  } catch (err) {
+    console.error('Error loading top servers:', err);
+    document.getElementById('top-servers-content').innerHTML =
       `<p class="text-red-600">Error loading top servers.</p>`;
   }
 }
 
+
 async function loadTopPrompts() {
   try {
     const response = await fetch(`${window.ROOT_PATH}/admin/prompts`);
-    const prompts = await response.json();
-    prompts.sort((a, b) => {
-      const aCount = a.metrics?.totalExecutions ?? 0;
-      const bCount = b.metrics?.totalExecutions ?? 0;
-      return bCount - aCount;
-    });
-    const topPrompts = prompts.slice(0, 5);
-    let html = `<table class="min-w-full border">
-        <thead>
-          <tr>
-            <th class="py-1 px-2 border dark:text-gray-300">ID</th>
-            <th class="py-1 px-2 border dark:text-gray-300">Name</th>
-            <th class="py-1 px-2 border dark:text-gray-300">Executions</th>
-          </tr>
-        </thead>
-        <tbody>`;
-    topPrompts.forEach((prompt) => {
-      const count = prompt.metrics?.totalExecutions ?? 0;
-      html += `<tr>
-          <td class="py-1 px-2 border dark:text-gray-300">${prompt.id}</td>
-          <td class="py-1 px-2 border dark:text-gray-300">${prompt.name}</td>
-          <td class="py-1 px-2 border dark:text-gray-300">${count}</td>
-        </tr>`;
-    });
-    html += `</tbody></table>`;
-    document.getElementById("top-prompts-content").innerHTML = html;
-  } catch (error) {
-    console.error("Error loading top prompts:", error);
-    document.getElementById("top-prompts-content").innerHTML =
+    const prompts  = await response.json();
+
+    prompts.sort((a, b) =>
+      (b.metrics?.totalExecutions ?? 0) - (a.metrics?.totalExecutions ?? 0)
+    );
+
+    const top  = prompts.slice(0, 5);
+    const rows = top.map(p => [
+      p.id,
+      p.name,
+      p.metrics?.totalExecutions ?? 0
+    ]);
+
+    const table = buildSafeTable(['ID', 'Name', 'Executions'], rows);
+    const slot  = document.getElementById('top-prompts-content');
+    slot.innerHTML = '';
+    slot.appendChild(table);
+
+  } catch (err) {
+    console.error('Error loading top prompts:', err);
+    document.getElementById('top-prompts-content').innerHTML =
       `<p class="text-red-600">Error loading top prompts.</p>`;
   }
 }
+
 
 // Tool Test Modal
 let currentTestTool = null;
