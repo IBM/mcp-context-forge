@@ -1028,6 +1028,42 @@ async def test_database_remove_session_exception(monkeypatch, caplog):
 
     assert "Database error removing session db_session" in caplog.text
 
+@pytest.mark.asyncio
+async def test_database_remove_session_exception(monkeypatch, caplog):
+    """Test database backend session operations."""
+    mock_db_session = Mock()
+    mock_db_session.filter.return_value.delete = Mock()
+    mock_db_session.query = Mock(return_value=mock_db_session)
+    mock_db_session.commit = Mock(side_effect=Exception("db error"))
+    mock_db_session.rollback = Mock()
+    mock_db_session.close = Mock()
+
+    monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
+    monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db_session]), raising=True)
+
+    caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+
+    registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
+    await registry.initialize()
+
+    mock_db_session.rollback.reset_mock()
+    mock_db_session.close.reset_mock()
+
+    tr = FakeSSETransport("db_session")
+    tr.disconnect = AsyncMock()
+
+    monkeypatch.setattr(registry, "_sessions", {"db_session": tr})
+
+    await registry.remove_session("db_session")
+
+    tr.disconnect.assert_awaited_once()
+
+    # 8) And the DB path hit the commit‐>exception branch:
+    mock_db_session.rollback.assert_called_once()
+    mock_db_session.close.assert_called_once()
+
+    assert "Database error removing session db_session" in caplog.text
+
 # --------------------------------------------------------------------------- #
 # Cleanup and error scenarios                                                 #
 # --------------------------------------------------------------------------- #
