@@ -21,12 +21,6 @@ import re
 from typing import Any, Dict, List, Optional
 import uuid
 
-# First-Party
-from mcpgateway.config import settings
-from mcpgateway.types import ResourceContent
-from mcpgateway.utils.create_slug import slugify
-from mcpgateway.utils.db_isready import wait_for_db_ready
-
 # Third-Party
 import jsonschema
 from sqlalchemy import (
@@ -58,6 +52,12 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 from sqlalchemy.orm.attributes import get_history
+
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.types import ResourceContent
+from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.db_isready import wait_for_db_ready
 
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", …)
@@ -111,6 +111,12 @@ engine = create_engine(
 # 6. Function to return UTC timestamp
 # ---------------------------------------------------------------------------
 def utc_now():
+    """
+    Get the current time in UTC.
+
+    Returns:
+        datetime: The current UTC date and time as a timezone-aware datetime object.
+    """
     return datetime.now(timezone.utc)
 
 
