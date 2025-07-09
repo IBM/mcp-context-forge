@@ -22,8 +22,8 @@ type: application
 # * appVersion   - upstream application version; shown in UIs but not
 #                  used for upgrade logic.
 # --------------------------------------------------------------------
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.3.0
+appVersion: "0.3.0"
 
 # Icon shown by registries / dashboards (must be an http(s) URL).
 icon: https://raw.githubusercontent.com/IBM/mcp-context-forge/main/docs/theme/logo.png

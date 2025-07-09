@@ -336,13 +336,13 @@ docker run -d --name mcpgateway \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.2.0
+  ghcr.io/ibm/mcp-context-forge:0.3.0
 
 # Tail logs (Ctrl+C to quit)
 docker logs -f mcpgateway
 
 # Generating an API key
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.2.0 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.3.0 \
   python -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
 ```
 
@@ -362,7 +362,7 @@ docker run -d --name mcpgateway \
   -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
-  ghcr.io/ibm/mcp-context-forge:0.2.0
+  ghcr.io/ibm/mcp-context-forge:0.3.0
 ```
 
 SQLite now lives on the host at `./data/mcp.db`.
@@ -376,7 +376,7 @@ docker run -d --name mcpgateway \
   -e PORT=4444 \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -v $(pwd)/data:/data \
-  ghcr.io/ibm/mcp-context-forge:0.2.0
+  ghcr.io/ibm/mcp-context-forge:0.3.0
 ```
 
 Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
@@ -392,7 +392,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.2.0
+  ghcr.io/ibm/mcp-context-forge:0.3.0
 ```
 
 #### 2 - Persist SQLite
@@ -405,7 +405,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.2.0
+  ghcr.io/ibm/mcp-context-forge:0.3.0
 ```
 
 #### 3 - Host networking (rootless)
@@ -415,7 +415,7 @@ podman run -d --name mcpgateway \
   --network=host \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.2.0
+  ghcr.io/ibm/mcp-context-forge:0.3.0
 ```
 
 ---
@@ -424,7 +424,7 @@ podman run -d --name mcpgateway \
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
 * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `v0.2.0`) instead of `latest` for reproducible builds.
+* **Pinned tags** - Use an explicit version (e.g. `v0.3.0`) instead of `latest` for reproducible builds.
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
@@ -470,7 +470,7 @@ docker run --rm -i \
   -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1 \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:0.2.0 \
+  ghcr.io/ibm/mcp-context-forge:0.3.0 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -518,7 +518,7 @@ python3 -m mcpgateway.wrapper
 <summary><strong>Expected responses from mcpgateway.wrapper</strong></summary>
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.2.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.3.0"}}}
 
 # When there's no tools
 {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
@@ -550,7 +550,7 @@ docker run -i --rm \
   -e MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
   -e MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
-  ghcr.io/ibm/mcp-context-forge:0.2.0 \
+  ghcr.io/ibm/mcp-context-forge:0.3.0 \
   python3 -m mcpgateway.wrapper
 ```
 
