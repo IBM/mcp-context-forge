@@ -241,7 +241,7 @@ Copy [.env.example](.env.example) to `.env` and tweak any of the settings (or us
 ```bash
 # 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
 python3 -m mcpgateway.translate \
-     --stdio "docker run --rm -it -p 8888:8080 ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
+     --stdio "docker run --rm -i -p 8888:8080 ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
      --port 8003
 
 # Or using the official mcp-server-git using uvx:
