@@ -57,16 +57,14 @@ import uuid
 # Third-Party
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import PlainTextResponse
-from fastapi.middleware.cors import CORSMiddleware
-from sse_starlette.sse import EventSourceResponse
-import uvicorn
-
 # Conditional imports
 try:
     # Third-Party
     from fastapi.middleware.cors import CORSMiddleware
 except ImportError:
     CORSMiddleware = None
+from sse_starlette.sse import EventSourceResponse
+import uvicorn
 
 try:
     # Third-Party
