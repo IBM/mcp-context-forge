@@ -33,15 +33,6 @@ from sqlalchemy import case, delete, func, literal, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-# Third-Party
-import httpx
-from mcp import ClientSession
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import case, delete, func, literal, not_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway

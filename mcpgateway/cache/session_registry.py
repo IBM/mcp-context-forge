@@ -20,10 +20,6 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException, status
 import httpx
 
-# Third-Party
-from fastapi import HTTPException, status
-import httpx
-
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord

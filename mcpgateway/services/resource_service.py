@@ -29,12 +29,6 @@ from sqlalchemy import delete, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-# Third-Party
-import parse
-from sqlalchemy import delete, func, not_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
 # First-Party
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric

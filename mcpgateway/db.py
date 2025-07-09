@@ -55,7 +55,7 @@ from sqlalchemy.orm.attributes import get_history
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.types import ResourceContent
+from mcpgateway.models import ResourceContent
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
 
