@@ -1366,6 +1366,9 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
 
     Returns:
         GatewayTestResponse: The response from the gateway, including status code, latency, and body
+
+    Raises:
+        HTTPException: If the gateway request fails (e.g., connection error, timeout).
     """
     full_url = str(request.base_url).rstrip("/") + "/" + request.path.lstrip("/")
     logger.debug(f"User {user} testing server at {request.base_url}.")
