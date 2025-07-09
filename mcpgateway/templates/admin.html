@@ -331,9 +331,9 @@
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Server</h3>
-          <form method="POST" 
-                action="{{ root_path }}/admin/servers" 
-                id="add-server-form" 
+          <form method="POST"
+                action="{{ root_path }}/admin/servers"
+                id="add-server-form"
                 onsubmit="return handleToggleSubmit(event, 'servers')"
                 onreset="document.getElementById('associatedTools').selectedIndex = -1;">
             <div class="grid grid-cols-1 gap-6">
@@ -2402,8 +2402,8 @@
     </div>
 
     <!-- Test Gateway Modal -->
-    <div 
-      id="gateway-test-modal" 
+    <div
+      id="gateway-test-modal"
       class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden">
       <div  class="bg-white dark:bg-gray-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-lg p-6">
         <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">Test Server Connectivity</h2>
@@ -2417,7 +2417,7 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700">Method</label>
-            <select 
+            <select
               name="method" id="gateway-test-method"
               class="mt-1 block w-full rounded-md shadow-sm p-1"
               >
@@ -2464,7 +2464,7 @@
           <div class="spinner border-t-4 border-blue-600 w-6 h-6 rounded-full animate-spin"></div>
         </div>
       </div>
-    </div>    
+    </div>
 
     <!-- Gateway Edit Modal -->
     <div

@@ -162,7 +162,7 @@ document.addEventListener("DOMContentLoaded", function () {
         status.textContent = "";
         status.classList.remove("error-status");
 
-        const is_inactive_checked = isInactiveChecked('gateways');  
+        const is_inactive_checked = isInactiveChecked('gateways');
         formData.append("is_inactive_checked", is_inactive_checked);
 
         try {
@@ -301,8 +301,8 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       let formData = new FormData(this);
-      const is_inactive_checked = isInactiveChecked('tools');  
-      formData.append("is_inactive_checked", is_inactive_checked); 
+      const is_inactive_checked = isInactiveChecked('tools');
+      formData.append("is_inactive_checked", is_inactive_checked);
       try {
         let response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
           method: "POST",
@@ -560,7 +560,7 @@ function handleToggleSubmit(event, type) {
   event.preventDefault();
 
   // Get the value of 'is_inactive_checked' from the function
-  const is_inactive_checked = isInactiveChecked(type);  
+  const is_inactive_checked = isInactiveChecked(type);
 
   // Dynamically add the 'is_inactive_checked' value to the form
   const form = event.target;
