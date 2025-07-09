@@ -40,7 +40,7 @@ from fastapi import HTTPException
 import pytest
 
 # First-Party
-from mcpgateway.cache.session_registry import SessionRegistry
+from mcpgateway.cache.session_registry import SessionRegistry, SessionMessageRecord
 from mcpgateway.config import settings
 
 
@@ -218,6 +218,160 @@ async def test_broadcast_and_respond(payload, monkeypatch, registry: SessionRegi
 
     assert captured["transport"] is tr
     assert captured["message"] == payload
+
+
+async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
+    """test input to publish for redis"""
+
+    monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
+    registry._backend = "redis"
+    
+    mock_redis = AsyncMock()
+    registry._redis = mock_redis
+    
+    fixed_ts = 1_234_567.890
+    monkeypatch.setattr("mcpgateway.cache.session_registry.time.time", lambda: fixed_ts)
+    
+    msg = {"a": 1}
+    expected_msg_json = json.dumps(msg)
+
+    expected_payload = json.dumps({
+        "type":    "message",
+        "message": expected_msg_json,
+        "timestamp": fixed_ts
+    })
+
+    await registry.broadcast("B", msg)
+    
+    mock_redis.publish.assert_awaited_once_with("B", expected_payload)
+
+    mock_redis.publish.reset_mock()
+
+    msg = ["a", "b", "c"]
+    expected_msg_json = json.dumps(msg)
+
+    expected_payload = json.dumps({
+        "type":    "message",
+        "message": expected_msg_json,
+        "timestamp": fixed_ts
+    })
+
+    await registry.broadcast("B", msg)
+    
+    mock_redis.publish.assert_awaited_once_with("B", expected_payload)
+
+    mock_redis.publish.reset_mock()
+
+    msg = 123
+    expected_msg_json = json.dumps(str(msg))
+
+    expected_payload = json.dumps({
+        "type":    "message",
+        "message": expected_msg_json,
+        "timestamp": fixed_ts
+    })
+
+    await registry.broadcast("B", msg)
+    
+    mock_redis.publish.assert_awaited_once_with("B", expected_payload)
+
+    mock_redis.publish.reset_mock()
+
+    msg = "hello\nworld"
+    expected_msg_json = json.dumps(str(msg))
+
+    expected_payload = json.dumps({
+        "type":    "message",
+        "message": expected_msg_json,
+        "timestamp": fixed_ts
+    })
+
+    await registry.broadcast("B", msg)
+    
+    mock_redis.publish.assert_awaited_once_with("B", expected_payload)
+
+    mock_redis.publish.reset_mock()
+
+async def test_broadcast_database_input(monkeypatch, registry: SessionRegistry, caplog):
+    """test input to publish for database"""
+
+    monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
+    registry._backend = "database"
+    
+    mock_db = AsyncMock()
+    monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
+    monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db]), raising=True)
+
+    monkeypatch.setattr(
+        "asyncio.to_thread",
+        lambda func, *a, **k: func(*a, **k)
+    )
+
+    
+    fixed_ts = 1_234_567.890
+    monkeypatch.setattr("mcpgateway.cache.session_registry.time.time", lambda: fixed_ts)
+    
+    msg = {"a": 1}
+    expected_msg_json = json.dumps(msg)
+
+    await registry.broadcast("B", msg)
+    
+    assert mock_db.add.call_count == 1
+    actual_record = mock_db.add.call_args[0][0]
+    assert isinstance(actual_record, SessionMessageRecord)
+    assert actual_record.session_id == "B"
+    assert actual_record.message == expected_msg_json
+
+    mock_db.add.reset_mock()
+
+    msg = ["a", "b", "c"]
+    expected_msg_json = json.dumps(msg)
+
+    await registry.broadcast("B", msg)
+    
+    assert mock_db.add.call_count == 1
+    actual_record = mock_db.add.call_args[0][0]
+    assert isinstance(actual_record, SessionMessageRecord)
+    assert actual_record.session_id == "B"
+    assert actual_record.message == expected_msg_json
+
+    mock_db.add.reset_mock()
+
+    msg = 123
+    expected_msg_json = json.dumps(str(msg))
+
+    await registry.broadcast("B", msg)
+    
+    assert mock_db.add.call_count == 1
+    actual_record = mock_db.add.call_args[0][0]
+    assert isinstance(actual_record, SessionMessageRecord)
+    assert actual_record.session_id == "B"
+    assert actual_record.message == expected_msg_json
+
+    mock_db.add.reset_mock()
+
+    msg = "hello\nworld"
+    expected_msg_json = json.dumps(str(msg))
+
+    await registry.broadcast("B", msg)
+    
+    assert mock_db.add.call_count == 1
+    actual_record = mock_db.add.call_args[0][0]
+    assert isinstance(actual_record, SessionMessageRecord)
+    assert actual_record.session_id == "B"
+    assert actual_record.message == expected_msg_json
+
+    mock_db.add.reset_mock()
+    mock_db.commit = Mock(side_effect=Exception("db error"))
+
+    msg = "hello\nworld"
+    expected_msg_json = json.dumps(str(msg))
+
+    await registry.broadcast("B", msg)
+
+    mock_db.rollback.assert_called_once()
+
+    assert "Database error during broadcast" in caplog.text
 
 
 # --------------------------------------------------------------------------- #
@@ -474,6 +628,45 @@ async def test_generate_response_server_specific_tools_list(registry: SessionReg
     reply = tr.sent[-1]
     assert reply["id"] == 46
     assert reply["result"]["tools"] == [{"name": "demo"}]
+
+@pytest.mark.asyncio
+async def test_generate_response_server_specific_resources_list(registry: SessionRegistry, stub_db, stub_services):
+    """*resources/list* responds with server_id calls server-specific method."""
+    tr = FakeSSETransport("resources")
+    await registry.add_session("resources", tr)
+
+    msg = {"method": "resources/list", "id": 43, "params": {}}
+    await registry.generate_response(
+        message=msg,
+        transport=tr,
+        server_id="server123",
+        user={},
+        base_url="http://host",
+    )
+
+    reply = tr.sent[-1]
+    assert reply["id"] == 43
+    assert reply["result"]["resources"] == [{"name": "demo"}]
+
+
+@pytest.mark.asyncio
+async def test_generate_response_server_specific_prompts_list(registry: SessionRegistry, stub_db, stub_services):
+    """*prompts/list* responds with server_id calls server-specific method."""
+    tr = FakeSSETransport("prompts")
+    await registry.add_session("prompts", tr)
+
+    msg = {"method": "prompts/list", "id": 44, "params": {}}
+    await registry.generate_response(
+        message=msg,
+        transport=tr,
+        server_id="server123",
+        user={},
+        base_url="http://host",
+    )
+
+    reply = tr.sent[-1]
+    assert reply["id"] == 44
+    assert reply["result"]["prompts"] == [{"name": "demo"}]
 
 
 @pytest.mark.asyncio
@@ -762,24 +955,32 @@ async def test_database_add_session_exception(monkeypatch, caplog):
     """Test database backend session operations."""
     mock_db_session = Mock()
     mock_db_session.add = Mock()  # okay
-    mock_db_session.commit = Mock(side_effect=Exception("db error"))
+    mock_db_session.commit = Mock()
     mock_db_session.rollback = Mock()
     mock_db_session.close = Mock()
 
     monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db_session]), raising=True)
 
+    monkeypatch.setattr(
+        "asyncio.to_thread",
+        lambda func, *a, **k: func(*a, **k)
+    )
+
     caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
 
     registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
-
     await registry.initialize()
 
-    tr = FakeSSETransport("db_session")
+    mock_db_session.commit = Mock(side_effect=Exception("db error"))
+    mock_db_session.rollback.reset_mock()
+    mock_db_session.close.reset_mock()
 
+    tr = FakeSSETransport("db_session")
     await registry.add_session("db_session", tr)
 
     mock_db_session.rollback.assert_called_once()
+    mock_db_session.close.assert_called_once()
 
     assert "Database error adding session db_session" in caplog.text
 
@@ -795,6 +996,11 @@ async def test_database_remove_session_exception(monkeypatch, caplog):
 
     monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db_session]), raising=True)
+
+    monkeypatch.setattr(
+        "asyncio.to_thread",
+        lambda func, *a, **k: func(*a, **k)
+    )
 
     caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
 
