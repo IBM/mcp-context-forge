@@ -16,16 +16,16 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
+# Third-Party
+from fastapi import HTTPException, status
+import httpx
+
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.transports import SSETransport
 from mcpgateway.types import Implementation, InitializeResult, ServerCapabilities
-
-# Third-Party
-from fastapi import HTTPException, status
-import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,7 @@ class SessionRegistry(SessionBackend):
         self._sessions: Dict[str, Any] = {}  # Local transport cache
         self._lock = asyncio.Lock()
         self._cleanup_task = None
+        self._pubsub = None
 
     async def initialize(self) -> None:
         """Initialize the registry with async setup.
@@ -570,7 +571,7 @@ class SessionRegistry(SessionBackend):
                             continue
 
                         # Refresh session in database
-                        def _refresh_session():
+                        def _refresh_session(session_id=session_id):
                             db_session = next(get_db())
                             try:
                                 session = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
