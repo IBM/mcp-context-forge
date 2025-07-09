@@ -270,6 +270,7 @@
                       action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate: This will temporarily disable the server without deleting it."
+                      onsubmit="return handleToggleSubmit(event, 'servers')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -285,6 +286,7 @@
                       action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
                       class="inline mr-2"
                       title="Activate: This will re-enable the server."
+                      onsubmit="return handleToggleSubmit(event, 'servers')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
@@ -311,7 +313,7 @@
                       method="POST"
                       action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
                       class="inline"
-                      onsubmit="return confirm('Are you sure you want to permanently delete this server?');"
+                      onsubmit="return handleSubmitWithConfirmation(event, 'servers')"
                     >
                       <button
                         type="submit"
@@ -329,7 +331,11 @@
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Server</h3>
-          <form method="POST" action="{{ root_path }}/admin/servers" id="add-server-form" onreset="document.getElementById('associatedTools').selectedIndex = -1;">
+          <form method="POST" 
+                action="{{ root_path }}/admin/servers" 
+                id="add-server-form" 
+                onsubmit="return handleToggleSubmit(event, 'servers')"
+                onreset="document.getElementById('associatedTools').selectedIndex = -1;">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -610,6 +616,7 @@
                       action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate"
+                      onsubmit="return handleToggleSubmit(event, 'tools')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -625,6 +632,7 @@
                       action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
                       class="inline mr-2"
                       title="Activate"
+                      onsubmit="return handleToggleSubmit(event, 'tools')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
@@ -651,7 +659,7 @@
                       method="POST"
                       action="{{ root_path }}/admin/tools/{{ tool.id }}/delete"
                       class="inline"
-                      onsubmit="return confirm('Are you sure you want to permanently delete this tool? (Deactivation is reversible, deletion is permanent)');"
+                      onsubmit="return handleSubmitWithConfirmation(event, 'tools')"
                     >
                       <button
                         type="submit"
@@ -973,6 +981,7 @@
                       action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate: This will temporarily disable the resource without deleting it."
+                      onsubmit="return handleToggleSubmit(event, 'resources')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -988,6 +997,7 @@
                       action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
                       class="inline mr-2"
                       title="Activate: This will re-enable the resource."
+                      onsubmit="return handleToggleSubmit(event, 'resources')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
@@ -1014,7 +1024,7 @@
                       method="POST"
                       action="{{ root_path }}/admin/resources/{{ resource.uri }}/delete"
                       class="inline"
-                      onsubmit="return confirm('Are you sure you want to permanently delete this resource? (Deactivation is reversible, deletion is permanent)');"
+                      onsubmit="return handleSubmitWithConfirmation(event, 'resources')"
                     >
                       <button
                         type="submit"
@@ -1193,6 +1203,7 @@
                       action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate: This will temporarily disable the prompt without deleting it."
+                      onsubmit="return handleToggleSubmit(event, 'prompts')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -1208,6 +1219,7 @@
                       action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle"
                       class="inline mr-2"
                       title="Activate: This will re-enable the prompt."
+                      onsubmit="return handleToggleSubmit(event, 'prompts')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
@@ -1234,7 +1246,7 @@
                       method="POST"
                       action="{{ root_path }}/admin/prompts/{{ prompt.name }}/delete"
                       class="inline"
-                      onsubmit="return confirm('Are you sure you want to permanently delete this prompt? (Deactivation is reversible, deletion is permanent)');"
+                      onsubmit="return handleSubmitWithConfirmation(event, 'prompts')"
                     >
                       <button
                         type="submit"
@@ -1253,7 +1265,7 @@
 
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Prompt</h3>
-          <form method="POST" action="{{ root_path }}/admin/prompts" id="add-prompt-form">
+          <form method="POST" action="{{ root_path }}/admin/prompts" id="add-prompt-form" onsubmit="return handleToggleSubmit(event, 'prompts')">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -1442,6 +1454,7 @@
                       action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
                       class="inline mr-2"
                       title="Deactivate: This will temporarily disable the gateway without deleting it."
+                      onsubmit="return handleToggleSubmit(event, 'gateways')"
                     >
                       <input type="hidden" name="activate" value="false" />
                       <button
@@ -1457,6 +1470,7 @@
                       action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
                       class="inline mr-2"
                       title="Activate: This will re-enable the gateway."
+                      onsubmit="return handleToggleSubmit(event, 'gateways')"
                     >
                       <input type="hidden" name="activate" value="true" />
                       <button
@@ -1483,7 +1497,7 @@
                       method="POST"
                       action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete"
                       class="inline"
-                      onsubmit="return confirm('Are you sure you want to permanently delete this gateway? (Deactivation is reversible, deletion is permanent)');"
+                      onsubmit="return handleSubmitWithConfirmation(event, 'gateways')"
                     >
                       <button
                         type="submit"
@@ -1701,7 +1715,7 @@
                       method="POST"
                       action="{{ root_path }}/admin/roots/{{ root.uri }}/delete"
                       class="inline"
-                      onsubmit="return confirm('Are you sure you want to delete this root?');"
+                      onsubmit="return handleSubmitWithConfirmation(event, 'roots')"
                     >
                       <button type="submit" class="text-red-600 hover:text-red-900">
                         Delete
@@ -1718,7 +1732,7 @@
         <!-- Add new root -------------------------------------------------------->
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Root</h3>
-          <form method="POST" action="{{ root_path }}/admin/roots" id="add-root-form">
+          <form method="POST" action="{{ root_path }}/admin/roots" id="add-root-form" onsubmit="return handleToggleSubmit(event, 'roots')">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label class="block text-sm font-medium text-gray-700">URI</label>
