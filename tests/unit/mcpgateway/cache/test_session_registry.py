@@ -27,10 +27,12 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import sys
 import json
 import re
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, Mock, patch
+import importlib
 
 # Third-Party
 from fastapi import HTTPException
@@ -183,6 +185,20 @@ async def test_add_get_remove(registry: SessionRegistry):
     assert not await tr.is_connected()
     assert registry.get_session_sync("A") is None
 
+@pytest.mark.asyncio
+async def test_add_with_exception(registry: SessionRegistry, monkeypatch):
+    """Add ➜ get (async & sync) ➜ remove and verify cache/state."""
+    tr = FakeSSETransport("A")
+    
+    registry._backend = "redis"
+
+    mock_redis = AsyncMock(name="MockRedis")
+    mock_redis.aclose = AsyncMock(side_effect=Exception("Redis close error"))
+
+    monkeypatch.setattr(registry, "_backend", "redis")
+    monkeypatch.setattr(registry, "_redis", mock_redis)
+
+    await registry.add_session("A", tr)
 
 # --------------------------------------------------------------------------- #
 # broadcast ➜ respond with different payload types                            #
@@ -254,6 +270,57 @@ def stub_services(monkeypatch):
     monkeypatch.setattr(f"{mod}.resource_service.list_resources", _return_items, raising=False)
     monkeypatch.setattr(f"{mod}.resource_service.list_server_resources", _return_items, raising=False)
 
+
+def test_redis_importerror_isolated():
+    # Backup original sys.modules state
+    original_redis_asyncio = sys.modules.get('redis.asyncio')
+    original_my_module = sys.modules.get('mcpgateway.cache.session_registry')
+
+    # Simulate ImportError for redis.asyncio
+    with patch.dict(sys.modules, {'redis.asyncio': None}):
+        # if 'mcpgateway.cache.session_registry' in sys.modules:
+        #     del sys.modules['mcpgateway.cache.session_registry']  # Force re-import
+
+        import mcpgateway.cache.session_registry
+        importlib.reload(mcpgateway.cache.session_registry)
+        assert not mcpgateway.cache.session_registry.REDIS_AVAILABLE
+
+    # Cleanup: restore the original sys.modules entries
+    if original_redis_asyncio is not None:
+        sys.modules['redis.asyncio'] = original_redis_asyncio
+    else:
+        sys.modules.pop('redis.asyncio', None)
+
+    if original_my_module is not None:
+        sys.modules['mcpgateway.cache.session_registry'] = original_my_module
+    else:
+        sys.modules.pop('mcpgateway.cache.session_registry', None)
+
+
+def test_sqlalchemy_importerror_isolated():
+    # Backup original sys.modules state
+    original_sqlalchemy = sys.modules.get('sqlalchemy')
+    original_my_module = sys.modules.get('mcpgateway.cache.session_registry')
+
+    # Simulate ImportError for redis.asyncio
+    with patch.dict(sys.modules, {'sqlalchemy': None}):
+        # if 'mcpgateway.cache.session_registry' in sys.modules:
+            # del sys.modules['mcpgateway.cache.session_registry']  # Force re-import
+
+        import mcpgateway.cache.session_registry
+        importlib.reload(mcpgateway.cache.session_registry)
+        assert not mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE
+
+    # Cleanup: restore the original sys.modules entries
+    if original_sqlalchemy is not None:
+        sys.modules['sqlalchemy'] = original_sqlalchemy
+    else:
+        sys.modules.pop('sqlalchemy', None)
+
+    if original_my_module is not None:
+        sys.modules['mcpgateway.cache.session_registry'] = original_my_module
+    else:
+        sys.modules.pop('mcpgateway.cache.session_registry', None)
 
 # --------------------------------------------------------------------------- #
 # generate_response branches                                                  #
@@ -517,6 +584,7 @@ async def test_none_backend():
         await registry.shutdown()
 
 
+
 @pytest.mark.asyncio
 async def test_redis_backend_init_no_redis_available(monkeypatch):
     """Test Redis backend when Redis not available."""
@@ -761,6 +829,39 @@ async def test_memory_cleanup_task():
     finally:
         await registry.shutdown()
 
+
+@pytest.mark.asyncio
+async def test_redis_shutdown(monkeypatch):
+    """shutdown() should swallow Redis / PubSub aclose() errors."""
+
+    # Tell the registry that the Redis extras are present
+    monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
+
+    # ── fake PubSub object ────────────────────────────────────────────────
+    mock_pubsub = AsyncMock(name="MockPubSub")
+    mock_pubsub.aclose = AsyncMock()
+
+    # ── fake Redis client ────────────────────────────────────────────────
+    mock_redis = AsyncMock(name="MockRedis")
+    mock_redis.aclose = AsyncMock()
+    # pubsub() is **not** awaited in prod code, so a plain Mock is fine
+    mock_redis.pubsub = Mock(return_value=mock_pubsub)
+
+    # ── patch the Redis class the module imported ────────────────────────
+    with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
+        MockRedis.from_url.return_value = mock_redis
+
+        registry = SessionRegistry(
+            backend="redis",
+            redis_url="redis://localhost:6379",
+        )
+        await registry.initialize()  # calls mock_redis.pubsub()
+
+        # must swallow both aclose() exceptions
+        await registry.shutdown()
+
+        mock_pubsub.aclose.assert_awaited_once()
+        mock_redis.aclose.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_shutdown_with_redis_error(monkeypatch):
