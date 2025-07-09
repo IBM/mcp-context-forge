@@ -674,7 +674,7 @@ Add this to your VS Code `settings.json`:
   "mcp.servers": {
     "mcp-gateway": {
       "type": "sse",
-      "url": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/1/sse",
+      "url": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/sse",
       "headers": {
         "Authorization": "Bearer <MCPGATEWAY_BEARER_TOKEN>"
       }
@@ -695,7 +695,7 @@ Add to your Claude Desktop configuration:
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
         "MCP_AUTH_TOKEN": "<MCPGATEWAY_BEARER_TOKEN>",
-        "MCP_SERVER_CATALOG_URLS": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/1"
+        "MCP_SERVER_CATALOG_URLS": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1"
       }
     }
   }
@@ -708,7 +708,7 @@ Add to your Claude Desktop configuration:
 from mcpgateway_wrapper import MCPClient
 
 client = MCPClient(
-    catalog_urls=["https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/1"],
+    catalog_urls=["https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1"],
     token="<MCPGATEWAY_BEARER_TOKEN>",
 )
 

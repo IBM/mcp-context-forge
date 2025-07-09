@@ -22,7 +22,7 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
     ```bash
     curl -N -H "Accept: text/event-stream" \
          -H "Authorization: Bearer $TOKEN" \
-         http://localhost:4444/servers/1/sse
+         http://localhost:4444/servers/UUID_OF_SERVER_1/sse
     ```
 
 ---

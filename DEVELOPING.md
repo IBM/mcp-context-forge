@@ -5,7 +5,7 @@
 ```bash
 # Gateway & auth
 export MCP_GATEWAY_BASE_URL=http://localhost:4444
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
+export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1
 export MCP_AUTH_TOKEN="<your_bearer_token>"
 ```
 
@@ -13,12 +13,12 @@ export MCP_AUTH_TOKEN="<your_bearer_token>"
 | ----------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | **SSE (direct)**                                            | `npx @modelcontextprotocol/inspector`                                        | Connects straight to the Gateway's SSE endpoint.                              |
 | **Stdio wrapper** <br/>*(for clients that can't speak SSE)* | `npx @modelcontextprotocol/inspector python -m mcpgateway.wrapper`           | Spins up the wrapper **in-process** and points Inspector to its stdio stream. |
-| **Stdio wrapper via uv / uvenv**                            | `npx @modelcontextprotocol/inspector uvenv run python -m mcpgateway.wrapper` | Uses the lightning-fast `uv` virtual-env if installed.                        |
+| **Stdio wrapper via uv / uvx**                            | `npx @modelcontextprotocol/inspector uvx python -m mcpgateway.wrapper` | Uses the lightning-fast `uv` virtual-env if installed.                        |
 
 🔍 MCP Inspector boots at **[http://localhost:5173](http://localhost:5173)** - open it in a browser and add:
 
 ```text
-Server URL: http://localhost:4444/servers/1/sse
+Server URL: http://localhost:4444/servers/UUID_OF_SERVER_1/sse
 Headers:    Authorization: Bearer <your_bearer_token>
 ```
 
@@ -31,10 +31,8 @@ remote debugging or for clients that only understand SSE.
 
 ```bash
 # Using uvx (ships with uv)
-npx -y supergateway --stdio "uvx run mcp-server-git"
-# OR: using uvenv (pip-based)
-pip install uvenv
-npx -y supergateway --stdio "uvenv run mcp-server-git"
+pip install uv
+npx -y supergateway --stdio "uvx mcp-server-git"
 ```
 
 | Endpoint                 | Method | URL                                                            |

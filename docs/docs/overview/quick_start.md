@@ -154,8 +154,8 @@ Pick an install method below, generate an auth token, then walk through a real t
 
 ```bash
 # Spin up a sample MCP time server (SSE, port 8002)
-pip install uvenv
-npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002 &
+pip install uv
+npx -y supergateway --stdio "uvx mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002 &
 ```
 
 ```bash
@@ -183,7 +183,7 @@ curl -s -H "Authorization: Bearer $MCP_BEARER_TOKEN" http://localhost:4444/serve
 ```bash
 # Optional: Connect interactively via MCP Inspector
 npx -y @modelcontextprotocol/inspector
-# Transport SSE → URL http://localhost:4444/servers/1/sse
+# Transport SSE → URL http://localhost:4444/servers/UUID_OF_SERVER_1/sse
 # Header Authorization → Bearer $MCP_BEARER_TOKEN
 ```
 
@@ -193,7 +193,7 @@ npx -y @modelcontextprotocol/inspector
 
 ```bash
 export MCP_AUTH_TOKEN=$MCP_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
+export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1
 python -m mcpgateway.wrapper   # behaves as a local MCP stdio server - run from MCP client
 ```
 
@@ -206,7 +206,7 @@ Use this in GUI clients (Claude Desktop, Continue, etc.) that prefer stdio. Exam
       "command": "python3",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
         "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }

@@ -32,7 +32,7 @@ Supported modes:
 
 ```bash
 python3 -m mcpgateway.translate \
-  --stdio "uvenv run mcp-server-git" \
+  --stdio "uvx mcp-server-git" \
   --port 9000
 ```
 
@@ -111,7 +111,7 @@ Health check endpoint. Always responds with `ok`.
 
 ```bash
 python3 -m mcpgateway.translate \
-  --stdio "uvenv run mcp-server-git" \
+  --stdio "uvx mcp-server-git" \
   --port 9000 \
   --cors "https://myapp.com"
 ```

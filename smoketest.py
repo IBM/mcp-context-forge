@@ -59,7 +59,7 @@ SUPERGW_CMD = [
     "-y",
     "supergateway",
     "--stdio",
-    "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin",
+    "uvx mcp_server_time -- --local-timezone=Europe/Dublin",
     "--port",
     str(PORT_TIME_SERVER),
 ]

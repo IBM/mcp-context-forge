@@ -186,7 +186,7 @@ curl -s -k -H "$AUTH_HEADER" $BASE_URL/servers | jq
 ### 8. Open an SSE stream
 
 ```bash
-curl -s -k -N -H "$AUTH_HEADER" $BASE_URL/servers/1/sse
+curl -s -k -N -H "$AUTH_HEADER" $BASE_URL/servers/UUID_OF_SERVER_1/sse
 ```
 
 Leave running - real-time events appear here.
@@ -201,7 +201,7 @@ curl -s -k -X POST $BASE_URL/rpc \
   -d '{
         "jsonrpc": "2.0",
         "id": 99,
-        "method": "get_current_time",
+        "method": "get_system_time",
         "params": {
           "timezone": "Europe/Dublin"
         }
@@ -231,7 +231,7 @@ You can test the Gateway against GitHub's official `mcp-server-git` tool using [
 Start a temporary SSE wrapper around the GitHub MCP server:
 
 ```bash
-npx -y supergateway --stdio "uvx run mcp-server-git"
+npx -y supergateway --stdio "uvx mcp-server-git"
 ```
 
 This starts:
@@ -272,7 +272,7 @@ Once launched at [http://localhost:5173](http://localhost:5173):
 2. Use the URL for your virtual server's SSE stream:
 
 ```
-http://localhost:4444/servers/1/sse
+http://localhost:4444/servers/UUID_OF_SERVER_1/sse
 ```
 
 3. Add this header:
@@ -294,7 +294,7 @@ http://localhost:4444/servers/1/sse
 ## 🧹 Cleanup
 
 ```bash
-curl -s -k -X DELETE -H "$AUTH_HEADER" $BASE_URL/servers/1
+curl -s -k -X DELETE -H "$AUTH_HEADER" $BASE_URL/servers/UUID_OF_SERVER_1
 curl -s -k -X DELETE -H "$AUTH_HEADER" $BASE_URL/tools/1
 curl -s -k -X DELETE -H "$AUTH_HEADER" $BASE_URL/gateways/1
 ```
