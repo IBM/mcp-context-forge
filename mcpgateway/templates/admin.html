@@ -331,9 +331,9 @@
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">Add New Server</h3>
-          <form method="POST" 
-                action="{{ root_path }}/admin/servers" 
-                id="add-server-form" 
+          <form method="POST"
+                action="{{ root_path }}/admin/servers"
+                id="add-server-form"
                 onsubmit="return handleToggleSubmit(event, 'servers')"
                 onreset="document.getElementById('associatedTools').selectedIndex = -1;">
             <div class="grid grid-cols-1 gap-6">
@@ -1448,6 +1448,11 @@
                     gateway.lastSeen else 'Never' }}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <button
+                      onclick="testGateway('{{ gateway.url }}')"
+                      class="text-stone-600 hover:text-stone-900 mr-2">
+                      Test
+                    </button>
                     {% if gateway.enabled %}
                     <form
                       method="POST"
@@ -2392,6 +2397,71 @@
               Close
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Test Gateway Modal -->
+    <div
+      id="gateway-test-modal"
+      class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden">
+      <div  class="bg-white dark:bg-gray-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-lg p-6">
+        <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">Test Server Connectivity</h2>
+
+        <form id="gateway-test-form" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Server URL</label>
+            <input name="url" type="text"
+                  id="gateway-test-url"
+                  class="mt-1 block w-full rounded-md shadow-sm p-1" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Method</label>
+            <select
+              name="method" id="gateway-test-method"
+              class="mt-1 block w-full rounded-md shadow-sm p-1"
+              >
+              <option>GET</option>
+              <option>POST</option>
+              <option>PUT</option>
+              <option>DELETE</option>
+              <option>PATCH</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Path</label>
+            <input id="gateway-test-path" name="path" type="text" placeholder="/health"
+                  class="mt-1 block w-full rounded-md shadow-sm p-1" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
+            <textarea id="headers-json" class="mt-1 block w-full rounded-md shadow-sm p-1"></textarea>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700">Body (JSON)</label>
+            <textarea id="body-json" class="mt-1 block w-full rounded-md shadow-sm p-1"></textarea>
+          </div>
+
+          <div class="flex">
+            <button type="submit" id="gateway-test-submit"
+                    class="w-full text-center px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+              Send
+            </button>
+            <p class="p-1"></p>
+            <button id="gateway-test-close" type="button" class="w-full text-center px-3 py-1 border rounded bg-white text-gray-700 hover:bg-gray-50">
+              Close
+            </button>
+          </div>
+
+          <div id="test-result" class="hidden">
+            <label class="block text-sm font-medium text-gray-700">Response</label>
+            <pre id="response-json" class="bg-gray-100 p-2 rounded overflow-auto text-sm text-gray-800 max-h-64"></pre>
+          </div>
+        </form>
+
+        <div id="loading" class="mt-4 hidden">
+          <div class="spinner border-t-4 border-blue-600 w-6 h-6 rounded-full animate-spin"></div>
         </div>
       </div>
     </div>
