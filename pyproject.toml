@@ -46,9 +46,9 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "alembic>=1.16.2",
+    "alembic>=1.16.3",
     "cryptography>=45.0.5",
-    "fastapi>=0.115.14",
+    "fastapi>=0.116.0",
     "filelock>=3.18.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
@@ -63,7 +63,7 @@ dependencies = [
     "pydantic-settings>=2.10.1",
     "pyjwt>=2.10.1",
     "sqlalchemy>=2.0.41",
-    "sse-starlette>=2.3.6",
+    "sse-starlette>=2.4.1",
     "starlette>=0.46.2",
     "uvicorn>=0.35.0",
     "zeroconf>=0.147.0",
@@ -84,7 +84,7 @@ postgres = [
 ]
 
 alembic = [
-    "alembic>=1.16.2",
+    "alembic>=1.16.3",
 ]
 
 # Async SQLite Driver (optional)
@@ -101,7 +101,7 @@ asyncpg = [
 dev = [
     "argparse-manpage>=4.6",
     "autoflake>=2.3.1",
-    "bandit>=1.8.5",
+    "bandit>=1.8.6",
     "black>=25.1.0",
     "bump2version>=1.0.1",
     "check-manifest>=0.50",
@@ -123,8 +123,8 @@ dev = [
     "pydocstyle>=6.3.0",
     "pylint>=3.3.7",
     "pylint-pydantic>=0.3.5",
-    "pyre-check>=0.9.23",
-    "pyrefly>=0.22.2",
+    "pyre-check>=0.9.25",
+    "pyrefly>=0.23.1",
     "pyright>=1.1.402",
     "pyroma>=4.3.3",
     "pyspelling>=2.10",
@@ -145,7 +145,7 @@ dev = [
     "tox>=4.27.0",
     "tox-uv>=1.26.1",
     "twine>=6.1.0",
-    "ty>=0.0.1a13",
+    "ty>=0.0.1a14",
     "types-tabulate>=0.9.0.20241207",
     "uv>=0.7.19",
     "yamllint>=1.37.1",
@@ -153,10 +153,10 @@ dev = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=0.3.0",
+    "mcp-contextforge-gateway[redis]>=0.2.0",
 ]
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.3.0",
+    "mcp-contextforge-gateway[redis,dev]>=0.2.0",
 ]
 
 # --------------------------------------------------------------------
