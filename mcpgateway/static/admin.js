@@ -1227,14 +1227,14 @@ async function testGateway(gatewayURL) {
 
   // Close the modal and reset the form when the close button is clicked
   document.getElementById("gateway-test-close").addEventListener("click", function () {
-    closeModal("gateway-test-modal");
-
     // Reset the form and CodeMirror editors
     document.getElementById("gateway-test-form").reset();
     headersEditor.setValue('');
     bodyEditor.setValue('');
     document.getElementById("response-json").textContent = '';
     document.getElementById("test-result").classList.add("hidden");
+
+    closeModal("gateway-test-modal");
   })
 }
 
