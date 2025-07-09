@@ -55,6 +55,8 @@ from typing import AsyncIterator, List, Optional, Sequence
 import uuid
 
 # Third-Party
+import uvicorn
+from sse_starlette.sse import EventSourceResponse
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import PlainTextResponse
 # Conditional imports
@@ -63,8 +65,6 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
 except ImportError:
     CORSMiddleware = None
-from sse_starlette.sse import EventSourceResponse
-import uvicorn
 
 try:
     # Third-Party
