@@ -28,6 +28,7 @@ from __future__ import annotations
 # Standard
 import asyncio
 import json
+import logging
 import re
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, Mock, patch
@@ -480,11 +481,13 @@ async def test_handle_initialize_missing_version_error(registry: SessionRegistry
 
 
 @pytest.mark.asyncio
-async def test_handle_initialize_unsupported_version_error(registry: SessionRegistry):
+async def test_handle_initialize_unsupported_version_warning(registry: SessionRegistry, caplog):
+    caplog.set_level(logging.WARNING, logger="mcpgateway.cache.session_registry")
     body = {"protocol_version": "999"}
-    with pytest.raises(HTTPException) as exc:
-        await registry.handle_initialize_logic(body)
-    assert exc.value.headers["MCP-Error-Code"] == "-32003"
+
+    await registry.handle_initialize_logic(body)
+
+    assert "Using non default protocol version: 999" in caplog.text
 
 
 # --------------------------------------------------------------------------- #

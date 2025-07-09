@@ -657,11 +657,7 @@ class SessionRegistry(SessionBackend):
             )
 
         if protocol_version != settings.protocol_version:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported protocol version: {protocol_version}",
-                headers={"MCP-Error-Code": "-32003"},
-            )
+            logger.warning(f"Using non default protocol version: {protocol_version}")
 
         return InitializeResult(
             protocolVersion=settings.protocol_version,
