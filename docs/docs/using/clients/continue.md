@@ -44,7 +44,7 @@ There are **two ways** to attach Continue to a gateway:
     "modelContextProtocolServer": {
       "transport": {
         "type": "sse",
-        "url": "http://localhost:4444/servers/1/sse",
+        "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/sse",
         "headers": {
           "Authorization": "Bearer ${env:MCP_AUTH_TOKEN}"
         }
@@ -79,7 +79,7 @@ pipx install --include-deps mcp-contextforge-gateway
         "command": "python3",
         "args": ["-m", "mcpgateway.wrapper"],
         "env": {
-          "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+          "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
           "MCP_AUTH_TOKEN": "${env:MCP_AUTH_TOKEN}",
           "MCP_TOOL_CALL_TIMEOUT": "120"
         }

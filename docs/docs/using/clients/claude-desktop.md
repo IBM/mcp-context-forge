@@ -26,7 +26,7 @@ prompt and resource registered in your Gateway.
       "command": "python3",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
         "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
@@ -46,7 +46,7 @@ prompt and resource registered in your Gateway.
   "command": "docker",
   "args": [
     "run", "--rm", "--network=host", "-i",
-    "-e", "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1",
+    "-e", "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1",
     "-e", "MCP_AUTH_TOKEN=<YOUR_JWT_TOKEN>",
     "ghcr.io/ibm/mcp-context-forge:latest",
     "python3", "-m", "mcpgateway.wrapper"
@@ -67,7 +67,7 @@ If you installed the package globally:
   "command": "pipx",
   "args": ["run", "python3", "-m", "mcpgateway.wrapper"],
   "env": {
-    "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+    "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
     "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>"
   }
 }
@@ -82,7 +82,7 @@ If you installed the package globally:
 3. Type:
 
    ```
-   #get_current_time { "timezone": "Europe/Dublin" }
+   #get_system_time { "timezone": "Europe/Dublin" }
    ```
 4. The wrapper should proxy the call → Gateway → tool → chat reply.
 

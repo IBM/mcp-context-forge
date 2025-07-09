@@ -16,7 +16,7 @@
 
 ???+ check "Python tooling"
     - [ ] `pip install --upgrade pip`
-    - [ ] `uv` and `uvenv` installed - [install uv](https://github.com/astral-sh/uv)
+    - [ ] `uv` and `uvx` installed - [install uv](https://github.com/astral-sh/uv)
     - [ ] `.venv` created with `make venv install install-dev`
 
 ???+ check "Additional tools"

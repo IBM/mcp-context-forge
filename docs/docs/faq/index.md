@@ -3,14 +3,14 @@
 ## ⚡ Quickstart
 
 ???+ example "🚀 How can I install and run MCP Gateway in one command?"
-    PyPI (pipx / uvenv makes an isolated venv):
+    PyPI (pipx / uvx makes an isolated venv):
 
     ```bash
     # Using pipx - pip install pipx
     pipx run mcp-contextforge-gateway
 
-    # Or uvenv - pip install uvenv (default: admin/changeme)
-    uvenv run mcp-contextforge-gateway --port 4444
+    # Or uvx - pip install uv (default: admin/changeme)
+    uvx mcp-contextforge-gateway --port 4444
     ```
 
     OCI image (Docker/Podman) - shares host network so localhost works:
@@ -214,7 +214,7 @@
 
 ???+ example "🦾 How do I connect GitHub's mcp-server-git via SuperGateway?"
     ```bash
-    npx -y supergateway --stdio "uvx run mcp-server-git"
+    npx -y supergateway --stdio "uvx mcp-server-git"
     ```
 
 ---

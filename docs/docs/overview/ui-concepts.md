@@ -12,8 +12,8 @@
     You can use [`supergateway`](https://www.npmjs.com/package/supergateway) to wrap any `stdio`-only MCP server and expose it over SSE. Here are example commands:
 
     ```bash
-    npx -y supergateway --stdio "uvenv run mcp-server-git" --port 8001
-    npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin"
+    npx -y supergateway --stdio "uvx mcp-server-git" --port 8001
+    npx -y supergateway --stdio "uvx mcp_server_time -- --local-timezone=Europe/Dublin"
     ```
 
     ✅ **Important:** The gateway must be able to reach the MCP server's network address.
