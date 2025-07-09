@@ -21,16 +21,6 @@ import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 import uuid
 
-# First-Party
-from mcpgateway.config import settings
-from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import SessionLocal
-from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
-from mcpgateway.services.tool_service import ToolService
-from mcpgateway.utils.create_slug import slugify
-from mcpgateway.utils.services_auth import decode_auth
-
 # Third-Party
 from filelock import FileLock, Timeout
 import httpx
@@ -48,6 +38,16 @@ try:
 except ImportError:
     REDIS_AVAILABLE = False
     logging.info("Redis is not utilized in this environment.")
+
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import SessionLocal
+from mcpgateway.db import Tool as DbTool
+from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
+from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.services_auth import decode_auth
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 logger = logging.getLogger(__name__)
@@ -239,16 +239,16 @@ class GatewayService:
 
             return GatewayRead.model_validate(gateway)
         except* GatewayConnectionError as ge:
-            logger.error("GatewayConnectionError in group: %s", ge.exceptions)
+            logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
             raise ge.exceptions[0]
         except* ValueError as ve:
-            logger.error("ValueErrors in group: %s", ve.exceptions)
+            logger.error(f"ValueErrors in group: {ve.exceptions}")
             raise ve.exceptions[0]
         except* RuntimeError as re:
-            logger.error("RuntimeErrors in group: %s", re.exceptions)
+            logger.error(f"RuntimeErrors in group: {re.exceptions}")
             raise re.exceptions[0]
         except* BaseException as other:  # catches every other sub-exception
-            logger.error("Other grouped errors: %s", other.exceptions)
+            logger.error(f"Other grouped errors: {other.exceptions}")
             raise other.exceptions[0]
 
     async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
