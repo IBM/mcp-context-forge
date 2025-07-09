@@ -157,7 +157,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
-        
+
         server = ServerCreate(
             name=form.get("name"),
             description=form.get("description"),
@@ -213,7 +213,7 @@ async def admin_edit_server(
         RedirectResponse: A redirect to the admin dashboard catalog section with a status code of 303
     """
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked","false")
+    is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
@@ -227,7 +227,7 @@ async def admin_edit_server(
         await server_service.update_server(db, server_id, server)
 
         root_path = request.scope.get("root_path", "")
-        
+
         if is_inactive_checked.lower() == "true":
             return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
         return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
@@ -303,11 +303,11 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         await server_service.delete_server(db, server_id)
     except Exception as e:
         logger.error(f"Error deleting server: {e}")
-    
+
     form = await request.form()
     is_inactive_checked = form.get("is_inactive_checked", "false")
     root_path = request.scope.get("root_path", "")
-    
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
     return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
@@ -892,7 +892,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     form = await request.form()
     is_inactive_checked = form.get("is_inactive_checked", "false")
     root_path = request.scope.get("root_path", "")
-    
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
     return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
@@ -987,7 +987,7 @@ async def admin_edit_resource(
 
     root_path = request.scope.get("root_path", "")
     is_inactive_checked = form.get("is_inactive_checked", "false")
-    
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
@@ -1014,7 +1014,7 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
     """
     logger.debug(f"User {user} is deleting resource URI {uri}")
     await resource_service.delete_resource(db, uri)
-    
+
     form = await request.form()
     is_inactive_checked = form.get("is_inactive_checked", "false")
     root_path = request.scope.get("root_path", "")
@@ -1022,7 +1022,6 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
- 
 
 
 @admin_router.post("/resources/{resource_id}/toggle")
@@ -1156,7 +1155,7 @@ async def admin_edit_prompt(
 
     root_path = request.scope.get("root_path", "")
     is_inactive_checked = form.get("is_inactive_checked", "false")
-    
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
