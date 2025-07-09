@@ -32,7 +32,7 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
   "servers": {
     "mcp-gateway": {
       "type": "sse",
-      "url": "https://mcpgateway.example.com/servers/1/sse",
+      "url": "https://mcpgateway.example.com/servers/UUID_OF_SERVER_1/sse",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -56,7 +56,7 @@ python -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-tes
   "servers": {
     "mcp-gateway": {
       "type": "http",
-      "url": "https://mcpgateway.example.com/servers/1/mcp/",
+      "url": "https://mcpgateway.example.com/servers/UUID_OF_SERVER_1/mcp/",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -92,7 +92,7 @@ uv pip install mcp-contextforge-gateway                       # inside any uv/ve
       "command": "python3",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
         "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
@@ -111,7 +111,7 @@ That's it - VS Code spawns the stdio process, pipes JSON-RPC, and you're ready t
   "command": "docker",
   "args": [
     "run", "--rm", "--network=host", "-i",
-    "-e", "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1",
+    "-e", "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1",
     "-e", "MCP_AUTH_TOKEN=<YOUR_JWT_TOKEN>",
     "ghcr.io/ibm/mcp-context-forge:latest",
     "python3", "-m", "mcpgateway.wrapper"

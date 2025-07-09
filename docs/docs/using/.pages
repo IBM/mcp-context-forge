@@ -4,3 +4,4 @@ nav:
   - mcpgateway-translate.md
   - Clients: clients
   - Agents: agents
+  - Servers: servers

@@ -27,7 +27,7 @@ Environment variables:
 Example:
     $ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
     $ export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-    $ export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/1'
+    $ export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
     $ export MCP_TOOL_CALL_TIMEOUT=120
     $ export MCP_WRAPPER_LOG_LEVEL=DEBUG # OFF to disable logging
     $ python3 -m mcpgateway.wrapper
@@ -85,7 +85,7 @@ def _extract_base_url(url: str) -> str:
 
     Args:
         url (str): Full catalog URL, e.g.
-            `https://host.com/gateway/servers/1`.
+            `https://host.com/gateway/servers/UUID_OF_SERVER_1`.
 
     Returns:
         str: Clean base URL suitable for building `/tools/`, `/prompts/`,
@@ -96,9 +96,9 @@ def _extract_base_url(url: str) -> str:
         ValueError: If *url* lacks a scheme or network location.
 
     Examples:
-        >>> _extract_base_url("https://host.com/servers/2")
+        >>> _extract_base_url("https://host.com/servers/UUID_OF_SERVER_2")
         'https://host.com'
-        >>> _extract_base_url("https://host.com/gateway/servers/2")
+        >>> _extract_base_url("https://host.com/gateway/servers/UUID_OF_SERVER_2")
         'https://host.com/gateway'
         >>> _extract_base_url("https://host.com/gateway/servers")
         'https://host.com/gateway'
@@ -116,7 +116,7 @@ def _extract_base_url(url: str) -> str:
 
     path = parsed.path or ""
     if "/servers/" in path:
-        path = path.split("/servers")[0]  # ".../servers/123" -> "..."
+        path = path.split("/servers")[0]  # ".../servers/UUID_OF_SERVER_123" -> "..."
     elif path.endswith("/servers"):
         path = path[: -len("/servers")]  # ".../servers"     -> "..."
     # otherwise keep the existing path (supports APP_ROOT_PATH)

@@ -29,79 +29,89 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 ---
 
 ## Table of Contents
-- [Overview & Goals](#-overview--goals)
-- [Quick Start - PyPI](#quick-start--pypi)
-  - [1 - Install & run (copy-paste friendly)](#1--install--run-copypaste-friendly)
-- [Quick Start - Containers](#quick-start--containers)
-  - [Docker](#-docker)
-    - [1 - Minimum viable run](#1--minimum-viable-run)
-    - [2 - Persist the SQLite database](#2--persist-the-sqlite-database)
-    - [3 - Local tool discovery (host network)](#3--local-tool-discovery-host-network)
-  - [Podman (rootless-friendly)](#-podman-rootless-friendly)
-    - [1 - Basic run](#1--basic-run)
-    - [2 - Persist SQLite](#2--persist-sqlite)
-    - [3 - Host networking (rootless)](#3--host-networking-rootless)
-- [Testing `mcpgateway.wrapper` by hand:](#testing-mcpgatewaywrapper-by-hand)
-  - [Running from an MCP Client (`mcpgateway.wrapper`)](#-running-from-an-mcp-client-mcpgatewaywrapper)
-    - [1 - Install <code>uv</code>  (<code>uvenv</code> is an alias it provides)](#1--install-uv--uvenv-is-an-alias-it-provides)
-    - [2 - Create an on-the-spot venv & run the wrapper](#2--create-an-on-the-spot-venv--run-the-wrapper)
-    - [Claude Desktop JSON (runs through **uvenv run**)](#claude-desktop-json-runs-through-uvenv-run)
-  - [Using with Claude Desktop (or any GUI MCP client)](#-using-with-claude-desktop-or-any-gui-mcp-client)
-- [Quick Start: VS Code Dev Container](#-quick-start-vs-code-dev-container)
-  - [1 - Clone & Open](#1--clone--open)
-  - [2 - First-Time Build (Automatic)](#2--first-time-build-automatic)
-- [Quick Start (manual install)](#quick-start-manual-install)
-  - [Prerequisites](#prerequisites)
-  - [One-liner (dev)](#one-liner-dev)
-  - [Containerised (self-signed TLS)](#containerised-self-signed-tls)
-  - [Smoke-test the API](#smoke-test-the-api)
-- [Installation](#installation)
-  - [Via Make](#via-make)
-  - [UV (alternative)](#uv-alternative)
-  - [pip (alternative)](#pip-alternative)
-  - [Optional (PostgreSQL adapter)](#optional-postgresql-adapter)
-    - [Quick Postgres container](#quick-postgres-container)
-- [Configuration (`.env` or env vars)](#configuration-env-or-env-vars)
-  - [Basic](#basic)
-  - [Authentication](#authentication)
-  - [UI Features](#ui-features)
-  - [Security](#security)
-  - [Logging](#logging)
-  - [Transport](#transport)
-  - [Federation](#federation)
-  - [Resources](#resources)
-  - [Tools](#tools)
-  - [Prompts](#prompts)
-  - [Health Checks](#health-checks)
-  - [Database](#database)
-  - [Cache Backend](#cache-backend)
-  - [Development](#development)
-- [Running](#running)
-- [Makefile](#makefile)
-  - [Script helper](#script-helper)
-  - [Manual (Uvicorn)](#manual-uvicorn)
-- [Authentication examples](#authentication-examples)
-- [AWS / Azure / OpenShift](#️-aws--azure--openshift)
-- [IBM Cloud Code Engine Deployment](#️-ibm-cloud-code-engine-deployment)
-  - [Prerequisites](#-prerequisites)
-  - [Environment Variables](#-environment-variables)
-  - [Make Targets](#-make-targets)
-  - [Example Workflow](#-example-workflow)
-- [API Endpoints](#api-endpoints)
-- [Testing](#testing)
-- [Project Structure](#project-structure)
-- [API Documentation](#api-documentation)
-- [Makefile targets](#makefile-targets)
-- [Troubleshooting](#-troubleshooting)
-  - [Diagnose the listener](#diagnose-the-listener)
-  - [Why localhost fails on Windows](#why-localhost-fails-on-windows)
-    - [Fix (Podman rootless)](#fix-podman-rootless)
-    - [Fix (Docker Desktop > 4.19)](#fix-docker-desktop--419)
-- [Contributing](#contributing)
-- [Changelog](#changelog)
-- [License](#license)
-- [Core Authors and Maintainers](#core-authors-and-maintainers)
-- [Star History and Project Activity](#star-history-and-project-activity)
+
+<!-- vscode-markdown-toc -->
+* 1. [Table of Contents](#TableofContents)
+* 2. [🚀 Overview & Goals](#OverviewGoals)
+* 3. [Quick Start - PyPI](#QuickStart-PyPI)
+    * 3.1. [1 - Install & run (copy-paste friendly)](#Installruncopy-pastefriendly)
+* 4. [Quick Start - Containers](#QuickStart-Containers)
+    * 4.1. [🐳 Docker](#Docker)
+        * 4.1.1. [1 - Minimum viable run](#Minimumviablerun)
+        * 4.1.2. [2 - Persist the SQLite database](#PersisttheSQLitedatabase)
+        * 4.1.3. [3 - Local tool discovery (host network)](#Localtooldiscoveryhostnetwork)
+    * 4.2. [🦭 Podman (rootless-friendly)](#Podmanrootless-friendly)
+        * 4.2.1. [1 - Basic run](#Basicrun)
+        * 4.2.2. [2 - Persist SQLite](#PersistSQLite)
+        * 4.2.3. [3 - Host networking (rootless)](#Hostnetworkingrootless)
+* 5. [Testing `mcpgateway.wrapper` by hand:](#Testingmcpgateway.wrapperbyhand:)
+    * 5.1. [🧩 Running from an MCP Client (`mcpgateway.wrapper`)](#RunningfromanMCPClientmcpgateway.wrapper)
+        * 5.1.1. [1 - Install <code>uv</code>  (<code>uvx</code> is an alias it provides)](#Installcodeuvcodecodeuvxcodeisanaliasitprovides)
+        * 5.1.2. [2 - Create an on-the-spot venv & run the wrapper](#Createanon-the-spotvenvrunthewrapper)
+        * 5.1.3. [Claude Desktop JSON (runs through **uvx**)](#ClaudeDesktopJSONrunsthroughuvx)
+    * 5.2. [🚀 Using with Claude Desktop (or any GUI MCP client)](#UsingwithClaudeDesktoporanyGUIMCPclient)
+* 6. [🚀 Quick Start: VS Code Dev Container](#QuickStart:VSCodeDevContainer)
+    * 6.1. [1 - Clone & Open](#CloneOpen)
+    * 6.2. [2 - First-Time Build (Automatic)](#First-TimeBuildAutomatic)
+* 7. [Quick Start (manual install)](#QuickStartmanualinstall)
+    * 7.1. [Prerequisites](#Prerequisites)
+    * 7.2. [One-liner (dev)](#One-linerdev)
+    * 7.3. [Containerised (self-signed TLS)](#Containerisedself-signedTLS)
+    * 7.4. [Smoke-test the API](#Smoke-testtheAPI)
+* 8. [Installation](#Installation)
+    * 8.1. [Via Make](#ViaMake)
+    * 8.2. [UV (alternative)](#UValternative)
+    * 8.3. [pip (alternative)](#pipalternative)
+    * 8.4. [Optional (PostgreSQL adapter)](#OptionalPostgreSQLadapter)
+        * 8.4.1. [Quick Postgres container](#QuickPostgrescontainer)
+* 9. [Configuration (`.env` or env vars)](#Configuration.envorenvvars)
+    * 9.1. [Basic](#Basic)
+    * 9.2. [Authentication](#Authentication)
+    * 9.3. [UI Features](#UIFeatures)
+    * 9.4. [Security](#Security)
+    * 9.5. [Logging](#Logging)
+    * 9.6. [Transport](#Transport)
+    * 9.7. [Federation](#Federation)
+    * 9.8. [Resources](#Resources)
+    * 9.9. [Tools](#Tools)
+    * 9.10. [Prompts](#Prompts)
+    * 9.11. [Health Checks](#HealthChecks)
+    * 9.12. [Database](#Database)
+    * 9.13. [Cache Backend](#CacheBackend)
+    * 9.14. [Development](#Development)
+* 10. [Running](#Running)
+    * 10.1. [Makefile](#Makefile)
+    * 10.2. [Script helper](#Scripthelper)
+    * 10.3. [Manual (Uvicorn)](#ManualUvicorn)
+* 11. [Authentication examples](#Authenticationexamples)
+* 12. [☁️ AWS / Azure / OpenShift](#AWSAzureOpenShift)
+* 13. [☁️ IBM Cloud Code Engine Deployment](#IBMCloudCodeEngineDeployment)
+    * 13.1. [🔧 Prerequisites](#Prerequisites-1)
+    * 13.2. [📦 Environment Variables](#EnvironmentVariables)
+    * 13.3. [🚀 Make Targets](#MakeTargets)
+    * 13.4. [📝 Example Workflow](#ExampleWorkflow)
+* 14. [API Endpoints](#APIEndpoints)
+* 15. [Testing](#Testing)
+* 16. [Project Structure](#ProjectStructure)
+* 17. [API Documentation](#APIDocumentation)
+* 18. [Makefile targets](#Makefiletargets)
+* 19. [🔍 Troubleshooting](#Troubleshooting)
+    * 19.1. [Diagnose the listener](#Diagnosethelistener)
+    * 19.2. [Why localhost fails on Windows](#WhylocalhostfailsonWindows)
+        * 19.2.1. [Fix (Podman rootless)](#FixPodmanrootless)
+        * 19.2.2. [Fix (Docker Desktop > 4.19)](#FixDockerDesktop4.19)
+* 20. [Contributing](#Contributing)
+* 21. [Changelog](#Changelog)
+* 22. [License](#License)
+* 23. [Core Authors and Maintainers](#CoreAuthorsandMaintainers)
+* 24. [Star History and Project Activity](#StarHistoryandProjectActivity)
+
+<!-- vscode-markdown-toc-config
+    numbering=true
+    autoSave=true
+    /vscode-markdown-toc-config -->
+<!-- /vscode-markdown-toc -->
+
 
 
 ## 🚀 Overview & Goals
@@ -227,14 +237,23 @@ Copy [.env.example](.env.example) to `.env` and tweak any of the settings (or us
 <summary><strong>🚀 End-to-end demo (register a local MCP server)</strong></summary>
 
 ```bash
-# 1️⃣  Spin up a sample MCP server (Node supergateway)
-pip install uvenv
-npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin" --port 8002 &
+# 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
+python3 -m mcpgateway.translate \
+     --stdio "docker run --rm -it -p 8888:8080 ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
+     --port 8003
+
+# Or using the official mcp-server-git using uvx:
+pip install uv # to install uvx, if not already installed
+python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
+
+# Alternative: running the local binary
+# cd mcp-servers/go/fast-time-server; make build
+# python3 -m mcpgateway.translate --stdio "./dist/fast-time-server -transport=stdio" --port 8002
 
 # 2️⃣  Register it with the gateway
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"local_time","url":"http://localhost:8002/sse"}' \
+     -d '{"name":"fast_time","url":"http://localhost:8002/sse"}' \
      http://localhost:4444/gateways
 
 # 3️⃣  Verify tool catalog
@@ -243,15 +262,15 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:444
 # 4️⃣  Create a *virtual server* bundling those tools
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"demo_server","description":"Time tools","associatedTools":["1","2"]}' \
+     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["1"]}' \
      http://localhost:4444/servers | jq
 
-# 5️⃣  List servers (should now include ID 1)
+# 5️⃣  List servers (should now include the UUID of the newly created virtual server)
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
 
 # 6️⃣  Client SSE endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
 npx -y @modelcontextprotocol/inspector
-# Transport Type: SSE, URL: http://localhost:4444/servers/1/sse,  Header Name: "Authorization", Bearer Token
+# Transport Type: SSE, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/sse,  Header Name: "Authorization", Bearer Token
 ```
 
 </details>
@@ -261,7 +280,7 @@ npx -y @modelcontextprotocol/inspector
 
 ```bash
 export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
+export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1
 python3 -m mcpgateway.wrapper  # Ctrl-C to exit
 ```
 
@@ -271,7 +290,7 @@ In MCP Inspector, define `MCP_AUTH_TOKEN` and `MCP_SERVER_CATALOG_URLS` env vari
 
 ```bash
 echo $PWD/.venv/bin/python3 # Using the Python3 full path ensures you have a working venv
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/1'
+export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
 export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
 npx -y @modelcontextprotocol/inspector
 ```
@@ -286,7 +305,7 @@ When using a MCP Client such as Claude with stdio:
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
         "MCP_AUTH_TOKEN": "your-token-here",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
@@ -442,13 +461,13 @@ The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while ke
 # Set environment variables
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
 export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/1'
+export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
 export MCP_TOOL_CALL_TIMEOUT=120
 export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
 
 docker run --rm -i \
   -e MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN \
-  -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/1 \
+  -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1 \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
   ghcr.io/ibm/mcp-context-forge:0.2.0 \
@@ -464,16 +483,10 @@ docker run --rm -i \
 Because the wrapper speaks JSON-RPC over stdin/stdout, you can interact with it using nothing more than a terminal or pipes.
 
 ```bash
-# Run a time server, then register it in your gateway..
-pip install mcp-server-time
-npx -y supergateway --stdio "uvenv run mcp_server_time -- --local-timezone=Europe/Dublin"
-
 # Start the MCP Gateway Wrapper
 export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1
+export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/YOUR_SERVER_UUID
 python3 -m mcpgateway.wrapper
-# Alternatively with uv
-uv run --directory . -m mcpgateway.wrapper
 ```
 
 <details>
@@ -496,7 +509,7 @@ uv run --directory . -m mcpgateway.wrapper
 
 # Get / call tools
 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_current_time","arguments":{"timezone":"Europe/Dublin"}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_system_time","arguments":{"timezone":"Europe/Dublin"}}}
 ```
 
 </details>
@@ -511,10 +524,10 @@ uv run --directory . -m mcpgateway.wrapper
 {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
 
 # After you add some tools and create a virtual server
-{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"get_current_time","description":"Get current time in a specific timezones","inputSchema":{"type":"object","properties":{"timezone":{"type":"string","description":"IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Use 'America/New_York' as local timezone if no timezone provided by the user."}},"required":["timezone"]}}]}}
+{"jsonrpc":"2.0","id":2,"result":{"tools":[{"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true},"description":"Convert time between different timezones","inputSchema":{"properties":{"source_timezone":{"description":"Source IANA timezone name","type":"string"},"target_timezone":{"description":"Target IANA timezone name","type":"string"},"time":{"description":"Time to convert in RFC3339 format or common formats like '2006-01-02 15:04:05'","type":"string"}},"required":["time","source_timezone","target_timezone"],"type":"object"},"name":"convert_time"},{"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true},"description":"Get current system time in specified timezone","inputSchema":{"properties":{"timezone":{"description":"IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Defaults to UTC","type":"string"}},"type":"object"},"name":"get_system_time"}]}}
 
 # Running the time tool:
-{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"{'content': [{'type': 'text', 'text': '{\\n  \"timezone\": \"Europe/Dublin\",\\n  \"datetime\": \"2025-06-08T21:47:07+01:00\",\\n  \"is_dst\": true\\n}'}], 'is_error': False}"}],"isError":false}}
+{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"2025-07-09T00:09:45+01:00"}]}}
 ```
 
 </details>
@@ -523,8 +536,8 @@ uv run --directory . -m mcpgateway.wrapper
 
 The `mcpgateway.wrapper` exposes everything your Gateway knows about over **stdio**, so any MCP client that *can't* (or *shouldn't*) open an authenticated SSE stream still gets full tool-calling power.
 
-> **Remember** to substitute your real Gateway URL (and server ID) for `http://localhost:4444/servers/1`.
-> When inside Docker/Podman, that often becomes `http://host.docker.internal:4444/servers/1` (macOS/Windows) or the gateway container's hostname (Linux).
+> **Remember** to substitute your real Gateway URL (and server ID) for `http://localhost:4444/servers/UUID_OF_SERVER_1`.
+> When inside Docker/Podman, that often becomes `http://host.docker.internal:4444/servers/UUID_OF_SERVER_1` (macOS/Windows) or the gateway container's hostname (Linux).
 
 ---
 
@@ -534,7 +547,7 @@ The `mcpgateway.wrapper` exposes everything your Gateway knows about over **stdi
 ```bash
 docker run -i --rm \
   --network=host \
-  -e MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1 \
+  -e MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
   -e MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   ghcr.io/ibm/mcp-context-forge:0.2.0 \
@@ -554,7 +567,7 @@ pipx install --include-deps mcp-contextforge-gateway
 
 # Run the stdio wrapper
 MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
-MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1 \
+MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
 python3 -m mcpgateway.wrapper
 # Alternatively with uv
 uv run --directory . -m mcpgateway.wrapper
@@ -570,7 +583,7 @@ uv run --directory . -m mcpgateway.wrapper
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
         "MCP_AUTH_TOKEN": "<your-token>",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
@@ -583,9 +596,9 @@ uv run --directory . -m mcpgateway.wrapper
 ---
 
 <details>
-<summary><strong>⚡ uv / uvenv (light-speed venvs)</strong></summary>
+<summary><strong>⚡ uv / uvx (light-speed venvs)</strong></summary>
 
-#### 1 - Install <code>uv</code>  (<code>uvenv</code> is an alias it provides)
+#### 1 - Install <code>uv</code>  (<code>uvx</code> is an alias it provides)
 
 ```bash
 # (a) official one-liner
@@ -607,17 +620,17 @@ uv pip install mcp-contextforge-gateway
 
 # Launch wrapper
 MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
-MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/1 \
+MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
 uv run --directory . -m mcpgateway.wrapper # Use this just for testing, as the Client will run the uv command
 ```
 
-#### Claude Desktop JSON (runs through **uvenv run**)
+#### Claude Desktop JSON (runs through **uvx**)
 
 ```json
 {
   "mcpServers": {
     "mcpgateway-wrapper": {
-      "command": "uvenv",
+      "command": "uvx",
       "args": [
         "run",
         "--",
@@ -627,7 +640,7 @@ uv run --directory . -m mcpgateway.wrapper # Use this just for testing, as the C
       ],
       "env": {
         "MCP_AUTH_TOKEN": "<your-token>",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/1"
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
     }
   }
 }
@@ -640,7 +653,7 @@ uv run --directory . -m mcpgateway.wrapper # Use this just for testing, as the C
 ### 🚀 Using with Claude Desktop (or any GUI MCP client)
 
 1. **Edit Config** → `File ▸ Settings ▸ Developer ▸ Edit Config`
-2. Paste one of the JSON blocks above (Docker / pipx / uvenv).
+2. Paste one of the JSON blocks above (Docker / pipx / uvx).
 3. Restart the app so the new stdio server is spawned.
 4. Open logs in the same menu to verify `mcpgateway-wrapper` started and listed your tools.
 
@@ -1421,7 +1434,7 @@ curl -N -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:444
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers
 
 # Get server
-curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers/1
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers/UUID_OF_SERVER_1
 
 # Create server
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -1433,11 +1446,11 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"description":"Updated"}' \
-     http://localhost:4444/servers/1
+     http://localhost:4444/servers/UUID_OF_SERVER_1
 
 # Toggle active
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/servers/1/toggle?activate=false
+     http://localhost:4444/servers/UUID_OF_SERVER_1/toggle?activate=false
 ```
 
 </details>

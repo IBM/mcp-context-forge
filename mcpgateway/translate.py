@@ -14,7 +14,7 @@ You can now run the bridge in either direction:
 Usage
 -----
 # 1. expose an MCP server that talks JSON-RPC on stdio at :9000/sse
-python -m mcpgateway.translate --stdio "uvenv run mcp-server-git" --port 9000
+python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 
 # 2. from another shell / browser subscribe to the SSE stream
 curl -N http://localhost:9000/sse          # receive the stream
