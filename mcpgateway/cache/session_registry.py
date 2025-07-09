@@ -138,7 +138,6 @@ class SessionRegistry(SessionBackend):
         self._sessions: Dict[str, Any] = {}  # Local transport cache
         self._lock = asyncio.Lock()
         self._cleanup_task = None
-        self._pubsub = None
 
     async def initialize(self) -> None:
         """Initialize the registry with async setup.
