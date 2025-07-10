@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.schemas import PromptRead, SecurePromptCreate, SecurePromptUpdate
+from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ class PromptService:
             },
         }
 
-    async def register_prompt(self, db: Session, prompt: SecurePromptCreate) -> PromptRead:
+    async def register_prompt(self, db: Session, prompt: PromptCreate) -> PromptRead:
         """Register a new prompt template.
 
         Args:
@@ -322,7 +322,7 @@ class PromptService:
         except Exception as e:
             raise PromptError(f"Failed to process prompt: {str(e)}")
 
-    async def update_prompt(self, db: Session, name: str, prompt_update: SecurePromptUpdate) -> PromptRead:
+    async def update_prompt(self, db: Session, name: str, prompt_update: PromptUpdate) -> PromptRead:
         """Update an existing prompt.
 
         Args:

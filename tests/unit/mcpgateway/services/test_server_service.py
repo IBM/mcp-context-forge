@@ -18,7 +18,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import SecureServerCreate, SecureServerUpdate, ServerRead
+from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate
 from mcpgateway.services.server_service import (
     ServerError,
     ServerNotFoundError,
@@ -189,7 +189,7 @@ class TestServerService:
             )
         )
 
-        server_create = SecureServerCreate(
+        server_create = ServerCreate(
             name="test_server",
             description="A test server",
             icon="http://example.com/image.jpg",
@@ -219,7 +219,7 @@ class TestServerService:
         mock_scalar.scalar_one_or_none.return_value = mock_server
         test_db.execute = Mock(return_value=mock_scalar)
 
-        server_create = SecureServerCreate(
+        server_create = ServerCreate(
             name="test_server",
             description="A new server",
             icon="http://image.com/test.jpg",
@@ -248,7 +248,7 @@ class TestServerService:
         test_db.get = Mock(return_value=None)
         test_db.rollback = Mock()
 
-        server_create = SecureServerCreate(
+        server_create = ServerCreate(
             name="test_server",
             description="A test server",
             associated_tools=["999"],
@@ -423,7 +423,7 @@ class TestServerService:
             )
         )
 
-        server_update = SecureServerUpdate(
+        server_update = ServerUpdate(
             name="updated_server",
             description="An updated server",
             icon="http://example.com/image.jpg",
@@ -442,7 +442,7 @@ class TestServerService:
     @pytest.mark.asyncio
     async def test_update_server_not_found(self, server_service, test_db):
         test_db.get = Mock(return_value=None)
-        update_data = SecureServerUpdate(name="updated_server")
+        update_data = ServerUpdate(name="updated_server")
         with pytest.raises(ServerError) as exc:
             await server_service.update_server(test_db, 999, update_data)
         assert "Server not found" in str(exc.value)
@@ -465,7 +465,7 @@ class TestServerService:
             await server_service.update_server(
                 test_db,
                 1,
-                SecureServerUpdate(name="existing_server"),
+                ServerUpdate(name="existing_server"),
             )
         assert "Server already exists with name" in str(exc.value)
 

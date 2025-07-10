@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import AuthenticationValues, SecureToolCreate, SecureToolUpdate, ToolRead
+from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     TextContent,
     ToolError,
@@ -232,7 +232,7 @@ class TestToolService:
         )
 
         # Create tool request
-        tool_create = SecureToolCreate(
+        tool_create = ToolCreate(
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
@@ -268,7 +268,7 @@ class TestToolService:
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Create tool request with conflicting name
-        tool_create = SecureToolCreate(
+        tool_create = ToolCreate(
             name="test_tool",  # Same name as mock_tool
             url="http://example.com/tools/new",
             description="A new tool",
@@ -291,7 +291,7 @@ class TestToolService:
         token = "token"
         auth_value = encode_auth({"Authorization": f"Bearer {token}"})
 
-        tool_input = SecureToolCreate(name="no_auth_tool", gateway_id=None, auth=AuthenticationValues(auth_type="bearer", auth_value=auth_value))
+        tool_input = ToolCreate(name="no_auth_tool", gateway_id=None, auth=AuthenticationValues(auth_type="bearer", auth_value=auth_value))
 
         # Run the function
         result = await tool_service.register_tool(test_db, tool_input)
@@ -315,7 +315,7 @@ class TestToolService:
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Create tool request with conflicting name
-        tool_create = SecureToolCreate(
+        tool_create = ToolCreate(
             name="test_tool",  # Same name as mock_tool
             url="http://example.com/tools/new",
             description="A new tool",
@@ -340,7 +340,7 @@ class TestToolService:
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Create tool request with conflicting name
-        tool_create = SecureToolCreate(
+        tool_create = ToolCreate(
             name="test_tool",  # Same name as mock_tool
             url="http://example.com/tools/new",
             description="A new tool",
@@ -367,7 +367,7 @@ class TestToolService:
         test_db.rollback = Mock()
 
         # Create tool request
-        tool_create = SecureToolCreate(
+        tool_create = ToolCreate(
             name="test_tool",
             url="http://example.com/tools/test",
             description="A test tool",
@@ -929,7 +929,7 @@ class TestToolService:
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
         # Create update request
-        tool_update = SecureToolUpdate(
+        tool_update = ToolUpdate(
             name="updated_tool",
             url="http://example.com/tools/updated",
             description="An updated test tool",
@@ -974,7 +974,7 @@ class TestToolService:
         test_db.rollback = Mock()
 
         # Create update request with conflicting name
-        tool_update = SecureToolUpdate(
+        tool_update = ToolUpdate(
             name="existing_tool",  # Name that conflicts with another tool
         )
 
@@ -991,7 +991,7 @@ class TestToolService:
         test_db.get = Mock(return_value=None)
 
         # Create update request
-        tool_update = SecureToolUpdate(
+        tool_update = ToolUpdate(
             name="updated_tool",
         )
 
@@ -1008,7 +1008,7 @@ class TestToolService:
         test_db.get = Mock(return_value=mock_tool)
 
         # Create update request
-        tool_update = SecureToolUpdate()
+        tool_update = ToolUpdate()
 
         # The service wraps the exception in ToolError
         with pytest.raises(ToolError) as exc_info:
@@ -1026,7 +1026,7 @@ class TestToolService:
         test_db.refresh = AsyncMock()
 
         # Create update request
-        tool_update = SecureToolUpdate(
+        tool_update = ToolUpdate(
             integration_type="MCP", request_type="STREAMABLEHTTP", headers={"key": "value"}, input_schema={"key2": "value2"}, annotations={"key3": "value3"}, jsonpath_filter="test_filter"
         )
 
@@ -1056,7 +1056,7 @@ class TestToolService:
         basic_auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"
 
         # Create update request
-        tool_update = SecureToolUpdate(auth=AuthenticationValues(auth_type="basic", auth_value=basic_auth_value))
+        tool_update = ToolUpdate(auth=AuthenticationValues(auth_type="basic", auth_value=basic_auth_value))
 
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
@@ -1078,7 +1078,7 @@ class TestToolService:
         basic_auth_value = "OrZImykkCmMkfNETfO-tk_ZNv9QSUKBZUEKC81-OzdnZqnAslksS7rhvpty41-kHLc42TfKF9sIYr1Q2W4GhXAz_"
 
         # Create update request
-        tool_update = SecureToolUpdate(auth=AuthenticationValues(auth_type="bearer", auth_value=basic_auth_value))
+        tool_update = ToolUpdate(auth=AuthenticationValues(auth_type="bearer", auth_value=basic_auth_value))
 
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
@@ -1095,7 +1095,7 @@ class TestToolService:
         test_db.refresh = AsyncMock()
 
         # Create update request
-        tool_update = SecureToolUpdate(auth=AuthenticationValues())
+        tool_update = ToolUpdate(auth=AuthenticationValues())
 
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)

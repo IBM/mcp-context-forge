@@ -36,11 +36,11 @@ from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.schemas import (
+    ResourceCreate,
     ResourceMetrics,
     ResourceRead,
     ResourceSubscription,
-    SecureResourceCreate,
-    SecureResourceUpdate,
+    ResourceUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ class ResourceService:
         }
         return ResourceRead.model_validate(resource_dict)
 
-    async def register_resource(self, db: Session, resource: SecureResourceCreate) -> ResourceRead:
+    async def register_resource(self, db: Session, resource: ResourceCreate) -> ResourceRead:
         """Register a new resource.
 
         Args:
@@ -393,7 +393,7 @@ class ResourceService:
             db.rollback()
             logger.error(f"Failed to unsubscribe: {str(e)}")
 
-    async def update_resource(self, db: Session, uri: str, resource_update: SecureResourceUpdate) -> ResourceRead:
+    async def update_resource(self, db: Session, uri: str, resource_update: ResourceUpdate) -> ResourceRead:
         """Update a resource.
 
         Args:

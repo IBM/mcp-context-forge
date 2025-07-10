@@ -37,7 +37,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayRead, SecureGatewayCreate, SecureGatewayUpdate, SecureToolCreate
+from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth
@@ -172,7 +172,7 @@ class GatewayService:
         self._active_gateways.clear()
         logger.info("Gateway service shutdown complete")
 
-    async def register_gateway(self, db: Session, gateway: SecureGatewayCreate) -> GatewayRead:
+    async def register_gateway(self, db: Session, gateway: GatewayCreate) -> GatewayRead:
         """Register a new gateway.
 
         Args:
@@ -277,7 +277,7 @@ class GatewayService:
         gateways = db.execute(query).scalars().all()
         return [GatewayRead.model_validate(g) for g in gateways]
 
-    async def update_gateway(self, db: Session, gateway_id: str, gateway_update: SecureGatewayUpdate) -> GatewayRead:
+    async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate) -> GatewayRead:
         """Update a gateway.
 
         Args:
@@ -755,7 +755,7 @@ class GatewayService:
                         tools = response.tools
                         tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
 
-                        tools = [SecureToolCreate.model_validate(tool) for tool in tools]
+                        tools = [ToolCreate.model_validate(tool) for tool in tools]
                         logger.info(f"{tools[0]=}")
 
                 return capabilities, tools
@@ -789,7 +789,7 @@ class GatewayService:
                         response = await session.list_tools()
                         tools = response.tools
                         tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
-                        tools = [SecureToolCreate.model_validate(tool) for tool in tools]
+                        tools = [ToolCreate.model_validate(tool) for tool in tools]
                         for tool in tools:
                             tool.request_type = "STREAMABLEHTTP"
 

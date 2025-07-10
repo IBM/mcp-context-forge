@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 # First-Party
-from mcpgateway.schemas import ResourceRead, ResourceSubscription, SecureResourceCreate, SecureResourceUpdate
+from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.resource_service import (
     ResourceError,
     ResourceNotFoundError,
@@ -123,7 +123,7 @@ def mock_inactive_resource():
 @pytest.fixture
 def sample_resource_create():
     """Create a sample ResourceCreate object."""
-    return SecureResourceCreate(uri="http://example.com/new-resource", name="New Resource", description="A new test resource", mime_type="text/plain", content="New content")  # Use a valid HTTP URI
+    return ResourceCreate(uri="http://example.com/new-resource", name="New Resource", description="A new test resource", mime_type="text/plain", content="New content")  # Use a valid HTTP URI
 
 
 # --------------------------------------------------------------------------- #
@@ -274,7 +274,7 @@ class TestResourceRegistration:
     @pytest.mark.asyncio
     async def test_register_resource_binary_content(self, resource_service, mock_db):
         """Test registration with binary content."""
-        binary_resource = SecureResourceCreate(uri="http://example.com/binary", name="Binary Resource", content=b"binary content", mime_type="application/octet-stream")
+        binary_resource = ResourceCreate(uri="http://example.com/binary", name="Binary Resource", content=b"binary content", mime_type="application/octet-stream")
 
         # Mock no existing resource
         mock_scalar = MagicMock()
@@ -552,7 +552,7 @@ class TestResourceManagement:
     @pytest.mark.asyncio
     async def test_update_resource_success(self, resource_service, mock_db, mock_resource):
         """Test successful resource update."""
-        update_data = SecureResourceUpdate(name="Updated Name", description="Updated description", content="Updated content")
+        update_data = ResourceUpdate(name="Updated Name", description="Updated description", content="Updated content")
 
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
@@ -591,7 +591,7 @@ class TestResourceManagement:
     @pytest.mark.asyncio
     async def test_update_resource_not_found(self, resource_service, mock_db):
         """Test updating non-existent resource."""
-        update_data = SecureResourceUpdate(name="New Name")
+        update_data = ResourceUpdate(name="New Name")
 
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = None
@@ -603,7 +603,7 @@ class TestResourceManagement:
     @pytest.mark.asyncio
     async def test_update_resource_inactive(self, resource_service, mock_db, mock_inactive_resource):
         """Test updating inactive resource."""
-        update_data = SecureResourceUpdate(name="New Name")
+        update_data = ResourceUpdate(name="New Name")
 
         # First query (for active) returns None, second (for inactive) returns resource
         mock_scalar1 = MagicMock()
@@ -621,7 +621,7 @@ class TestResourceManagement:
     async def test_update_resource_binary_content(self, resource_service, mock_db, mock_resource):
         """Test updating resource with binary content."""
         mock_resource.mime_type = "application/octet-stream"
-        update_data = SecureResourceUpdate(content=b"new binary content")
+        update_data = ResourceUpdate(content=b"new binary content")
 
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
@@ -1300,7 +1300,7 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_update_resource_error(self, resource_service, mock_db, mock_resource):
         """Test update resource with generic error."""
-        update_data = SecureResourceUpdate(name="New Name")
+        update_data = ResourceUpdate(name="New Name")
 
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource

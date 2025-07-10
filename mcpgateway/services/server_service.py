@@ -31,7 +31,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import SecureServerCreate, SecureServerUpdate, ServerMetrics, ServerRead
+from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ class ServerService:
             "prompts": prompts or [],
         }
 
-    async def register_server(self, db: Session, server_in: SecureServerCreate) -> ServerRead:
+    async def register_server(self, db: Session, server_in: ServerCreate) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
 
@@ -154,7 +154,7 @@ class ServerService:
 
         Args:
             db (Session): The SQLAlchemy database session.
-            server_in (SecureServerCreate): The server creation schema containing server details and lists of
+            server_in (ServerCreate): The server creation schema containing server details and lists of
                 associated tool, resource, and prompt IDs (as strings).
 
         Returns:
@@ -287,7 +287,7 @@ class ServerService:
         logger.debug(f"Server Data: {server_data}")
         return self._convert_server_to_read(server)
 
-    async def update_server(self, db: Session, server_id: str, server_update: SecureServerUpdate) -> ServerRead:
+    async def update_server(self, db: Session, server_id: str, server_update: ServerUpdate) -> ServerRead:
         """Update an existing server.
 
         Args:

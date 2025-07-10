@@ -52,10 +52,10 @@ from mcpgateway.schemas import (
     AdminToolCreate,
     EventMessage,
     ListFilters,
-    SecureServerCreate,
-    SecureServerUpdate,
+    ServerCreate,
     ServerMetrics,
     ServerRead,
+    ServerUpdate,
     StatusToggleRequest,
     StatusToggleResponse,
 )
@@ -667,8 +667,8 @@ class TestServerSchemas:
     """Test server-related schemas."""
 
     def test_server_create(self):
-        """Test SecureServerCreate model."""
-        server = SecureServerCreate(
+        """Test ServerCreate model."""
+        server = ServerCreate(
             name="Test Server",
             description="Test server instance",
             icon="http://example.com/server.png",
@@ -685,7 +685,7 @@ class TestServerSchemas:
         assert server.associated_prompts == ["6"]
 
         # Test with comma-separated strings for associations
-        csv_server = SecureServerCreate(
+        csv_server = ServerCreate(
             name="CSV Server",
             description="Server with comma-separated values",
             associated_tools="1,2,3",
@@ -699,7 +699,7 @@ class TestServerSchemas:
         assert csv_server.associated_prompts == ["6"]
 
         # Minimal server
-        minimal = SecureServerCreate(
+        minimal = ServerCreate(
             name="Minimal Server",
         )
 
@@ -711,8 +711,8 @@ class TestServerSchemas:
         assert minimal.associated_prompts is None
 
     def test_server_update(self):
-        """Test SecureServerUpdate model."""
-        update = SecureServerUpdate(
+        """Test ServerUpdate model."""
+        update = ServerUpdate(
             name="Updated Server",
             description="Updated description",
             icon="http://example.com/updated.png",
@@ -729,7 +729,7 @@ class TestServerSchemas:
         assert update.associated_prompts == ["14"]
 
         # Test with comma-separated strings
-        csv_update = SecureServerUpdate(
+        csv_update = ServerUpdate(
             associated_tools="10,11",
             associated_resources="12,13",
             associated_prompts="14",

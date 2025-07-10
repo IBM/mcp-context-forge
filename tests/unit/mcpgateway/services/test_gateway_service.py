@@ -28,7 +28,7 @@ import pytest
 # ---------------------------------------------------------------------------
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import SecureGatewayCreate, SecureGatewayUpdate
+from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayError,
@@ -172,7 +172,7 @@ class TestGatewayService:
         )
         gateway_service._notify_gateway_added = AsyncMock()
 
-        gateway_create = SecureGatewayCreate(
+        gateway_create = GatewayCreate(
             name="test_gateway",
             url="http://example.com/gateway",
             description="A test gateway",
@@ -186,7 +186,7 @@ class TestGatewayService:
         gateway_service._initialize_gateway.assert_called_once()
         gateway_service._notify_gateway_added.assert_called_once()
 
-        # `result` is the same SecureGatewayCreate instance because we stubbed
+        # `result` is the same GatewayCreate instance because we stubbed
         # GatewayRead.model_validate → just check its fields:
         assert result.name == "test_gateway"
         assert result.url == "http://example.com/gateway"
@@ -198,7 +198,7 @@ class TestGatewayService:
         # DB returns an existing gateway with the same name
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
 
-        gateway_create = SecureGatewayCreate(
+        gateway_create = GatewayCreate(
             name="test_gateway",  # same as mock_gateway
             url="http://example.com/other",
             description="Another gateway",
@@ -220,7 +220,7 @@ class TestGatewayService:
         # _initialize_gateway blows up before any DB work happens
         gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Failed to connect"))
 
-        gateway_create = SecureGatewayCreate(
+        gateway_create = GatewayCreate(
             name="test_gateway",
             url="http://example.com/gateway",
             description="A test gateway",
@@ -291,7 +291,7 @@ class TestGatewayService:
         )
         gateway_service._notify_gateway_updated = AsyncMock()
 
-        gateway_update = SecureGatewayUpdate(
+        gateway_update = GatewayUpdate(
             name="updated_gateway",
             url="http://example.com/updated",
             description="Updated description",
@@ -310,7 +310,7 @@ class TestGatewayService:
     async def test_update_gateway_not_found(self, gateway_service, test_db):
         """Updating a non-existent gateway surfaces GatewayError with message."""
         test_db.get = Mock(return_value=None)
-        gateway_update = SecureGatewayUpdate(name="whatever")
+        gateway_update = GatewayUpdate(name="whatever")
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.update_gateway(test_db, 999, gateway_update)
         assert "Gateway not found: 999" in str(exc_info.value)
@@ -323,8 +323,8 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=conflicting))
         test_db.rollback = Mock()
 
-        # gateway_update = MagicMock(spec=SecureGatewayUpdate, name="existing_gateway")
-        gateway_update = SecureGatewayUpdate(name="existing_gateway")
+        # gateway_update = MagicMock(spec=GatewayUpdate, name="existing_gateway")
+        gateway_update = GatewayUpdate(name="existing_gateway")
 
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.update_gateway(test_db, 1, gateway_update)

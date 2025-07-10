@@ -213,7 +213,7 @@ class TestIntegrationScenarios:
             "uri": MOCK_RESOURCE.uri,
             "name": MOCK_RESOURCE.name,
             "description": "demo text",
-            "content": "Hello",  # required by SecureResourceCreate
+            "content": "Hello",  # required by ResourceCreate
         }
         resp_create = test_client.post("/resources/", json=create_body, headers=auth_headers)
         assert resp_create.status_code == 200

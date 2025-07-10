@@ -248,7 +248,7 @@ class AuthenticationValues(BaseModelWithConfigDict):
     auth_header_value: str = Field("", description="Value for custom headers authentication")
 
 
-class SecureToolCreate(BaseModel):
+class ToolCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the tool")
@@ -367,7 +367,7 @@ class SecureToolCreate(BaseModel):
             Dict: Reformatedd values dict
         """
         logger.debug(
-            "Assembling auth in SecureToolCreate with raw values",
+            "Assembling auth in ToolCreate with raw values",
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
@@ -393,7 +393,7 @@ class SecureToolCreate(BaseModel):
         return values
 
 
-class SecureToolUpdate(BaseModelWithConfigDict):
+class ToolUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing tool.
 
     Similar to ToolCreate but all fields are optional to allow partial updates.
@@ -512,7 +512,7 @@ class SecureToolUpdate(BaseModelWithConfigDict):
             Dict: Reformatedd values dict
         """
         logger.debug(
-            "Assembling auth in SecureToolCreate with raw values",
+            "Assembling auth in ToolCreate with raw values",
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
@@ -601,7 +601,7 @@ class ToolResult(BaseModelWithConfigDict):
     error_message: Optional[str] = None
 
 
-class SecureResourceCreate(BaseModel):
+class ResourceCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     uri: str = Field(..., description="Unique URI for the resource")
@@ -707,7 +707,7 @@ class SecureResourceCreate(BaseModel):
         return v
 
 
-class SecureResourceUpdate(BaseModelWithConfigDict):
+class ResourceUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing resource.
 
     Similar to ResourceCreate but URI is not required and all fields are optional.
@@ -899,7 +899,7 @@ class PromptArgument(BaseModelWithConfigDict):
     )
 
 
-class SecurePromptCreate(BaseModel):
+class PromptCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the prompt")
@@ -968,7 +968,7 @@ class SecurePromptCreate(BaseModel):
         return v
 
 
-class SecurePromptUpdate(BaseModelWithConfigDict):
+class PromptUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing prompt.
 
     Similar to PromptCreate but all fields are optional to allow partial updates.
@@ -1076,7 +1076,7 @@ class PromptInvocation(BaseModelWithConfigDict):
 # --- Gateway Schemas ---
 
 
-class SecureGatewayCreate(BaseModel):
+class GatewayCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
@@ -1217,10 +1217,10 @@ class SecureGatewayCreate(BaseModel):
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, or headers.")
 
 
-class SecureGatewayUpdate(BaseModelWithConfigDict):
+class GatewayUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing federation gateway.
 
-    Similar to SecureGatewayCreate but all fields are optional to allow partial updates.
+    Similar to GatewayCreate but all fields are optional to allow partial updates.
     """
 
     name: Optional[str] = Field(None, description="Unique name for the gateway")
@@ -1479,25 +1479,7 @@ class FederatedPrompt(BaseModelWithConfigDict):
 
 
 # --- RPC Schemas ---
-
-
-# class RPCRequest(BaseModelWithConfigDict):
-#     """Schema for JSON-RPC 2.0 requests.
-
-#     Validates:
-#     - Protocol version
-#     - Method name
-#     - Optional parameters
-#     - Optional request ID
-#     """
-
-#     jsonrpc: Literal["2.0"]
-#     method: str
-#     params: Optional[Dict[str, Any]] = None
-#     id: Optional[Union[int, str]] = None
-
-
-class SecureRPCRequest(BaseModel):
+class RPCRequest(BaseModel):
     """MCP-compliant RPC request validation"""
 
     jsonrpc: Literal["2.0"]
@@ -1684,7 +1666,7 @@ class ListFilters(BaseModelWithConfigDict):
 # --- Server Schemas ---
 
 
-class SecureServerCreate(BaseModel):
+class ServerCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="The server's name")
@@ -1758,7 +1740,7 @@ class SecureServerCreate(BaseModel):
         return v
 
 
-class SecureServerUpdate(BaseModelWithConfigDict):
+class ServerUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing server.
 
     All fields are optional to allow partial updates.

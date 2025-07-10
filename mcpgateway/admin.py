@@ -33,27 +33,27 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.schemas import (
+    GatewayCreate,
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
+    GatewayUpdate,
+    PromptCreate,
     PromptMetrics,
     PromptRead,
+    PromptUpdate,
+    ResourceCreate,
     ResourceMetrics,
     ResourceRead,
-    SecureGatewayCreate,
-    SecureGatewayUpdate,
-    SecurePromptCreate,
-    SecurePromptUpdate,
-    SecureResourceCreate,
-    SecureResourceUpdate,
-    SecureServerCreate,
-    SecureServerUpdate,
-    SecureToolCreate,
-    SecureToolUpdate,
+    ResourceUpdate,
+    ServerCreate,
     ServerMetrics,
     ServerRead,
+    ServerUpdate,
+    ToolCreate,
     ToolMetrics,
     ToolRead,
+    ToolUpdate,
 )
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 from mcpgateway.services.prompt_service import PromptService
@@ -162,7 +162,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
 
-        server = SecureServerCreate(
+        server = ServerCreate(
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
@@ -220,7 +220,7 @@ async def admin_edit_server(
     is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
-        server = SecureServerUpdate(
+        server = ServerUpdate(
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
@@ -598,7 +598,7 @@ async def admin_add_tool(
     }
     logger.debug(f"Tool data built: {tool_data}")
     try:
-        tool = SecureToolCreate(**tool_data)
+        tool = ToolCreate(**tool_data)
         logger.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
         await tool_service.register_tool(db, tool)
         return JSONResponse(
@@ -673,7 +673,7 @@ async def admin_edit_tool(
         "auth_header_value": form.get("auth_header_value", ""),
     }
     logger.debug(f"Tool update data built: {tool_data}")
-    tool = SecureToolUpdate(**tool_data)
+    tool = ToolUpdate(**tool_data)
     try:
         await tool_service.update_tool(db, tool_id, tool)
 
@@ -795,7 +795,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     """
     logger.debug(f"User {user} is adding a new gateway")
     form = await request.form()
-    gateway = SecureGatewayCreate(
+    gateway = GatewayCreate(
         name=form["name"],
         url=form["url"],
         description=form.get("description"),
@@ -849,7 +849,7 @@ async def admin_edit_gateway(
     """
     logger.debug(f"User {user} is editing gateway ID {gateway_id}")
     form = await request.form()
-    gateway = SecureGatewayUpdate(
+    gateway = GatewayUpdate(
         name=form["name"],
         url=form["url"],
         description=form.get("description"),
@@ -941,7 +941,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     """
     logger.debug(f"User {user} is adding a new resource")
     form = await request.form()
-    resource = SecureResourceCreate(
+    resource = ResourceCreate(
         uri=form["uri"],
         name=form["name"],
         description=form.get("description"),
@@ -981,7 +981,7 @@ async def admin_edit_resource(
     """
     logger.debug(f"User {user} is editing resource URI {uri}")
     form = await request.form()
-    resource = SecureResourceUpdate(
+    resource = ResourceUpdate(
         name=form["name"],
         description=form.get("description"),
         mime_type=form.get("mimeType"),
@@ -1109,7 +1109,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     form = await request.form()
     args_json = form.get("arguments") or "[]"
     arguments = json.loads(args_json)
-    prompt = SecurePromptCreate(
+    prompt = PromptCreate(
         name=form["name"],
         description=form.get("description"),
         template=form["template"],
@@ -1149,7 +1149,7 @@ async def admin_edit_prompt(
     form = await request.form()
     args_json = form.get("arguments") or "[]"
     arguments = json.loads(args_json)
-    prompt = SecurePromptUpdate(
+    prompt = PromptUpdate(
         name=form["name"],
         description=form.get("description"),
         template=form["template"],
