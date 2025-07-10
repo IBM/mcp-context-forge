@@ -295,7 +295,7 @@ class MCPPathRewriteMiddleware:
         Initialize the middleware with the ASGI application.
 
         Args:
-            app (Callable): The next ASGI application in the middleware stack.
+            application (Callable): The next ASGI application in the middleware stack.
         """
         self.application = application
 
