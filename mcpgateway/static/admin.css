@@ -17,16 +17,28 @@
   width: 24px;
   height: 24px;
   animation: spin 1s linear infinite;
+
   /* margin: 10px auto; */
 
   /* Positioning to the left */
-  margin: 10px 0 10px 10px; /* top, right, bottom, left */
-  display: block; /* Ensures it behaves like a block-level element */
+  margin: 10px 0 10px 10px;
+
+  /* top, right, bottom, left */
+  display: block;
+
+  /* Ensures it behaves like a block-level element */
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
-.feedback:blank { display:none; }
+.feedback:blank {
+  display: none;
+}
