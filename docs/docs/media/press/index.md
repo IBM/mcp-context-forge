@@ -4,18 +4,18 @@
 
 ## Articles
 !!! details "Watsonx.ai Agent to MCP Gateway (ruslanmv.com)"
-**Author:** Ruslan Magana Vsevolodovna | **Publication:** ruslanmv.com | **Date:** July 4, 2025
-[Read the article](https://ruslanmv.com/blog/watsonx-agent-to-mcp-gateway)
+    **Author:** Ruslan Magana Vsevolodovna | **Publication:** ruslanmv.com | **Date:** July 4, 2025
+    [Read the article](https://ruslanmv.com/blog/watsonx-agent-to-mcp-gateway)
 
     !!! quote
-    This detailed, end-to-end tutorial provides a practical blueprint for developers. It walks through the entire process of building a watsonx.ai-powered agent, registering it with the MCP Gateway using SSE, and connecting it to a custom FastAPI frontend. The post serves as a hands-on guide for creating fully-functional, multi-component AI applications.
+        This detailed, end-to-end tutorial provides a practical blueprint for developers. It walks through the entire process of building a watsonx.ai-powered agent, registering it with the MCP Gateway using SSE, and connecting it to a custom FastAPI frontend. The post serves as a hands-on guide for creating fully-functional, multi-component AI applications.
 
 !!! details "Getting Started with ContextForge MCP Gateway on macOS (aiarchplaybook.substack.com)"
-**Author:** Shaikh Quader | **Publication:** AI Architect's Playbook | **Date:** June 26, 2025
-[Read the article](https://aiarchplaybook.substack.com/p/getting-started-with-contextforge)
+    **Author:** Shaikh Quader | **Publication:** AI Architect's Playbook | **Date:** June 26, 2025
+    [Read the article](https://aiarchplaybook.substack.com/p/getting-started-with-contextforge)
 
     !!! quote
-    ContextForge MCP Gateway is an open-source IBM middleware that connects AI agents to multiple MCP servers through a single endpoint with centralized login and built-in observability.
+        ContextForge MCP Gateway is an open-source IBM middleware that connects AI agents to multiple MCP servers through a single endpoint with centralized login and built-in observability.
 
 !!! details "IBM's MCP Gateway: A Unified FastAPI-Based Model Context Protocol Gateway for Next-Gen AI Toolchains (MarkTechPost)"
     **Author:** Nikhil | **Publication:** MarkTechPost | **Date:** June 21, 2025
