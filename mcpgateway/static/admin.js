@@ -82,389 +82,6 @@ function safeUrl(u, allowData = false) {
   }
 }
 
-document.addEventListener("DOMContentLoaded", function () {
-  const hash = window.location.hash;
-  if (hash) {
-    showTab(hash.slice(1));
-  }
-
-  document.getElementById("tab-catalog").addEventListener("click", () => {
-    showTab("catalog");
-  });
-  document.getElementById("tab-tools").addEventListener("click", () => {
-    showTab("tools");
-  });
-  document.getElementById("tab-resources").addEventListener("click", () => {
-    showTab("resources");
-  });
-  document.getElementById("tab-prompts").addEventListener("click", () => {
-    showTab("prompts");
-  });
-  document.getElementById("tab-gateways").addEventListener("click", () => {
-    showTab("gateways");
-  });
-  document.getElementById("tab-roots").addEventListener("click", () => {
-    showTab("roots");
-  });
-  document.getElementById("tab-metrics").addEventListener("click", () => {
-    showTab("metrics");
-  });
-  document.getElementById("tab-version-info").addEventListener("click", () => {
-    showTab("version-info");
-  });
-
-  /* ------------------------------------------------------------------
-  * HTMX debug hooks
-  * ------------------------------------------------------------------ */
-  document.body.addEventListener("htmx:beforeRequest", (event) => {
-    if (event.detail.elt.id === "tab-version-info") {
-      console.log("HTMX: Sending request for version info partial");
-    }
-  });
-
-  document.body.addEventListener("htmx:afterSwap", (event) => {
-    if (event.detail.target.id === "version-info-panel") {
-      console.log("HTMX: Content swapped into version-info-panel");
-    }
-  });
-
-  // Pre-load version info if that's the initial tab
-  if (window.location.hash === "#version-info") {
-    // Small delay to ensure DOM is ready
-    setTimeout(() => {
-      const panel = document.getElementById("version-info-panel");
-      if (panel && panel.innerHTML.trim() === "") {
-        fetch(`${window.ROOT_PATH}/version?partial=true`)
-          .then((resp) => {
-            if (!resp.ok) throw new Error("Network response was not ok");
-            return resp.text();
-          })
-          .then((html) => {
-            panel.innerHTML = html;
-          })
-          .catch((err) => {
-            console.error("Failed to preload version info:", err);
-            panel.innerHTML = "<p class='text-red-600'>Failed to load version info.</p>";
-          });
-      }
-    }, 100);
-  }
-
-  // Authentication toggle
-  document.getElementById("auth-type").addEventListener("change", function () {
-    const basicFields = document.getElementById("auth-basic-fields");
-    const bearerFields = document.getElementById("auth-bearer-fields");
-    const headersFields = document.getElementById("auth-headers-fields");
-    handleAuthTypeSelection(
-      this.value,
-      basicFields,
-      bearerFields,
-      headersFields,
-    );
-  });
-  document
-    .getElementById("auth-type-gw")
-    .addEventListener("change", function () {
-      const basicFields = document.getElementById("auth-basic-fields-gw");
-      const bearerFields = document.getElementById("auth-bearer-fields-gw");
-      const headersFields = document.getElementById("auth-headers-fields-gw");
-      handleAuthTypeSelection(
-        this.value,
-        basicFields,
-        bearerFields,
-        headersFields,
-      );
-    });
-  document
-    .getElementById("auth-type-gw-edit")
-    .addEventListener("change", function () {
-      const basicFields = document.getElementById("auth-basic-fields-gw-edit");
-      const bearerFields = document.getElementById(
-        "auth-bearer-fields-gw-edit",
-      );
-      const headersFields = document.getElementById(
-        "auth-headers-fields-gw-edit",
-      );
-      handleAuthTypeSelection(
-        this.value,
-        basicFields,
-        bearerFields,
-        headersFields,
-      );
-    });
-  document
-    .getElementById("edit-auth-type")
-    .addEventListener("change", function () {
-      const basicFields = document.getElementById("edit-auth-basic-fields");
-      const bearerFields = document.getElementById("edit-auth-bearer-fields");
-      const headersFields = document.getElementById("edit-auth-headers-fields");
-      if (this.value === "basic") {
-        basicFields.style.display = "block";
-        bearerFields.style.display = "none";
-        headersFields.style.display = "none";
-      } else if (this.value === "bearer") {
-        basicFields.style.display = "none";
-        bearerFields.style.display = "block";
-        headersFields.style.display = "none";
-      } else if (this.value === "authheaders") {
-        basicFields.style.display = "none";
-        bearerFields.style.display = "none";
-        headersFields.style.display = "block";
-      } else {
-        basicFields.style.display = "none";
-        bearerFields.style.display = "none";
-        headersFields.style.display = "none";
-      }
-    });
-
-    document.getElementById("add-gateway-form")
-      .addEventListener("submit", async (e) => {
-        e.preventDefault();
-
-        const form = e.target;
-        const formData = new FormData(form);
-
-        const status = document.getElementById("status-gateways");
-        const loading = document.getElementById("add-gateway-loading");
-
-        // Show loading and clear previous status
-        loading.style.display = "block";
-        status.textContent = "";
-        status.classList.remove("error-status");
-
-        const is_inactive_checked = isInactiveChecked('gateways');
-        formData.append("is_inactive_checked", is_inactive_checked);
-
-        try {
-          const response = await fetch(`${window.ROOT_PATH}/admin/gateways`, {
-            method: "POST",
-            body: formData,
-          });
-
-          let result = await response.json();
-            if (!result.success) {
-              alert(result.message || "An error occurred");
-            } else {
-              if (is_inactive_checked) {
-                window.location.href = `${window.ROOT_PATH}/admin?include_inactive=true#gateways`; // Redirect on success
-              } else{
-              window.location.href = `${window.ROOT_PATH}/admin#gateways`; // Redirect on success
-              }
-            }
-
-        } catch (error) {
-          console.error("Error:", error);
-          status.textContent = error.message || "An error occurred!";
-          status.classList.add("error-status");
-        } finally {
-          loading.style.display = "none"; // Hide loading spinner
-        }
-      });
-
-
-  document
-    .getElementById("add-resource-form")
-    .addEventListener("submit", (e) => {
-      e.preventDefault();
-      const form = e.target;
-      const formData = new FormData(form);
-      fetch(`${window.ROOT_PATH}/admin/resources`, {
-        method: "POST",
-        body: formData,
-      })
-        .then((response) => {
-          console.log(response);
-          if (!response.ok) {
-            const status = document.getElementById("status-resources");
-            status.textContent = "Connection failed!";
-            status.classList.add("error-status");
-          } else {
-            location.reload();
-          }
-        })
-        .catch((error) => {
-          console.error("Error:", error);
-        });
-    });
-
-  // Dynamically add parameter block on button click
-  document.getElementById("add-parameter-btn").addEventListener("click", () => {
-    parameterCount++;
-    const parametersContainer = document.getElementById("parameters-container");
-    const paramDiv = document.createElement("div");
-    paramDiv.classList.add(
-      "border",
-      "p-4",
-      "mb-4",
-      "rounded-md",
-      "bg-gray-50",
-      "shadow-sm",
-    );
-    paramDiv.innerHTML = `
-    <div class="flex justify-between items-center">
-      <span class="font-semibold text-gray-800">Parameter ${parameterCount}</span>
-      <button type="button" class="delete-param text-red-600 hover:text-red-800 focus:outline-none text-xl" title="Delete Parameter">&times;</button>
-    </div>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-      <div>
-        <label class="block text-sm font-medium text-gray-700">Parameter Name</label>
-        <input type="text" name="param_name_${parameterCount}" required class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200" />
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-gray-700">Type</label>
-        <select name="param_type_${parameterCount}" class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200">
-          <option value="string">String</option>
-          <option value="number">Number</option>
-          <option value="boolean">Boolean</option>
-          <option value="object">Object</option>
-          <option value="array">Array</option>
-        </select>
-      </div>
-    </div>
-    <div class="mt-4">
-      <label class="block text-sm font-medium text-gray-700">Description</label>
-      <textarea name="param_description_${parameterCount}" class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200"></textarea>
-    </div>
-    <div class="mt-4 flex items-center">
-      <input type="checkbox" name="param_required_${parameterCount}" checked class="h-4 w-4 text-indigo-600 border border-gray-300 rounded" />
-      <label class="ml-2 text-sm font-medium text-gray-700">Required</label>
-    </div>
-    `;
-    parametersContainer.appendChild(paramDiv);
-    updateSchemaPreview();
-
-    // Delete parameter functionality
-    const deleteButton = paramDiv.querySelector(".delete-param");
-    deleteButton.addEventListener("click", () => {
-      paramDiv.remove();
-      updateSchemaPreview();
-      parameterCount--;
-    });
-  });
-
-  // Let the form load and then refresh the code mirror editors
-  var addToolForm = document.getElementById("add-tool-form");
-  addToolForm.addEventListener("click", function () {
-    if (getComputedStyle(addToolForm).display !== "none") {
-      refreshEditors();
-    }
-  });
-
-  // for tools insertion failure pop ups
-  document
-    .getElementById("add-tool-form")
-    .addEventListener("submit", async function (event) {
-      event.preventDefault();
-      // If in UI mode, update schemaEditor with generated schema
-      const mode = document.querySelector(
-        'input[name="schema_input_mode"]:checked',
-      ).value;
-      if (mode === "ui") {
-        window.schemaEditor.setValue(generateSchema());
-      }
-      // Save CodeMirror editors' contents into the underlying textareas
-      if (window.headersEditor) {
-        window.headersEditor.save();
-      }
-      if (window.schemaEditor) {
-        window.schemaEditor.save();
-      }
-
-      let formData = new FormData(this);
-      const is_inactive_checked = isInactiveChecked('tools');
-      formData.append("is_inactive_checked", is_inactive_checked);
-      try {
-        let response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
-          method: "POST",
-          body: formData,
-        });
-        let result = await response.json();
-        if (!result.success) {
-          alert(result.message || "An error occurred");
-        } else {
-            if (is_inactive_checked) {
-              window.location.href = `${window.ROOT_PATH}/admin?include_inactive=true#tools`; // Redirect on success
-            } else{
-            window.location.href = `${window.ROOT_PATH}/admin#tools`; // Redirect on success
-            }
-        }
-      } catch (error) {
-        console.error("Fetch error:", error);
-        alert("Failed to submit the form. Check console for details.");
-      }
-    });
-
-  // You can override this default in HTML by adding `data-default="REST"` (for example)
-  const integrationTypeSelect = document.getElementById("integrationType");
-  const defaultIntegration =
-    integrationTypeSelect.dataset.default ||
-    integrationTypeSelect.options[0].value;
-  integrationTypeSelect.value = defaultIntegration;
-  updateRequestTypeOptions();
-
-  integrationTypeSelect.addEventListener("change", () => {
-    updateRequestTypeOptions();
-  });
-
-  const editToolTypeSelect = document.getElementById("edit-tool-type");
-  const editToolRequestTypeSelect = document.getElementById(
-    "edit-tool-request-type",
-  );
-
-  const requestTypeMap = {
-    MCP: ["SSE", "STREAMABLE", "STDIO"],
-    REST: ["GET", "POST", "PUT", "DELETE"],
-  };
-
-
-  // Optionally pass in a pre-selected method
-  function updateEditToolRequestTypes(selectedMethod = null) {
-    const selectedType = editToolTypeSelect.value;
-    const allowedMethods = requestTypeMap[selectedType] || [];
-
-    // Clear existing options
-    editToolRequestTypeSelect.innerHTML = "";
-
-    // Populate new options
-    allowedMethods.forEach((method) => {
-      const option = document.createElement("option");
-      option.value = method;
-      option.textContent = method;
-      editToolRequestTypeSelect.appendChild(option);
-    });
-
-    // Set the pre-selected method, if valid
-    if (selectedMethod && allowedMethods.includes(selectedMethod)) {
-      editToolRequestTypeSelect.value = selectedMethod;
-    }
-  }
-
-  // Call once on page load or when popup opens
-  const currentType = "REST"; // example: loaded from existing data
-  const currentMethod = "PUT"; // example: loaded from existing data
-
-  editToolTypeSelect.value = currentType;
-  updateEditToolRequestTypes(currentMethod);
-
-  // Update request type options when tool type changes
-  editToolTypeSelect.addEventListener("change", () => {
-    updateEditToolRequestTypes(); // no preselection on change
-  });
-
-  //Input schema UI backend for schema creation
-  window.schemaEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("schema-editor"),
-    {
-      mode: "application/json",
-      theme: "monokai",
-      lineNumbers: true,
-      autoCloseBrackets: true,
-      matchBrackets: true,
-      tabSize: 2,
-    },
-  );
-});
-
 // Tab handling
 function showTab(tabName) {
   /* ---------- navigation styling ---------- */
@@ -1218,57 +835,153 @@ async function viewGateway(gatewayId) {
   }
 }
 
-// Function to test a gateway by sending a request to it
-// This function opens a modal where the user can input the request details
-// and see the response from the gateway.
-let headersEditor, bodyEditor;
+// Global variables for gateway test editors
+let gatewayTestHeadersEditor = null;
+let gatewayTestBodyEditor = null;
+let gatewayTestFormHandler = null;
+let gatewayTestCloseHandler = null;
+
+// Safe editor refresh with existence checks
+function refreshEditors() {
+  setTimeout(function () {
+    if (window.headersEditor && typeof window.headersEditor.refresh === 'function') {
+      try {
+        window.headersEditor.refresh();
+        console.log('✓ Refreshed headersEditor');
+      } catch (error) {
+        console.error('Failed to refresh headersEditor:', error);
+      }
+    }
+    
+    if (window.schemaEditor && typeof window.schemaEditor.refresh === 'function') {
+      try {
+        window.schemaEditor.refresh();
+        console.log('✓ Refreshed schemaEditor');
+      } catch (error) {
+        console.error('Failed to refresh schemaEditor:', error);
+      }
+    }
+  }, 100);
+}
+
+// Cleaned up testGateway function with proper event listener management
 async function testGateway(gatewayURL) {
-  openModal("gateway-test-modal");
+  try {
+    console.log('Opening gateway test modal for:', gatewayURL);
+    
+    // Clean up any existing event listeners first
+    cleanupGatewayTestModal();
+    
+    // Open the modal
+    openModal("gateway-test-modal");
+    
+    // Initialize CodeMirror editors if they don't exist
+    if (!gatewayTestHeadersEditor) {
+      const headersElement = document.getElementById('headers-json');
+      if (headersElement && window.CodeMirror) {
+        gatewayTestHeadersEditor = window.CodeMirror.fromTextArea(headersElement, {
+          mode: "application/json",
+          lineNumbers: true,
+        });
+        gatewayTestHeadersEditor.setSize(null, 100);
+        console.log('✓ Initialized gateway test headers editor');
+      }
+    }
 
-  if (!headersEditor) {
-    headersEditor = CodeMirror.fromTextArea(document.getElementById('headers-json'), {
-      mode: "application/json",
-      lineNumbers: true,
-    });
-    headersEditor.setSize(null, 100);
+    if (!gatewayTestBodyEditor) {
+      const bodyElement = document.getElementById('body-json');
+      if (bodyElement && window.CodeMirror) {
+        gatewayTestBodyEditor = window.CodeMirror.fromTextArea(bodyElement, {
+          mode: "application/json",
+          lineNumbers: true
+        });
+        gatewayTestBodyEditor.setSize(null, 100);
+        console.log('✓ Initialized gateway test body editor');
+      }
+    }
+
+    // Set form action and URL
+    const form = document.getElementById("gateway-test-form");
+    const urlInput = document.getElementById("gateway-test-url");
+    
+    if (form) form.action = `${window.ROOT_PATH}/admin/gateways/test`;
+    if (urlInput) urlInput.value = gatewayURL;
+
+    // Set up form submission handler
+    if (form) {
+      gatewayTestFormHandler = async function(e) {
+        await handleGatewayTestSubmit(e);
+      };
+      form.addEventListener("submit", gatewayTestFormHandler);
+    }
+
+    // Set up close button handler
+    const closeButton = document.getElementById("gateway-test-close");
+    if (closeButton) {
+      gatewayTestCloseHandler = function() {
+        handleGatewayTestClose();
+      };
+      closeButton.addEventListener("click", gatewayTestCloseHandler);
+    }
+
+  } catch (error) {
+    console.error('Error setting up gateway test modal:', error);
+    alert('Failed to open gateway test modal');
   }
+}
 
-  if (!bodyEditor) {
-    bodyEditor = CodeMirror.fromTextArea(document.getElementById('body-json'), {
-      mode: "application/json",
-      lineNumbers: true
-    });
-    bodyEditor.setSize(null, 100);
-  }
+// Handle gateway test form submission
+async function handleGatewayTestSubmit(e) {
+  e.preventDefault();
 
-  document.getElementById("gateway-test-form").action = `${window.ROOT_PATH}/admin/gateways/test`;
-  document.getElementById("gateway-test-url").value = gatewayURL;
+  const loading = document.getElementById("loading");
+  const responseDiv = document.getElementById("response-json");
+  const resultDiv = document.getElementById("test-result");
 
-  // Handle submission of the gateway test form
-  document.getElementById("gateway-test-form").addEventListener("submit", async function (e) {
-    e.preventDefault(); // prevent full page reload
-
+  try {
     // Show loading
-    document.getElementById("loading").classList.remove("hidden");
+    if (loading) loading.classList.remove("hidden");
+    if (resultDiv) resultDiv.classList.add("hidden");
 
     const form = e.target;
     const url = form.action;
 
-    // Get form.elements and CodeMirror content
-    const base_url = form.elements["gateway-test-url"].value;
-    const method = form.elements["method"].value;
-    const path = form.elements["path"].value;
-    const headersRaw = headersEditor.getValue();
-    const bodyRaw = bodyEditor.getValue();
+    // Get form data
+    const formData = new FormData(form);
+    const base_url = formData.get("gateway-test-url");
+    const method = formData.get("method");
+    const path = formData.get("path");
+    
+    // Get CodeMirror content safely
+    let headersRaw = "";
+    let bodyRaw = "";
+    
+    if (gatewayTestHeadersEditor) {
+      try {
+        headersRaw = gatewayTestHeadersEditor.getValue() || "";
+      } catch (error) {
+        console.error('Error getting headers value:', error);
+      }
+    }
+    
+    if (gatewayTestBodyEditor) {
+      try {
+        bodyRaw = gatewayTestBodyEditor.getValue() || "";
+      } catch (error) {
+        console.error('Error getting body value:', error);
+      }
+    }
 
+    // Parse JSON safely
     let headersParsed, bodyParsed;
     try {
-      headersParsed = headersRaw ? JSON.parse(headersRaw) : undefined;
-      bodyParsed = bodyRaw ? JSON.parse(bodyRaw) : undefined;
+      headersParsed = headersRaw.trim() ? JSON.parse(headersRaw) : undefined;
+      bodyParsed = bodyRaw.trim() ? JSON.parse(bodyRaw) : undefined;
     } catch (err) {
-      document.getElementById("loading").classList.add("hidden");
-      document.getElementById("response-json").textContent = `❌ Invalid JSON: ${err.message}`;
-      document.getElementById("test-result").classList.remove("hidden");
+      if (responseDiv) {
+        responseDiv.textContent = `❌ Invalid JSON: ${err.message}`;
+      }
+      if (resultDiv) resultDiv.classList.remove("hidden");
       return;
     }
 
@@ -1280,34 +993,292 @@ async function testGateway(gatewayURL) {
       body: bodyParsed,
     };
 
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+    // Make the request with timeout
+    const response = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const result = await response.json();
+    
+    if (responseDiv) {
+      responseDiv.textContent = JSON.stringify(result, null, 2);
+    }
+
+  } catch (error) {
+    console.error('Gateway test error:', error);
+    if (responseDiv) {
+      responseDiv.textContent = `❌ Error: ${error.message}`;
+    }
+  } finally {
+    if (loading) loading.classList.add("hidden");
+    if (resultDiv) resultDiv.classList.remove("hidden");
+  }
+}
+
+// Handle gateway test modal close
+function handleGatewayTestClose() {
+  try {
+    // Reset form
+    const form = document.getElementById("gateway-test-form");
+    if (form) form.reset();
+
+    // Clear editors
+    if (gatewayTestHeadersEditor) {
+      try {
+        gatewayTestHeadersEditor.setValue('');
+      } catch (error) {
+        console.error('Error clearing headers editor:', error);
+      }
+    }
+    
+    if (gatewayTestBodyEditor) {
+      try {
+        gatewayTestBodyEditor.setValue('');
+      } catch (error) {
+        console.error('Error clearing body editor:', error);
+      }
+    }
+
+    // Clear response
+    const responseDiv = document.getElementById("response-json");
+    const resultDiv = document.getElementById("test-result");
+    
+    if (responseDiv) responseDiv.textContent = '';
+    if (resultDiv) resultDiv.classList.add("hidden");
+
+    // Close modal
+    closeModal("gateway-test-modal");
+    
+  } catch (error) {
+    console.error('Error closing gateway test modal:', error);
+  }
+}
+
+// Clean up gateway test modal event listeners
+function cleanupGatewayTestModal() {
+  try {
+    const form = document.getElementById("gateway-test-form");
+    const closeButton = document.getElementById("gateway-test-close");
+
+    // Remove existing event listeners
+    if (form && gatewayTestFormHandler) {
+      form.removeEventListener("submit", gatewayTestFormHandler);
+      gatewayTestFormHandler = null;
+    }
+
+    if (closeButton && gatewayTestCloseHandler) {
+      closeButton.removeEventListener("click", gatewayTestCloseHandler);
+      gatewayTestCloseHandler = null;
+    }
+
+    console.log('✓ Cleaned up gateway test modal listeners');
+  } catch (error) {
+    console.error('Error cleaning up gateway test modal:', error);
+  }
+}
+
+// Enhanced modal functions with proper cleanup
+function openModal(modalId) {
+  try {
+    const modal = document.getElementById(modalId);
+    if (!modal) {
+      console.error(`Modal ${modalId} not found`);
+      return;
+    }
+    
+    // Reset modal state
+    resetModalState(modalId);
+    
+    modal.classList.remove("hidden");
+    console.log(`✓ Opened modal: ${modalId}`);
+  } catch (error) {
+    console.error(`Error opening modal ${modalId}:`, error);
+  }
+}
+
+function closeModal(modalId, clearId = null) {
+  try {
+    const modal = document.getElementById(modalId);
+    if (!modal) {
+      console.error(`Modal ${modalId} not found`);
+      return;
+    }
+
+    // Clear specified content if provided
+    if (clearId) {
+      const resultEl = document.getElementById(clearId);
+      if (resultEl) resultEl.innerHTML = '';
+    }
+
+    // Clean up specific modal types
+    if (modalId === "gateway-test-modal") {
+      cleanupGatewayTestModal();
+    }
+
+    modal.classList.add('hidden');
+    console.log(`✓ Closed modal: ${modalId}`);
+  } catch (error) {
+    console.error(`Error closing modal ${modalId}:`, error);
+  }
+}
+
+function resetModalState(modalId) {
+  try {
+    // Clear any dynamic content
+    const modalContent = document.querySelector(`#${modalId} [data-dynamic-content]`);
+    if (modalContent) {
+      modalContent.innerHTML = '';
+    }
+    
+    // Reset any forms in the modal
+    const forms = document.querySelectorAll(`#${modalId} form`);
+    forms.forEach(form => {
+      try {
+        form.reset();
+      } catch (error) {
+        console.error('Error resetting form:', error);
+      }
+    });
+    
+    console.log(`✓ Reset modal state: ${modalId}`);
+  } catch (error) {
+    console.error(`Error resetting modal state ${modalId}:`, error);
+  }
+}
+
+// Enhanced fetch functions with better error handling
+async function viewTool(toolId) {
+  try {
+    console.log(`Fetching tool details for ID: ${toolId}`);
+    
+    const response = await fetchWithTimeout(`${window.ROOT_PATH}/admin/tools/${toolId}`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const tool = await response.json();
+
+    let authHTML = "";
+    if (tool.auth?.username && tool.auth?.password) {
+      authHTML = `
+        <p><strong>Authentication Type:</strong> Basic</p>
+        <p><strong>Username:</strong> ${escapeHtml(tool.auth.username)}</p>
+        <p><strong>Password:</strong> ********</p>
+      `;
+    } else if (tool.auth?.token) {
+      authHTML = `
+        <p><strong>Authentication Type:</strong> Token</p>
+        <p><strong>Token:</strong> ********</p>
+      `;
+    } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
+      authHTML = `
+        <p><strong>Authentication Type:</strong> Custom Headers</p>
+        <p><strong>Header Key:</strong> ${escapeHtml(tool.auth.authHeaderKey)}</p>
+        <p><strong>Header Value:</strong> ********</p>
+      `;
+    } else {
+      authHTML = `<p><strong>Authentication Type:</strong> None</p>`;
+    }
+
+    // Helper function to create annotation badges
+    const renderAnnotations = (annotations) => {
+      if (!annotations || Object.keys(annotations).length === 0) {
+        return '<p><strong>Annotations:</strong> <span class="text-gray-500">None</span></p>';
+      }
+
+      const badges = [];
+
+      // Show title if present - ESCAPED
+      if (annotations.title) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">${escapeHtml(annotations.title)}</span>`);
+      }
+
+      // Show behavior hints with appropriate colors
+      if (annotations.readOnlyHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1">📖 Read-Only</span>`);
+      }
+
+      if (annotations.destructiveHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1">⚠️ Destructive</span>`);
+      }
+
+      if (annotations.idempotentHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1">🔄 Idempotent</span>`);
+      }
+
+      if (annotations.openWorldHint === true) {
+        badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐 External Access</span>`);
+      }
+
+      // Show any other custom annotations - ESCAPED
+      Object.keys(annotations).forEach(key => {
+        if (!['title', 'readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'].includes(key)) {
+          const value = annotations[key];
+          badges.push(`<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mr-1 mb-1">${escapeHtml(key)}: ${escapeHtml(value)}</span>`);
+        }
       });
 
-      const result = await response.json();
-      document.getElementById("response-json").textContent = JSON.stringify(result, null, 2);
-    } catch (err) {
-      document.getElementById("response-json").textContent = `❌ Error: ${err.message}`;
-    } finally {
-      document.getElementById("loading").classList.add("hidden");
-      document.getElementById("test-result").classList.remove("hidden");
+      return `
+        <div>
+          <strong>Annotations:</strong>
+          <div class="mt-1 flex flex-wrap">
+            ${badges.join('')}
+          </div>
+        </div>
+      `;
+    };
+
+    const toolDetailsDiv = document.getElementById("tool-details");
+    if (toolDetailsDiv) {
+      toolDetailsDiv.innerHTML = `
+        <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
+          <p><strong>Name:</strong> ${escapeHtml(tool.name)}</p>
+          <p><strong>URL:</strong> ${escapeHtml(tool.url)}</p>
+          <p><strong>Type:</strong> ${escapeHtml(tool.integrationType)}</p>
+          <p><strong>Description:</strong> ${escapeHtml(tool.description || "N/A")}</p>
+          <p><strong>Request Type:</strong> ${escapeHtml(tool.requestType || "N/A")}</p>
+          ${authHTML}
+          ${renderAnnotations(tool.annotations)}
+          <div>
+            <strong>Headers:</strong>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${escapeHtml(JSON.stringify(tool.headers || {}, null, 2))}</pre>
+          </div>
+          <div>
+            <strong>Input Schema:</strong>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${escapeHtml(JSON.stringify(tool.inputSchema || {}, null, 2))}</pre>
+          </div>
+          <div>
+            <strong>Metrics:</strong>
+            <ul class="list-disc list-inside ml-4">
+              <li>Total Executions: ${escapeHtml(tool.metrics?.totalExecutions ?? 0)}</li>
+              <li>Successful Executions: ${escapeHtml(tool.metrics?.successfulExecutions ?? 0)}</li>
+              <li>Failed Executions: ${escapeHtml(tool.metrics?.failedExecutions ?? 0)}</li>
+              <li>Failure Rate: ${escapeHtml(tool.metrics?.failureRate ?? 0)}</li>
+              <li>Min Response Time: ${escapeHtml(tool.metrics?.minResponseTime ?? "N/A")}</li>
+              <li>Max Response Time: ${escapeHtml(tool.metrics?.maxResponseTime ?? "N/A")}</li>
+              <li>Average Response Time: ${escapeHtml(tool.metrics?.avgResponseTime ?? "N/A")}</li>
+              <li>Last Execution Time: ${escapeHtml(tool.metrics?.lastExecutionTime ?? "N/A")}</li>
+            </ul>
+          </div>
+        </div>
+      `;
     }
-  });
 
-  // Close the modal and reset the form when the close button is clicked
-  document.getElementById("gateway-test-close").addEventListener("click", function () {
-    // Reset the form and CodeMirror editors
-    document.getElementById("gateway-test-form").reset();
-    headersEditor.setValue('');
-    bodyEditor.setValue('');
-    document.getElementById("response-json").textContent = '';
-    document.getElementById("test-result").classList.add("hidden");
+    openModal("tool-modal");
+    console.log('✓ Tool details loaded successfully');
 
-    closeModal("gateway-test-modal");
-  })
+  } catch (error) {
+    console.error("Error fetching tool details:", error);
+    
+    if (error.name === 'AbortError') {
+      alert('Request timed out. Please try again.');
+    } else {
+      alert(`Failed to load tool details: ${error.message}`);
+    }
+  }
 }
 
 async function editGateway(gatewayId) {
@@ -1488,144 +1459,6 @@ async function editServer(serverId) {
   }
 }
 
-// Initialize CodeMirror editors
-document.addEventListener("DOMContentLoaded", function () {
-  window.headersEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("headers-editor"),
-    {
-      mode: "application/json",
-      theme: "monokai",
-      lineNumbers: true,
-      autoCloseBrackets: true,
-      matchBrackets: true,
-      tabSize: 2,
-    },
-  );
-
-  window.resourceContentEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("resource-content-editor"),
-    {
-      mode: "text/plain",
-      theme: "monokai",
-      lineNumbers: true,
-      tabSize: 2,
-    },
-  );
-
-  window.promptTemplateEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("prompt-template-editor"),
-    {
-      mode: "text/plain",
-      theme: "monokai",
-      lineNumbers: true,
-      tabSize: 2,
-    },
-  );
-
-  window.promptArgsEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("prompt-args-editor"),
-    {
-      mode: "application/json",
-      theme: "monokai",
-      lineNumbers: true,
-      autoCloseBrackets: true,
-      matchBrackets: true,
-      tabSize: 2,
-    },
-  );
-
-  window.editToolHeadersEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("edit-tool-headers"),
-    {
-      mode: "application/json",
-      theme: "monokai",
-      lineNumbers: true,
-      autoCloseBrackets: true,
-      matchBrackets: true,
-      tabSize: 2,
-    },
-  );
-
-  window.editToolSchemaEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("edit-tool-schema"),
-    {
-      mode: "application/json",
-      theme: "monokai",
-      lineNumbers: true,
-      autoCloseBrackets: true,
-      matchBrackets: true,
-      tabSize: 2,
-    },
-  );
-
-  window.editResourceContentEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("edit-resource-content"),
-    {
-      mode: "text/plain",
-      theme: "monokai",
-      lineNumbers: true,
-      tabSize: 2,
-    },
-  );
-
-  window.editPromptTemplateEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("edit-prompt-template"),
-    {
-      mode: "text/plain",
-      theme: "monokai",
-      lineNumbers: true,
-      tabSize: 2,
-    },
-  );
-
-  window.editPromptArgumentsEditor = window.CodeMirror.fromTextArea(
-    document.getElementById("edit-prompt-arguments"),
-    {
-      mode: "application/json",
-      theme: "monokai",
-      lineNumbers: true,
-      autoCloseBrackets: true,
-      matchBrackets: true,
-      tabSize: 2,
-    },
-  );
-
-  // Add event listener to save resource content before submitting the edit resource form
-  document
-    .getElementById("edit-resource-form")
-    .addEventListener("submit", function () {
-      if (window.editResourceContentEditor) {
-        window.editResourceContentEditor.save();
-      }
-    });
-
-  // Set initial tab based on URL hash or default to Catalog
-  const hash = window.location.hash || "#catalog";
-  showTab(hash.substring(1));
-
-  // Set checkbox states based on URL parameter
-  const urlParams = new URLSearchParams(window.location.search);
-  const includeInactive = urlParams.get("include_inactive") === "true";
-  if (document.getElementById("show-inactive-tools"))
-    document.getElementById("show-inactive-tools").checked = includeInactive;
-  if (document.getElementById("show-inactive-resources"))
-    document.getElementById("show-inactive-resources").checked =
-      includeInactive;
-  if (document.getElementById("show-inactive-prompts"))
-    document.getElementById("show-inactive-prompts").checked = includeInactive;
-  if (document.getElementById("show-inactive-gateways"))
-    document.getElementById("show-inactive-gateways").checked = includeInactive;
-  if (document.getElementById("show-inactive-servers"))
-    document.getElementById("show-inactive-servers").checked = includeInactive;
-});
-
-function refreshEditors() {
-  // Use a timeout to let the browser render the form as visible
-  setTimeout(function () {
-    window.headersEditor.refresh();
-    window.schemaEditor.refresh();
-  }, 100);
-}
 
 /* ---------------------------------------------------------------
  * Function: loadAggregatedMetrics  (aggregated dashboard)
@@ -2106,19 +1939,480 @@ function initToolSelect(selectId,
   select.addEventListener("change", update);
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  initToolSelect("associatedTools",
-                 "selectedToolsPills",
-                 "selectedToolsWarning",
-                 6);
+// Global error handlers for debugging
+window.addEventListener('error', function(e) {
+  console.error('Global error:', e.error, e.filename, e.lineno);
 });
 
-document.addEventListener("DOMContentLoaded", () => {
-  initToolSelect("edit-server-tools",
-                 "selectedEditToolsPills",
-                 "selectedEditToolsWarning",
-                 6);
+window.addEventListener('unhandledrejection', function(e) {
+  console.error('Unhandled promise rejection:', e.reason);
 });
+
+// SINGLE consolidated DOMContentLoaded handler
+document.addEventListener("DOMContentLoaded", function () {
+  console.log('DOM loaded - initializing...');
+  
+  try {
+    // 1. Initialize CodeMirror editors first
+    initializeCodeMirrorEditors();
+    
+    // 2. Initialize tool selects
+    initializeToolSelects();
+    
+    // 3. Set up all event listeners
+    initializeEventListeners();
+    
+    // 4. Handle initial tab/state
+    initializeTabState();
+    
+    console.log('Initialization complete');
+  } catch (error) {
+    console.error('Initialization failed:', error);
+  }
+});
+
+// Separate initialization functions
+function initializeCodeMirrorEditors() {
+  console.log('Initializing CodeMirror editors...');
+  
+  const editorConfigs = [
+    { id: "headers-editor", mode: "application/json", varName: "headersEditor" },
+    { id: "schema-editor", mode: "application/json", varName: "schemaEditor" },
+    { id: "resource-content-editor", mode: "text/plain", varName: "resourceContentEditor" },
+    { id: "prompt-template-editor", mode: "text/plain", varName: "promptTemplateEditor" },
+    { id: "prompt-args-editor", mode: "application/json", varName: "promptArgsEditor" },
+    { id: "edit-tool-headers", mode: "application/json", varName: "editToolHeadersEditor" },
+    { id: "edit-tool-schema", mode: "application/json", varName: "editToolSchemaEditor" },
+    { id: "edit-resource-content", mode: "text/plain", varName: "editResourceContentEditor" },
+    { id: "edit-prompt-template", mode: "text/plain", varName: "editPromptTemplateEditor" },
+    { id: "edit-prompt-arguments", mode: "application/json", varName: "editPromptArgumentsEditor" }
+  ];
+
+  editorConfigs.forEach(config => {
+    const element = document.getElementById(config.id);
+    if (element && window.CodeMirror) {
+      try {
+        window[config.varName] = window.CodeMirror.fromTextArea(element, {
+          mode: config.mode,
+          theme: "monokai",
+          lineNumbers: true,
+          autoCloseBrackets: true,
+          matchBrackets: true,
+          tabSize: 2,
+        });
+        console.log(`✓ Initialized ${config.varName}`);
+      } catch (error) {
+        console.error(`Failed to initialize ${config.varName}:`, error);
+      }
+    } else {
+      console.warn(`Element ${config.id} not found or CodeMirror not available`);
+    }
+  });
+}
+
+function initializeToolSelects() {
+  console.log('Initializing tool selects...');
+  
+  // Initialize both tool selects
+  initToolSelect("associatedTools", "selectedToolsPills", "selectedToolsWarning", 6);
+  initToolSelect("edit-server-tools", "selectedEditToolsPills", "selectedEditToolsWarning", 6);
+}
+
+function initializeEventListeners() {
+  console.log('Setting up event listeners...');
+  
+  // Tab navigation
+  setupTabNavigation();
+  
+  // HTMX debug hooks
+  setupHTMXHooks();
+  
+  // Authentication toggles
+  setupAuthenticationToggles();
+  
+  // Form handlers
+  setupFormHandlers();
+  
+  // Schema mode handlers
+  setupSchemaModeHandlers();
+  
+  // Integration type handlers
+  setupIntegrationTypeHandlers();
+}
+
+function setupTabNavigation() {
+  const tabs = ["catalog", "tools", "resources", "prompts", "gateways", "roots", "metrics", "version-info"];
+  
+  tabs.forEach(tabName => {
+    const tabElement = document.getElementById(`tab-${tabName}`);
+    if (tabElement) {
+      tabElement.addEventListener("click", () => showTab(tabName));
+    }
+  });
+}
+
+function setupHTMXHooks() {
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    if (event.detail.elt.id === "tab-version-info") {
+      console.log("HTMX: Sending request for version info partial");
+    }
+  });
+
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target.id === "version-info-panel") {
+      console.log("HTMX: Content swapped into version-info-panel");
+    }
+  });
+}
+
+function setupAuthenticationToggles() {
+  const authHandlers = [
+    { id: "auth-type", basicId: "auth-basic-fields", bearerId: "auth-bearer-fields", headersId: "auth-headers-fields" },
+    { id: "auth-type-gw", basicId: "auth-basic-fields-gw", bearerId: "auth-bearer-fields-gw", headersId: "auth-headers-fields-gw" },
+    { id: "auth-type-gw-edit", basicId: "auth-basic-fields-gw-edit", bearerId: "auth-bearer-fields-gw-edit", headersId: "auth-headers-fields-gw-edit" },
+    { id: "edit-auth-type", basicId: "edit-auth-basic-fields", bearerId: "edit-auth-bearer-fields", headersId: "edit-auth-headers-fields" }
+  ];
+
+  authHandlers.forEach(handler => {
+    const element = document.getElementById(handler.id);
+    if (element) {
+      element.addEventListener("change", function () {
+        const basicFields = document.getElementById(handler.basicId);
+        const bearerFields = document.getElementById(handler.bearerId);
+        const headersFields = document.getElementById(handler.headersId);
+        handleAuthTypeSelection(this.value, basicFields, bearerFields, headersFields);
+      });
+    }
+  });
+}
+
+function setupFormHandlers() {
+  // Gateway form
+  const gatewayForm = document.getElementById("add-gateway-form");
+  if (gatewayForm) {
+    gatewayForm.addEventListener("submit", handleGatewayFormSubmit);
+  }
+
+  // Resource form
+  const resourceForm = document.getElementById("add-resource-form");
+  if (resourceForm) {
+    resourceForm.addEventListener("submit", handleResourceFormSubmit);
+  }
+
+  // Tool form
+  const toolForm = document.getElementById("add-tool-form");
+  if (toolForm) {
+    toolForm.addEventListener("submit", handleToolFormSubmit);
+    toolForm.addEventListener("click", function () {
+      if (getComputedStyle(toolForm).display !== "none") {
+        refreshEditors();
+      }
+    });
+  }
+
+  // Parameter button
+  const paramButton = document.getElementById("add-parameter-btn");
+  if (paramButton) {
+    paramButton.addEventListener("click", handleAddParameter);
+  }
+
+  // Edit resource form save handler
+  const editResourceForm = document.getElementById("edit-resource-form");
+  if (editResourceForm) {
+    editResourceForm.addEventListener("submit", function () {
+      if (window.editResourceContentEditor) {
+        window.editResourceContentEditor.save();
+      }
+    });
+  }
+}
+
+function setupSchemaModeHandlers() {
+  const schemaModeRadios = document.getElementsByName("schema_input_mode");
+  const uiBuilderDiv = document.getElementById("ui-builder");
+  const jsonInputContainer = document.getElementById("json-input-container");
+
+  Array.from(schemaModeRadios).forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.value === "ui" && radio.checked) {
+        if (uiBuilderDiv) uiBuilderDiv.style.display = "block";
+        if (jsonInputContainer) jsonInputContainer.style.display = "none";
+      } else if (radio.value === "json" && radio.checked) {
+        if (uiBuilderDiv) uiBuilderDiv.style.display = "none";
+        if (jsonInputContainer) jsonInputContainer.style.display = "block";
+        updateSchemaPreview();
+      }
+    });
+  });
+}
+
+function setupIntegrationTypeHandlers() {
+  const integrationTypeSelect = document.getElementById("integrationType");
+  if (integrationTypeSelect) {
+    const defaultIntegration = integrationTypeSelect.dataset.default || integrationTypeSelect.options[0].value;
+    integrationTypeSelect.value = defaultIntegration;
+    updateRequestTypeOptions();
+    integrationTypeSelect.addEventListener("change", () => updateRequestTypeOptions());
+  }
+
+  const editToolTypeSelect = document.getElementById("edit-tool-type");
+  if (editToolTypeSelect) {
+    editToolTypeSelect.value = "REST";
+    updateEditToolRequestTypes("PUT");
+    editToolTypeSelect.addEventListener("change", () => updateEditToolRequestTypes());
+  }
+}
+
+function initializeTabState() {
+  console.log('Initializing tab state...');
+  
+  // Handle initial tab
+  const hash = window.location.hash;
+  if (hash) {
+    showTab(hash.slice(1));
+  } else {
+    showTab("catalog");
+  }
+
+  // Pre-load version info if that's the initial tab
+  if (window.location.hash === "#version-info") {
+    setTimeout(() => {
+      const panel = document.getElementById("version-info-panel");
+      if (panel && panel.innerHTML.trim() === "") {
+        fetchWithTimeout(`${window.ROOT_PATH}/version?partial=true`)
+          .then((resp) => {
+            if (!resp.ok) throw new Error("Network response was not ok");
+            return resp.text();
+          })
+          .then((html) => {
+            panel.innerHTML = html;
+          })
+          .catch((err) => {
+            console.error("Failed to preload version info:", err);
+            panel.innerHTML = "<p class='text-red-600'>Failed to load version info.</p>";
+          });
+      }
+    }, 100);
+  }
+
+  // Set checkbox states based on URL parameter
+  const urlParams = new URLSearchParams(window.location.search);
+  const includeInactive = urlParams.get("include_inactive") === "true";
+  
+  const checkboxes = ["show-inactive-tools", "show-inactive-resources", "show-inactive-prompts", "show-inactive-gateways", "show-inactive-servers"];
+  checkboxes.forEach(id => {
+    const checkbox = document.getElementById(id);
+    if (checkbox) {
+      checkbox.checked = includeInactive;
+    }
+  });
+}
+
+// Form handler functions
+async function handleGatewayFormSubmit(e) {
+  e.preventDefault();
+  
+  const form = e.target;
+  const formData = new FormData(form);
+  const status = document.getElementById("status-gateways");
+  const loading = document.getElementById("add-gateway-loading");
+
+  try {
+    if (loading) loading.style.display = "block";
+    if (status) {
+      status.textContent = "";
+      status.classList.remove("error-status");
+    }
+
+    const is_inactive_checked = isInactiveChecked('gateways');
+    formData.append("is_inactive_checked", is_inactive_checked);
+
+    const response = await fetchWithTimeout(`${window.ROOT_PATH}/admin/gateways`, {
+      method: "POST",
+      body: formData,
+    });
+
+    let result = await response.json();
+    if (!result.success) {
+      alert(result.message || "An error occurred");
+    } else {
+      const redirectUrl = is_inactive_checked 
+        ? `${window.ROOT_PATH}/admin?include_inactive=true#gateways`
+        : `${window.ROOT_PATH}/admin#gateways`;
+      window.location.href = redirectUrl;
+    }
+  } catch (error) {
+    console.error("Error:", error);
+    if (status) {
+      status.textContent = error.message || "An error occurred!";
+      status.classList.add("error-status");
+    }
+  } finally {
+    if (loading) loading.style.display = "none";
+  }
+}
+
+function handleResourceFormSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const formData = new FormData(form);
+  
+  fetchWithTimeout(`${window.ROOT_PATH}/admin/resources`, {
+    method: "POST",
+    body: formData,
+  })
+    .then((response) => {
+      if (!response.ok) {
+        const status = document.getElementById("status-resources");
+        if (status) {
+          status.textContent = "Connection failed!";
+          status.classList.add("error-status");
+        }
+      } else {
+        location.reload();
+      }
+    })
+    .catch((error) => {
+      console.error("Error:", error);
+    });
+}
+
+async function handleToolFormSubmit(event) {
+  event.preventDefault();
+  
+  try {
+    // If in UI mode, update schemaEditor with generated schema
+    const mode = document.querySelector('input[name="schema_input_mode"]:checked');
+    if (mode && mode.value === "ui") {
+      if (window.schemaEditor) {
+        window.schemaEditor.setValue(generateSchema());
+      }
+    }
+    
+    // Save CodeMirror editors' contents
+    if (window.headersEditor) window.headersEditor.save();
+    if (window.schemaEditor) window.schemaEditor.save();
+
+    let formData = new FormData(event.target);
+    const is_inactive_checked = isInactiveChecked('tools');
+    formData.append("is_inactive_checked", is_inactive_checked);
+    
+    let response = await fetchWithTimeout(`${window.ROOT_PATH}/admin/tools`, {
+      method: "POST",
+      body: formData,
+    });
+    
+    let result = await response.json();
+    if (!result.success) {
+      alert(result.message || "An error occurred");
+    } else {
+      const redirectUrl = is_inactive_checked 
+        ? `${window.ROOT_PATH}/admin?include_inactive=true#tools`
+        : `${window.ROOT_PATH}/admin#tools`;
+      window.location.href = redirectUrl;
+    }
+  } catch (error) {
+    console.error("Fetch error:", error);
+    alert("Failed to submit the form. Check console for details.");
+  }
+}
+
+function handleAddParameter() {
+  parameterCount++;
+  const parametersContainer = document.getElementById("parameters-container");
+  if (!parametersContainer) return;
+  
+  const paramDiv = document.createElement("div");
+  paramDiv.classList.add("border", "p-4", "mb-4", "rounded-md", "bg-gray-50", "shadow-sm");
+  paramDiv.innerHTML = `
+    <div class="flex justify-between items-center">
+      <span class="font-semibold text-gray-800">Parameter ${parameterCount}</span>
+      <button type="button" class="delete-param text-red-600 hover:text-red-800 focus:outline-none text-xl" title="Delete Parameter">&times;</button>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Parameter Name</label>
+        <input type="text" name="param_name_${parameterCount}" required class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Type</label>
+        <select name="param_type_${parameterCount}" class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200">
+          <option value="string">String</option>
+          <option value="number">Number</option>
+          <option value="boolean">Boolean</option>
+          <option value="object">Object</option>
+          <option value="array">Array</option>
+        </select>
+      </div>
+    </div>
+    <div class="mt-4">
+      <label class="block text-sm font-medium text-gray-700">Description</label>
+      <textarea name="param_description_${parameterCount}" class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200"></textarea>
+    </div>
+    <div class="mt-4 flex items-center">
+      <input type="checkbox" name="param_required_${parameterCount}" checked class="h-4 w-4 text-indigo-600 border border-gray-300 rounded" />
+      <label class="ml-2 text-sm font-medium text-gray-700">Required</label>
+    </div>
+  `;
+  
+  parametersContainer.appendChild(paramDiv);
+  updateSchemaPreview();
+
+  // Delete parameter functionality
+  const deleteButton = paramDiv.querySelector(".delete-param");
+  if (deleteButton) {
+    deleteButton.addEventListener("click", () => {
+      paramDiv.remove();
+      updateSchemaPreview();
+      parameterCount--;
+    });
+  }
+}
+
+// Add updateEditToolRequestTypes function that was missing
+function updateEditToolRequestTypes(selectedMethod = null) {
+  const editToolTypeSelect = document.getElementById("edit-tool-type");
+  const editToolRequestTypeSelect = document.getElementById("edit-tool-request-type");
+  
+  if (!editToolTypeSelect || !editToolRequestTypeSelect) return;
+  
+  const requestTypeMap = {
+    MCP: ["SSE", "STREAMABLE", "STDIO"],
+    REST: ["GET", "POST", "PUT", "DELETE"],
+  };
+
+  const selectedType = editToolTypeSelect.value;
+  const allowedMethods = requestTypeMap[selectedType] || [];
+
+  // Clear existing options
+  editToolRequestTypeSelect.innerHTML = "";
+
+  // Populate new options
+  allowedMethods.forEach((method) => {
+    const option = document.createElement("option");
+    option.value = method;
+    option.textContent = method;
+    editToolRequestTypeSelect.appendChild(option);
+  });
+
+  // Set the pre-selected method, if valid
+  if (selectedMethod && allowedMethods.includes(selectedMethod)) {
+    editToolRequestTypeSelect.value = selectedMethod;
+  }
+}
+
+// Add fetchWithTimeout function
+function fetchWithTimeout(url, options = {}, timeout = 10000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  return fetch(url, {
+    ...options,
+    signal: controller.signal
+  }).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
 
 window.toggleInactiveItems = toggleInactiveItems;
 window.handleToggleSubmit = handleToggleSubmit;
