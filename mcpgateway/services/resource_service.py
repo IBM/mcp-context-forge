@@ -21,7 +21,6 @@ import logging
 import mimetypes
 import re
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
-from urllib.parse import urlparse
 
 # Third-Party
 import parse
@@ -156,7 +155,6 @@ class ResourceService:
 
         Raises:
             ResourceURIConflictError: If resource URI already exists
-            ResourceValidationError: If resource validation fails
             ResourceError: For other resource registration errors
         """
         try:
@@ -169,10 +167,6 @@ class ResourceService:
                     is_active=existing_resource.is_active,
                     resource_id=existing_resource.id,
                 )
-
-            # Validate URI
-            if not self._is_valid_uri(resource.uri):
-                raise ResourceValidationError(f"Invalid URI: {resource.uri}")
 
             # Detect mime type if not provided
             mime_type = resource.mime_type
@@ -641,21 +635,6 @@ class ResourceService:
                 self._event_subscribers["*"].remove(queue)
                 if not self._event_subscribers["*"]:
                     del self._event_subscribers["*"]
-
-    def _is_valid_uri(self, uri: str) -> bool:
-        """Validate a resource URI.
-
-        Args:
-            uri: URI to validate
-
-        Returns:
-            True if URI is valid
-        """
-        try:
-            parsed = urlparse(uri)
-            return bool(parsed.scheme and parsed.path)
-        except Exception:
-            return False
 
     def _detect_mime_type(self, uri: str, content: Union[str, bytes]) -> str:
         """Detect mime type from URI and content.
