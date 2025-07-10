@@ -291,6 +291,46 @@ class Settings(BaseSettings):
             if not db_dir.exists():
                 db_dir.mkdir(parents=True)
 
+    # Validation patterns for safe display (configurable)
+    validation_dangerous_html_pattern: str = r"<(script|iframe|object|embed|link|meta|base|form)\b|</*(script|iframe|object|embed|link|meta|base|form)>"
+    validation_dangerous_js_pattern: str = r"javascript:|vbscript:|on\w+\s*=|data:.*script"
+    validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
+
+    # Character validation patterns
+    validation_name_pattern: str = r"^[a-zA-Z0-9_\-\s]+$"  # Allow spaces for names
+    validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
+    validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
+    validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
+    validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_-]*$"  # MCP tool naming
+
+    # MCP-compliant size limits (configurable via env)
+    validation_max_name_length: int = 255
+    validation_max_description_length: int = 4096
+    validation_max_template_length: int = 65536  # 64KB
+    validation_max_content_length: int = 1048576  # 1MB
+    validation_max_json_depth: int = 10
+    validation_max_url_length: int = 2048
+    validation_max_rpc_param_size: int = 262144  # 256KB
+
+    # Allowed MIME types
+    validation_allowed_mime_types: List[str] = [
+        "text/plain",
+        "text/html",
+        "text/css",
+        "text/javascript",
+        "application/json",
+        "application/xml",
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/svg+xml",
+        "application/octet-stream",
+    ]
+
+    # Rate limiting
+    validation_max_requests_per_minute: int = 60
+
 
 def extract_using_jq(data, jq_filter=""):
     """

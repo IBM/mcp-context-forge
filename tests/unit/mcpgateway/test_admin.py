@@ -101,7 +101,7 @@ def mock_request():
                 "associatedTools": ["1", "2", "3"],
                 "associatedResources": "4,5",
                 "associatedPrompts": "6",
-                "requestType": "POST",
+                "requestType": "SSE",
                 "integrationType": "MCP",
                 "headers": "{}",
                 "input_schema": "{}",

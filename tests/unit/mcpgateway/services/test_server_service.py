@@ -107,7 +107,7 @@ class TestServerService:
         mock_db_server.id = "1"
         mock_db_server.name = "test_server"
         mock_db_server.description = "A test server"
-        mock_db_server.icon = "server-icon"
+        mock_db_server.icon = "http://example.com/image.jpg"
         mock_db_server.created_at = "2023-01-01T00:00:00"
         mock_db_server.updated_at = "2023-01-01T00:00:00"
         mock_db_server.is_active = True
@@ -192,7 +192,7 @@ class TestServerService:
         server_create = ServerCreate(
             name="test_server",
             description="A test server",
-            icon="server-icon",
+            icon="http://example.com/image.jpg",
             associated_tools=["101"],
             associated_resources=["201"],
             associated_prompts=["301"],
@@ -222,7 +222,7 @@ class TestServerService:
         server_create = ServerCreate(
             name="test_server",
             description="A new server",
-            icon="new-icon",
+            icon="http://image.com/test.jpg",
         )
 
         with pytest.raises(ServerError) as exc:
@@ -272,7 +272,7 @@ class TestServerService:
             id="1",
             name="test_server",
             description="A test server",
-            icon="server-icon",
+            icon="http://example.com/image.jgp",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             is_active=True,
@@ -306,7 +306,7 @@ class TestServerService:
             id="1",
             name="test_server",
             description="A test server",
-            icon="server-icon",
+            icon="http://example.com/image.jpg",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             is_active=True,
@@ -403,7 +403,7 @@ class TestServerService:
                 id="1",
                 name="updated_server",
                 description="An updated server",
-                icon="updated-icon",
+                icon="http://example.com/image.jpg",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
@@ -426,7 +426,7 @@ class TestServerService:
         server_update = ServerUpdate(
             name="updated_server",
             description="An updated server",
-            icon="updated-icon",
+            icon="http://example.com/image.jpg",
             associated_tools=["102"],
             associated_resources=["202"],
             associated_prompts=["302"],

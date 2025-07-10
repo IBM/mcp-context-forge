@@ -273,7 +273,7 @@ class TestToolService:
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
             gateway_id="1",
         )
 
@@ -320,7 +320,7 @@ class TestToolService:
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
         )
 
         # Should raise ToolError wrapping ToolNameConflictError
@@ -345,7 +345,7 @@ class TestToolService:
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
         )
 
         # Should raise ToolError wrapping ToolNameConflictError
@@ -372,7 +372,7 @@ class TestToolService:
             url="http://example.com/tools/test",
             description="A test tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
         )
 
         # Should raise ToolError
