@@ -89,7 +89,7 @@ def mock_tool():
     tool.auth_username = None
     tool.auth_password = None
     tool.auth_token = None
-    tool.auth_value = None  # Add this field
+    tool.auth_value = None
     tool.gateway_id = "1"
     tool.gateway = mock_gateway
     tool.annotations = {}

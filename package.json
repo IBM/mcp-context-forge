@@ -1,5 +1,15 @@
 {
   "devDependencies": {
+    "@biomejs/biome": "^2.1.1",
+    "@stylistic/eslint-plugin": "^5.1.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-n": "^16.6.2",
+    "eslint-plugin-prettier": "^5.5.1",
+    "eslint-plugin-promise": "^6.6.0",
+    "prettier": "^3.6.2",
     "stylelint-order": "^7.0.0"
   }
 }
