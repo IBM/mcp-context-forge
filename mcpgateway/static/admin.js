@@ -422,15 +422,36 @@ function resetModalState(modalId) {
 }
 
 // ===================================================================
-// ENHANCED METRICS LOADING with Better Error Handling
+// ENHANCED METRICS LOADING with Retry Logic and Request Deduplication
 // ===================================================================
 
+// Track ongoing metrics requests to prevent duplicates
+let metricsRequestInProgress = false;
+const MAX_METRICS_RETRIES = 3;
+const METRICS_RETRY_DELAY = 2000; // 2 seconds
+
+/**
+ * Enhanced metrics loading with retry logic and request deduplication
+ */
 async function loadAggregatedMetrics() {
+    // Prevent multiple concurrent requests
+    if (metricsRequestInProgress) {
+        console.log("Metrics request already in progress, skipping...");
+        return;
+    }
+
     try {
+        metricsRequestInProgress = true;
         console.log("Loading aggregated metrics...");
 
-        const response = await fetchWithTimeout(
+        // Show loading state
+        showMetricsLoading();
+
+        const response = await fetchWithTimeoutAndRetry(
             `${window.ROOT_PATH}/admin/metrics`,
+            {}, // options
+            30000, // 30 second timeout for metrics (longer than default)
+            MAX_METRICS_RETRIES,
         );
 
         if (!response.ok) {
@@ -448,8 +469,152 @@ async function loadAggregatedMetrics() {
     } catch (error) {
         console.error("Error loading aggregated metrics:", error);
         showMetricsError(error);
+    } finally {
+        metricsRequestInProgress = false;
+        hideMetricsLoading();
     }
 }
+
+/**
+ * Enhanced fetch with automatic retry logic
+ */
+async function fetchWithTimeoutAndRetry(
+    url,
+    options = {},
+    timeout = 30000,
+    maxRetries = 3,
+) {
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`Metrics fetch attempt ${attempt}/${maxRetries}`);
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+            const response = await fetch(url, {
+                ...options,
+                signal: controller.signal,
+            });
+
+            clearTimeout(timeoutId);
+
+            // If we get any response (even error codes), return it
+            // Let the caller handle HTTP error codes
+            console.log(`✓ Metrics fetch attempt ${attempt} succeeded`);
+            return response;
+        } catch (error) {
+            lastError = error;
+
+            console.warn(
+                `✗ Metrics fetch attempt ${attempt} failed:`,
+                error.message,
+            );
+
+            // Don't retry on the last attempt
+            if (attempt === maxRetries) {
+                console.error(
+                    `All ${maxRetries} metrics fetch attempts failed`,
+                );
+                throw error;
+            }
+
+            // Wait before retrying, with exponential backoff
+            const delay = METRICS_RETRY_DELAY * Math.pow(2, attempt - 1);
+            console.log(`Retrying metrics fetch in ${delay}ms...`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+    }
+
+    throw lastError;
+}
+
+/**
+ * Show loading state for metrics
+ */
+function showMetricsLoading() {
+    const metricsPanel = safeGetElement("metrics-panel");
+    if (metricsPanel) {
+        const loadingDiv = document.createElement("div");
+        loadingDiv.id = "metrics-loading";
+        loadingDiv.className = "flex justify-center items-center p-8";
+        loadingDiv.innerHTML = `
+            <div class="text-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+                <p class="text-gray-600">Loading metrics...</p>
+                <p class="text-sm text-gray-500 mt-2">This may take a moment</p>
+            </div>
+        `;
+        metricsPanel.innerHTML = "";
+        metricsPanel.appendChild(loadingDiv);
+    }
+}
+
+/**
+ * Hide loading state for metrics
+ */
+function hideMetricsLoading() {
+    const loadingDiv = safeGetElement("metrics-loading");
+    if (loadingDiv && loadingDiv.parentNode) {
+        loadingDiv.parentNode.removeChild(loadingDiv);
+    }
+}
+
+/**
+ * Enhanced error display with retry option
+ */
+function showMetricsError(error) {
+    const metricsPanel = safeGetElement("metrics-panel");
+    if (metricsPanel) {
+        const errorDiv = document.createElement("div");
+        errorDiv.className = "text-center p-8";
+
+        const errorMessage = handleFetchError(error, "load metrics");
+
+        // Determine if this looks like a server/network issue
+        const isNetworkError =
+            error.message.includes("fetch") ||
+            error.message.includes("network") ||
+            error.message.includes("timeout") ||
+            error.name === "AbortError";
+
+        const helpText = isNetworkError
+            ? "This usually happens when the server is slow to respond or there's a network issue."
+            : "There may be an issue with the metrics calculation on the server.";
+
+        errorDiv.innerHTML = `
+            <div class="text-red-600 mb-4">
+                <svg class="w-12 h-12 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <h3 class="text-lg font-medium mb-2">Failed to Load Metrics</h3>
+                <p class="text-sm mb-2">${escapeHtml(errorMessage)}</p>
+                <p class="text-xs text-gray-500 mb-4">${helpText}</p>
+                <button 
+                    onclick="retryLoadMetrics()" 
+                    class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
+                    Try Again
+                </button>
+            </div>
+        `;
+
+        metricsPanel.innerHTML = "";
+        metricsPanel.appendChild(errorDiv);
+    }
+}
+
+/**
+ * Retry loading metrics (callable from retry button)
+ */
+function retryLoadMetrics() {
+    console.log("Manual retry requested");
+    metricsRequestInProgress = false; // Reset request flag
+    loadAggregatedMetrics();
+}
+
+// Make retry function available globally immediately
+window.retryLoadMetrics = retryLoadMetrics;
 
 function showMetricsPlaceholder() {
     const metricsPanel = safeGetElement("metrics-panel");
@@ -460,17 +625,6 @@ function showMetricsPlaceholder() {
             "Metrics endpoint not available. This feature may not be implemented yet.";
         metricsPanel.innerHTML = "";
         metricsPanel.appendChild(placeholderDiv);
-    }
-}
-
-function showMetricsError(error) {
-    const metricsPanel = safeGetElement("metrics-panel");
-    if (metricsPanel) {
-        const errorDiv = document.createElement("div");
-        errorDiv.className = "text-red-600 p-4";
-        errorDiv.textContent = `Failed to load metrics: ${handleFetchError(error, "load metrics")}`;
-        metricsPanel.innerHTML = "";
-        metricsPanel.appendChild(errorDiv);
     }
 }
 
@@ -2032,16 +2186,23 @@ function showTab(tabName) {
             );
         }
 
-        // Lazy-loaders with enhanced error handling
+        // Enhanced metrics loading with better timing
         if (tabName === "metrics") {
-            try {
-                loadAggregatedMetrics();
-            } catch (error) {
-                console.error("Error loading metrics:", error);
-                showMetricsError(error);
-            }
+            // Give the tab time to fully render, then load metrics
+            setTimeout(() => {
+                try {
+                    // Only load if we're still on the metrics tab
+                    if (!panel.classList.contains("hidden")) {
+                        loadAggregatedMetrics();
+                    }
+                } catch (error) {
+                    console.error("Error loading metrics:", error);
+                    showMetricsError(error);
+                }
+            }, 200); // Increased delay
         }
 
+        // Version info loading (unchanged)
         if (tabName === "version-info") {
             const versionPanel = safeGetElement("version-info-panel");
             if (versionPanel && versionPanel.innerHTML.trim() === "") {
@@ -2055,7 +2216,6 @@ function showTab(tabName) {
                         return resp.text();
                     })
                     .then((html) => {
-                        // Use safeSetInnerHTML for trusted backend content
                         safeSetInnerHTML(versionPanel, html, true);
                         console.log("✓ Version info loaded");
                     })
