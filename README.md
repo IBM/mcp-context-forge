@@ -255,17 +255,23 @@ python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 # 2️⃣  Register it with the gateway
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"fast_time","url":"http://localhost:8002/sse"}' \
+     -d '{"name":"fast_time","url":"http://localhost:9000/sse"}' \
      http://localhost:4444/gateways
 
 # 3️⃣  Verify tool catalog
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools | jq
 
-# 4️⃣  Create a *virtual server* bundling those tools
+# 4️⃣  Create a *virtual server* bundling those tools. Use the ID of tools from the tool catalog (Step #3) and pass them in the associatedTools list.
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["1"]}' \
+     -d '{"name":"time_server","description":"Fast time tools","associatedTools":[<ID_OF_TOOLS>]}' \
      http://localhost:4444/servers | jq
+
+# Example curl
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"      
+     -H "Content-Type: application/json"      
+     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["6018ca46d32a4ac6b4c054c13a1726a2"]}' \
+     http://localhost:4444/servers | jq   
 
 # 5️⃣  List servers (should now include the UUID of the newly created virtual server)
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
@@ -355,6 +361,12 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `
 ```bash
 mkdir -p $(pwd)/data
 
+touch $(pwd)/data/mcp.db
+
+sudo chown -R :docker $(pwd)/data
+
+chmod 777 $(pwd)/data
+
 docker run -d --name mcpgateway \
   --restart unless-stopped \
   -p 4444:4444 \
@@ -372,6 +384,14 @@ SQLite now lives on the host at `./data/mcp.db`.
 #### 3 - Local tool discovery (host network)
 
 ```bash
+mkdir -p $(pwd)/data
+
+touch $(pwd)/data/mcp.db
+
+sudo chown -R :docker $(pwd)/data
+
+chmod 777 $(pwd)/data
+
 docker run -d --name mcpgateway \
   --network=host \
   -e HOST=0.0.0.0 \
@@ -402,6 +422,12 @@ podman run -d --name mcpgateway \
 ```bash
 mkdir -p $(pwd)/data
 
+touch $(pwd)/data/mcp.db
+
+sudo chown -R :docker $(pwd)/data
+
+chmod 777 $(pwd)/data
+
 podman run -d --name mcpgateway \
   --restart=on-failure \
   -p 4444:4444 \
@@ -413,6 +439,14 @@ podman run -d --name mcpgateway \
 #### 3 - Host networking (rootless)
 
 ```bash
+mkdir -p $(pwd)/data
+
+touch $(pwd)/data/mcp.db
+
+sudo chown -R :docker $(pwd)/data
+
+chmod 777 $(pwd)/data
+
 podman run -d --name mcpgateway \
   --network=host \
   -v $(pwd)/data:/data \
