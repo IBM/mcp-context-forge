@@ -754,7 +754,9 @@ class GatewayService:
                         response = await session.list_tools()
                         tools = response.tools
                         tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+
                         tools = [ToolCreate.model_validate(tool) for tool in tools]
+                        logger.info(f"{tools[0]=}")
 
                 return capabilities, tools
 
