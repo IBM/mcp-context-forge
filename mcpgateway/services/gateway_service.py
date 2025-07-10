@@ -37,7 +37,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import SecureGatewayCreate, GatewayRead, GatewayUpdate, SecureToolCreate
+from mcpgateway.schemas import GatewayRead, GatewayUpdate, SecureGatewayCreate, SecureToolCreate
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth
@@ -756,7 +756,7 @@ class GatewayService:
                         tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
 
                         tools = [SecureToolCreate.model_validate(tool) for tool in tools]
-                        logger.info(f'{tools[0]=}')
+                        logger.info(f"{tools[0]=}")
 
                 return capabilities, tools
 

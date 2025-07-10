@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.schemas import SecurePromptCreate, PromptRead, PromptUpdate
+from mcpgateway.schemas import PromptRead, PromptUpdate, SecurePromptCreate
 
 logger = logging.getLogger(__name__)
 

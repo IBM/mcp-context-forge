@@ -27,7 +27,7 @@ import pytest
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.models import Message, PromptResult, Role
-from mcpgateway.schemas import SecurePromptCreate, PromptRead, PromptUpdate
+from mcpgateway.schemas import PromptRead, PromptUpdate, SecurePromptCreate
 from mcpgateway.services.prompt_service import (
     PromptError,
     PromptNotFoundError,

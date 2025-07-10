@@ -36,11 +36,11 @@ from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.schemas import (
-    SecureResourceCreate,
     ResourceMetrics,
     ResourceRead,
     ResourceSubscription,
     ResourceUpdate,
+    SecureResourceCreate,
 )
 
 logger = logging.getLogger(__name__)

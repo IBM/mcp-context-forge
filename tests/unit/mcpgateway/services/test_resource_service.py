@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 # First-Party
-from mcpgateway.schemas import SecureResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
+from mcpgateway.schemas import ResourceRead, ResourceSubscription, ResourceUpdate, SecureResourceCreate
 from mcpgateway.services.resource_service import (
     ResourceError,
     ResourceNotFoundError,

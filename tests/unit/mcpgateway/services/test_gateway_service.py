@@ -28,7 +28,7 @@ import pytest
 # ---------------------------------------------------------------------------
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import SecureGatewayCreate, GatewayUpdate
+from mcpgateway.schemas import GatewayUpdate, SecureGatewayCreate
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayError,
