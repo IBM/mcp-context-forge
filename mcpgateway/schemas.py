@@ -328,12 +328,12 @@ class ToolCreate(BaseModel):
 
     @field_validator("request_type")
     @classmethod
-    def validate_request_type(cls, v: str, values: Dict[str, Any]) -> str:
+    def validate_request_type(cls, v: str, info: ValidationInfo) -> str:
         """Validate request type based on integration type
 
         Args:
             v (str): Value to validate
-            values (str): Values used for validation
+            info (ValidationInfo): Values used for validation
 
         Returns:
             str: Value if validated as safe
@@ -341,7 +341,8 @@ class ToolCreate(BaseModel):
         Raises:
             ValueError: When value is unsafe
         """
-        integration_type = values.config.get("integration_type", "MCP")
+        data = info.data
+        integration_type = data.get("integration_type")
 
         if integration_type == "MCP":
             allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
