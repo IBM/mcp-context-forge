@@ -55,11 +55,11 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Sequence
 import uuid
 
 # Third-Party
+import uvicorn
+from sse_starlette.sse import EventSourceResponse
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
-from sse_starlette.sse import EventSourceResponse
-import uvicorn
 
 try:
     # Third-Party
@@ -135,7 +135,7 @@ class StdIOEndpoint:
 
         Creates the subprocess and starts the stdout pump task.
         """
-        LOGGER.info("Starting stdio subprocess: %s", self._cmd)
+        LOGGER.info(f"Starting stdio subprocess: {self._cmd}")
         self._proc = await asyncio.create_subprocess_exec(
             *shlex.split(self._cmd),
             stdin=asyncio.subprocess.PIPE,
@@ -153,7 +153,7 @@ class StdIOEndpoint:
         """
         if self._proc is None:
             return
-        LOGGER.info("Stopping subprocess (pid=%s)", self._proc.pid)
+        LOGGER.info(f"Stopping subprocess (pid={self._proc.pid})")
         self._proc.terminate()
         with suppress(asyncio.TimeoutError):
             await asyncio.wait_for(self._proc.wait(), timeout=5)
@@ -171,7 +171,7 @@ class StdIOEndpoint:
         """
         if not self._stdin:
             raise RuntimeError("stdio endpoint not started")
-        LOGGER.debug("→ stdio: %s", raw.strip())
+        LOGGER.debug(f"→ stdio: {raw.strip()}")
         self._stdin.write(raw.encode())
         await self._stdin.drain()
 
@@ -192,7 +192,7 @@ class StdIOEndpoint:
                 if not line:  # EOF
                     break
                 text = line.decode(errors="replace")
-                LOGGER.debug("← stdio: %s", text.strip())
+                LOGGER.debug(f"← stdio: {text.strip()}")
                 await self._pubsub.publish(text)
         except Exception:  # pragma: no cover --best-effort logging
             LOGGER.exception("stdout pump crashed - terminating bridge")
@@ -420,7 +420,7 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
         with suppress(NotImplementedError):  # Windows lacks add_signal_handler
             loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
 
-    LOGGER.info("Bridge ready → http://127.0.0.1:%s/sse", port)
+    LOGGER.info(f"Bridge ready → http://127.0.0.1:{port}/sse")
     await server.serve()
     await _shutdown()  # final cleanup
 
