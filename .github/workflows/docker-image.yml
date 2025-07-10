@@ -142,7 +142,7 @@ jobs:
           output-file: sbom.spdx.json
 
       # -------------------------------------------------------------
-      # 6️⃣  Trivy CVE scan → SARIF
+      # 6️⃣  Trivy, Grype CVE scan → SARIF
       # -------------------------------------------------------------
       - name: 🛡️  Trivy vulnerability scan
         id: trivy
@@ -159,6 +159,18 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
+
+      - name: 🔍 Grype vulnerability scan
+        run: |
+          grype ${{ env.IMAGE_NAME }}:latest --scope all-layers --only-fixed
+      - name: 📄 Generating Grype SARIF report
+        run: |
+          grype ${{ env.IMAGE_NAME }}:latest --scope all-layers --output sarif --file grype-results.sarif
+      - name: ☁️  Upload Grype SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: grype-results.sarif
 
       # -------------------------------------------------------------
       # 7️⃣  Push both tags to GHCR
