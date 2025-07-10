@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/ibm-mcp-context-forge-badge.png)](https://mseep.ai/app/ibm-mcp-context-forge)
+
 # MCP Gateway
 
 > Model Context Protocol gateway & proxy - unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
