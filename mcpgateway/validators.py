@@ -53,9 +53,9 @@ class SecurityValidator:
     """Configurable validation with MCP-compliant limits"""
 
     # Configurable patterns (from settings)
-    DANGEROUS_HTML_PATTERN = settings.validation_dangerous_html_pattern # Default: <(script|iframe|object|embed|link|meta|base|form)\b|</*(script|iframe|object|embed|link|meta|base|form)>
-    DANGEROUS_JS_PATTERN = settings.validation_dangerous_js_pattern # Default: javascript:|vbscript:|on\w+\s*=|data:.*script
-    ALLOWED_URL_SCHEMES = settings.validation_allowed_url_schemes # Default: ["http://", "https://", "ws://", "wss://"]
+    DANGEROUS_HTML_PATTERN = settings.validation_dangerous_html_pattern  # Default: <(script|iframe|object|embed|link|meta|base|form)\b|</*(script|iframe|object|embed|link|meta|base|form)>
+    DANGEROUS_JS_PATTERN = settings.validation_dangerous_js_pattern  # Default: javascript:|vbscript:|on\w+\s*=|data:.*script
+    ALLOWED_URL_SCHEMES = settings.validation_allowed_url_schemes  # Default: ["http://", "https://", "ws://", "wss://"]
 
     # Character type patterns
     NAME_PATTERN = settings.validation_name_pattern  # Default: ^[a-zA-Z0-9_\-]+$
