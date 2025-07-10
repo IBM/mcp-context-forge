@@ -27,7 +27,7 @@ import pytest
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.models import Message, PromptResult, Role
-from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
+from mcpgateway.schemas import SecurePromptCreate, PromptRead, PromptUpdate
 from mcpgateway.services.prompt_service import (
     PromptError,
     PromptNotFoundError,
@@ -122,7 +122,7 @@ class TestPromptService:
 
         prompt_service._notify_prompt_added = AsyncMock()
 
-        pc = PromptCreate(
+        pc = SecurePromptCreate(
             name="hello",
             description="greet a user",
             template="Hello {{ name }}!",
@@ -144,7 +144,7 @@ class TestPromptService:
         existing = _build_db_prompt()
         test_db.execute = Mock(return_value=_make_execute_result(scalar=existing))
 
-        pc = PromptCreate(name="hello", description="", template="X", arguments=[])
+        pc = SecurePromptCreate(name="hello", description="", template="X", arguments=[])
 
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)

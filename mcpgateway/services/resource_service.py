@@ -36,7 +36,7 @@ from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.schemas import (
-    ResourceCreate,
+    SecureResourceCreate,
     ResourceMetrics,
     ResourceRead,
     ResourceSubscription,
@@ -144,7 +144,7 @@ class ResourceService:
         }
         return ResourceRead.model_validate(resource_dict)
 
-    async def register_resource(self, db: Session, resource: ResourceCreate) -> ResourceRead:
+    async def register_resource(self, db: Session, resource: SecureResourceCreate) -> ResourceRead:
         """Register a new resource.
 
         Args:

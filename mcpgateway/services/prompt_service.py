@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
+from mcpgateway.schemas import SecurePromptCreate, PromptRead, PromptUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ class PromptService:
             },
         }
 
-    async def register_prompt(self, db: Session, prompt: PromptCreate) -> PromptRead:
+    async def register_prompt(self, db: Session, prompt: SecurePromptCreate) -> PromptRead:
         """Register a new prompt template.
 
         Args:

@@ -18,7 +18,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate
+from mcpgateway.schemas import SecureServerCreate, ServerRead, ServerUpdate
 from mcpgateway.services.server_service import (
     ServerError,
     ServerNotFoundError,
@@ -107,7 +107,7 @@ class TestServerService:
         mock_db_server.id = "1"
         mock_db_server.name = "test_server"
         mock_db_server.description = "A test server"
-        mock_db_server.icon = "server-icon"
+        mock_db_server.icon = "http://example.com/image.jpg"
         mock_db_server.created_at = "2023-01-01T00:00:00"
         mock_db_server.updated_at = "2023-01-01T00:00:00"
         mock_db_server.is_active = True
@@ -189,10 +189,10 @@ class TestServerService:
             )
         )
 
-        server_create = ServerCreate(
+        server_create = SecureServerCreate(
             name="test_server",
             description="A test server",
-            icon="server-icon",
+            icon="http://example.com/image.jpg",
             associated_tools=["101"],
             associated_resources=["201"],
             associated_prompts=["301"],
@@ -219,10 +219,10 @@ class TestServerService:
         mock_scalar.scalar_one_or_none.return_value = mock_server
         test_db.execute = Mock(return_value=mock_scalar)
 
-        server_create = ServerCreate(
+        server_create = SecureServerCreate(
             name="test_server",
             description="A new server",
-            icon="new-icon",
+            icon="http://image.com/test.jpg",
         )
 
         with pytest.raises(ServerError) as exc:
@@ -248,7 +248,7 @@ class TestServerService:
         test_db.get = Mock(return_value=None)
         test_db.rollback = Mock()
 
-        server_create = ServerCreate(
+        server_create = SecureServerCreate(
             name="test_server",
             description="A test server",
             associated_tools=["999"],
@@ -272,7 +272,7 @@ class TestServerService:
             id="1",
             name="test_server",
             description="A test server",
-            icon="server-icon",
+            icon="http://example.com/image.jgp",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             is_active=True,
@@ -306,7 +306,7 @@ class TestServerService:
             id="1",
             name="test_server",
             description="A test server",
-            icon="server-icon",
+            icon="http://example.com/image.jpg",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             is_active=True,

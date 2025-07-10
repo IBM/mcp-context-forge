@@ -41,7 +41,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.models import TextContent, ToolResult
 from mcpgateway.schemas import (
-    ToolCreate,
+    SecureToolCreate,
     ToolRead,
     ToolUpdate,
 )
@@ -188,7 +188,7 @@ class ToolService:
         db.add(metric)
         db.commit()
 
-    async def register_tool(self, db: Session, tool: ToolCreate) -> ToolRead:
+    async def register_tool(self, db: Session, tool: SecureToolCreate) -> ToolRead:
         """Register a new tool.
 
         Args:

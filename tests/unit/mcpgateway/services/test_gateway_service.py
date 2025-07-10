@@ -28,7 +28,7 @@ import pytest
 # ---------------------------------------------------------------------------
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+from mcpgateway.schemas import SecureGatewayCreate, GatewayUpdate
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayError,
@@ -172,7 +172,7 @@ class TestGatewayService:
         )
         gateway_service._notify_gateway_added = AsyncMock()
 
-        gateway_create = GatewayCreate(
+        gateway_create = SecureGatewayCreate(
             name="test_gateway",
             url="http://example.com/gateway",
             description="A test gateway",
@@ -186,7 +186,7 @@ class TestGatewayService:
         gateway_service._initialize_gateway.assert_called_once()
         gateway_service._notify_gateway_added.assert_called_once()
 
-        # `result` is the same GatewayCreate instance because we stubbed
+        # `result` is the same SecureGatewayCreate instance because we stubbed
         # GatewayRead.model_validate → just check its fields:
         assert result.name == "test_gateway"
         assert result.url == "http://example.com/gateway"
@@ -198,7 +198,7 @@ class TestGatewayService:
         # DB returns an existing gateway with the same name
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
 
-        gateway_create = GatewayCreate(
+        gateway_create = SecureGatewayCreate(
             name="test_gateway",  # same as mock_gateway
             url="http://example.com/other",
             description="Another gateway",
@@ -220,7 +220,7 @@ class TestGatewayService:
         # _initialize_gateway blows up before any DB work happens
         gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Failed to connect"))
 
-        gateway_create = GatewayCreate(
+        gateway_create = SecureGatewayCreate(
             name="test_gateway",
             url="http://example.com/gateway",
             description="A test gateway",

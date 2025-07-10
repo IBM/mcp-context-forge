@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
+from mcpgateway.schemas import AuthenticationValues, SecureToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     TextContent,
     ToolError,
@@ -232,7 +232,7 @@ class TestToolService:
         )
 
         # Create tool request
-        tool_create = ToolCreate(
+        tool_create = SecureToolCreate(
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
@@ -268,12 +268,12 @@ class TestToolService:
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Create tool request with conflicting name
-        tool_create = ToolCreate(
+        tool_create = SecureToolCreate(
             name="test_tool",  # Same name as mock_tool
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
             gateway_id="1",
         )
 
@@ -291,7 +291,7 @@ class TestToolService:
         token = "token"
         auth_value = encode_auth({"Authorization": f"Bearer {token}"})
 
-        tool_input = ToolCreate(name="no_auth_tool", gateway_id=None, auth=AuthenticationValues(auth_type="bearer", auth_value=auth_value))
+        tool_input = SecureToolCreate(name="no_auth_tool", gateway_id=None, auth=AuthenticationValues(auth_type="bearer", auth_value=auth_value))
 
         # Run the function
         result = await tool_service.register_tool(test_db, tool_input)
@@ -315,12 +315,12 @@ class TestToolService:
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Create tool request with conflicting name
-        tool_create = ToolCreate(
+        tool_create = SecureToolCreate(
             name="test_tool",  # Same name as mock_tool
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
         )
 
         # Should raise ToolError wrapping ToolNameConflictError
@@ -340,12 +340,12 @@ class TestToolService:
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Create tool request with conflicting name
-        tool_create = ToolCreate(
+        tool_create = SecureToolCreate(
             name="test_tool",  # Same name as mock_tool
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
         )
 
         # Should raise ToolError wrapping ToolNameConflictError
@@ -367,12 +367,12 @@ class TestToolService:
         test_db.rollback = Mock()
 
         # Create tool request
-        tool_create = ToolCreate(
+        tool_create = SecureToolCreate(
             name="test_tool",
             url="http://example.com/tools/test",
             description="A test tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
         )
 
         # Should raise ToolError

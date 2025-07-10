@@ -33,24 +33,24 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.schemas import (
-    GatewayCreate,
+    SecureGatewayCreate,
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
     GatewayUpdate,
-    PromptCreate,
+    SecurePromptCreate,
     PromptMetrics,
     PromptRead,
     PromptUpdate,
-    ResourceCreate,
+    SecureResourceCreate,
     ResourceMetrics,
     ResourceRead,
     ResourceUpdate,
-    ServerCreate,
+    SecureServerCreate,
     ServerMetrics,
     ServerRead,
     ServerUpdate,
-    ToolCreate,
+    SecureToolCreate,
     ToolMetrics,
     ToolRead,
     ToolUpdate,
@@ -162,7 +162,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
 
-        server = ServerCreate(
+        server = SecureServerCreate(
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
@@ -598,7 +598,7 @@ async def admin_add_tool(
     }
     logger.debug(f"Tool data built: {tool_data}")
     try:
-        tool = ToolCreate(**tool_data)
+        tool = SecureToolCreate(**tool_data)
         logger.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
         await tool_service.register_tool(db, tool)
         return JSONResponse(
@@ -795,7 +795,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     """
     logger.debug(f"User {user} is adding a new gateway")
     form = await request.form()
-    gateway = GatewayCreate(
+    gateway = SecureGatewayCreate(
         name=form["name"],
         url=form["url"],
         description=form.get("description"),
@@ -941,7 +941,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     """
     logger.debug(f"User {user} is adding a new resource")
     form = await request.form()
-    resource = ResourceCreate(
+    resource = SecureResourceCreate(
         uri=form["uri"],
         name=form["name"],
         description=form.get("description"),
@@ -1109,7 +1109,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     form = await request.form()
     args_json = form.get("arguments") or "[]"
     arguments = json.loads(args_json)
-    prompt = PromptCreate(
+    prompt = SecurePromptCreate(
         name=form["name"],
         description=form.get("description"),
         template=form["template"],

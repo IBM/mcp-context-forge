@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 # First-Party
-from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
+from mcpgateway.schemas import SecureResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.resource_service import (
     ResourceError,
     ResourceNotFoundError,
@@ -123,7 +123,7 @@ def mock_inactive_resource():
 @pytest.fixture
 def sample_resource_create():
     """Create a sample ResourceCreate object."""
-    return ResourceCreate(uri="http://example.com/new-resource", name="New Resource", description="A new test resource", mime_type="text/plain", content="New content")  # Use a valid HTTP URI
+    return SecureResourceCreate(uri="http://example.com/new-resource", name="New Resource", description="A new test resource", mime_type="text/plain", content="New content")  # Use a valid HTTP URI
 
 
 # --------------------------------------------------------------------------- #
@@ -274,7 +274,7 @@ class TestResourceRegistration:
     @pytest.mark.asyncio
     async def test_register_resource_binary_content(self, resource_service, mock_db):
         """Test registration with binary content."""
-        binary_resource = ResourceCreate(uri="http://example.com/binary", name="Binary Resource", content=b"binary content", mime_type="application/octet-stream")
+        binary_resource = SecureResourceCreate(uri="http://example.com/binary", name="Binary Resource", content=b"binary content", mime_type="application/octet-stream")
 
         # Mock no existing resource
         mock_scalar = MagicMock()

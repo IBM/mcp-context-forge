@@ -52,7 +52,7 @@ from mcpgateway.schemas import (
     AdminToolCreate,
     EventMessage,
     ListFilters,
-    ServerCreate,
+    SecureServerCreate,
     ServerMetrics,
     ServerRead,
     ServerUpdate,
@@ -667,8 +667,8 @@ class TestServerSchemas:
     """Test server-related schemas."""
 
     def test_server_create(self):
-        """Test ServerCreate model."""
-        server = ServerCreate(
+        """Test SecureServerCreate model."""
+        server = SecureServerCreate(
             name="Test Server",
             description="Test server instance",
             icon="http://example.com/server.png",
@@ -685,7 +685,7 @@ class TestServerSchemas:
         assert server.associated_prompts == ["6"]
 
         # Test with comma-separated strings for associations
-        csv_server = ServerCreate(
+        csv_server = SecureServerCreate(
             name="CSV Server",
             description="Server with comma-separated values",
             associated_tools="1,2,3",
@@ -699,7 +699,7 @@ class TestServerSchemas:
         assert csv_server.associated_prompts == ["6"]
 
         # Minimal server
-        minimal = ServerCreate(
+        minimal = SecureServerCreate(
             name="Minimal Server",
         )
 

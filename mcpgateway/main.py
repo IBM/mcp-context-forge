@@ -71,20 +71,20 @@ from mcpgateway.models import (
     Root,
 )
 from mcpgateway.schemas import (
-    GatewayCreate,
+    SecureGatewayCreate,
     GatewayRead,
     GatewayUpdate,
     JsonPathModifier,
-    PromptCreate,
+    SecurePromptCreate,
     PromptRead,
     PromptUpdate,
-    ResourceCreate,
+    SecureResourceCreate,
     ResourceRead,
     ResourceUpdate,
-    ServerCreate,
+    SecureServerCreate,
     ServerRead,
     ServerUpdate,
-    ToolCreate,
+    SecureToolCreate,
     ToolRead,
     ToolUpdate,
 )
@@ -604,7 +604,7 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user: str = 
 @server_router.post("", response_model=ServerRead, status_code=201)
 @server_router.post("/", response_model=ServerRead, status_code=201)
 async def create_server(
-    server: ServerCreate,
+    server: SecureServerCreate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> ServerRead:
@@ -612,7 +612,7 @@ async def create_server(
     Creates a new server.
 
     Args:
-        server (ServerCreate): The data for the new server.
+        server (SecureServerCreate): The data for the new server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -924,12 +924,12 @@ async def list_tools(
 
 @tool_router.post("", response_model=ToolRead)
 @tool_router.post("/", response_model=ToolRead)
-async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
+async def create_tool(tool: SecureToolCreate, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
     """
     Creates a new tool in the system.
 
     Args:
-        tool (ToolCreate): The data needed to create the tool.
+        tool (SecureToolCreate): The data needed to create the tool.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -1167,7 +1167,7 @@ async def list_resources(
 @resource_router.post("", response_model=ResourceRead)
 @resource_router.post("/", response_model=ResourceRead)
 async def create_resource(
-    resource: ResourceCreate,
+    resource: SecureResourceCreate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> ResourceRead:
@@ -1175,7 +1175,7 @@ async def create_resource(
     Create a new resource.
 
     Args:
-        resource (ResourceCreate): Data for the new resource.
+        resource (SecureResourceCreate): Data for the new resource.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -1361,7 +1361,7 @@ async def list_prompts(
 @prompt_router.post("", response_model=PromptRead)
 @prompt_router.post("/", response_model=PromptRead)
 async def create_prompt(
-    prompt: PromptCreate,
+    prompt: SecurePromptCreate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> PromptRead:
@@ -1369,7 +1369,7 @@ async def create_prompt(
     Create a new prompt.
 
     Args:
-        prompt (PromptCreate): Payload describing the prompt to create.
+        prompt (SecurePromptCreate): Payload describing the prompt to create.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
@@ -1559,7 +1559,7 @@ async def list_gateways(
 @gateway_router.post("", response_model=GatewayRead)
 @gateway_router.post("/", response_model=GatewayRead)
 async def register_gateway(
-    gateway: GatewayCreate,
+    gateway: SecureGatewayCreate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> GatewayRead:
