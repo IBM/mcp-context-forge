@@ -892,7 +892,7 @@ async def server_get_prompts(
 @tool_router.get("", response_model=Union[List[ToolRead], List[Dict], Dict, List])
 @tool_router.get("/", response_model=Union[List[ToolRead], List[Dict], Dict, List])
 async def list_tools(
-    cursor: Optional[str] = None,  # Add this parameter
+    cursor: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
@@ -1138,7 +1138,7 @@ async def toggle_resource_status(
 @resource_router.get("", response_model=List[ResourceRead])
 @resource_router.get("/", response_model=List[ResourceRead])
 async def list_resources(
-    cursor: Optional[str] = None,  # Add this parameter
+    cursor: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
