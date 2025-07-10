@@ -570,7 +570,7 @@ class SessionRegistry(SessionBackend):
                             continue
 
                         # Refresh session in database
-                        def _refresh_session():
+                        def _refresh_session(session_id=session_id):
                             db_session = next(get_db())
                             try:
                                 session = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
