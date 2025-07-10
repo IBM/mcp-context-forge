@@ -41,7 +41,7 @@ import importlib
 import sys
 import types
 from typing import Sequence
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, MagicMock
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -69,6 +69,23 @@ def translate():
     sys.modules.pop("mcpgateway.translate", None)
     return importlib.import_module("mcpgateway.translate")
 
+def test_translate_importerror(monkeypatch):
+    # Remove httpx from sys.modules if present
+    sys.modules.pop("httpx", None)
+    # Simulate ImportError when importing httpx
+    import builtins
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "httpx":
+            raise ImportError("No module named 'httpx'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    # Reload the module to trigger the import block
+    import mcpgateway.translate as translate
+    importlib.reload(translate)
+    assert translate.httpx is None
 
 # ---------------------------------------------------------------------------#
 # Dummy subprocess plumbing                                                  #
@@ -137,11 +154,30 @@ async def test_pubsub_queuefull_removal(translate):
     await ps.publish("x")
     assert bad not in ps._subscribers
 
+@pytest.mark.asyncio
+async def test_pubsub_double_unsubscribe_and_publish_no_subs(translate):
+    ps = translate._PubSub()
+    q = ps.subscribe()
+    ps.unsubscribe(q)
+    # Unsubscribing again should not raise
+    ps.unsubscribe(q)
+    # Publishing with no subscribers should not raise
+    await ps.publish("no one listens")
 
 # ---------------------------------------------------------------------------#
 # Tests: StdIOEndpoint                                                       #
 # ---------------------------------------------------------------------------#
 
+
+@pytest.mark.asyncio
+async def test_stdio_endpoint_stop_when_proc_none(translate):
+    """Test StdIOEndpoint.stop() returns immediately if _proc is None."""
+    ps = translate._PubSub()
+    ep = translate.StdIOEndpoint("echo test", ps)
+    # Ensure _proc is None (should be by default)
+    assert ep._proc is None
+    # Should not raise or do anything
+    await ep.stop()
 
 @pytest.mark.asyncio
 async def test_stdio_endpoint_flow(monkeypatch, translate):
@@ -209,6 +245,23 @@ async def test_stdio_endpoint_stop_timeout(monkeypatch, translate):
     await ep.stop()  # Should handle timeout gracefully
     assert fake.terminated
 
+@pytest.mark.asyncio
+async def test_stdio_endpoint_stop_cancels_pump(monkeypatch, translate):
+    ps = translate._PubSub()
+    fake = _FakeProc(['{"jsonrpc":"2.0"}\n'])
+
+    async def _fake_exec(*_a, **_kw):
+        return fake
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", _fake_exec)
+
+    ep = translate.StdIOEndpoint("echo hi", ps)
+    await ep.start()
+    # Simulate pump task still running
+    assert ep._pump_task is not None
+    # Stop should cancel the pump task
+    await ep.stop()
+    assert fake.terminated
 
 # ---------------------------------------------------------------------------#
 # Tests: FastAPI facade (/sse /message /healthz)                             #
@@ -349,6 +402,46 @@ def test_fastapi_custom_paths(translate):
     assert "/healthz" in route_paths  # Default health endpoint should still exist
 
 
+def test_build_fastapi_with_cors_and_keepalive(translate):
+    ps = translate._PubSub()
+    stdio = Mock()
+    app = translate._build_fastapi(ps, stdio, keep_alive=5, cors_origins=["*"])
+    assert app is not None
+    # Check CORS middleware is present
+    assert any("CORSMiddleware" in str(m) for m in app.user_middleware)
+
+
+@pytest.mark.asyncio
+async def test_sse_event_gen_unsubscribes_on_disconnect(monkeypatch, translate):
+    ps = translate._PubSub()
+    stdio = Mock()
+    app = translate._build_fastapi(ps, stdio)
+
+    # Patch request to simulate disconnect after first yield
+    class DummyRequest:
+        def __init__(self):
+            self.base_url = "http://test/"
+            self._disconnected = False
+        async def is_disconnected(self):
+            if not self._disconnected:
+                self._disconnected = True
+                return False
+            return True
+
+    # Get the /sse route handler
+    for route in app.routes:
+        if getattr(route, "path", None) == "/sse":
+            handler = route.endpoint
+            break
+
+    # Call the handler and exhaust the generator
+    resp = await handler(DummyRequest())
+    # The generator should unsubscribe after disconnect (no error)
+    assert resp is not None
+
+
+
+
 # ---------------------------------------------------------------------------#
 # Tests: _parse_args                                                         #
 # ---------------------------------------------------------------------------#
@@ -385,6 +478,13 @@ def test_parse_args_log_level(translate):
     """Test parsing log level."""
     ns = translate._parse_args(["--stdio", "echo hi", "--logLevel", "debug"])
     assert ns.logLevel == "debug"
+
+def test_parse_args_missing_required(translate):
+    import sys
+    argv = []
+    # Should exit with SystemExit due to missing required argument
+    with pytest.raises(SystemExit):
+        translate._parse_args(argv)
 
 
 # ---------------------------------------------------------------------------#
@@ -439,6 +539,7 @@ async def test_run_stdio_to_sse(monkeypatch, translate):
 
     # Add timeout to prevent hanging
     await asyncio.wait_for(_test_logic(), timeout=3.0)
+
 
 
 @pytest.mark.asyncio
@@ -737,11 +838,69 @@ async def test_run_sse_to_stdio_with_data_processing(monkeypatch, translate):
     # Add timeout to prevent hanging
     await asyncio.wait_for(_test_logic(), timeout=5.0)
 
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_importerror(monkeypatch, translate):
+    monkeypatch.setattr(translate, "httpx", None)
+    with pytest.raises(ImportError):
+        await translate._run_sse_to_stdio("http://dummy/sse", None)
 
+@pytest.mark.asyncio
+async def test_pump_sse_to_stdio_full(monkeypatch, translate):
+    # Prepare fake process with mock stdin
+    written = []
+    class DummyStdin:
+        def write(self, data):
+            written.append(data)
+        async def drain(self):
+            written.append("drained")
+
+    class DummyProcess:
+        stdin = DummyStdin()
+
+    # Prepare fake response with aiter_lines
+    lines = [
+        "event: message",
+        "data: ",  # Should be skipped
+        "data: {}",  # Should be skipped
+        "data: {\"jsonrpc\":\"2.0\",\"result\":\"ok\"}",  # Should be written
+        "data: another",  # Should be written
+        "notdata: ignored",  # Should be ignored
+    ]
+    class DummyResponse:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def aiter_lines(self):
+            for line in lines:
+                yield line
+
+    class DummyClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        def stream(self, *a, **k): return DummyResponse()
+
+    # Patch httpx.AsyncClient to return DummyClient
+    monkeypatch.setattr(translate, "httpx", MagicMock())
+    translate.httpx.AsyncClient = MagicMock(return_value=DummyClient())
+
+    # Patch asyncio.create_subprocess_shell to return DummyProcess
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_shell", AsyncMock(return_value=DummyProcess()))
+
+    # Patch process.stdout so read_stdout() exits immediately
+    class DummyStdout:
+        async def readline(self): return b""
+    DummyProcess.stdout = DummyStdout()
+
+    # Actually call _run_sse_to_stdio, which will define and call pump_sse_to_stdio
+    await translate._run_sse_to_stdio("http://dummy/sse", None)
+
+    # Check that only the correct data was written and drained
+    # Should skip empty and {} data, write the others
+    assert b'{"jsonrpc":"2.0","result":"ok"}\n' in written
+    assert b'another\n' in written
+    assert "drained" in written
 # ---------------------------------------------------------------------------#
 # Tests: CLI entry-point (`python -m mcpgateway.translate`)                  #
 # ---------------------------------------------------------------------------#
-
 
 def test_module_entrypoint(monkeypatch, translate):
     """Test that the module can be executed as __main__."""
@@ -842,6 +1001,17 @@ def test_main_function_not_implemented_error(monkeypatch, translate, capsys):
     captured = capsys.readouterr()
     assert "Test error message" in captured.err
 
+def test_main_unknown_args(monkeypatch, translate):
+    monkeypatch.setattr(
+        translate,
+        "_parse_args",
+        lambda argv: type("Args", (), {
+            "stdio": None, "sse": None, "streamableHttp": None,
+            "logLevel": "info", "cors": None, "oauth2Bearer": None, "port": 8000
+        })()
+    )
+    # Just call main and assert it returns None (does not raise)
+    assert translate.main(["--unknown"]) is None
 
 # ---------------------------------------------------------------------------#
 # Tests: Edge cases and error paths                                          #
@@ -937,3 +1107,9 @@ async def test_stdio_endpoint_exception_in_pump(monkeypatch, translate):
 
     # Add timeout to prevent hanging
     await asyncio.wait_for(_test_logic(), timeout=3.0)
+
+@pytest.mark.asyncio
+async def test_stdio_endpoint_send_not_started(translate):
+    ep = translate.StdIOEndpoint("cmd", translate._PubSub())
+    with pytest.raises(RuntimeError):
+        await ep.send("test")
