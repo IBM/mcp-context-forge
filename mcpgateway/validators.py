@@ -118,7 +118,7 @@ class SecurityValidator:
 
         # Check against allowed pattern
         if not re.match(cls.NAME_PATTERN, value):
-            raise ValueError(f"{field_name} can only contain letters, numbers, underscore, and hyphen. " f"Special characters like <, >, quotes are not allowed.")
+            raise ValueError(f"{field_name} can only contain letters, numbers, underscore, and hyphen. Special characters like <, >, quotes are not allowed.")
 
         # Additional check for HTML-like patterns
         if re.search(r'[<>"\'/]', value):
