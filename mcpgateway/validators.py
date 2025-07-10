@@ -5,7 +5,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Madhav Kandukuri
 
-This module defines the `SecurityValidator` class, which provides centralized, configurable 
+This module defines the `SecurityValidator` class, which provides centralized, configurable
 validation logic for user-generated content in MCP-based applications.
 
 The validator enforces strict security and structural rules across common input types such as:
