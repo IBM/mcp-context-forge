@@ -317,6 +317,7 @@ class Settings(BaseSettings):
         "text/plain",
         "text/html",
         "text/css",
+        "text/markdown",
         "text/javascript",
         "application/json",
         "application/xml",
