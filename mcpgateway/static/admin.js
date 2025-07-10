@@ -474,30 +474,559 @@ function showMetricsError(error) {
     }
 }
 
+// ===================================================================
+// ENHANCED METRICS DISPLAY with Complete System Overview
+// ===================================================================
+
 function displayMetrics(data) {
     const metricsPanel = safeGetElement("metrics-panel");
     if (!metricsPanel) {
+        console.error("Metrics panel element not found");
         return;
     }
 
-    // Create safe metrics display
-    const metricsContainer = document.createElement("div");
-    metricsContainer.className = "grid grid-cols-1 md:grid-cols-2 gap-6";
+    try {
+        // Create main container with safe structure
+        const mainContainer = document.createElement("div");
+        mainContainer.className = "space-y-6";
 
-    // Tools metrics
-    if (data.tools) {
-        const toolsCard = createMetricsCard("Tools", data.tools);
-        metricsContainer.appendChild(toolsCard);
+        // System overview section (top priority display)
+        if (data.system || data.overall) {
+            const systemData = data.system || data.overall || {};
+            const systemSummary = createSystemSummaryCard(systemData);
+            mainContainer.appendChild(systemSummary);
+        }
+
+        // Key Performance Indicators section
+        const kpiData = extractKPIData(data);
+        if (Object.keys(kpiData).length > 0) {
+            const kpiSection = createKPISection(kpiData);
+            mainContainer.appendChild(kpiSection);
+        }
+
+        // Top Performers section (before individual metrics)
+        if (data.topPerformers || data.top) {
+            const topData = data.topPerformers || data.top;
+            const topSection = createTopPerformersSection(topData);
+            mainContainer.appendChild(topSection);
+        }
+
+        // Individual metrics grid for all components
+        const metricsContainer = document.createElement("div");
+        metricsContainer.className =
+            "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6";
+
+        // Tools metrics
+        if (data.tools) {
+            const toolsCard = createMetricsCard("Tools", data.tools);
+            metricsContainer.appendChild(toolsCard);
+        }
+
+        // Resources metrics
+        if (data.resources) {
+            const resourcesCard = createMetricsCard(
+                "Resources",
+                data.resources,
+            );
+            metricsContainer.appendChild(resourcesCard);
+        }
+
+        // Prompts metrics
+        if (data.prompts) {
+            const promptsCard = createMetricsCard("Prompts", data.prompts);
+            metricsContainer.appendChild(promptsCard);
+        }
+
+        // Gateways metrics
+        if (data.gateways) {
+            const gatewaysCard = createMetricsCard("Gateways", data.gateways);
+            metricsContainer.appendChild(gatewaysCard);
+        }
+
+        // Servers metrics
+        if (data.servers) {
+            const serversCard = createMetricsCard("Servers", data.servers);
+            metricsContainer.appendChild(serversCard);
+        }
+
+        // Performance metrics
+        if (data.performance) {
+            const performanceCard = createPerformanceCard(data.performance);
+            metricsContainer.appendChild(performanceCard);
+        }
+
+        mainContainer.appendChild(metricsContainer);
+
+        // Recent activity section (bottom)
+        if (data.recentActivity || data.recent) {
+            const activityData = data.recentActivity || data.recent;
+            const activitySection = createRecentActivitySection(activityData);
+            mainContainer.appendChild(activitySection);
+        }
+
+        // Safe content replacement
+        metricsPanel.innerHTML = "";
+        metricsPanel.appendChild(mainContainer);
+
+        console.log("✓ Enhanced metrics display rendered successfully");
+    } catch (error) {
+        console.error("Error displaying metrics:", error);
+        showMetricsError(error);
     }
+}
 
-    // Resources metrics
-    if (data.resources) {
-        const resourcesCard = createMetricsCard("Resources", data.resources);
-        metricsContainer.appendChild(resourcesCard);
+/**
+ * SECURITY: Create system summary card with safe HTML generation
+ */
+function createSystemSummaryCard(systemData) {
+    try {
+        const card = document.createElement("div");
+        card.className =
+            "bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white";
+
+        // Card title
+        const title = document.createElement("h2");
+        title.className = "text-2xl font-bold mb-4";
+        title.textContent = "System Overview";
+        card.appendChild(title);
+
+        // Statistics grid
+        const statsGrid = document.createElement("div");
+        statsGrid.className = "grid grid-cols-2 md:grid-cols-4 gap-4";
+
+        // Define system statistics with validation
+        const systemStats = [
+            {
+                key: "uptime",
+                label: "Uptime",
+                suffix: "",
+            },
+            {
+                key: "totalRequests",
+                label: "Total Requests",
+                suffix: "",
+            },
+            {
+                key: "activeConnections",
+                label: "Active Connections",
+                suffix: "",
+            },
+            {
+                key: "memoryUsage",
+                label: "Memory Usage",
+                suffix: "%",
+            },
+            {
+                key: "cpuUsage",
+                label: "CPU Usage",
+                suffix: "%",
+            },
+            {
+                key: "diskUsage",
+                label: "Disk Usage",
+                suffix: "%",
+            },
+            {
+                key: "networkIn",
+                label: "Network In",
+                suffix: " MB",
+            },
+            {
+                key: "networkOut",
+                label: "Network Out",
+                suffix: " MB",
+            },
+        ];
+
+        systemStats.forEach((stat) => {
+            const value =
+                systemData[stat.key] ??
+                systemData[stat.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
+                "N/A";
+
+            const statDiv = document.createElement("div");
+            statDiv.className = "text-center";
+
+            const valueSpan = document.createElement("div");
+            valueSpan.className = "text-2xl font-bold";
+            valueSpan.textContent =
+                (value === "N/A" ? "N/A" : escapeHtml(String(value))) +
+                stat.suffix;
+
+            const labelSpan = document.createElement("div");
+            labelSpan.className = "text-blue-100 text-sm";
+            labelSpan.textContent = stat.label;
+
+            statDiv.appendChild(valueSpan);
+            statDiv.appendChild(labelSpan);
+            statsGrid.appendChild(statDiv);
+        });
+
+        card.appendChild(statsGrid);
+        return card;
+    } catch (error) {
+        console.error("Error creating system summary card:", error);
+        return document.createElement("div"); // Safe fallback
     }
+}
 
-    metricsPanel.innerHTML = "";
-    metricsPanel.appendChild(metricsContainer);
+/**
+ * SECURITY: Create KPI section with safe data handling
+ */
+function createKPISection(kpiData) {
+    try {
+        const section = document.createElement("div");
+        section.className = "grid grid-cols-1 md:grid-cols-4 gap-4";
+
+        // Define KPI indicators with safe configuration
+        const kpis = [
+            {
+                key: "totalExecutions",
+                label: "Total Executions",
+                icon: "🎯",
+                color: "blue",
+            },
+            {
+                key: "successRate",
+                label: "Success Rate",
+                icon: "✅",
+                color: "green",
+                suffix: "%",
+            },
+            {
+                key: "avgResponseTime",
+                label: "Avg Response Time",
+                icon: "⚡",
+                color: "yellow",
+                suffix: "ms",
+            },
+            {
+                key: "errorRate",
+                label: "Error Rate",
+                icon: "❌",
+                color: "red",
+                suffix: "%",
+            },
+        ];
+
+        kpis.forEach((kpi) => {
+            const value = kpiData[kpi.key] ?? "N/A";
+
+            const kpiCard = document.createElement("div");
+            kpiCard.className = `bg-white rounded-lg shadow p-4 border-l-4 border-${kpi.color}-500 dark:bg-gray-800`;
+
+            const header = document.createElement("div");
+            header.className = "flex items-center justify-between";
+
+            const iconSpan = document.createElement("span");
+            iconSpan.className = "text-2xl";
+            iconSpan.textContent = kpi.icon;
+
+            const valueDiv = document.createElement("div");
+            valueDiv.className = "text-right";
+
+            const valueSpan = document.createElement("div");
+            valueSpan.className = `text-2xl font-bold text-${kpi.color}-600`;
+            valueSpan.textContent =
+                (value === "N/A" ? "N/A" : escapeHtml(String(value))) +
+                (kpi.suffix || "");
+
+            const labelSpan = document.createElement("div");
+            labelSpan.className = "text-sm text-gray-500 dark:text-gray-400";
+            labelSpan.textContent = kpi.label;
+
+            valueDiv.appendChild(valueSpan);
+            valueDiv.appendChild(labelSpan);
+            header.appendChild(iconSpan);
+            header.appendChild(valueDiv);
+            kpiCard.appendChild(header);
+            section.appendChild(kpiCard);
+        });
+
+        return section;
+    } catch (error) {
+        console.error("Error creating KPI section:", error);
+        return document.createElement("div"); // Safe fallback
+    }
+}
+
+/**
+ * SECURITY: Extract and calculate KPI data with validation
+ */
+function extractKPIData(data) {
+    try {
+        const kpiData = {};
+
+        // Initialize calculation variables
+        let totalExecutions = 0;
+        let totalSuccessful = 0;
+        let totalFailed = 0;
+        const responseTimes = [];
+
+        // Process each category safely
+        const categories = [
+            "tools",
+            "resources",
+            "prompts",
+            "gateways",
+            "servers",
+        ];
+        categories.forEach((category) => {
+            if (data[category]) {
+                const categoryData = data[category];
+                totalExecutions += Number(categoryData.totalExecutions || 0);
+                totalSuccessful += Number(
+                    categoryData.successfulExecutions || 0,
+                );
+                totalFailed += Number(categoryData.failedExecutions || 0);
+
+                if (
+                    categoryData.avgResponseTime &&
+                    categoryData.avgResponseTime !== "N/A"
+                ) {
+                    responseTimes.push(Number(categoryData.avgResponseTime));
+                }
+            }
+        });
+
+        // Calculate safe aggregate metrics
+        kpiData.totalExecutions = totalExecutions;
+        kpiData.successRate =
+            totalExecutions > 0
+                ? Math.round((totalSuccessful / totalExecutions) * 100)
+                : 0;
+        kpiData.errorRate =
+            totalExecutions > 0
+                ? Math.round((totalFailed / totalExecutions) * 100)
+                : 0;
+        kpiData.avgResponseTime =
+            responseTimes.length > 0
+                ? Math.round(
+                      responseTimes.reduce((a, b) => a + b, 0) /
+                          responseTimes.length,
+                  )
+                : "N/A";
+
+        return kpiData;
+    } catch (error) {
+        console.error("Error extracting KPI data:", error);
+        return {}; // Safe fallback
+    }
+}
+
+/**
+ * SECURITY: Create top performers section with safe display
+ */
+function createTopPerformersSection(topData) {
+    try {
+        const section = document.createElement("div");
+        section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
+
+        const title = document.createElement("h3");
+        title.className = "text-lg font-medium mb-4 dark:text-gray-200";
+        title.textContent = "Top Performers";
+        section.appendChild(title);
+
+        const grid = document.createElement("div");
+        grid.className = "grid grid-cols-1 md:grid-cols-2 gap-4";
+
+        // Top Tools
+        if (topData.tools && Array.isArray(topData.tools)) {
+            const toolsCard = createTopItemCard("Tools", topData.tools);
+            grid.appendChild(toolsCard);
+        }
+
+        // Top Resources
+        if (topData.resources && Array.isArray(topData.resources)) {
+            const resourcesCard = createTopItemCard(
+                "Resources",
+                topData.resources,
+            );
+            grid.appendChild(resourcesCard);
+        }
+
+        // Top Prompts
+        if (topData.prompts && Array.isArray(topData.prompts)) {
+            const promptsCard = createTopItemCard("Prompts", topData.prompts);
+            grid.appendChild(promptsCard);
+        }
+
+        // Top Servers
+        if (topData.servers && Array.isArray(topData.servers)) {
+            const serversCard = createTopItemCard("Servers", topData.servers);
+            grid.appendChild(serversCard);
+        }
+
+        section.appendChild(grid);
+        return section;
+    } catch (error) {
+        console.error("Error creating top performers section:", error);
+        return document.createElement("div"); // Safe fallback
+    }
+}
+
+/**
+ * SECURITY: Create top item card with safe content handling
+ */
+function createTopItemCard(title, items) {
+    try {
+        const card = document.createElement("div");
+        card.className = "bg-gray-50 rounded p-4 dark:bg-gray-700";
+
+        const cardTitle = document.createElement("h4");
+        cardTitle.className = "font-medium mb-2 dark:text-gray-200";
+        cardTitle.textContent = `Top ${title}`;
+        card.appendChild(cardTitle);
+
+        const list = document.createElement("ul");
+        list.className = "space-y-1";
+
+        items.slice(0, 5).forEach((item) => {
+            const listItem = document.createElement("li");
+            listItem.className =
+                "text-sm text-gray-600 dark:text-gray-300 flex justify-between";
+
+            const nameSpan = document.createElement("span");
+            nameSpan.textContent = escapeHtml(item.name || "Unknown");
+
+            const countSpan = document.createElement("span");
+            countSpan.className = "font-medium";
+            countSpan.textContent = String(item.executions || 0);
+
+            listItem.appendChild(nameSpan);
+            listItem.appendChild(countSpan);
+            list.appendChild(listItem);
+        });
+
+        card.appendChild(list);
+        return card;
+    } catch (error) {
+        console.error("Error creating top item card:", error);
+        return document.createElement("div"); // Safe fallback
+    }
+}
+
+/**
+ * SECURITY: Create performance metrics card with safe display
+ */
+function createPerformanceCard(performanceData) {
+    try {
+        const card = document.createElement("div");
+        card.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
+
+        const titleElement = document.createElement("h3");
+        titleElement.className = "text-lg font-medium mb-4 dark:text-gray-200";
+        titleElement.textContent = "Performance Metrics";
+        card.appendChild(titleElement);
+
+        const metricsList = document.createElement("div");
+        metricsList.className = "space-y-2";
+
+        // Define performance metrics with safe structure
+        const performanceMetrics = [
+            { key: "memoryUsage", label: "Memory Usage" },
+            { key: "cpuUsage", label: "CPU Usage" },
+            { key: "diskIo", label: "Disk I/O" },
+            { key: "networkThroughput", label: "Network Throughput" },
+            { key: "cacheHitRate", label: "Cache Hit Rate" },
+            { key: "activeThreads", label: "Active Threads" },
+        ];
+
+        performanceMetrics.forEach((metric) => {
+            const value =
+                performanceData[metric.key] ??
+                performanceData[
+                    metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()
+                ] ??
+                "N/A";
+
+            const metricRow = document.createElement("div");
+            metricRow.className = "flex justify-between";
+
+            const label = document.createElement("span");
+            label.className = "text-gray-600 dark:text-gray-400";
+            label.textContent = metric.label + ":";
+
+            const valueSpan = document.createElement("span");
+            valueSpan.className = "font-medium dark:text-gray-200";
+            valueSpan.textContent =
+                value === "N/A" ? "N/A" : escapeHtml(String(value));
+
+            metricRow.appendChild(label);
+            metricRow.appendChild(valueSpan);
+            metricsList.appendChild(metricRow);
+        });
+
+        card.appendChild(metricsList);
+        return card;
+    } catch (error) {
+        console.error("Error creating performance card:", error);
+        return document.createElement("div"); // Safe fallback
+    }
+}
+
+/**
+ * SECURITY: Create recent activity section with safe content handling
+ */
+function createRecentActivitySection(activityData) {
+    try {
+        const section = document.createElement("div");
+        section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
+
+        const title = document.createElement("h3");
+        title.className = "text-lg font-medium mb-4 dark:text-gray-200";
+        title.textContent = "Recent Activity";
+        section.appendChild(title);
+
+        if (Array.isArray(activityData) && activityData.length > 0) {
+            const activityList = document.createElement("div");
+            activityList.className = "space-y-3 max-h-64 overflow-y-auto";
+
+            // Display up to 10 recent activities safely
+            activityData.slice(0, 10).forEach((activity) => {
+                const activityItem = document.createElement("div");
+                activityItem.className =
+                    "flex items-center justify-between p-2 bg-gray-50 rounded dark:bg-gray-700";
+
+                const leftSide = document.createElement("div");
+
+                const actionSpan = document.createElement("span");
+                actionSpan.className = "font-medium dark:text-gray-200";
+                actionSpan.textContent = escapeHtml(
+                    activity.action || "Unknown Action",
+                );
+
+                const targetSpan = document.createElement("span");
+                targetSpan.className =
+                    "text-sm text-gray-500 dark:text-gray-400 ml-2";
+                targetSpan.textContent = escapeHtml(activity.target || "");
+
+                leftSide.appendChild(actionSpan);
+                leftSide.appendChild(targetSpan);
+
+                const rightSide = document.createElement("div");
+                rightSide.className = "text-xs text-gray-400";
+                rightSide.textContent = escapeHtml(activity.timestamp || "");
+
+                activityItem.appendChild(leftSide);
+                activityItem.appendChild(rightSide);
+                activityList.appendChild(activityItem);
+            });
+
+            section.appendChild(activityList);
+        } else {
+            const noActivity = document.createElement("p");
+            noActivity.className =
+                "text-gray-500 dark:text-gray-400 text-center py-4";
+            noActivity.textContent = "No recent activity to display";
+            section.appendChild(noActivity);
+        }
+
+        return section;
+    } catch (error) {
+        console.error("Error creating recent activity section:", error);
+        return document.createElement("div"); // Safe fallback
+    }
 }
 
 function createMetricsCard(title, metrics) {
@@ -536,7 +1065,7 @@ function createMetricsCard(title, metrics) {
 
         const valueSpan = document.createElement("span");
         valueSpan.className = "font-medium dark:text-gray-200";
-        valueSpan.textContent = String(value);
+        valueSpan.textContent = value === "N/A" ? "N/A" : String(value);
 
         metricRow.appendChild(label);
         metricRow.appendChild(valueSpan);
