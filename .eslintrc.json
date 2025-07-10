@@ -14,14 +14,14 @@
 
   "extends": [
     "standard",
-    "plugin:prettier/recommended"   // turns off all whitespace rules
+    "plugin:prettier/recommended"
   ],
 
   "rules": {
-    "semi":   ["error", "always"],                 // custom prefs
+    "semi":   ["error", "always"],
     "quotes": ["error", "double", { "avoidEscape": true }],
 
-    "curly":        ["error", "all"],              // real-bug safety nets
+    "curly":        ["error", "all"],
     "prefer-const": "warn"
   }
 }

@@ -10,7 +10,7 @@
       </svg>
       Application Information
     </h2>
-    
+
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div class="text-center">
         <div class="text-2xl font-bold">{{ payload.app.name }}</div>
@@ -29,7 +29,7 @@
         <div class="text-blue-100 text-sm">Host</div>
       </div>
     </div>
-    
+
     {% if payload.app.git_revision %}
     <div class="mt-4 pt-4 border-t border-blue-300">
       <div class="text-center">
@@ -141,19 +141,19 @@
         <span class="text-gray-600 dark:text-gray-400">CPU:</span>
         <span class="font-medium dark:text-gray-200">{{ payload.system.cpu_count }} × {{ payload.system.cpu_freq_mhz }} MHz</span>
       </div>
-      
+
       <!-- Memory Info -->
       <div class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700">
         <span class="text-gray-600 dark:text-gray-400">Memory:</span>
         <span class="font-medium dark:text-gray-200">{{ "{:.1f}".format(payload.system.mem_used_mb) }} / {{ payload.system.mem_total_mb }} MB</span>
       </div>
-      
+
       <!-- Disk Info -->
       <div class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700">
         <span class="text-gray-600 dark:text-gray-400">Disk:</span>
         <span class="font-medium dark:text-gray-200">{{ "{:.1f}".format(payload.system.disk_used_gb) }} / {{ "{:.1f}".format(payload.system.disk_total_gb) }} GB</span>
       </div>
-      
+
       <!-- Boot Time -->
       <div class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700">
         <span class="text-gray-600 dark:text-gray-400">Boot Time:</span>
@@ -180,7 +180,7 @@
         Copy JSON
       </button>
     </div>
-    
+
     <div class="bg-gray-100 dark:bg-gray-900 rounded-md overflow-hidden">
       <div class="max-h-80 overflow-auto">
         <pre id="json-data" class="p-4 text-sm text-gray-800 dark:text-gray-300 whitespace-pre-wrap break-words font-mono">{{ payload | tojson(indent=2) }}</pre>
@@ -199,13 +199,13 @@ function copyJsonToClipboard(sourceId = 'json-data') {
   if (window.copyJsonToClipboard && sourceId !== 'json-data') {
     return window.copyJsonToClipboard(sourceId);
   }
-  
+
   const el = document.getElementById(sourceId);
   if (!el) {
     console.warn('[copyJsonToClipboard] sourceId "%s" not found', sourceId);
     return;
   }
-  
+
   navigator.clipboard.writeText(el.innerText)
     .then(() => {
       // Show success message using the existing function if available

@@ -662,8 +662,8 @@ function showMetricsError(error) {
                 <h3 class="text-lg font-medium mb-2">Failed to Load Metrics</h3>
                 <p class="text-sm mb-2">${escapeHtml(errorMessage)}</p>
                 <p class="text-xs text-gray-500 mb-4">${helpText}</p>
-                <button 
-                    onclick="retryLoadMetrics()" 
+                <button
+                    onclick="retryLoadMetrics()"
                     class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
                     Try Again
                 </button>
@@ -877,8 +877,7 @@ function createSystemSummaryCard(systemData) {
             const valueSpan = document.createElement("div");
             valueSpan.className = "text-2xl font-bold";
             valueSpan.textContent =
-                (value === "N/A" ? "N/A" : escapeHtml(String(value))) +
-                stat.suffix;
+                (value === "N/A" ? "N/A" : String(value)) + stat.suffix;
 
             const labelSpan = document.createElement("div");
             labelSpan.className = "text-blue-100 text-sm";
@@ -955,8 +954,7 @@ function createKPISection(kpiData) {
             const valueSpan = document.createElement("div");
             valueSpan.className = `text-2xl font-bold text-${kpi.color}-600`;
             valueSpan.textContent =
-                (value === "N/A" ? "N/A" : escapeHtml(String(value))) +
-                (kpi.suffix || "");
+                (value === "N/A" ? "N/A" : String(value)) + (kpi.suffix || "");
 
             const labelSpan = document.createElement("div");
             labelSpan.className = "text-sm text-gray-500 dark:text-gray-400";
@@ -1114,7 +1112,7 @@ function createTopItemCard(title, items) {
                 "text-sm text-gray-600 dark:text-gray-300 flex justify-between";
 
             const nameSpan = document.createElement("span");
-            nameSpan.textContent = escapeHtml(item.name || "Unknown");
+            nameSpan.textContent = item.name || "Unknown";
 
             const countSpan = document.createElement("span");
             countSpan.className = "font-medium";
@@ -1176,8 +1174,7 @@ function createPerformanceCard(performanceData) {
 
             const valueSpan = document.createElement("span");
             valueSpan.className = "font-medium dark:text-gray-200";
-            valueSpan.textContent =
-                value === "N/A" ? "N/A" : escapeHtml(String(value));
+            valueSpan.textContent = value === "N/A" ? "N/A" : String(value);
 
             metricRow.appendChild(label);
             metricRow.appendChild(valueSpan);
@@ -1360,7 +1357,7 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = escapeHtml(tool.description || "");
+            descField.value = tool.description || "";
         }
         if (typeField) {
             typeField.value = tool.integrationType || "MCP";
@@ -1648,10 +1645,10 @@ async function editResource(resourceUri) {
             nameField.value = nameValidation.value;
         }
         if (descField) {
-            descField.value = escapeHtml(resource.description || "");
+            descField.value = resource.description || "";
         }
         if (mimeField) {
-            mimeField.value = escapeHtml(resource.mimeType || "");
+            mimeField.value = resource.mimeType || "";
         }
         if (contentField) {
             const contentStr =
@@ -1894,7 +1891,7 @@ async function editPrompt(promptName) {
             nameField.value = nameValidation.value;
         }
         if (descField) {
-            descField.value = escapeHtml(prompt.description || "");
+            descField.value = prompt.description || "";
         }
         if (templateField) {
             templateField.value = prompt.template || "";
@@ -2059,7 +2056,7 @@ async function editGateway(gatewayId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = escapeHtml(gateway.description || "");
+            descField.value = gateway.description || "";
         }
 
         openModal("gateway-edit-modal");
@@ -2192,7 +2189,7 @@ async function editServer(serverId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = escapeHtml(server.description || "");
+            descField.value = server.description || "";
         }
 
         openModal("server-edit-modal");
@@ -2406,9 +2403,7 @@ function generateSchema() {
 
                 schema.properties[nameValidation.value] = {
                     type: typeField ? typeField.value : "string",
-                    description: descField
-                        ? escapeHtml(descField.value.trim())
-                        : "",
+                    description: descField ? descField.value.trim() : "",
                 };
 
                 if (requiredField && requiredField.checked) {
@@ -2796,26 +2791,55 @@ const toolTestState = {
     requestTimeout: 10000, // Reduced from 15000ms
 };
 
+/**
+ * ENHANCED: Tool testing with improved race condition handling
+ */
 async function testTool(toolId) {
     try {
         console.log(`Testing tool ID: ${toolId}`);
 
-        // 1. DEBOUNCING: Prevent rapid successive clicks
+        // 1. ENHANCED DEBOUNCING: More aggressive to prevent rapid clicking
         const now = Date.now();
         const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
         const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 1000; // Increased from 500ms
 
-        if (timeSinceLastRequest < toolTestState.debounceDelay) {
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
             console.log(
                 `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
             );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
             showErrorMessage(
-                `Please wait ${Math.ceil((toolTestState.debounceDelay - timeSinceLastRequest) / 1000)} more seconds before testing again`,
+                `Please wait ${waitTime} more seconds before testing again`,
             );
             return;
         }
 
-        // 2. REQUEST DEDUPLICATION: Cancel any existing request for this tool
+        // 2. MODAL PROTECTION: Enhanced check
+        if (AppState.isModalActive("tool-test-modal")) {
+            console.warn("Tool test modal is already active");
+            return; // Silent fail for better UX
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const testButton = document.querySelector(
+            `[onclick*="testTool('${toolId}')"]`,
+        );
+        if (testButton) {
+            if (testButton.disabled) {
+                console.log(
+                    "Test button already disabled, request in progress",
+                );
+                return;
+            }
+            testButton.disabled = true;
+            testButton.textContent = "Testing...";
+            testButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
         const existingController = toolTestState.activeRequests.get(toolId);
         if (existingController) {
             console.log(`Cancelling existing request for tool ${toolId}`);
@@ -2823,31 +2847,12 @@ async function testTool(toolId) {
             toolTestState.activeRequests.delete(toolId);
         }
 
-        // 3. MODAL PROTECTION: Check if tool test modal is already open
-        if (AppState.isModalActive("tool-test-modal")) {
-            console.warn("Tool test modal is already active");
-            showErrorMessage(
-                "A tool test is already in progress. Please wait for it to complete.",
-            );
-            return;
-        }
-
-        // 4. USER FEEDBACK: Show immediate feedback
-        const testButton = document.querySelector(
-            `[onclick*="testTool('${toolId}')"]`,
-        );
-        if (testButton) {
-            testButton.disabled = true;
-            testButton.textContent = "Testing...";
-            testButton.classList.add("opacity-50", "cursor-not-allowed");
-        }
-
-        // 5. CREATE NEW REQUEST CONTROLLER
+        // 5. CREATE NEW REQUEST with longer timeout
         const controller = new AbortController();
         toolTestState.activeRequests.set(toolId, controller);
         toolTestState.lastRequestTime.set(toolId, now);
 
-        // 6. MAKE REQUEST with shorter timeout and abort signal
+        // 6. MAKE REQUEST with increased timeout (was 10 seconds, now 15)
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/tools/${toolId}`,
             {
@@ -2857,7 +2862,7 @@ async function testTool(toolId) {
                     Pragma: "no-cache",
                 },
             },
-            toolTestState.requestTimeout, // 10 second timeout
+            15000, // Increased timeout
         );
 
         if (!response.ok) {
@@ -2871,7 +2876,7 @@ async function testTool(toolId) {
                 );
             } else if (response.status >= 500) {
                 throw new Error(
-                    `Server error (${response.status}). The server may be overloaded.`,
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
                 );
             } else {
                 throw new Error(
@@ -2888,7 +2893,7 @@ async function testTool(toolId) {
         // Store in safe state
         AppState.currentTestTool = tool;
 
-        // Set modal title and description safely
+        // Set modal title and description safely - NO DOUBLE ESCAPING
         const titleElement = safeGetElement("tool-test-modal-title");
         const descElement = safeGetElement("tool-test-modal-description");
 
@@ -2934,16 +2939,16 @@ async function testTool(toolId) {
                 const fieldDiv = document.createElement("div");
                 fieldDiv.className = "mb-4";
 
-                // Field label
+                // Field label - use textContent to avoid double escaping
                 const label = document.createElement("label");
                 label.textContent = keyValidation.value;
                 label.className = "block text-sm font-medium text-gray-700";
                 fieldDiv.appendChild(label);
 
-                // Description help text
+                // Description help text - use textContent
                 if (prop.description) {
                     const description = document.createElement("small");
-                    description.textContent = escapeHtml(prop.description);
+                    description.textContent = prop.description; // NO escapeHtml here
                     description.className = "text-gray-500 block mb-1";
                     fieldDiv.appendChild(description);
                 }
@@ -2989,16 +2994,16 @@ async function testTool(toolId) {
             error.message.includes("NetworkError")
         ) {
             errorMessage =
-                "Unable to connect to the server. The server may be overloaded. Please wait a moment and try again.";
+                "Unable to connect to the server. Please wait a moment and try again.";
         } else if (
             error.message.includes("empty response") ||
             error.message.includes("ERR_EMPTY_RESPONSE")
         ) {
             errorMessage =
-                "The server returned an empty response. This usually happens when the server is overloaded. Please wait a moment and try again.";
+                "The server returned an empty response. Please wait a moment and try again.";
         } else if (error.message.includes("timeout")) {
             errorMessage =
-                "Request timed out. The server may be busy. Please try again in a few seconds.";
+                "Request timed out. Please try again in a few seconds.";
         }
 
         showErrorMessage(errorMessage);
@@ -3374,7 +3379,7 @@ async function handleGatewayTestSubmit(e) {
         const payload = {
             base_url: urlValidation.value,
             method,
-            path: escapeHtml(path),
+            path,
             headers: headersValidation.value,
             body: bodyValidation.value,
         };
@@ -3485,6 +3490,9 @@ function cleanupGatewayTestModal() {
 // ENHANCED TOOL VIEWING with Secure Display
 // ===================================================================
 
+/**
+ * SECURE: View Tool function with safe display
+ */
 async function viewTool(toolId) {
     try {
         console.log(`Fetching tool details for ID: ${toolId}`);
@@ -3504,7 +3512,7 @@ async function viewTool(toolId) {
         if (tool.auth?.username && tool.auth?.password) {
             authHTML = `
         <p><strong>Authentication Type:</strong> Basic</p>
-        <p><strong>Username:</strong> ${escapeHtml(tool.auth.username)}</p>
+        <p><strong>Username:</strong> <span class="auth-username"></span></p>
         <p><strong>Password:</strong> ********</p>
       `;
         } else if (tool.auth?.token) {
@@ -3515,14 +3523,14 @@ async function viewTool(toolId) {
         } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
             authHTML = `
         <p><strong>Authentication Type:</strong> Custom Headers</p>
-        <p><strong>Header Key:</strong> ${escapeHtml(tool.auth.authHeaderKey)}</p>
+        <p><strong>Header Key:</strong> <span class="auth-header-key"></span></p>
         <p><strong>Header Value:</strong> ********</p>
       `;
         } else {
             authHTML = "<p><strong>Authentication Type:</strong> None</p>";
         }
 
-        // Create annotation badges safely
+        // Create annotation badges safely - NO ESCAPING since we're using textContent
         const renderAnnotations = (annotations) => {
             if (!annotations || Object.keys(annotations).length === 0) {
                 return '<p><strong>Annotations:</strong> <span class="text-gray-500">None</span></p>';
@@ -3533,7 +3541,7 @@ async function viewTool(toolId) {
             // Show title if present
             if (annotations.title) {
                 badges.push(
-                    `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">${escapeHtml(annotations.title)}</span>`,
+                    '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1 annotation-title"></span>',
                 );
             }
 
@@ -3575,7 +3583,7 @@ async function viewTool(toolId) {
                 ) {
                     const value = annotations[key];
                     badges.push(
-                        `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mr-1 mb-1">${escapeHtml(key)}: ${escapeHtml(value)}</span>`,
+                        `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mr-1 mb-1 custom-annotation" data-key="${key}" data-value="${value}"></span>`,
                     );
                 }
             });
@@ -3592,41 +3600,117 @@ async function viewTool(toolId) {
 
         const toolDetailsDiv = safeGetElement("tool-details");
         if (toolDetailsDiv) {
-            // Use safeSetInnerHTML for trusted backend content with proper escaping
+            // Create structure safely without double-escaping
             const safeHTML = `
         <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
-          <p><strong>Name:</strong> ${escapeHtml(tool.name)}</p>
-          <p><strong>URL:</strong> ${escapeHtml(tool.url)}</p>
-          <p><strong>Type:</strong> ${escapeHtml(tool.integrationType)}</p>
-          <p><strong>Description:</strong> ${escapeHtml(tool.description || "N/A")}</p>
-          <p><strong>Request Type:</strong> ${escapeHtml(tool.requestType || "N/A")}</p>
+          <p><strong>Name:</strong> <span class="tool-name"></span></p>
+          <p><strong>URL:</strong> <span class="tool-url"></span></p>
+          <p><strong>Type:</strong> <span class="tool-type"></span></p>
+          <p><strong>Description:</strong> <span class="tool-description"></span></p>
+          <p><strong>Request Type:</strong> <span class="tool-request-type"></span></p>
           ${authHTML}
           ${renderAnnotations(tool.annotations)}
           <div>
             <strong>Headers:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${escapeHtml(JSON.stringify(tool.headers || {}, null, 2))}</pre>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100 tool-headers"></pre>
           </div>
           <div>
             <strong>Input Schema:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100">${escapeHtml(JSON.stringify(tool.inputSchema || {}, null, 2))}</pre>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100 tool-schema"></pre>
           </div>
           <div>
             <strong>Metrics:</strong>
             <ul class="list-disc list-inside ml-4">
-              <li>Total Executions: ${escapeHtml(tool.metrics?.totalExecutions ?? 0)}</li>
-              <li>Successful Executions: ${escapeHtml(tool.metrics?.successfulExecutions ?? 0)}</li>
-              <li>Failed Executions: ${escapeHtml(tool.metrics?.failedExecutions ?? 0)}</li>
-              <li>Failure Rate: ${escapeHtml(tool.metrics?.failureRate ?? 0)}</li>
-              <li>Min Response Time: ${escapeHtml(tool.metrics?.minResponseTime ?? "N/A")}</li>
-              <li>Max Response Time: ${escapeHtml(tool.metrics?.maxResponseTime ?? "N/A")}</li>
-              <li>Average Response Time: ${escapeHtml(tool.metrics?.avgResponseTime ?? "N/A")}</li>
-              <li>Last Execution Time: ${escapeHtml(tool.metrics?.lastExecutionTime ?? "N/A")}</li>
+              <li>Total Executions: <span class="metric-total"></span></li>
+              <li>Successful Executions: <span class="metric-success"></span></li>
+              <li>Failed Executions: <span class="metric-failed"></span></li>
+              <li>Failure Rate: <span class="metric-failure-rate"></span></li>
+              <li>Min Response Time: <span class="metric-min-time"></span></li>
+              <li>Max Response Time: <span class="metric-max-time"></span></li>
+              <li>Average Response Time: <span class="metric-avg-time"></span></li>
+              <li>Last Execution Time: <span class="metric-last-time"></span></li>
             </ul>
           </div>
         </div>
       `;
 
+            // Set structure first
             safeSetInnerHTML(toolDetailsDiv, safeHTML, true);
+
+            // Now safely set text content - NO ESCAPING since textContent is safe
+            const setTextSafely = (selector, value) => {
+                const element = toolDetailsDiv.querySelector(selector);
+                if (element) {
+                    element.textContent = value || "N/A";
+                }
+            };
+
+            setTextSafely(".tool-name", tool.name);
+            setTextSafely(".tool-url", tool.url);
+            setTextSafely(".tool-type", tool.integrationType);
+            setTextSafely(".tool-description", tool.description);
+            setTextSafely(".tool-request-type", tool.requestType);
+            setTextSafely(
+                ".tool-headers",
+                JSON.stringify(tool.headers || {}, null, 2),
+            );
+            setTextSafely(
+                ".tool-schema",
+                JSON.stringify(tool.inputSchema || {}, null, 2),
+            );
+
+            // Set auth fields safely
+            if (tool.auth?.username) {
+                setTextSafely(".auth-username", tool.auth.username);
+            }
+            if (tool.auth?.authHeaderKey) {
+                setTextSafely(".auth-header-key", tool.auth.authHeaderKey);
+            }
+
+            // Set annotation title safely
+            if (tool.annotations?.title) {
+                setTextSafely(".annotation-title", tool.annotations.title);
+            }
+
+            // Set custom annotations safely
+            const customAnnotations =
+                toolDetailsDiv.querySelectorAll(".custom-annotation");
+            customAnnotations.forEach((element) => {
+                const key = element.dataset.key;
+                const value = element.dataset.value;
+                element.textContent = `${key}: ${value}`;
+            });
+
+            // Set metrics safely
+            setTextSafely(".metric-total", tool.metrics?.totalExecutions ?? 0);
+            setTextSafely(
+                ".metric-success",
+                tool.metrics?.successfulExecutions ?? 0,
+            );
+            setTextSafely(
+                ".metric-failed",
+                tool.metrics?.failedExecutions ?? 0,
+            );
+            setTextSafely(
+                ".metric-failure-rate",
+                tool.metrics?.failureRate ?? 0,
+            );
+            setTextSafely(
+                ".metric-min-time",
+                tool.metrics?.minResponseTime ?? "N/A",
+            );
+            setTextSafely(
+                ".metric-max-time",
+                tool.metrics?.maxResponseTime ?? "N/A",
+            );
+            setTextSafely(
+                ".metric-avg-time",
+                tool.metrics?.avgResponseTime ?? "N/A",
+            );
+            setTextSafely(
+                ".metric-last-time",
+                tool.metrics?.lastExecutionTime ?? "N/A",
+            );
         }
 
         openModal("tool-modal");
