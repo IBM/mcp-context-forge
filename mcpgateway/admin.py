@@ -36,24 +36,24 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
-    GatewayUpdate,
     PromptMetrics,
     PromptRead,
-    PromptUpdate,
     ResourceMetrics,
     ResourceRead,
-    ResourceUpdate,
     SecureGatewayCreate,
+    SecureGatewayUpdate,
     SecurePromptCreate,
+    SecurePromptUpdate,
     SecureResourceCreate,
+    SecureResourceUpdate,
     SecureServerCreate,
+    SecureServerUpdate,
     SecureToolCreate,
+    SecureToolUpdate,
     ServerMetrics,
     ServerRead,
-    ServerUpdate,
     ToolMetrics,
     ToolRead,
-    ToolUpdate,
 )
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 from mcpgateway.services.prompt_service import PromptService
@@ -220,7 +220,7 @@ async def admin_edit_server(
     is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
-        server = ServerUpdate(
+        server = SecureServerUpdate(
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
@@ -673,7 +673,7 @@ async def admin_edit_tool(
         "auth_header_value": form.get("auth_header_value", ""),
     }
     logger.debug(f"Tool update data built: {tool_data}")
-    tool = ToolUpdate(**tool_data)
+    tool = SecureToolUpdate(**tool_data)
     try:
         await tool_service.update_tool(db, tool_id, tool)
 
@@ -849,7 +849,7 @@ async def admin_edit_gateway(
     """
     logger.debug(f"User {user} is editing gateway ID {gateway_id}")
     form = await request.form()
-    gateway = GatewayUpdate(
+    gateway = SecureGatewayUpdate(
         name=form["name"],
         url=form["url"],
         description=form.get("description"),
@@ -981,7 +981,7 @@ async def admin_edit_resource(
     """
     logger.debug(f"User {user} is editing resource URI {uri}")
     form = await request.form()
-    resource = ResourceUpdate(
+    resource = SecureResourceUpdate(
         name=form["name"],
         description=form.get("description"),
         mime_type=form.get("mimeType"),
@@ -1149,7 +1149,7 @@ async def admin_edit_prompt(
     form = await request.form()
     args_json = form.get("arguments") or "[]"
     arguments = json.loads(args_json)
-    prompt = PromptUpdate(
+    prompt = SecurePromptUpdate(
         name=form["name"],
         description=form.get("description"),
         template=form["template"],

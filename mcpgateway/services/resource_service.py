@@ -39,8 +39,8 @@ from mcpgateway.schemas import (
     ResourceMetrics,
     ResourceRead,
     ResourceSubscription,
-    ResourceUpdate,
     SecureResourceCreate,
+    SecureResourceUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -393,7 +393,7 @@ class ResourceService:
             db.rollback()
             logger.error(f"Failed to unsubscribe: {str(e)}")
 
-    async def update_resource(self, db: Session, uri: str, resource_update: ResourceUpdate) -> ResourceRead:
+    async def update_resource(self, db: Session, uri: str, resource_update: SecureResourceUpdate) -> ResourceRead:
         """Update a resource.
 
         Args:

@@ -248,77 +248,6 @@ class AuthenticationValues(BaseModelWithConfigDict):
     auth_header_value: str = Field("", description="Value for custom headers authentication")
 
 
-# class ToolCreate(BaseModelWithConfigDict):
-#     """Schema for creating a new tool.
-
-#     Supports both MCP-compliant tools and REST integrations. Validates:
-#       - Unique tool name
-#       - Valid endpoint URL
-#       - Valid JSON Schema for input validation
-#       - Integration type: 'MCP' for MCP-compliant tools or 'REST' for REST integrations
-#       - Request type (For REST-GET,POST,PUT,DELETE and for MCP-SSE,STDIO,STREAMABLEHTTP)
-#       - Optional authentication credentials: BasicAuth or BearerTokenAuth or HeadersAuth.
-#     """
-
-#     name: str = Field(..., description="Unique name for the tool")
-#     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
-#     description: Optional[str] = Field(None, description="Tool description")
-#     request_type: Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
-#     integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
-#     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
-#     input_schema: Optional[Dict[str, Any]] = Field(
-#         default_factory=lambda: {"type": "object", "properties": {}},
-#         description="JSON Schema for validating tool parameters",
-#     )
-#     annotations: Optional[Dict[str, Any]] = Field(
-#         default_factory=dict,
-#         description="Tool annotations for behavior hints (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint)",
-#     )
-#     jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
-#     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
-#     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
-
-#     @model_validator(mode="before")
-#     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-#         """
-#         Assemble authentication information from separate keys if provided.
-
-#         Looks for keys "auth_type", "auth_username", "auth_password", "auth_token", "auth_header_key" and "auth_header_value".
-#         Constructs the "auth" field as a dictionary suitable for BasicAuth or BearerTokenAuth or HeadersAuth.
-
-#         Args:
-#             values: Dict with authentication information
-
-#         Returns:
-#             Dict: Reformatedd values dict
-#         """
-#         logger.debug(
-#             "Assembling auth in ToolCreate with raw values",
-#             extra={
-#                 "auth_type": values.get("auth_type"),
-#                 "auth_username": values.get("auth_username"),
-#                 "auth_password": values.get("auth_password"),
-#                 "auth_token": values.get("auth_token"),
-#                 "auth_header_key": values.get("auth_header_key"),
-#                 "auth_header_value": values.get("auth_header_value"),
-#             },
-#         )
-
-#         auth_type = values.get("auth_type")
-#         if auth_type:
-#             if auth_type.lower() == "basic":
-#                 creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
-#                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
-#                 values["auth"] = {"auth_type": "basic", "auth_value": encoded_auth}
-#             elif auth_type.lower() == "bearer":
-#                 encoded_auth = encode_auth({"Authorization": f"Bearer {values.get('auth_token', '')}"})
-#                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
-#             elif auth_type.lower() == "authheaders":
-#                 encoded_auth = encode_auth({values.get("auth_header_key", ""): values.get("auth_header_value", "")})
-#                 values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
-#         return values
-
-
 class SecureToolCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -326,7 +255,7 @@ class SecureToolCreate(BaseModel):
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
-    request_type: Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLE"] = Field("SSE", description="HTTP method to be used for invoking the tool")
+    request_type: Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
     annotations: Optional[Dict[str, Any]] = Field(
@@ -415,7 +344,7 @@ class SecureToolCreate(BaseModel):
         integration_type = values.config.get("integration_type", "MCP")
 
         if integration_type == "MCP":
-            allowed = ["SSE", "STREAMABLE", "STDIO"]
+            allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
         else:  # REST
             allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
@@ -464,7 +393,7 @@ class SecureToolCreate(BaseModel):
         return values
 
 
-class ToolUpdate(BaseModelWithConfigDict):
+class SecureToolUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing tool.
 
     Similar to ToolCreate but all fields are optional to allow partial updates.
@@ -482,6 +411,92 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Ensure tool names follow MCP naming conventions
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_tool_name(v)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        """Validate URL format and ensure safe display
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_url(v, "Tool URL")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure descriptions display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is unsafe
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("headers", "input_schema", "annotations")
+    @classmethod
+    def validate_json_fields(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate JSON structure depth
+
+        Args:
+            v (dict): Value to validate
+
+        Returns:
+            dict: Value if validated as safe
+        """
+        SecurityValidator.validate_json_depth(v)
+        return v
+
+    @field_validator("request_type")
+    @classmethod
+    def validate_request_type(cls, v: str, values: Dict[str, Any]) -> str:
+        """Validate request type based on integration type
+
+        Args:
+            v (str): Value to validate
+            values (str): Values used for validation
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is unsafe
+        """
+        integration_type = values.config.get("integration_type", "MCP")
+
+        if integration_type == "MCP":
+            allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
+        else:  # REST
+            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+
+        if v not in allowed:
+            raise ValueError(f"Request type '{v}' not allowed for {integration_type} integration")
+        return v
+
     @model_validator(mode="before")
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -496,9 +511,8 @@ class ToolUpdate(BaseModelWithConfigDict):
         Returns:
             Dict: Reformatedd values dict
         """
-
         logger.debug(
-            "Assembling auth in ToolCreate with raw values",
+            "Assembling auth in SecureToolCreate with raw values",
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
@@ -585,23 +599,6 @@ class ToolResult(BaseModelWithConfigDict):
     content: List[Union[TextContent, ImageContent]]
     is_error: bool = False
     error_message: Optional[str] = None
-
-
-# class ResourceCreate(BaseModelWithConfigDict):
-#     """Schema for creating a new resource.
-
-#     Supports:
-#     - Static resources with URI
-#     - Template resources with parameters
-#     - Both text and binary content
-#     """
-
-#     uri: str = Field(..., description="Unique URI for the resource")
-#     name: str = Field(..., description="Human-readable resource name")
-#     description: Optional[str] = Field(None, description="Resource description")
-#     mime_type: Optional[str] = Field(None, description="Resource MIME type")
-#     template: Optional[str] = Field(None, description="URI template for parameterized resources")
-#     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
 
 
 class SecureResourceCreate(BaseModel):
@@ -710,7 +707,7 @@ class SecureResourceCreate(BaseModel):
         return v
 
 
-class ResourceUpdate(BaseModelWithConfigDict):
+class SecureResourceUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing resource.
 
     Similar to ResourceCreate but URI is not required and all fields are optional.
@@ -721,6 +718,88 @@ class ResourceUpdate(BaseModelWithConfigDict):
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
     template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate resource name
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_name(v, "Resource name")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure descriptions display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is unsafe
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, v: Optional[str]) -> Optional[str]:
+        """Validate MIME type format
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_mime_type(v)
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: Optional[Union[str, bytes]]) -> Optional[Union[str, bytes]]:
+        """Validate content size and safety
+
+        Args:
+            v (Union[str, bytes]): Value to validate
+
+        Returns:
+            Union[str, bytes]: Value if validated as safe
+
+        Raises:
+            ValueError: When value is unsafe
+        """
+        if v is None:
+            return v
+
+        if len(v) > SecurityValidator.MAX_CONTENT_LENGTH:
+            raise ValueError(f"Content exceeds maximum length of {SecurityValidator.MAX_CONTENT_LENGTH}")
+
+        if isinstance(v, bytes):
+            try:
+                v_str = v.decode("utf-8")
+
+                if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v_str if isinstance(v, bytes) else v, re.IGNORECASE):
+                    raise ValueError("Content contains HTML tags that may cause display issues")
+            except UnicodeDecodeError:
+                raise ValueError("Content must be UTF-8 decodable")
+        else:
+            if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v if isinstance(v, bytes) else v, re.IGNORECASE):
+                raise ValueError("Content contains HTML tags that may cause display issues")
+
+        return v
 
 
 class ResourceRead(BaseModelWithConfigDict):
@@ -820,21 +899,6 @@ class PromptArgument(BaseModelWithConfigDict):
     )
 
 
-# class PromptCreate(BaseModelWithConfigDict):
-#     """Schema for creating a new prompt template.
-
-#     Includes:
-#     - Template name and description
-#     - Template text
-#     - Expected arguments
-#     """
-
-#     name: str = Field(..., description="Unique name for the prompt")
-#     description: Optional[str] = Field(None, description="Prompt description")
-#     template: str = Field(..., description="Prompt template text")
-#     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
-
-
 class SecurePromptCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -904,7 +968,7 @@ class SecurePromptCreate(BaseModel):
         return v
 
 
-class PromptUpdate(BaseModelWithConfigDict):
+class SecurePromptUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing prompt.
 
     Similar to PromptCreate but all fields are optional to allow partial updates.
@@ -914,6 +978,66 @@ class PromptUpdate(BaseModelWithConfigDict):
     description: Optional[str] = Field(None, description="Prompt description")
     template: Optional[str] = Field(None, description="Prompt template text")
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Ensure prompt names display correctly in UI
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_name(v, "Prompt name")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure descriptions display safely without breaking UI layout
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is unsafe
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("template")
+    @classmethod
+    def validate_template(cls, v: str) -> str:
+        """Validate template content for safe display
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_template(v)
+
+    @field_validator("arguments")
+    @classmethod
+    def validate_arguments(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Ensure JSON structure is valid and within complexity limits
+
+        Args:
+            v (dict): Value to validate
+
+        Returns:
+            dict: Value if validated as safe
+        """
+        SecurityValidator.validate_json_depth(v)
+        return v
 
 
 class PromptRead(BaseModelWithConfigDict):
@@ -950,125 +1074,6 @@ class PromptInvocation(BaseModelWithConfigDict):
 
 
 # --- Gateway Schemas ---
-
-
-# class GatewayCreate(BaseModelWithConfigDict):
-#     """Schema for registering a new federation gateway.
-
-#     Captures:
-#     - Gateway name
-#     - Endpoint URL
-#     - Optional description
-#     - Authentication type: basic, bearer, headers
-#     - Authentication credentials: username/password or token or custom headers
-#     """
-
-#     name: str = Field(..., description="Unique name for the gateway")
-#     url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
-#     description: Optional[str] = Field(None, description="Gateway description")
-#     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
-
-#     # Authorizations
-#     auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, or none")
-#     # Fields for various types of authentication
-#     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
-#     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
-#     auth_token: Optional[str] = Field(None, description="Token for bearer authentication")
-#     auth_header_key: Optional[str] = Field(None, description="Key for custom headers authentication")
-#     auth_header_value: Optional[str] = Field(None, description="Value for custom headers authentication")
-
-#     # Adding `auth_value` as an alias for better access post-validation
-#     auth_value: Optional[str] = Field(None, validate_default=True)
-
-#     @field_validator("url", mode="before")
-#     def ensure_url_scheme(cls, v: str) -> str:
-#         """
-#         Ensure URL has an http/https scheme.
-
-#         Args:
-#             v: Input url
-
-#         Returns:
-#             str: URL with correct schema
-
-#         """
-#         if isinstance(v, str) and not (v.startswith("http://") or v.startswith("https://")):
-#             return f"http://{v}"
-#         return v
-
-#     @field_validator("auth_value", mode="before")
-#     def create_auth_value(cls, v, info):
-#         """
-#         This validator will run before the model is fully instantiated (mode="before")
-#         It will process the auth fields based on auth_type and generate auth_value.
-
-#         Args:
-#             v: Input url
-#             info: ValidationInfo containing auth_type
-
-#         Returns:
-#             str: Auth value
-#         """
-#         data = info.data
-#         auth_type = data.get("auth_type")
-
-#         if (auth_type is None) or (auth_type == ""):
-#             return v  # If no auth_type is provided, no need to create auth_value
-
-#         # Process the auth fields and generate auth_value based on auth_type
-#         auth_value = cls._process_auth_fields(info)
-
-#         return auth_value
-
-#     @staticmethod
-#     def _process_auth_fields(info: ValidationInfo) -> Optional[Dict[str, Any]]:
-#         """
-#         Processes the input authentication fields and returns the correct auth_value.
-#         This method is called based on the selected auth_type.
-
-#         Args:
-#             info: ValidationInfo containing auth fields
-
-#         Returns:
-#             Dict with encoded auth
-
-#         Raises:
-#             ValueError: If auth_type is invalid
-#         """
-#         data = info.data
-#         auth_type = data.get("auth_type")
-
-#         if auth_type == "basic":
-#             # For basic authentication, both username and password must be present
-#             username = data.get("auth_username")
-#             password = data.get("auth_password")
-
-#             if not username or not password:
-#                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
-
-#             creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
-#             return encode_auth({"Authorization": f"Basic {creds}"})
-
-#         if auth_type == "bearer":
-#             # For bearer authentication, only token is required
-#             token = data.get("auth_token")
-
-#             if not token:
-#                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
-
-#             return encode_auth({"Authorization": f"Bearer {token}"})
-
-#         if auth_type == "authheaders":
-#             # For headers authentication, both key and value must be present
-#             header_key = data.get("auth_header_key")
-#             header_value = data.get("auth_header_value")
-
-#             if not header_key or not header_value:
-#                 raise ValueError("For 'headers' auth, both 'auth_header_key' and 'auth_header_value' must be provided.")
-
-#             return encode_auth({header_key: header_value})
-
-#         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, or headers.")
 
 
 class SecureGatewayCreate(BaseModel):
@@ -1212,10 +1217,10 @@ class SecureGatewayCreate(BaseModel):
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, or headers.")
 
 
-class GatewayUpdate(BaseModelWithConfigDict):
+class SecureGatewayUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing federation gateway.
 
-    Similar to GatewayCreate but all fields are optional to allow partial updates.
+    Similar to SecureGatewayCreate but all fields are optional to allow partial updates.
     """
 
     name: Optional[str] = Field(None, description="Unique name for the gateway")
@@ -1235,20 +1240,51 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
 
-    @field_validator("url", mode="before")
-    def ensure_url_scheme(cls, v: Optional[str]) -> Optional[str]:
-        """
-        Ensure URL has an http/https scheme.
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate gateway name
 
         Args:
-            v: Input URL
+            v (str): Value to validate
 
         Returns:
-            str: Validated URL
+            str: Value if validated as safe
         """
-        if isinstance(v, str) and not (v.startswith("http://") or v.startswith("https://")):
-            return f"http://{v}"
-        return v
+        return SecurityValidator.validate_name(v, "Gateway name")
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        """Validate gateway URL
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_url(v, "Gateway URL")
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure descriptions display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is unsafe
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Description")
 
     @field_validator("auth_value", mode="before")
     def create_auth_value(cls, v, info):
@@ -1648,41 +1684,6 @@ class ListFilters(BaseModelWithConfigDict):
 # --- Server Schemas ---
 
 
-# class ServerCreate(BaseModelWithConfigDict):
-#     """Schema for creating a new server.
-
-#     Attributes:
-#         name: The server's name (required).
-#         description: Optional text description.
-#         icon: Optional URL for the server's icon.
-#         associated_tools: Optional list of tool IDs (as strings).
-#         associated_resources: Optional list of resource IDs (as strings).
-#         associated_prompts: Optional list of prompt IDs (as strings).
-#     """
-
-#     name: str = Field(..., description="The server's name")
-#     description: Optional[str] = Field(None, description="Server description")
-#     icon: Optional[str] = Field(None, description="URL for the server's icon")
-#     associated_tools: Optional[List[str]] = Field(None, description="Comma-separated tool IDs")
-#     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
-#     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
-
-#     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
-#     def split_comma_separated(cls, v):
-#         """
-#         Splits a comma-separated string into a list of strings if needed.
-
-#         Args:
-#             v: Input string
-
-#         Returns:
-#             list: Comma separated array of input string
-#         """
-#         if isinstance(v, str):
-#             return [item.strip() for item in v.split(",") if item.strip()]
-#         return v
-
-
 class SecureServerCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -1757,7 +1758,7 @@ class SecureServerCreate(BaseModel):
         return v
 
 
-class ServerUpdate(BaseModelWithConfigDict):
+class SecureServerUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing server.
 
     All fields are optional to allow partial updates.
@@ -1769,6 +1770,54 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_tools: Optional[List[str]] = Field(None, description="Comma-separated tool IDs")
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate server name
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_name(v, "Server name")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure descriptions display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is not safe
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("icon")
+    @classmethod
+    def validate_icon(cls, v: Optional[str]) -> Optional[str]:
+        """Validate icon URL
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        if v is None or v == "":
+            return v
+        return SecurityValidator.validate_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
     def split_comma_separated(cls, v):

@@ -53,9 +53,9 @@ from mcpgateway.schemas import (
     EventMessage,
     ListFilters,
     SecureServerCreate,
+    SecureServerUpdate,
     ServerMetrics,
     ServerRead,
-    ServerUpdate,
     StatusToggleRequest,
     StatusToggleResponse,
 )
@@ -711,8 +711,8 @@ class TestServerSchemas:
         assert minimal.associated_prompts is None
 
     def test_server_update(self):
-        """Test ServerUpdate model."""
-        update = ServerUpdate(
+        """Test SecureServerUpdate model."""
+        update = SecureServerUpdate(
             name="Updated Server",
             description="Updated description",
             icon="http://example.com/updated.png",
@@ -729,7 +729,7 @@ class TestServerSchemas:
         assert update.associated_prompts == ["14"]
 
         # Test with comma-separated strings
-        csv_update = ServerUpdate(
+        csv_update = SecureServerUpdate(
             associated_tools="10,11",
             associated_resources="12,13",
             associated_prompts="14",

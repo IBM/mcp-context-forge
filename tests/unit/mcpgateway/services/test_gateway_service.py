@@ -28,7 +28,7 @@ import pytest
 # ---------------------------------------------------------------------------
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayUpdate, SecureGatewayCreate
+from mcpgateway.schemas import SecureGatewayCreate, SecureGatewayUpdate
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayError,
@@ -291,7 +291,7 @@ class TestGatewayService:
         )
         gateway_service._notify_gateway_updated = AsyncMock()
 
-        gateway_update = GatewayUpdate(
+        gateway_update = SecureGatewayUpdate(
             name="updated_gateway",
             url="http://example.com/updated",
             description="Updated description",
@@ -310,7 +310,7 @@ class TestGatewayService:
     async def test_update_gateway_not_found(self, gateway_service, test_db):
         """Updating a non-existent gateway surfaces GatewayError with message."""
         test_db.get = Mock(return_value=None)
-        gateway_update = GatewayUpdate(name="whatever")
+        gateway_update = SecureGatewayUpdate(name="whatever")
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.update_gateway(test_db, 999, gateway_update)
         assert "Gateway not found: 999" in str(exc_info.value)
@@ -323,8 +323,8 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=conflicting))
         test_db.rollback = Mock()
 
-        # gateway_update = MagicMock(spec=GatewayUpdate, name="existing_gateway")
-        gateway_update = GatewayUpdate(name="existing_gateway")
+        # gateway_update = MagicMock(spec=SecureGatewayUpdate, name="existing_gateway")
+        gateway_update = SecureGatewayUpdate(name="existing_gateway")
 
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.update_gateway(test_db, 1, gateway_update)

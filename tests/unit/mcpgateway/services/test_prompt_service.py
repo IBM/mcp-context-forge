@@ -27,7 +27,7 @@ import pytest
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.models import Message, PromptResult, Role
-from mcpgateway.schemas import PromptRead, PromptUpdate, SecurePromptCreate
+from mcpgateway.schemas import PromptRead, SecurePromptCreate, SecurePromptUpdate
 from mcpgateway.services.prompt_service import (
     PromptError,
     PromptNotFoundError,
@@ -193,7 +193,7 @@ class TestPromptService:
         test_db.refresh = Mock()
         prompt_service._notify_prompt_updated = AsyncMock()
 
-        upd = PromptUpdate(description="new desc", template="Hi, {{ name }}!")
+        upd = SecurePromptUpdate(description="new desc", template="Hi, {{ name }}!")
         res = await prompt_service.update_prompt(test_db, "hello", upd)
 
         test_db.commit.assert_called_once()
@@ -211,7 +211,7 @@ class TestPromptService:
                 _make_execute_result(scalar=conflicting),
             ]
         )
-        upd = PromptUpdate(name="other")
+        upd = SecurePromptUpdate(name="other")
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.update_prompt(test_db, "hello", upd)
 

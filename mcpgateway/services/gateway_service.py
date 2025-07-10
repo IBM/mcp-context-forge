@@ -37,7 +37,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayRead, GatewayUpdate, SecureGatewayCreate, SecureToolCreate
+from mcpgateway.schemas import GatewayRead, SecureGatewayCreate, SecureGatewayUpdate, SecureToolCreate
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth
@@ -277,7 +277,7 @@ class GatewayService:
         gateways = db.execute(query).scalars().all()
         return [GatewayRead.model_validate(g) for g in gateways]
 
-    async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate) -> GatewayRead:
+    async def update_gateway(self, db: Session, gateway_id: str, gateway_update: SecureGatewayUpdate) -> GatewayRead:
         """Update a gateway.
 
         Args:

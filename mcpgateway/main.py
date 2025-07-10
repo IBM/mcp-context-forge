@@ -72,21 +72,21 @@ from mcpgateway.models import (
 )
 from mcpgateway.schemas import (
     GatewayRead,
-    GatewayUpdate,
     JsonPathModifier,
     PromptRead,
-    PromptUpdate,
     ResourceRead,
-    ResourceUpdate,
     SecureGatewayCreate,
+    SecureGatewayUpdate,
     SecurePromptCreate,
+    SecurePromptUpdate,
     SecureResourceCreate,
+    SecureResourceUpdate,
     SecureServerCreate,
+    SecureServerUpdate,
     SecureToolCreate,
+    SecureToolUpdate,
     ServerRead,
-    ServerUpdate,
     ToolRead,
-    ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
@@ -634,7 +634,7 @@ async def create_server(
 @server_router.put("/{server_id}", response_model=ServerRead)
 async def update_server(
     server_id: str,
-    server: ServerUpdate,
+    server: SecureServerUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> ServerRead:
@@ -643,7 +643,7 @@ async def update_server(
 
     Args:
         server_id (str): The ID of the server to update.
-        server (ServerUpdate): The updated server data.
+        server (SecureServerUpdate): The updated server data.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -992,7 +992,7 @@ async def get_tool(
 @tool_router.put("/{tool_id}", response_model=ToolRead)
 async def update_tool(
     tool_id: str,
-    tool: ToolUpdate,
+    tool: SecureToolUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> ToolRead:
@@ -1001,7 +1001,7 @@ async def update_tool(
 
     Args:
         tool_id (str): The ID of the tool to update.
-        tool (ToolUpdate): The updated tool information.
+        tool (SecureToolUpdate): The updated tool information.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -1226,7 +1226,7 @@ async def read_resource(uri: str, db: Session = Depends(get_db), user: str = Dep
 @resource_router.put("/{uri:path}", response_model=ResourceRead)
 async def update_resource(
     uri: str,
-    resource: ResourceUpdate,
+    resource: SecureResourceUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> ResourceRead:
@@ -1235,7 +1235,7 @@ async def update_resource(
 
     Args:
         uri (str): URI of the resource.
-        resource (ResourceUpdate): New resource data.
+        resource (SecureResourceUpdate): New resource data.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -1441,7 +1441,7 @@ async def get_prompt_no_args(
 @prompt_router.put("/{name}", response_model=PromptRead)
 async def update_prompt(
     name: str,
-    prompt: PromptUpdate,
+    prompt: SecurePromptUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> PromptRead:
@@ -1450,7 +1450,7 @@ async def update_prompt(
 
     Args:
         name (str): Identifier of the prompt to update.
-        prompt (PromptUpdate): New prompt content and metadata.
+        prompt (SecurePromptUpdate): New prompt content and metadata.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
@@ -1607,7 +1607,7 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
 async def update_gateway(
     gateway_id: str,
-    gateway: GatewayUpdate,
+    gateway: SecureGatewayUpdate,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> GatewayRead:

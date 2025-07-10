@@ -31,7 +31,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import SecureServerCreate, ServerMetrics, ServerRead, ServerUpdate
+from mcpgateway.schemas import SecureServerCreate, SecureServerUpdate, ServerMetrics, ServerRead
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +287,7 @@ class ServerService:
         logger.debug(f"Server Data: {server_data}")
         return self._convert_server_to_read(server)
 
-    async def update_server(self, db: Session, server_id: str, server_update: ServerUpdate) -> ServerRead:
+    async def update_server(self, db: Session, server_id: str, server_update: SecureServerUpdate) -> ServerRead:
         """Update an existing server.
 
         Args:

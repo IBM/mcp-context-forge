@@ -18,7 +18,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import SecureServerCreate, ServerRead, ServerUpdate
+from mcpgateway.schemas import SecureServerCreate, SecureServerUpdate, ServerRead
 from mcpgateway.services.server_service import (
     ServerError,
     ServerNotFoundError,
@@ -403,7 +403,7 @@ class TestServerService:
                 id="1",
                 name="updated_server",
                 description="An updated server",
-                icon="updated-icon",
+                icon="http://example.com/image.jpg",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
@@ -423,10 +423,10 @@ class TestServerService:
             )
         )
 
-        server_update = ServerUpdate(
+        server_update = SecureServerUpdate(
             name="updated_server",
             description="An updated server",
-            icon="updated-icon",
+            icon="http://example.com/image.jpg",
             associated_tools=["102"],
             associated_resources=["202"],
             associated_prompts=["302"],
@@ -442,7 +442,7 @@ class TestServerService:
     @pytest.mark.asyncio
     async def test_update_server_not_found(self, server_service, test_db):
         test_db.get = Mock(return_value=None)
-        update_data = ServerUpdate(name="updated_server")
+        update_data = SecureServerUpdate(name="updated_server")
         with pytest.raises(ServerError) as exc:
             await server_service.update_server(test_db, 999, update_data)
         assert "Server not found" in str(exc.value)
@@ -465,7 +465,7 @@ class TestServerService:
             await server_service.update_server(
                 test_db,
                 1,
-                ServerUpdate(name="existing_server"),
+                SecureServerUpdate(name="existing_server"),
             )
         assert "Server already exists with name" in str(exc.value)
 
