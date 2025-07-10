@@ -19,7 +19,7 @@
 | 0.7.0   | 02 Sep 2025 | 0 %        | Open       | Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A) |
 | 0.6.0   | 19 Aug 2025 | 0 %        | Open       | Security, Scale & Smart Automation |
 | 0.5.0   | 05 Aug 2025 | 0 %        | Open       | Enterprise Operability, Auth, Configuration & Observability |
-| 0.4.0   | 22 Jul 2025 | 0 %        | Open       | Bugfixes, Resilience (retry with exponential backoff), code quality and technical debt |
+| 0.4.0   | 22 Jul 2025 | 19 %       | Open       | Bugfixes, Resilience (retry with exponential backoff), code quality and technical debt |
 | 0.3.0   | 08 Jul 2025 | 100 %      | **Closed** | Annotations and multi-server tool federations |
 | 0.2.0   | 24 Jun 2025 | 100 %      | **Closed** | Streamable HTTP, Infra-as-Code, Dark Mode |
 | 0.1.0   | 05 Jun 2025 | 100 %      | **Closed** | Initial release |
@@ -104,7 +104,7 @@
 
 ## Release 0.4.0 - Bugfixes, Resilience & Code Quality
 
-!!! danger "Release 0.4.0 - Open (0%)"
+!!! danger "Release 0.4.0 - Open (19%)"
     **Due:** July 22, 2025 | **Status:** Open
     Focus on bugfixes, resilience (retry with exponential backoff), code quality and technical debt (test coverage, linting, security scans, GitHub Actions, Makefile, Helm improvements).
 
@@ -112,18 +112,28 @@
     - [**#232**](https://github.com/IBM/mcp-context-forge/issues/232) - Leaving Auth to None fails
     - [**#213**](https://github.com/IBM/mcp-context-forge/issues/213) - Can't use `STREAMABLEHTTP`
 
-???+ danger "✨ Open Features (6)"
+???+ check "🐛 Completed Bugs (2)"
+    - [**#340**](https://github.com/IBM/mcp-context-forge/issues/340) - Add input validation for main API endpoints (depends on #339 /admin API validation)
+    - [**#339**](https://github.com/IBM/mcp-context-forge/issues/339) - Add input validation for /admin endpoints
+
+???+ danger "✨ Open Features (4)"
     - [**#323**](https://github.com/IBM/mcp-context-forge/issues/323) - [Docs]: Add Developer Guide for using fast-time-server via JSON-RPC commands using curl or stdio
     - [**#320**](https://github.com/IBM/mcp-context-forge/issues/320) - [Feature Request]: Update Streamable HTTP to fully support Virtual Servers
     - [**#258**](https://github.com/IBM/mcp-context-forge/issues/258) - Universal Client Retry Mechanisms with Exponential Backoff & Random Jitter
     - [**#234**](https://github.com/IBM/mcp-context-forge/issues/234) - 🧠 Protocol Feature – Elicitation Support (MCP 2025-06-18)
     - [**#233**](https://github.com/IBM/mcp-context-forge/issues/233) - Contextual Hover-Help Tooltips in UI
     - [**#217**](https://github.com/IBM/mcp-context-forge/issues/217) - Graceful-Shutdown Hooks for API & Worker Containers (SIGTERM-safe rollouts, DB-pool cleanup, zero-drop traffic)
-    - [**#181**](https://github.com/IBM/mcp-context-forge/issues/181) - Test MCP Server Connectivity Debugging Tool
-    - [**#177**](https://github.com/IBM/mcp-context-forge/issues/177) - Persistent Admin UI Filter State
     - [**#172**](https://github.com/IBM/mcp-context-forge/issues/172) - Enable Auto Refresh and Reconnection for MCP Servers in Gateways
 
-???+ danger "🔧 Open Chores (20)"
+???+ check "✨ Completed Features (2)"
+    - [**#181**](https://github.com/IBM/mcp-context-forge/issues/181) - Test MCP Server Connectivity Debugging Tool
+    - [**#177**](https://github.com/IBM/mcp-context-forge/issues/177) - Persistent Admin UI Filter State
+
+???+ danger "🔧 Open Chores (23)"
+    - [**#351**](https://github.com/IBM/mcp-context-forge/issues/351) - Checklist for complete End-to-End Validation Testing for All API Endpoints, UI and Data Validation
+    - [**#344**](https://github.com/IBM/mcp-context-forge/issues/344) - Implement additional security headers and CORS configuration
+    - [**#342**](https://github.com/IBM/mcp-context-forge/issues/342) - Implement database-level security constraints and SQL injection prevention
+    - [**#341**](https://github.com/IBM/mcp-context-forge/issues/341) - Enhance UI security with DOMPurify and content sanitization
     - [**#317**](https://github.com/IBM/mcp-context-forge/issues/317) - [CHORE]: Script to add relative file path header to each file and verify top level docstring
     - [**#315**](https://github.com/IBM/mcp-context-forge/issues/315) - [CHORE] Check SPDX headers Makefile and GitHub Actions target - ensure all files have File, Author(s) and SPDX headers
     - [**#312**](https://github.com/IBM/mcp-context-forge/issues/312) - [CHORE]: End-to-End MCP Gateway Stack Testing Harness (mcpgateway, translate, wrapper, mcp-servers)
@@ -150,6 +160,10 @@
     - [**#212**](https://github.com/IBM/mcp-context-forge/issues/212) - [CHORE]: Achieve zero flagged Bandit / SonarQube issues
     - [**#211**](https://github.com/IBM/mcp-context-forge/issues/211) - [CHORE]: Achieve Zero Static-Type Errors Across All Checkers (mypy, ty, pyright, pyrefly)
     - [**#210**](https://github.com/IBM/mcp-context-forge/issues/210) - [CHORE]: Raise pylint from 9.16/10 -> 10/10
+
+???+ check "🔧 Completed Chores (2)"
+    - [**#338**](https://github.com/IBM/mcp-context-forge/issues/338) - Eliminate all lint issues in web stack
+    - [**#336**](https://github.com/IBM/mcp-context-forge/issues/336) - Implement output escaping for user data in UI
 
 ???+ danger "📚 Open Documentation (2)"
     - [**#94**](https://github.com/IBM/mcp-context-forge/issues/94) - [Feature Request]: Transport-Translation Bridge (`mcpgateway.translate`) any to any protocol conversion cli tool
@@ -199,6 +213,9 @@
     - [**#273**](https://github.com/IBM/mcp-context-forge/issues/273) - [Feature Request]: Terraform Module - "mcp-gateway-aws" supporting both EKS and ECS Fargate targets
     - [**#208**](https://github.com/IBM/mcp-context-forge/issues/208) - [Feature Request]: HTTP Header Passthrough
 
+???+ danger "🔧 Open Chores (1)"
+    - [**#313**](https://github.com/IBM/mcp-context-forge/issues/313) - [DESIGN]: Architecture Decisions and Discussions for AI Middleware and Plugin Framework (Enables #319)
+
 ---
 
 ## Release 0.7.0 - Multitenancy and RBAC
@@ -234,8 +251,7 @@
     - [**#221**](https://github.com/IBM/mcp-context-forge/issues/221) - [Feature Request]: Gateway-Level Input Validation & Output Sanitization (prevent traversal)
     - [**#182**](https://github.com/IBM/mcp-context-forge/issues/182) - [Feature Request]: Semantic tool auto-filtering
 
-???+ danger "🔧 Open Chores (2)"
-    - [**#313**](https://github.com/IBM/mcp-context-forge/issues/313) - [DESIGN]: Architecture Decisions and Discussions for AI Middleware and Plugin Framework (Enables #319)
+???+ danger "🔧 Open Chores (1)"
     - [**#291**](https://github.com/IBM/mcp-context-forge/issues/291) - [CHORE]: Comprehensive Scalability & Soak-Test Harness (Long-term Stability & Load) - locust, pytest-benchmark, smocker mocked MCP servers
 
 ---
@@ -345,6 +361,9 @@
 
 !!! warning "Issues Without Release Assignment"
     The following issues are currently open but not assigned to any specific release:
+
+???+ warning "🐛 Open Bugs (1)"
+    - [**#352**](https://github.com/IBM/mcp-context-forge/issues/352) - Resources - All data going into content
 
 ???+ warning "🔧 Open Chores (1)"
     - [**#318**](https://github.com/IBM/mcp-context-forge/issues/318) - [CHORE]: Publish Agents and Tools that leverage codebase and templates (draft)
