@@ -13,7 +13,7 @@ Here's an expanded section for that part:
 **Tools are not enough**: While our automated security tooling provides comprehensive coverage, we recognize that true security requires human expertise and collaborative oversight. Our security posture extends beyond automated scanning to include:
 
 - **Manual Security Code Reviews**: Expert security engineers conduct thorough code reviews focusing on logic flaws, business logic vulnerabilities, and complex attack vectors that automated tools might miss
-- **Threat Modeling & Risk Assessment**: Regular security assessments evaluate our attack surface, identify potential threat vectors, and validate our defense mechanisms against real-world attack scenarios  
+- **Threat Modeling & Risk Assessment**: Regular security assessments evaluate our attack surface, identify potential threat vectors, and validate our defense mechanisms against real-world attack scenarios
 - **Community-Driven Security**: We actively engage with the security research community, maintain responsible disclosure processes, and leverage collective intelligence to identify and address emerging threats
 - **Security Champion Program**: Developers across the project receive security training and act as security advocates within their teams, creating a culture of security awareness
 - **Penetration Testing**: Regular security assessments by internal and external security professionals validate our defenses against sophisticated attack techniques
@@ -85,26 +85,26 @@ The following diagram illustrates our comprehensive security scanning pipeline:
 ```mermaid
 flowchart TD
     A[Code Changes] --> B{Pre-commit Hooks}
-    
+
     B --> C[Ruff - Python Linter/Formatter]
     B --> D[Black - Code Formatter]
     B --> E[isort - Import Sorter]
     B --> F[mypy - Type Checking]
     B --> G[Bandit - Security Scanner]
-    
+
     C --> H[Pre-commit Success?]
     D --> H
     E --> H
     F --> H
     G --> H
-    
+
     H -->|No| I[Fix Issues & Retry]
     I --> B
-    
+
     H -->|Yes| J[Push to GitHub]
-    
+
     J --> K[GitHub Actions Triggers]
-    
+
     K --> L[Python Package Build]
     K --> M[CodeQL Analysis]
     K --> N[Bandit Security Scan]
@@ -113,29 +113,29 @@ flowchart TD
     K --> Q[Lint & Static Analysis]
     K --> R[Docker Image Build]
     K --> S[Container Security Scan]
-    
+
     L --> L1[Python Build Test]
     L --> L2[Package Installation Test]
-    
+
     M --> M1[Semantic Code Analysis]
     M --> M2[Security Vulnerability Detection]
     M --> M3[Data Flow Analysis]
-    
+
     N --> N1[Security Issue Detection]
     N --> N2[Common Security Patterns]
     N --> N3[Hardcoded Secrets Check]
-    
+
     O --> O1[Dependency Vulnerability Check]
     O --> O2[License Compliance]
     O --> O3[Supply Chain Security]
-    
+
     P --> P1[pytest Unit Tests]
     P --> P2[Coverage Analysis]
     P --> P3[Integration Tests]
-    
+
     Q --> Q1[Multiple Linters]
     Q --> Q2[Static Analysis Tools]
-    
+
     Q1 --> Q1A[flake8 - PEP8 Compliance]
     Q1 --> Q1B[pylint - Code Quality]
     Q1 --> Q1C[pycodestyle - Style Guide]
@@ -144,7 +144,7 @@ flowchart TD
     Q1 --> Q1F[yamllint - YAML Files]
     Q1 --> Q1G[jsonlint - JSON Files]
     Q1 --> Q1H[tomllint - TOML Files]
-    
+
     Q2 --> Q2A[mypy - Type Checking]
     Q2 --> Q2B[pyright - Type Analysis]
     Q2 --> Q2C[pytype - Google Type Checker]
@@ -153,77 +153,77 @@ flowchart TD
     Q2 --> Q2F[importchecker - Import Analysis]
     Q2 --> Q2G[fawltydeps - Dependency Analysis]
     Q2 --> Q2H[check-manifest - Package Completeness]
-    
+
     R --> R1[Docker Build]
     R --> R2[Multi-stage Build Process]
     R --> R3[Security Hardening]
-    
+
     S --> S1[Hadolint - Dockerfile Linting]
     S --> S2[Dockle - Container Security]
     S --> S3[Trivy - Vulnerability Scanner]
     S --> S4[OSV-Scanner - Open Source Vulns]
-    
+
     T[Local Development] --> U[Make Targets]
-    
+
     U --> V[make lint - Full Lint Suite]
     U --> W[Individual Security Tools]
     U --> X[make sbom - Software Bill of Materials]
     U --> Y[make lint-web - Frontend Security]
-    
+
     V --> V1[All Python Linters]
     V --> V2[Code Quality Checks]
     V --> V3[Style Enforcement]
-    
+
     W --> W1[make bandit - Security Scanner]
     W --> W2[make osv-scan - Vulnerability Check]
     W --> W3[make trivy - Container Security]
     W --> W4[make dockle - Image Analysis]
     W --> W5[make hadolint - Dockerfile Linting]
     W --> W6[make pip-audit - Dependency Scanning]
-    
+
     X --> X1[CycloneDX SBOM Generation]
     X --> X2[Dependency Inventory]
     X --> X3[License Compliance Check]
     X --> X4[Vulnerability Assessment]
-    
+
     Y --> Y1[htmlhint - HTML Validation]
     Y --> Y2[stylelint - CSS Security]
     Y --> Y3[eslint - JavaScript Security]
     Y --> Y4[retire.js - JS Library Vulnerabilities]
     Y --> Y5[npm audit - Package Vulnerabilities]
-    
+
     Z[Additional Security Tools] --> Z1[SonarQube Analysis]
     Z --> Z2[WhiteSource Security Scanning]
     Z --> Z3[Spellcheck - Documentation]
     Z --> Z4[Pre-commit Hook Validation]
-    
+
     AA[Container Security Pipeline] --> AA1[Multi-stage Build]
     AA --> AA2[Minimal Base Images]
     AA --> AA3[Security Hardening]
     AA --> AA4[Runtime Security]
-    
+
     AA1 --> AA1A[Build Dependencies]
     AA1 --> AA1B[Runtime Dependencies]
     AA1 --> AA1C[Security Scanning]
-    
+
     AA2 --> AA2A[UBI Micro Base]
     AA2 --> AA2B[Minimal Attack Surface]
     AA2 --> AA2C[No Shell Access]
-    
+
     AA3 --> AA3A[Non-root User]
     AA3 --> AA3B[Read-only Filesystem]
     AA3 --> AA3C[Capability Dropping]
-    
+
     AA4 --> AA4A[Runtime Monitoring]
     AA4 --> AA4B[Security Policies]
     AA4 --> AA4C[Vulnerability Patching]
-    
+
     classDef security fill:#ff6b6b,stroke:#d63031,stroke-width:2px
     classDef linting fill:#74b9ff,stroke:#0984e3,stroke-width:2px
     classDef container fill:#00b894,stroke:#00a085,stroke-width:2px
     classDef process fill:#fdcb6e,stroke:#e17055,stroke-width:2px
     classDef success fill:#55a3ff,stroke:#2d3436,stroke-width:2px
-    
+
     class G,M,N,O,W,W1,W2,W3,W4,Z1,Z2,AA security
     class C,D,E,F,Q,Q1,Q1A,Q1B,Q1C,Q1D,Q1E,Q1F,Q1G,Q1H,V linting
     class R,S,S1,S2,S3,S4,AA,AA1,AA2,AA3,AA4 container
@@ -238,8 +238,9 @@ flowchart TD
 ## 📦 Supported Versions and Security Updates
 
 All Container Images and Python dependencies are updated with every release (major or minor) or on CRITICAL/HIGH security vulnerabilities (triggering a minor release).
-
-We currently support only the latest version of this project. Older versions are not maintained or patched.
+We currently support only the latest version of this project, and only through the REST API.
+Admin UI / APIs are provided for developer convenience and should be disabled in production using the provided feature flags.
+Older versions are not maintained or patched.
 
 ### Security Patching Policy
 
