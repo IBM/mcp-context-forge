@@ -161,14 +161,57 @@ function isInactiveChecked(type) {
 // Enhanced fetch with timeout and better error handling
 function fetchWithTimeout(url, options = {}, timeout = 10000) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const timeoutId = setTimeout(() => {
+        console.warn(`Request to ${url} timed out after ${timeout}ms`);
+        controller.abort();
+    }, timeout);
 
     return fetch(url, {
         ...options,
         signal: controller.signal,
-    }).finally(() => {
-        clearTimeout(timeoutId);
-    });
+        // Add cache busting to prevent stale responses
+        headers: {
+            ...options.headers,
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+        },
+    })
+        .then((response) => {
+            clearTimeout(timeoutId);
+
+            // Handle empty responses explicitly
+            if (
+                response.status === 0 ||
+                (response.ok &&
+                    response.status === 200 &&
+                    !response.headers.get("content-length"))
+            ) {
+                console.warn(`Empty response received from ${url}`);
+                throw new Error("Server returned an empty response");
+            }
+
+            return response;
+        })
+        .catch((error) => {
+            clearTimeout(timeoutId);
+
+            // Improve error messages for common issues
+            if (error.name === "AbortError") {
+                throw new Error(
+                    `Request timed out after ${timeout / 1000} seconds`,
+                );
+            } else if (error.message.includes("Failed to fetch")) {
+                throw new Error(
+                    "Unable to connect to server. Please check if the server is running.",
+                );
+            } else if (error.message.includes("empty response")) {
+                throw new Error(
+                    "Server returned an empty response. The endpoint may not be implemented.",
+                );
+            }
+
+            throw error;
+        });
 }
 
 // Safe element getter with logging
@@ -288,6 +331,11 @@ const AppState = {
             this.editors.gateway[key] = null;
         });
 
+        // ADD THIS LINE: Clean up tool test state
+        if (typeof cleanupToolTestState === "function") {
+            cleanupToolTestState();
+        }
+
         console.log("✓ Application state reset");
     },
 
@@ -381,6 +429,8 @@ function closeModal(modalId, clearId = null) {
         // Clean up specific modal types
         if (modalId === "gateway-test-modal") {
             cleanupGatewayTestModal();
+        } else if (modalId === "tool-test-modal") {
+            cleanupToolTestModal(); // ADD THIS LINE
         }
 
         modal.classList.add("hidden");
@@ -425,63 +475,78 @@ function resetModalState(modalId) {
 // ENHANCED METRICS LOADING with Retry Logic and Request Deduplication
 // ===================================================================
 
-// Track ongoing metrics requests to prevent duplicates
-let metricsRequestInProgress = false;
-const MAX_METRICS_RETRIES = 3;
-const METRICS_RETRY_DELAY = 2000; // 2 seconds
+// More robust metrics request tracking
+let metricsRequestController = null;
+let metricsRequestPromise = null;
+const MAX_METRICS_RETRIES = 2; // Reduced from 3
+const METRICS_RETRY_DELAY = 1500; // Reduced from 2000ms
 
 /**
- * Enhanced metrics loading with retry logic and request deduplication
+ * Enhanced metrics loading with better race condition prevention
  */
 async function loadAggregatedMetrics() {
-    // Prevent multiple concurrent requests
-    if (metricsRequestInProgress) {
-        console.log("Metrics request already in progress, skipping...");
-        return;
+    // Cancel any existing request
+    if (metricsRequestController) {
+        console.log("Cancelling existing metrics request...");
+        metricsRequestController.abort();
+        metricsRequestController = null;
     }
 
-    try {
-        metricsRequestInProgress = true;
-        console.log("Loading aggregated metrics...");
+    // If there's already a promise in progress, return it
+    if (metricsRequestPromise) {
+        console.log("Returning existing metrics promise...");
+        return metricsRequestPromise;
+    }
 
-        // Show loading state
+    console.log("Starting new metrics request...");
+
+    metricsRequestPromise = loadMetricsInternal().finally(() => {
+        metricsRequestPromise = null;
+        metricsRequestController = null;
+    });
+
+    return metricsRequestPromise;
+}
+
+async function loadMetricsInternal() {
+    try {
+        console.log("Loading aggregated metrics...");
         showMetricsLoading();
 
-        const response = await fetchWithTimeoutAndRetry(
+        const result = await fetchWithTimeoutAndRetry(
             `${window.ROOT_PATH}/admin/metrics`,
             {}, // options
-            30000, // 30 second timeout for metrics (longer than default)
+            20000, // 20 second timeout (reduced from 30)
             MAX_METRICS_RETRIES,
         );
 
-        if (!response.ok) {
+        if (!result.ok) {
             // If metrics endpoint doesn't exist, show a placeholder instead of failing
-            if (response.status === 404) {
+            if (result.status === 404) {
                 showMetricsPlaceholder();
                 return;
             }
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            throw new Error(`HTTP ${result.status}: ${result.statusText}`);
         }
 
-        const data = await response.json();
+        const data = await result.json();
         displayMetrics(data);
         console.log("✓ Metrics loaded successfully");
     } catch (error) {
         console.error("Error loading aggregated metrics:", error);
         showMetricsError(error);
     } finally {
-        metricsRequestInProgress = false;
         hideMetricsLoading();
     }
 }
 
 /**
- * Enhanced fetch with automatic retry logic
+ * Enhanced fetch with automatic retry logic and better error handling
  */
 async function fetchWithTimeoutAndRetry(
     url,
     options = {},
-    timeout = 30000,
+    timeout = 20000,
     maxRetries = 3,
 ) {
     let lastError;
@@ -490,18 +555,18 @@ async function fetchWithTimeoutAndRetry(
         try {
             console.log(`Metrics fetch attempt ${attempt}/${maxRetries}`);
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
+            // Create new controller for each attempt
+            metricsRequestController = new AbortController();
 
-            const response = await fetch(url, {
-                ...options,
-                signal: controller.signal,
-            });
+            const response = await fetchWithTimeout(
+                url,
+                {
+                    ...options,
+                    signal: metricsRequestController.signal,
+                },
+                timeout,
+            );
 
-            clearTimeout(timeoutId);
-
-            // If we get any response (even error codes), return it
-            // Let the caller handle HTTP error codes
             console.log(`✓ Metrics fetch attempt ${attempt} succeeded`);
             return response;
         } catch (error) {
@@ -512,6 +577,12 @@ async function fetchWithTimeoutAndRetry(
                 error.message,
             );
 
+            // Don't retry on certain errors
+            if (error.name === "AbortError" && attempt < maxRetries) {
+                console.log("Request was aborted, skipping retry");
+                throw error;
+            }
+
             // Don't retry on the last attempt
             if (attempt === maxRetries) {
                 console.error(
@@ -520,8 +591,8 @@ async function fetchWithTimeoutAndRetry(
                 throw error;
             }
 
-            // Wait before retrying, with exponential backoff
-            const delay = METRICS_RETRY_DELAY * Math.pow(2, attempt - 1);
+            // Wait before retrying, with modest backoff
+            const delay = METRICS_RETRY_DELAY * attempt;
             console.log(`Retrying metrics fetch in ${delay}ms...`);
             await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -609,7 +680,9 @@ function showMetricsError(error) {
  */
 function retryLoadMetrics() {
     console.log("Manual retry requested");
-    metricsRequestInProgress = false; // Reset request flag
+    // Reset all tracking variables
+    metricsRequestController = null;
+    metricsRequestPromise = null;
     loadAggregatedMetrics();
 }
 
@@ -2135,11 +2208,18 @@ async function editServer(serverId) {
 // ENHANCED TAB HANDLING with Better Error Management
 // ===================================================================
 
+let tabSwitchTimeout = null;
+
 function showTab(tabName) {
     try {
         console.log(`Switching to tab: ${tabName}`);
 
-        // Navigation styling
+        // Clear any pending tab switch
+        if (tabSwitchTimeout) {
+            clearTimeout(tabSwitchTimeout);
+        }
+
+        // Navigation styling (immediate)
         document.querySelectorAll(".tab-panel").forEach((p) => {
             if (p) {
                 p.classList.add("hidden");
@@ -2186,50 +2266,57 @@ function showTab(tabName) {
             );
         }
 
-        // Enhanced metrics loading with better timing
-        if (tabName === "metrics") {
-            // Give the tab time to fully render, then load metrics
-            setTimeout(() => {
-                try {
+        // Debounced content loading
+        tabSwitchTimeout = setTimeout(() => {
+            try {
+                if (tabName === "metrics") {
                     // Only load if we're still on the metrics tab
                     if (!panel.classList.contains("hidden")) {
                         loadAggregatedMetrics();
                     }
-                } catch (error) {
-                    console.error("Error loading metrics:", error);
-                    showMetricsError(error);
                 }
-            }, 200); // Increased delay
-        }
 
-        // Version info loading (unchanged)
-        if (tabName === "version-info") {
-            const versionPanel = safeGetElement("version-info-panel");
-            if (versionPanel && versionPanel.innerHTML.trim() === "") {
-                fetchWithTimeout(`${window.ROOT_PATH}/version?partial=true`)
-                    .then((resp) => {
-                        if (!resp.ok) {
-                            throw new Error(
-                                `HTTP ${resp.status}: ${resp.statusText}`,
-                            );
-                        }
-                        return resp.text();
-                    })
-                    .then((html) => {
-                        safeSetInnerHTML(versionPanel, html, true);
-                        console.log("✓ Version info loaded");
-                    })
-                    .catch((err) => {
-                        console.error("Failed to load version info:", err);
-                        const errorDiv = document.createElement("div");
-                        errorDiv.className = "text-red-600 p-4";
-                        errorDiv.textContent =
-                            "Failed to load version info. Please try again.";
-                        versionPanel.innerHTML = "";
-                        versionPanel.appendChild(errorDiv);
-                    });
+                if (tabName === "version-info") {
+                    const versionPanel = safeGetElement("version-info-panel");
+                    if (versionPanel && versionPanel.innerHTML.trim() === "") {
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/version?partial=true`,
+                            {},
+                            10000,
+                        )
+                            .then((resp) => {
+                                if (!resp.ok) {
+                                    throw new Error(
+                                        `HTTP ${resp.status}: ${resp.statusText}`,
+                                    );
+                                }
+                                return resp.text();
+                            })
+                            .then((html) => {
+                                safeSetInnerHTML(versionPanel, html, true);
+                                console.log("✓ Version info loaded");
+                            })
+                            .catch((err) => {
+                                console.error(
+                                    "Failed to load version info:",
+                                    err,
+                                );
+                                const errorDiv = document.createElement("div");
+                                errorDiv.className = "text-red-600 p-4";
+                                errorDiv.textContent =
+                                    "Failed to load version info. Please try again.";
+                                versionPanel.innerHTML = "";
+                                versionPanel.appendChild(errorDiv);
+                            });
+                    }
+                }
+            } catch (error) {
+                console.error(
+                    `Error in tab ${tabName} content loading:`,
+                    error,
+                );
             }
-        }
+        }, 300); // 300ms debounce
 
         console.log(`✓ Successfully switched to tab: ${tabName}`);
     } catch (error) {
@@ -2701,19 +2788,102 @@ function handleSubmitWithConfirmation(event, type) {
 // ENHANCED TOOL TESTING with Safe State Management
 // ===================================================================
 
+// Track active tool test requests globally
+const toolTestState = {
+    activeRequests: new Map(), // toolId -> AbortController
+    lastRequestTime: new Map(), // toolId -> timestamp
+    debounceDelay: 500, // ms
+    requestTimeout: 10000, // Reduced from 15000ms
+};
+
 async function testTool(toolId) {
     try {
         console.log(`Testing tool ID: ${toolId}`);
 
+        // 1. DEBOUNCING: Prevent rapid successive clicks
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+
+        if (timeSinceLastRequest < toolTestState.debounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            showErrorMessage(
+                `Please wait ${Math.ceil((toolTestState.debounceDelay - timeSinceLastRequest) / 1000)} more seconds before testing again`,
+            );
+            return;
+        }
+
+        // 2. REQUEST DEDUPLICATION: Cancel any existing request for this tool
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+
+        // 3. MODAL PROTECTION: Check if tool test modal is already open
+        if (AppState.isModalActive("tool-test-modal")) {
+            console.warn("Tool test modal is already active");
+            showErrorMessage(
+                "A tool test is already in progress. Please wait for it to complete.",
+            );
+            return;
+        }
+
+        // 4. USER FEEDBACK: Show immediate feedback
+        const testButton = document.querySelector(
+            `[onclick*="testTool('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = true;
+            testButton.textContent = "Testing...";
+            testButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+
+        // 5. CREATE NEW REQUEST CONTROLLER
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
+
+        // 6. MAKE REQUEST with shorter timeout and abort signal
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/tools/${toolId}`,
+            {
+                signal: controller.signal,
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                },
+            },
+            toolTestState.requestTimeout, // 10 second timeout
         );
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before testing again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
         }
 
         const tool = await response.json();
+
+        // 7. CLEAN STATE before proceeding
+        toolTestState.activeRequests.delete(toolId);
 
         // Store in safe state
         AppState.currentTestTool = tool;
@@ -2805,11 +2975,43 @@ async function testTool(toolId) {
         console.log("✓ Tool test modal loaded successfully");
     } catch (error) {
         console.error("Error fetching tool details for testing:", error);
-        const errorMessage = handleFetchError(
-            error,
-            "load tool details for testing",
-        );
+
+        // Clean up state on error
+        toolTestState.activeRequests.delete(toolId);
+
+        let errorMessage = error.message;
+
+        // Enhanced error handling for rapid clicking scenarios
+        if (error.name === "AbortError") {
+            errorMessage = "Request was cancelled. Please try again.";
+        } else if (
+            error.message.includes("Failed to fetch") ||
+            error.message.includes("NetworkError")
+        ) {
+            errorMessage =
+                "Unable to connect to the server. The server may be overloaded. Please wait a moment and try again.";
+        } else if (
+            error.message.includes("empty response") ||
+            error.message.includes("ERR_EMPTY_RESPONSE")
+        ) {
+            errorMessage =
+                "The server returned an empty response. This usually happens when the server is overloaded. Please wait a moment and try again.";
+        } else if (error.message.includes("timeout")) {
+            errorMessage =
+                "Request timed out. The server may be busy. Please try again in a few seconds.";
+        }
+
         showErrorMessage(errorMessage);
+    } finally {
+        // 8. ALWAYS RESTORE BUTTON STATE
+        const testButton = document.querySelector(
+            `[onclick*="testTool('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Test";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
     }
 }
 
@@ -2817,6 +3019,7 @@ async function runToolTest() {
     const form = safeGetElement("tool-test-form");
     const loadingElement = safeGetElement("tool-test-loading");
     const resultContainer = safeGetElement("tool-test-result");
+    const runButton = document.querySelector('button[onclick="runToolTest()"]');
 
     if (!form || !AppState.currentTestTool) {
         console.error("Tool test form or current tool not found");
@@ -2824,7 +3027,20 @@ async function runToolTest() {
         return;
     }
 
+    // Prevent multiple concurrent test runs
+    if (runButton && runButton.disabled) {
+        console.log("Tool test already running");
+        return;
+    }
+
     try {
+        // Disable run button
+        if (runButton) {
+            runButton.disabled = true;
+            runButton.textContent = "Running...";
+            runButton.classList.add("opacity-50");
+        }
+
         // Show loading
         if (loadingElement) {
             loadingElement.style.display = "block";
@@ -2867,14 +3083,19 @@ async function runToolTest() {
             params,
         };
 
-        const response = await fetchWithTimeout(`${window.ROOT_PATH}/rpc`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
+        // Use shorter timeout for test execution
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/rpc`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+                credentials: "include",
             },
-            body: JSON.stringify(payload),
-            credentials: "include",
-        });
+            8000,
+        ); // 8 second timeout
 
         const result = await response.json();
         const resultStr = JSON.stringify(result, null, 2);
@@ -2919,9 +3140,81 @@ async function runToolTest() {
             resultContainer.appendChild(errorDiv);
         }
     } finally {
+        // Always restore UI state
         if (loadingElement) {
             loadingElement.style.display = "none";
         }
+        if (runButton) {
+            runButton.disabled = false;
+            runButton.textContent = "Run Tool";
+            runButton.classList.remove("opacity-50");
+        }
+    }
+}
+
+/**
+ * NEW: Cleanup function for tool test state
+ */
+function cleanupToolTestState() {
+    // Cancel all active requests
+    for (const [toolId, controller] of toolTestState.activeRequests) {
+        try {
+            controller.abort();
+            console.log(`Cancelled request for tool ${toolId}`);
+        } catch (error) {
+            console.warn(`Error cancelling request for tool ${toolId}:`, error);
+        }
+    }
+
+    // Clear all state
+    toolTestState.activeRequests.clear();
+    toolTestState.lastRequestTime.clear();
+
+    console.log("✓ Tool test state cleaned up");
+}
+
+/**
+ * NEW: Tool test modal specific cleanup
+ */
+function cleanupToolTestModal() {
+    try {
+        // Clear current test tool
+        AppState.currentTestTool = null;
+
+        // Clear result editor
+        if (AppState.toolTestResultEditor) {
+            try {
+                AppState.toolTestResultEditor.toTextArea();
+                AppState.toolTestResultEditor = null;
+            } catch (error) {
+                console.warn(
+                    "Error cleaning up tool test result editor:",
+                    error,
+                );
+            }
+        }
+
+        // Reset form
+        const form = safeGetElement("tool-test-form");
+        if (form) {
+            form.reset();
+        }
+
+        // Clear result container
+        const resultContainer = safeGetElement("tool-test-result");
+        if (resultContainer) {
+            resultContainer.innerHTML = "";
+        }
+
+        // Hide loading
+        const loadingElement = safeGetElement("tool-test-loading");
+        if (loadingElement) {
+            loadingElement.style.display = "none";
+        }
+
+        console.log("✓ Tool test modal cleaned up");
+    } catch (error) {
+        console.error("Error cleaning up tool test modal:", error);
     }
 }
 
@@ -3680,6 +3973,7 @@ window.addEventListener("unhandledrejection", (e) => {
 window.addEventListener("beforeunload", () => {
     try {
         AppState.reset();
+        cleanupToolTestState(); // ADD THIS LINE
         console.log("✓ Application state cleaned up before unload");
     } catch (error) {
         console.error("Error during cleanup:", error);
