@@ -268,10 +268,10 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/servers | jq
 
 # Example curl
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"      
-     -H "Content-Type: application/json"      
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"
+     -H "Content-Type: application/json"
      -d '{"name":"time_server","description":"Fast time tools","associatedTools":["6018ca46d32a4ac6b4c054c13a1726a2"]}' \
-     http://localhost:4444/servers | jq   
+     http://localhost:4444/servers | jq
 
 # 5️⃣  List servers (should now include the UUID of the newly created virtual server)
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
