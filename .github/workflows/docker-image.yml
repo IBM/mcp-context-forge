@@ -8,7 +8,7 @@
 #   - Lints the Dockerfile with **Hadolint** (CLI) → SARIF
 #   - Lints the finished image with **Dockle** (CLI) → SARIF
 #   - Generates an SPDX SBOM with **Syft**
-#   - Scans the image for CRITICAL CVEs with **Trivy**
+#   - Scans the image for CRITICAL CVEs with **Trivy/Grype**
 #   - Uploads Hadolint, Dockle and Trivy results as SARIF files
 #   - Pushes the image to **GitHub Container Registry (GHCR)**
 #   - Signs & attests the image with **Cosign (key-less OIDC)**
@@ -159,7 +159,10 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
-
+          
+      - name: 📥 Installing Grype CLI
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
       - name: 🔍 Grype vulnerability scan
         run: |
           grype ${{ env.IMAGE_NAME }}:latest --scope all-layers --only-fixed
