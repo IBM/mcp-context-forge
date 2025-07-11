@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.schemas import (
     PromptRead,
@@ -209,10 +210,20 @@ class TestHealthAndInfrastructure:
         assert response.json()["status"] == "ready"
 
     def test_root_redirect(self, test_client):
-        """Test that root path redirects to admin UI."""
+        """Test that root path behavior depends on UI configuration."""
         response = test_client.get("/", follow_redirects=False)
-        assert response.status_code == 303
-        assert response.headers["location"] == "/admin"
+        
+        # Check if UI is enabled
+        if settings.mcpgateway_ui_enabled:
+            # When UI is enabled, should redirect to admin
+            assert response.status_code == 303
+            assert response.headers["location"] == "/admin"
+        else:
+            # When UI is disabled, should return API info
+            assert response.status_code == 200
+            data = response.json()
+            assert data["name"] == "MCP_Gateway"
+            assert data["ui_enabled"] is False
 
     def test_static_files(self, test_client):
         """Test static file serving (when files don't exist)."""

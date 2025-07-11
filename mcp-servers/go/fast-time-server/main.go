@@ -3,7 +3,7 @@
 //
 // Copyright 2025
 // SPDX-License-Identifier: Apache-2.0
-// Authors: Mihai Criveti
+// Authors: Mihai Criveti, Manav Gupta
 //
 // This file implements an MCP (Model Context Protocol) server written in Go
 // that provides time-related tools for LLM applications. The server exposes
@@ -76,7 +76,7 @@
 //
 //   DUAL Transport:
 //     SSE Events:    http://localhost:8080/sse
-//     SSE Messages:  http://localhost:8080/messages
+//     SSE Messages:  http://localhost:8080/messages and http://localhost:8080/message
 //     HTTP MCP:      http://localhost:8080/http
 //     Health:        http://localhost:8080/health
 //     Version:       http://localhost:8080/version
@@ -609,7 +609,8 @@ func main() {
 
         // Register handlers
         mux.Handle("/sse", sseHandler)
-        mux.Handle("/messages", sseHandler)
+        mux.Handle("/messages", sseHandler) // Support plural (backward compatibility)
+        mux.Handle("/message", sseHandler)  // Support singular (MCP Gateway compatibility)
         mux.Handle("/http", httpHandler)
 
         // Register health and version endpoints
@@ -617,7 +618,7 @@ func main() {
 
         logAt(logInfo, "DUAL server ready on http://%s", addr)
         logAt(logInfo, "  SSE events:       /sse")
-        logAt(logInfo, "  SSE messages:     /messages")
+        logAt(logInfo, "  SSE messages:     /messages (plural) and /message (singular)")
         logAt(logInfo, "  HTTP endpoint:    /http")
         logAt(logInfo, "  Health check:     /health")
         logAt(logInfo, "  Version info:     /version")

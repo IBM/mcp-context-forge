@@ -172,7 +172,6 @@ class TestResourceRegistration:
 
         # Mock validation and notification
         with (
-            patch.object(resource_service, "_is_valid_uri", return_value=True),
             patch.object(resource_service, "_detect_mime_type", return_value="text/plain"),
             patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
             patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
@@ -238,19 +237,12 @@ class TestResourceRegistration:
         assert "inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_register_resource_invalid_uri(self, resource_service, mock_db, sample_resource_create):
-        """Test registration with invalid URI."""
-        # Mock no existing resource
-        mock_scalar = MagicMock()
-        mock_scalar.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_scalar
+    async def test_resource_create_with_invalid_uri(self):
+        """Test resource creation with invalid URI."""
+        with pytest.raises(ValueError) as exc_info:
+            ResourceCreate(uri="../invalid/uri", name="Bad URI", content="data")
 
-        # Mock invalid URI validation
-        with patch.object(resource_service, "_is_valid_uri", return_value=False):
-            with pytest.raises(ResourceError) as exc_info:  # Changed to ResourceError as that's what's actually raised
-                await resource_service.register_resource(mock_db, sample_resource_create)
-
-            assert "Invalid URI" in str(exc_info.value)
+        assert "cannot contain directory traversal sequences" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_integrity_error(self, resource_service, mock_db, sample_resource_create):
@@ -261,7 +253,7 @@ class TestResourceRegistration:
         mock_db.execute.return_value = mock_scalar
 
         # Mock validation success
-        with patch.object(resource_service, "_is_valid_uri", return_value=True), patch.object(resource_service, "_detect_mime_type", return_value="text/plain"):
+        with patch.object(resource_service, "_detect_mime_type", return_value="text/plain"):
             # Mock IntegrityError on commit
             mock_db.commit.side_effect = IntegrityError("", "", "")
 
@@ -283,7 +275,6 @@ class TestResourceRegistration:
 
         # Mock validation
         with (
-            patch.object(resource_service, "_is_valid_uri", return_value=True),
             patch.object(resource_service, "_detect_mime_type", return_value="application/octet-stream"),
             patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
             patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
@@ -1070,23 +1061,6 @@ class TestUtilityMethods:
     """Test utility methods."""
 
     @pytest.mark.parametrize(
-        "uri, expected",
-        [
-            ("http://example.com/test", True),
-            ("https://example.com/test", True),
-            ("file:///path/to/resource", True),
-            ("ftp://example.com/file", True),
-            ("invalid-uri", False),
-            ("", False),
-            ("http://", False),
-        ],
-    )
-    def test_is_valid_uri(self, resource_service, uri, expected):
-        """Test URI validation."""
-        result = resource_service._is_valid_uri(uri)
-        assert result == expected
-
-    @pytest.mark.parametrize(
         "uri, content, expected",
         [
             ("test.txt", "text content", "text/plain"),
@@ -1247,7 +1221,7 @@ class TestErrorHandling:
         mock_db.execute.return_value = mock_scalar
 
         # Mock validation success
-        with patch.object(resource_service, "_is_valid_uri", return_value=True), patch.object(resource_service, "_detect_mime_type", return_value="text/plain"):
+        with patch.object(resource_service, "_detect_mime_type", return_value="text/plain"):
             # Mock generic error on add
             mock_db.add.side_effect = Exception("Generic error")
 

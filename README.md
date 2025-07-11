@@ -217,6 +217,10 @@ pip install --upgrade pip
 pip install mcp-contextforge-gateway
 
 # 2️⃣  Launch on all interfaces with custom creds & secret key
+# Enable the Admin API endpoints (true/false) - disabled by default
+export MCPGATEWAY_UI_ENABLED=true
+export MCPGATEWAY_ADMIN_API_ENABLED=true
+
 BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
   mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
 
@@ -227,6 +231,38 @@ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
 ```
+
+<details>
+<summary><strong>Windows (PowerShell) quick-start</strong></summary>
+
+```powershell
+# 1️⃣  Isolated env + install from PyPI
+mkdir mcpgateway ; cd mcpgateway
+python -m venv .venv ; .\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install mcp-contextforge-gateway
+
+# 2️⃣  Environment variables (session-only)
+$Env:MCPGATEWAY_UI_ENABLED        = "true"
+$Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
+$Env:BASIC_AUTH_PASSWORD          = "changeme"      # admin/changeme
+$Env:JWT_SECRET_KEY               = "my-test-key"
+
+# 3️⃣  Launch the gateway
+mcpgateway.exe --host 0.0.0.0 --port 4444
+
+#   Optional: background it
+# Start-Process -FilePath "mcpgateway.exe" -ArgumentList "--host 0.0.0.0 --port 4444"
+
+# 4️⃣  Bearer token and smoke-test
+$Env:MCPGATEWAY_BEARER_TOKEN = python -m mcpgateway.utils.create_jwt_token `
+    --username admin --exp 10080 --secret my-test-key
+
+curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
+     http://127.0.0.1:4444/version | jq
+```
+
+</details>
 
 <details>
 <summary><strong>More configuration</strong></summary>
@@ -241,7 +277,7 @@ Copy [.env.example](.env.example) to `.env` and tweak any of the settings (or us
 ```bash
 # 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
 python3 -m mcpgateway.translate \
-     --stdio "docker run --rm -it -p 8888:8080 ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
+     --stdio "docker run --rm -i -p 8888:8080 ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
      --port 8003
 
 # Or using the official mcp-server-git using uvx:
@@ -255,16 +291,22 @@ python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 # 2️⃣  Register it with the gateway
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"fast_time","url":"http://localhost:8002/sse"}' \
+     -d '{"name":"fast_time","url":"http://localhost:9000/sse"}' \
      http://localhost:4444/gateways
 
 # 3️⃣  Verify tool catalog
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools | jq
 
-# 4️⃣  Create a *virtual server* bundling those tools
+# 4️⃣  Create a *virtual server* bundling those tools. Use the ID of tools from the tool catalog (Step #3) and pass them in the associatedTools list.
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["1"]}' \
+     -d '{"name":"time_server","description":"Fast time tools","associatedTools":[<ID_OF_TOOLS>]}' \
+     http://localhost:4444/servers | jq
+
+# Example curl
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"
+     -H "Content-Type: application/json"
+     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["6018ca46d32a4ac6b4c054c13a1726a2"]}' \
      http://localhost:4444/servers | jq
 
 # 5️⃣  List servers (should now include the UUID of the newly created virtual server)
@@ -332,19 +374,21 @@ Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 ```bash
 docker run -d --name mcpgateway \
   -p 4444:4444 \
+  -e MCPGATEWAY_UI_ENABLED=true \
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.3.0
+  ghcr.io/ibm/mcp-context-forge:0.3.1
 
 # Tail logs (Ctrl+C to quit)
 docker logs -f mcpgateway
 
 # Generating an API key
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.3.0 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.3.1 \
   python -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
 ```
 
@@ -355,16 +399,24 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `
 ```bash
 mkdir -p $(pwd)/data
 
+touch $(pwd)/data/mcp.db
+
+sudo chown -R :docker $(pwd)/data
+
+chmod 777 $(pwd)/data
+
 docker run -d --name mcpgateway \
   --restart unless-stopped \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
+  -e MCPGATEWAY_UI_ENABLED=true \
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
-  ghcr.io/ibm/mcp-context-forge:0.3.0
+  ghcr.io/ibm/mcp-context-forge:0.3.1
 ```
 
 SQLite now lives on the host at `./data/mcp.db`.
@@ -372,13 +424,23 @@ SQLite now lives on the host at `./data/mcp.db`.
 #### 3 - Local tool discovery (host network)
 
 ```bash
+mkdir -p $(pwd)/data
+
+touch $(pwd)/data/mcp.db
+
+sudo chown -R :docker $(pwd)/data
+
+chmod 777 $(pwd)/data
+
 docker run -d --name mcpgateway \
   --network=host \
+  -e MCPGATEWAY_UI_ENABLED=true \
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
   -e HOST=0.0.0.0 \
   -e PORT=4444 \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -v $(pwd)/data:/data \
-  ghcr.io/ibm/mcp-context-forge:0.3.0
+  ghcr.io/ibm/mcp-context-forge:0.3.1
 ```
 
 Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
@@ -394,7 +456,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.3.0
+  ghcr.io/ibm/mcp-context-forge:0.3.1
 ```
 
 #### 2 - Persist SQLite
@@ -402,22 +464,36 @@ podman run -d --name mcpgateway \
 ```bash
 mkdir -p $(pwd)/data
 
+touch $(pwd)/data/mcp.db
+
+sudo chown -R :docker $(pwd)/data
+
+chmod 777 $(pwd)/data
+
 podman run -d --name mcpgateway \
   --restart=on-failure \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.3.0
+  ghcr.io/ibm/mcp-context-forge:0.3.1
 ```
 
 #### 3 - Host networking (rootless)
 
 ```bash
+mkdir -p $(pwd)/data
+
+touch $(pwd)/data/mcp.db
+
+sudo chown -R :docker $(pwd)/data
+
+chmod 777 $(pwd)/data
+
 podman run -d --name mcpgateway \
   --network=host \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.3.0
+  ghcr.io/ibm/mcp-context-forge:0.3.1
 ```
 
 ---
@@ -426,7 +502,7 @@ podman run -d --name mcpgateway \
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
 * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `v0.3.0`) instead of `latest` for reproducible builds.
+* **Pinned tags** - Use an explicit version (e.g. `v0.3.1`) instead of `latest` for reproducible builds.
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
@@ -472,7 +548,7 @@ docker run --rm -i \
   -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1 \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:0.3.0 \
+  ghcr.io/ibm/mcp-context-forge:0.3.1 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -552,7 +628,7 @@ docker run -i --rm \
   -e MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
   -e MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
-  ghcr.io/ibm/mcp-context-forge:0.3.0 \
+  ghcr.io/ibm/mcp-context-forge:0.3.1 \
   python3 -m mcpgateway.wrapper
 ```
 
