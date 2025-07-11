@@ -37,6 +37,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
 # First-Party
+from mcpgateway import __version__
 from mcpgateway.config import settings
 from mcpgateway.db import engine
 from mcpgateway.utils.verify_credentials import require_auth
@@ -258,6 +259,7 @@ def _build_payload(
         "uptime_seconds": int(time.time() - START_TIME),
         "app": {
             "name": settings.app_name,
+            "version": __version__,
             "mcp_protocol_version": settings.protocol_version,
             "git_revision": _git_revision(),
         },

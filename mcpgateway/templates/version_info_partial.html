@@ -1,44 +1,54 @@
 <!-- htmlhint doctype-first:false -->
 <div class="space-y-6">
-  <!-- Application Overview Card (Similar to System Summary) -->
-  <div class="bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white">
-    <h2 class="text-2xl font-bold mb-4 flex items-center">
-      <svg class="h-8 w-8 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none"
-           viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
-      </svg>
-      Application Information
-    </h2>
+<!-- Application Overview Card (Similar to System Summary) -->
+<div class="bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white">
+  <h2 class="text-2xl font-bold mb-4 flex items-center">
+    <svg class="h-8 w-8 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none"
+         viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+    </svg>
+    Application Information
+  </h2>
 
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-      <div class="text-center">
-        <div class="text-2xl font-bold">{{ payload.app.name }}</div>
-        <div class="text-blue-100 text-sm">Application</div>
-      </div>
-      <div class="text-center">
-        <div class="text-2xl font-bold">{{ payload.app.mcp_protocol_version }}</div>
-        <div class="text-blue-100 text-sm">MCP Protocol</div>
-      </div>
-      <div class="text-center">
-        <div class="text-2xl font-bold">{{ payload.uptime_seconds }}s</div>
-        <div class="text-blue-100 text-sm">Uptime</div>
-      </div>
-      <div class="text-center">
-        <div class="text-2xl font-bold">{{ payload.host }}</div>
-        <div class="text-blue-100 text-sm">Host</div>
-      </div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="text-center">
+      <div class="text-2xl font-bold">{{ payload.app.name }}</div>
+      <div class="text-blue-100 text-sm">Application</div>
     </div>
+    <div class="text-center">
+      <div class="text-2xl font-bold">{{ payload.host }}</div>
+      <div class="text-blue-100 text-sm">Host</div>
+    </div>
+    <div class="text-center">
+      <div class="text-2xl font-bold">{{ payload.app.mcp_protocol_version }}</div>
+      <div class="text-blue-100 text-sm">MCP Protocol</div>
+    </div>
+    <div class="text-center">
+      <div class="text-2xl font-bold">{{ payload.uptime_seconds }}s</div>
+      <div class="text-blue-100 text-sm">Uptime</div>
+    </div>
+  </div>
 
-    {% if payload.app.git_revision %}
-    <div class="mt-4 pt-4 border-t border-blue-300">
+  {% if payload.app.version or payload.app.git_revision %}
+  <div class="mt-4 pt-4 border-t border-blue-300">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {% if payload.app.version %}
+      <div class="text-center">
+        <div class="text-lg font-medium">Version</div>
+        <div class="text-blue-100 font-mono text-sm">{{ payload.app.version }}</div>
+      </div>
+      {% endif %}
+      {% if payload.app.git_revision %}
       <div class="text-center">
         <div class="text-lg font-medium">Git Revision</div>
         <div class="text-blue-100 font-mono text-sm">{{ payload.app.git_revision }}</div>
       </div>
+      {% endif %}
     </div>
-    {% endif %}
   </div>
+  {% endif %}
+</div>
 
   <!-- Platform & Runtime Card -->
   <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
