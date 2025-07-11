@@ -3323,7 +3323,6 @@ async function handleGatewayTestSubmit(e) {
     try {
         // Show loading
         if (loading) {
-            console.log(loading)
             loading.classList.remove("hidden");
         }
         if (resultDiv) {
@@ -3415,7 +3414,6 @@ async function handleGatewayTestSubmit(e) {
             </div>
         `;
         }
-        console.log("✓ Gateway test completed successfully");
     } catch (error) {
         console.error("Gateway test error:", error);
         if (responseDiv) {
