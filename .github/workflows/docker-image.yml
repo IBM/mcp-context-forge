@@ -185,7 +185,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🚀  Push image to GHCR
+      - name: 🚀 Push image to GHCR
+        if: github.ref == 'refs/heads/main'
         run: |
           docker push $IMAGE_NAME:${{ env.TAG }}
           docker push $IMAGE_NAME:latest
