@@ -736,7 +736,7 @@ sonar-info:
 trivy:
 	@systemctl --user enable --now podman.socket
 	@echo "🔎  trivy vulnerability scan..."
-	@trivy --format table --severity HIGH,CRITICAL image localhost/$(PROJECT_NAME)/$(PROJECT_NAME)
+	@trivy --format table --severity HIGH,CRITICAL image $(PROJECT_NAME)/$(PROJECT_NAME)
 
 # help: dockle               - Lint the built container image via tarball (no daemon/socket needed)
 .PHONY: dockle
