@@ -3251,7 +3251,7 @@ async function testGateway(gatewayURL) {
 
         // Initialize CodeMirror editors if they don't exist
         if (!gatewayTestHeadersEditor) {
-            const headersElement = safeGetElement("headers-json");
+            const headersElement = safeGetElement("gateway-test-headers");
             if (headersElement && window.CodeMirror) {
                 gatewayTestHeadersEditor = window.CodeMirror.fromTextArea(
                     headersElement,
@@ -3266,7 +3266,7 @@ async function testGateway(gatewayURL) {
         }
 
         if (!gatewayTestBodyEditor) {
-            const bodyElement = safeGetElement("body-json");
+            const bodyElement = safeGetElement("gateway-test-body");
             if (bodyElement && window.CodeMirror) {
                 gatewayTestBodyEditor = window.CodeMirror.fromTextArea(
                     bodyElement,
@@ -3316,13 +3316,14 @@ async function testGateway(gatewayURL) {
 async function handleGatewayTestSubmit(e) {
     e.preventDefault();
 
-    const loading = safeGetElement("loading");
-    const responseDiv = safeGetElement("response-json");
-    const resultDiv = safeGetElement("test-result");
+    const loading = safeGetElement("gateway-test-loading");
+    const responseDiv = safeGetElement("gateway-test-response-json");
+    const resultDiv = safeGetElement("gateway-test-result");
 
     try {
         // Show loading
         if (loading) {
+            console.log(loading)
             loading.classList.remove("hidden");
         }
         if (resultDiv) {
@@ -3395,13 +3396,26 @@ async function handleGatewayTestSubmit(e) {
 
         if (responseDiv) {
             // Display result safely
-            const pre = document.createElement("pre");
-            pre.className =
-                "bg-gray-100 p-4 rounded overflow-auto max-h-96 dark:bg-gray-800 dark:text-gray-100";
-            pre.textContent = JSON.stringify(result, null, 2);
-            responseDiv.innerHTML = "";
-            responseDiv.appendChild(pre);
+            responseDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <h4>✅ Connection Successful</h4>
+                    <p><strong>Status Code:</strong> ${result.statusCode}</p>
+                    <p><strong>Response Time:</strong> ${result.latencyMs}ms</p>
+                    ${result.body ? `<details>
+                        <summary class='cursor-pointer'>Response Body</summary>
+                        <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto">${JSON.stringify(result.body, null, 2)}</pre>
+                    </details>` : ''}
+                </div>
+            `;
+        } else {
+        responseDiv.innerHTML = `
+            <div class="alert alert-error">
+                <h4>❌ Connection Failed</h4>
+                <p>${result.error || 'Unable to connect to the server'}</p>
+            </div>
+        `;
         }
+        console.log("✓ Gateway test completed successfully");
     } catch (error) {
         console.error("Gateway test error:", error);
         if (responseDiv) {
@@ -3447,8 +3461,8 @@ function handleGatewayTestClose() {
         }
 
         // Clear response
-        const responseDiv = safeGetElement("response-json");
-        const resultDiv = safeGetElement("test-result");
+        const responseDiv = safeGetElement("gateway-test-response-json");
+        const resultDiv = safeGetElement("gateway-test-result");
 
         if (responseDiv) {
             responseDiv.innerHTML = "";
