@@ -217,6 +217,10 @@ pip install --upgrade pip
 pip install mcp-contextforge-gateway
 
 # 2️⃣  Launch on all interfaces with custom creds & secret key
+# Enable the Admin API endpoints (true/false) - disabled by default
+export MCPGATEWAY_UI_ENABLED=true
+export MCPGATEWAY_ADMIN_API_ENABLED=true
+
 BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
   mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
 
