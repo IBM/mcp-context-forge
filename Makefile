@@ -20,7 +20,7 @@ TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
 # Project-wide clean-up targets
 DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .pytype \
                  dist build site .eggs *.egg-info .cache htmlcov certs \
-                 $(VENV_DIR).sbom $(COVERAGE_DIR) \
+                 $(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
                  node_modules
 
 FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
@@ -29,7 +29,8 @@ FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
                   $(DOCS_DIR)/pstats.png \
                   $(DOCS_DIR)/docs/test/sbom.md \
                   $(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
-				  $(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD)
+				  $(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
+                  *.db *.sqlite *.sqlite3 mcp.db-journal
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
@@ -156,7 +157,7 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 	chmod 640 certs/key.pem
 
 ## --- House-keeping -----------------------------------------------------------
-# help: clean                - Remove caches, build artefacts, virtualenv, docs, certs, coverage, SBOM, etc.
+# help: clean                - Remove caches, build artefacts, virtualenv, docs, certs, coverage, SBOM, database files, etc.
 .PHONY: clean
 clean:
 	@echo "🧹  Cleaning workspace..."

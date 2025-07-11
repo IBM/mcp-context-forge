@@ -532,6 +532,8 @@ class Root(BaseModel):
         name (Optional[str]): An optional human-readable name.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     uri: Union[FileUrl, AnyUrl] = Field(..., description="Unique identifier for the root")
     name: Optional[str] = Field(None, description="Optional human-readable name")
 

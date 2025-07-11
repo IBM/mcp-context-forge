@@ -89,7 +89,7 @@ def mock_tool():
     tool.auth_username = None
     tool.auth_password = None
     tool.auth_token = None
-    tool.auth_value = None  # Add this field
+    tool.auth_value = None
     tool.gateway_id = "1"
     tool.gateway = mock_gateway
     tool.annotations = {}
@@ -273,7 +273,7 @@ class TestToolService:
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
             gateway_id="1",
         )
 
@@ -320,7 +320,7 @@ class TestToolService:
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
         )
 
         # Should raise ToolError wrapping ToolNameConflictError
@@ -345,7 +345,7 @@ class TestToolService:
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
         )
 
         # Should raise ToolError wrapping ToolNameConflictError
@@ -372,7 +372,7 @@ class TestToolService:
             url="http://example.com/tools/test",
             description="A test tool",
             integration_type="MCP",
-            request_type="POST",
+            request_type="SSE",
         )
 
         # Should raise ToolError

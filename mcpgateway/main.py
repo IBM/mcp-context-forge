@@ -290,14 +290,14 @@ class MCPPathRewriteMiddleware:
     - All other requests are passed through without change.
     """
 
-    def __init__(self, app):
+    def __init__(self, application):
         """
         Initialize the middleware with the ASGI application.
 
         Args:
-            app (Callable): The next ASGI application in the middleware stack.
+            application (Callable): The next ASGI application in the middleware stack.
         """
-        self.app = app
+        self.application = application
 
     async def __call__(self, scope, receive, send):
         """
@@ -310,7 +310,7 @@ class MCPPathRewriteMiddleware:
         """
         # Only handle HTTP requests, HTTPS uses scope["type"] == "http" in ASGI
         if scope["type"] != "http":
-            await self.app(scope, receive, send)
+            await self.application(scope, receive, send)
             return
 
         # Call auth check first
@@ -325,7 +325,7 @@ class MCPPathRewriteMiddleware:
             scope["path"] = "/mcp"
             await streamable_http_session.handle_streamable_http(scope, receive, send)
             return
-        await self.app(scope, receive, send)
+        await self.application(scope, receive, send)
 
 
 # Configure CORS
@@ -892,7 +892,7 @@ async def server_get_prompts(
 @tool_router.get("", response_model=Union[List[ToolRead], List[Dict], Dict, List])
 @tool_router.get("/", response_model=Union[List[ToolRead], List[Dict], Dict, List])
 async def list_tools(
-    cursor: Optional[str] = None,  # Add this parameter
+    cursor: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
@@ -1138,7 +1138,7 @@ async def toggle_resource_status(
 @resource_router.get("", response_model=List[ResourceRead])
 @resource_router.get("/", response_model=List[ResourceRead])
 async def list_resources(
-    cursor: Optional[str] = None,  # Add this parameter
+    cursor: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
