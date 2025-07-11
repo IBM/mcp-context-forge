@@ -3334,7 +3334,7 @@ async function handleGatewayTestSubmit(e) {
 
         // Get form data with validation
         const formData = new FormData(form);
-        const baseUrl = formData.get("gateway-test-url");
+        const baseUrl = formData.get("url");
         const method = formData.get("method");
         const path = formData.get("path");
 
