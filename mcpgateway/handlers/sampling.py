@@ -95,7 +95,6 @@ class SamplingHandler:
                 if not self._validate_message(msg):
                     raise SamplingError(f"Invalid message format: {msg}")
 
-            # pylint: disable=fixme
             # TODO: Sample from selected model
             # For now return mock response
             response = self._mock_sample(messages=messages)
@@ -162,7 +161,6 @@ class SamplingHandler:
         Returns:
             Messages with added context
         """
-        # pylint: disable=fixme
         # TODO: Implement context gathering based on type
         # For now return original messages
         return messages
