@@ -233,6 +233,38 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 ```
 
 <details>
+<summary><strong>Windows (PowerShell) quick-start</strong></summary>
+
+```powershell
+# 1️⃣  Isolated env + install from PyPI
+mkdir mcpgateway ; cd mcpgateway
+python -m venv .venv ; .\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install mcp-contextforge-gateway
+
+# 2️⃣  Environment variables (session-only)
+$Env:MCPGATEWAY_UI_ENABLED        = "true"
+$Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
+$Env:BASIC_AUTH_PASSWORD          = "changeme"      # admin/changeme
+$Env:JWT_SECRET_KEY               = "my-test-key"
+
+# 3️⃣  Launch the gateway
+mcpgateway.exe --host 0.0.0.0 --port 4444
+
+#   Optional: background it
+# Start-Process -FilePath "mcpgateway.exe" -ArgumentList "--host 0.0.0.0 --port 4444"
+
+# 4️⃣  Bearer token and smoke-test
+$Env:MCPGATEWAY_BEARER_TOKEN = python -m mcpgateway.utils.create_jwt_token `
+    --username admin --exp 10080 --secret my-test-key
+
+curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
+     http://127.0.0.1:4444/version | jq
+```
+
+</details>
+
+<details>
 <summary><strong>More configuration</strong></summary>
 
 Copy [.env.example](.env.example) to `.env` and tweak any of the settings (or use them as env variables).
@@ -342,6 +374,8 @@ Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 ```bash
 docker run -d --name mcpgateway \
   -p 4444:4444 \
+  -e MCPGATEWAY_UI_ENABLED=true \
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
@@ -375,6 +409,8 @@ docker run -d --name mcpgateway \
   --restart unless-stopped \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
+  -e MCPGATEWAY_UI_ENABLED=true \
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
@@ -398,6 +434,8 @@ chmod 777 $(pwd)/data
 
 docker run -d --name mcpgateway \
   --network=host \
+  -e MCPGATEWAY_UI_ENABLED=true \
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
   -e HOST=0.0.0.0 \
   -e PORT=4444 \
   -e DATABASE_URL=sqlite:////data/mcp.db \
