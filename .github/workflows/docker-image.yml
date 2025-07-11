@@ -195,9 +195,11 @@ jobs:
       # 8️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
       # -------------------------------------------------------------
       - name: 📥 Install Cosign
+        if: github.ref == 'refs/heads/main'
         uses: sigstore/cosign-installer@v3 # provides the matching CLI
 
       - name: 🔏 Sign & attest images (latest + timestamp)
+        if: github.ref == 'refs/heads/main'
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
