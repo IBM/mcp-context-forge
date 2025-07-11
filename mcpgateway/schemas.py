@@ -622,7 +622,7 @@ class ToolResult(BaseModelWithConfigDict):
 class ResourceCreate(BaseModel):
     """
     Schema for creating a new resource.
-    
+
     Attributes:
         model_config (ConfigDict): Configuration for the model.
         uri (str): Unique URI for the resource.
