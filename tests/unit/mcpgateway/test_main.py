@@ -212,7 +212,7 @@ class TestHealthAndInfrastructure:
     def test_root_redirect(self, test_client):
         """Test that root path behavior depends on UI configuration."""
         response = test_client.get("/", follow_redirects=False)
-        
+
         # Check if UI is enabled
         if settings.mcpgateway_ui_enabled:
             # When UI is enabled, should redirect to admin

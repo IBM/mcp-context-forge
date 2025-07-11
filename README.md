@@ -375,7 +375,7 @@ Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e MCPGATEWAY_UI_ENABLED=true \
-  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
@@ -410,7 +410,7 @@ docker run -d --name mcpgateway \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
   -e MCPGATEWAY_UI_ENABLED=true \
-  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
@@ -435,7 +435,7 @@ chmod 777 $(pwd)/data
 docker run -d --name mcpgateway \
   --network=host \
   -e MCPGATEWAY_UI_ENABLED=true \
-  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e PORT=4444 \
   -e DATABASE_URL=sqlite:////data/mcp.db \
