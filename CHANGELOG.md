@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [0.3.1] - 2025-01-11 - Security and Data Validation (Pydantic, UI)
+
+### Security Improvements
+
+> This release adds enhanced validation rules in the Pydantic data models to help prevent XSS injection when data from untrusted MCP servers is displayed in downstream UIs. You should still ensure any downstream agents and applications perform data sanitization coming from untrusted MCP servers (apply defense in depth).
+
+> Data validation has been strengthened across all API endpoints (/admin and main), with additional input and output validation in the UI to improve overall security.
+
+> The Admin UI continues to follow security best practices with localhost-only access by default and feature flag controls - now set to disabled by default, as shown in `.env.example` file (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=false`).
+
+* **Comprehensive Input Validation Framework** (#339, #340):
+  * Enhanced data validation for all `/admin` endpoints - tools, resources, prompts, gateways, and servers
+  * Extended validation framework to all non-admin API endpoints for consistent data integrity
+  * Implemented configurable validation rules with sensible defaults:
+    - Character restrictions: names `^[a-zA-Z0-9_\-\s]+$`, tool names `^[a-zA-Z][a-zA-Z0-9_]*$`
+    - URL scheme validation for approved protocols (`http://`, `https://`, `ws://`, `wss://`)
+    - JSON nesting depth limits (default: 10 levels) to prevent resource exhaustion
+    - Field-specific length limits (names: 255, descriptions: 4KB, content: 1MB)
+    - MIME type validation for resources
+  * Clear, helpful error messages guide users to correct input formats
+
+* **Enhanced Output Handling in Admin UI** (#336):
+  * Improved data display safety - all user-controlled content now properly HTML-escaped
+  * Protected fields include prompt templates, tool names/annotations, resource content, gateway configs
+  * Ensures user data displays as intended without unexpected behavior
+
+### Added
+
+* **Test MCP Server Connectivity Tool** (#181) - new debugging feature in Admin UI to validate gateway connections
+* **Persistent Admin UI Filter State** (#177) - filters and view preferences now persist across page refreshes
+* **Revamped UI Components** - metrics and version tabs rewritten from scratch for consistency with overall UI layout
+
+### Changed
+
+* **Code Quality - Zero Lint Status** (#338):
+  * Resolved all 312 code quality issues across the web stack
+  * Updated 14 JavaScript patterns to follow best practices
+  * Corrected 2 HTML structure improvements
+  * Standardized JavaScript naming conventions
+  * Removed unused code for cleaner maintenance
+
+* **Validation Configuration** - new environment variables for customization. Update your `.env`:
+  ```bash
+  VALIDATION_MAX_NAME_LENGTH=255
+  VALIDATION_MAX_DESCRIPTION_LENGTH=4096
+  VALIDATION_MAX_JSON_DEPTH=10
+  VALIDATION_ALLOWED_URL_SCHEMES=["http://", "https://", "ws://", "wss://"]
+  ```
+
+* **Performance** - validation overhead kept under 10ms per request with efficient patterns
+
+---
+
 ## [0.3.0] - 2025-07-08
 
 ### Added

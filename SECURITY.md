@@ -1,12 +1,54 @@
 # 🔐 Security Policy
 
+**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
+
+## ⚠️ Beta Software Notice
+
+**Current Version: 0.3.1 (Beta)**
+
+MCP Gateway is currently in early beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
+
+### Admin UI is Development-Only
+
+**The Admin UI should never be exposed in production environments**. It is designed exclusively for:
+
+- **Local development** on developer workstations
+- **Localhost-only access** with trusted MCP servers
+- **Single-user administration** without access controls
+
+For production deployments:
+- **Disable the Admin UI and APIs completely** (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=true` in `.env`)
+- **Use only the REST API** with proper authentication
+- **Build your own production-grade UI** with appropriate security controls
+
+### Multi-Tenancy Considerations
+
+**MCP Gateway is not yet multi-tenant ready**. If you're building a platform that serves multiple users or teams, you must implement the following in your own application layer:
+
+- **User isolation and data segregation** - ensure users cannot access each other's configurations
+- **Role-Based Access Control (RBAC)** - manage permissions per user/team/organization
+- **Resource cleanup and lifecycle management** - handle orphaned resources and quota enforcement
+- **Additional input validation** - enforce tenant-specific business rules and limits
+- **Audit logging** - track actions per user for compliance and security
+- **Team and organization management** - handle user groups and hierarchies
+
+MCP Gateway should be deployed as a **single-tenant component** within your larger multi-tenant architecture. Many enterprise features including native RBAC, team management, and tenant isolation are planned - see our [Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) for upcoming releases.
+
+### General Beta Limitations
+
+- **Expect breaking changes** between minor versions
+- **Validate all MCP servers** before connecting them to the gateway
+- **Monitor security advisories** closely
+- **Test thoroughly** in isolated environments before deployment
+- **Review the codebase** to understand current capabilities and limitations
+
 ## Multi-layered Defense Strategy
 
 The MCP Gateway project implements a comprehensive, multi-layered security approach designed to protect against vulnerabilities at every stage of the development lifecycle. Our security strategy is built on the principle of "defense in depth," and "secure by design", incorporating Static Application Security Testing (SAST), Dynamic Application Security Testing (DAST), Software Composition Analysis (SCA), Interactive Application Security Testing (IAST), fuzz testing, mutation testing, chaos engineering, mandatory code reviews and continuous monitoring to ensure the highest security standards.
 
 ### Security Philosophy
 
-As a gateway service that handles Model Context Protocol (MCP) communications and potentially sensitive data flows, security is paramount to our design philosophy. We recognize that modern software security requires proactive measures rather than reactive responses - an a "secure by design" mindset. Our approach combines industry-standard security practices, and secure "defaults" with cutting-edge automated tooling to create a robust security posture.
+As a gateway service that handles Model Context Protocol (MCP) communications and potentially sensitive data flows, security is paramount to our design philosophy. We recognize that modern software security requires proactive measures rather than reactive responses - an a "secure by design" mindset. Our approach combines industry-standard security practices, and secure "defaults" with automated tooling to create a robust security posture.
 
 Here's an expanded section for that part:
 
@@ -16,7 +58,7 @@ Here's an expanded section for that part:
 - **Threat Modeling & Risk Assessment**: Regular security assessments evaluate our attack surface, identify potential threat vectors, and validate our defense mechanisms against real-world attack scenarios
 - **Community-Driven Security**: We actively engage with the security research community, maintain responsible disclosure processes, and leverage collective intelligence to identify and address emerging threats
 - **Security Champion Program**: Developers across the project receive security training and act as security advocates within their teams, creating a culture of security awareness
-- **Penetration Testing**: Regular security assessments by internal and external security professionals validate our defenses against sophisticated attack techniques
+- **Penetration Testing**: Regular security assessments
 - **Security Architecture Review**: All major design decisions undergo security architecture review to ensure security considerations are embedded from the earliest stages.
 
 This human-centered approach ensures that security is not just a technical implementation detail, but a fundamental aspect of how we design, build, and maintain the MCP Gateway service.
@@ -25,7 +67,7 @@ This human-centered approach ensures that security is not just a technical imple
 
 Our security pipeline operates at multiple levels:
 
-**Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include security scanners like Bandit, which identifies common security issues in Python code, along with type checking and code quality enforcement. Developers can run `make pre-commit` locally to execute these same security checks before pushing code.
+**Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include security scanners like Bandit, which identifies common security issues in Python code, along with type checking and code quality enforcement. Developers can run `make pre-commit bandit lint` locally to execute these same security checks before pushing code.
 
 **Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **24+ security scans** triggering automatically on every PR, including CodeQL semantic analysis for vulnerability detection, dependency vulnerability scanning, and container security assessment.
 
@@ -75,7 +117,111 @@ Our security posture is continuously evolving. We regularly update our toolchain
 
 ---
 
-## Security Scanning Process
+## 🛡️ Data Validation and Secure Defaults
+
+### Input Validation Framework
+
+As of version 0.3.1, MCP Gateway implements comprehensive input validation across all API endpoints using Pydantic data models with strict validation rules:
+
+- **Character restrictions** for names and identifiers to prevent injection attacks
+- **URL scheme validation** blocking potentially dangerous protocols (`javascript:`, `data:`, `vbscript:`)
+- **JSON nesting depth limits** to prevent resource exhaustion attacks
+- **Field-specific length limits** to ensure predictable resource usage
+- **MIME type validation** for content type security
+
+These validation rules help prevent XSS injection when data from untrusted MCP servers is displayed in downstream UIs. However, **the gateway is only one layer of defense** - downstream applications should implement their own validation and sanitization appropriate to their specific use cases.
+
+### Secure by Default Configuration
+
+Starting with v0.3.1, MCP Gateway follows the principle of "secure by default":
+
+- **Admin UI and API are disabled by default** - must be explicitly enabled via environment variables
+- **Authentication is required** for all endpoints when enabled
+- **Admin UI binds to localhost only** preventing external access
+- **Minimal container images** with non-root execution
+- **Read-only filesystems** in container deployments
+
+To enable admin features for development:
+```bash
+MCPGATEWAY_UI_ENABLED=true        # Default: false
+MCPGATEWAY_ADMIN_API_ENABLED=true # Default: false
+```
+
+**Important**: The Admin UI is provided for developer convenience only and should **never be enabled in production deployments**.
+
+---
+
+## 🔒 Defense in Depth Strategy
+
+### Gateway as One Layer
+
+The MCP Gateway provides important security controls but is designed to be **one component in a comprehensive defense-in-depth strategy**:
+
+1. **Upstream validation**: All MCP servers should be validated and trusted before connection
+2. **Gateway validation**: Input/output validation and sanitization at the gateway level
+3. **Downstream validation**: Applications consuming gateway data must implement their own security controls
+4. **Network isolation**: Use network policies and firewalls to restrict access
+5. **Monitoring**: Implement logging and alerting for suspicious activities
+
+### MCP Server Trust Model
+
+Before connecting any MCP server to the gateway:
+
+- **Verify server authenticity** and source code provenance
+- **Review server permissions** and data access patterns
+- **Test in isolation** before production deployment
+- **Monitor server behavior** for anomalies
+- **Implement rate limiting** for untrusted servers
+- **Use authentication** when available (Basic Auth, Bearer tokens)
+
+### Downstream Application Responsibilities
+
+Applications consuming data from MCP Gateway should:
+
+- **Never trust data implicitly** - validate all inputs
+- **Implement context-appropriate sanitization** for their UI framework
+- **Use Content Security Policy (CSP)** headers
+- **Escape data appropriately** for the output context (HTML, JavaScript, SQL, etc.)
+- **Implement their own authentication** and authorization
+- **Monitor for security anomalies** in rendered content
+
+---
+
+## 📋 Security Checklist for Deployments
+
+When deploying MCP Gateway in production:
+
+- [ ] Disable Admin UI and API in production (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=false`)
+- [ ] Enable authentication for all endpoints
+- [ ] Configure TLS/HTTPS with valid certificates (never run HTTP in production)
+- [ ] Validate and vet all connected MCP servers
+- [ ] Implement network-level access controls and firewall rules
+- [ ] Configure appropriate rate limits per endpoint and per client
+- [ ] Set up comprehensive monitoring, alerting, and anomaly detection
+- [ ] Review and customize validation rules for your use case
+- [ ] Secure database connections (use TLS, strong passwords, restricted access)
+- [ ] Secure Redis connections if using Redis (password, TLS, network isolation)
+- [ ] Configure resource limits (CPU, memory) to prevent DoS attacks
+- [ ] Implement proper secrets management (never hardcode credentials)
+- [ ] Set up structured logging without exposing sensitive data
+- [ ] Configure CORS policies appropriately for your clients
+- [ ] Disable debug mode and verbose error messages in production
+- [ ] Implement backup and disaster recovery procedures
+- [ ] Document incident response procedures
+- [ ] Set up log rotation and secure log storage
+- [ ] Review container security settings (non-root, read-only filesystem)
+- [ ] Ensure downstream applications implement their own security controls
+- [ ] Keep the gateway updated to the latest version
+- [ ] Regular security audits of connected MCP servers
+- [ ] Implement session timeout and token rotation policies
+- [ ] Monitor and limit concurrent connections per client
+- [ ] Set up security scanning in your CI/CD pipeline
+- [ ] Review and restrict environment variable access and use Secrets Management
+
+Remember: Security is a shared responsibility across all components of your system. This checklist should be adapted based on your specific deployment environment and security requirements.
+---
+
+## 🔍 Security Scanning Process
 
 The following diagram illustrates our comprehensive security scanning pipeline:
 
@@ -237,12 +383,28 @@ flowchart TD
 
 ## 📦 Supported Versions and Security Updates
 
-All Container Images and Python dependencies are updated with every release (major or minor) or on CRITICAL/HIGH security vulnerabilities (triggering a minor release).
-We currently support only the latest version of this project, and only through the REST API.
-Admin UI / APIs are provided for developer convenience and should be disabled in production using the provided feature flags.
-Older versions are not maintained or patched.
+**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
 
-### Security Patching Policy
+### Version Support Policy
+
+- We support **only the latest version** of this project
+- Support is provided **only through the REST API** (not the Admin UI)
+- Admin UI/APIs are provided for developer convenience and **must be disabled in production**
+- **No backports**: Older versions are not maintained or patched
+- **No SLAs**: Security updates are provided on a best-effort basis by the community
+
+### Security Update Process
+
+All Container Images and Python dependencies are updated with every release (major or minor) or on CRITICAL/HIGH security vulnerabilities (triggering a minor release), subject to maintainer availability.
+
+### Community Support
+
+- **GitHub Issues**: Report bugs and security issues via GitHub
+- **Pull Requests**: Security fixes from the community are welcome
+- **No Commercial Support**: This project has no commercial support options
+- **Use at Your Own Risk**: Evaluate thoroughly before production use
+
+### 🚨 Security Patching Policy
 
 Our security patching strategy prioritizes rapid response to vulnerabilities while maintaining system stability:
 
@@ -254,7 +416,7 @@ Our security patching strategy prioritizes rapid response to vulnerabilities whi
 
 **Zero-Day Vulnerabilities**: Emergency patching procedures are activated immediately upon discovery, with hotfixes deployed within 12 hours where possible.
 
-### Automated Patch Management
+### 🤖 Automated Patch Management
 
 Our automated systems continuously monitor for:
 - Security advisories from Python Package Index (PyPI)
@@ -270,7 +432,7 @@ When vulnerabilities are detected, our CI/CD pipeline automatically:
 4. Initiates the release process for critical/high-severity issues
 5. Notifies maintainers and security team
 
-### Patch Verification Process
+### ✅ Patch Verification Process
 
 All security patches undergo rigorous verification within compressed timelines:
 - Automated security scanning to verify vulnerability remediation
