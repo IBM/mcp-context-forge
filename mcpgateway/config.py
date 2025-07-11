@@ -43,7 +43,16 @@ from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+import re
+import logging
 
+logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     """MCP Gateway configuration settings."""
@@ -203,6 +212,18 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
+
+    @field_validator("gateway_tool_name_separator")
+    @classmethod
+    def must_be_allowed_sep(cls, v: str) -> str:
+        if not re.fullmatch(r"^(-{1,2}|_)$", v):
+            logger.warning(
+                f"Invalid gateway_tool_name_separator '{v}'. "
+                "Must be '-', '--', or '_'. Defaulting to '-'.",
+                stacklevel=2
+            )
+            return "-"
+        return v
 
     @property
     def api_key(self) -> str:

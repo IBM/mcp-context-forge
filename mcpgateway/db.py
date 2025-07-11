@@ -123,35 +123,31 @@ def utc_now() -> datetime:
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+def refresh_slugs_on_startup():
+    with SessionLocal() as session:
+        gateways = session.query(Gateway).all()
+        updated = False
+        for gateway in gateways:
+            new_slug = slugify(gateway.name)
+            if gateway.slug != new_slug:
+                gateway.slug = new_slug
+                updated = True
+        if updated:
+            session.commit()
+
+        tools = session.query(Tool).all()
+        for tool in tools:
+            session.expire(tool, ["gateway"])
+
+        for tool in tools:
+            new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
+            if tool._computed_name != new_name:
+                tool._computed_name = new_name
+        session.commit()
 
 class Base(DeclarativeBase):
     """Base class for all models."""
 
-
-# TODO: cleanup, not sure why this is commented out?
-# # Association table for tools and gateways (federation)
-# tool_gateway_table = Table(
-#     "tool_gateway_association",
-#     Base.metadata,
-#     Column("tool_id", String, ForeignKey("tools.id"), primary_key=True),
-#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
-# )
-
-# # Association table for resources and gateways (federation)
-# resource_gateway_table = Table(
-#     "resource_gateway_association",
-#     Base.metadata,
-#     Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
-#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
-# )
-
-# # Association table for prompts and gateways (federation)
-# prompt_gateway_table = Table(
-#     "prompt_gateway_association",
-#     Base.metadata,
-#     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
-#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
-# )
 
 # Association table for servers and tools
 server_tool_association = Table(
