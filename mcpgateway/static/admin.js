@@ -4071,6 +4071,95 @@ if (window.performance && window.performance.mark) {
 }
 
 // ===================================================================
+// Tool Tips for components with Alpine.js
+// ===================================================================
+
+/* global Alpine */
+function setupTooltipsWithAlpine() {
+    document.addEventListener("alpine:init", () => {
+        console.log("Initializing Alpine tooltip directive...");
+
+        Alpine.directive("tooltip", (el, { expression }, { evaluate }) => {
+            let tooltipEl = null;
+
+            const showTooltip = (event) => {
+                const text = evaluate(expression);
+                if (!text) return;
+
+                tooltipEl = document.createElement("div");
+                tooltipEl.textContent = text;
+                tooltipEl.setAttribute("role", "tooltip");
+                tooltipEl.className =
+                    "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
+
+                document.body.appendChild(tooltipEl);
+
+                // Position tooltip
+                if (event?.clientX && event?.clientY) {
+                    moveTooltip(event);
+                    el.addEventListener("mousemove", moveTooltip);
+                } else {
+                    const rect = el.getBoundingClientRect();
+                    const scrollY = window.scrollY || window.pageYOffset;
+                    const scrollX = window.scrollX || window.pageXOffset;
+                    tooltipEl.style.left = `${rect.left + scrollX}px`;
+                    tooltipEl.style.top = `${rect.bottom + scrollY + 10}px`;
+                }
+
+                requestAnimationFrame(() => {
+                    tooltipEl.style.opacity = "1";
+                });
+            };
+
+            const moveTooltip = (e) => {
+                if (!tooltipEl) return;
+
+                const paddingX = 12;
+                const paddingY = 20;
+                const tipRect = tooltipEl.getBoundingClientRect();
+
+                let left = e.clientX + paddingX;
+                let top = e.clientY + paddingY;
+
+                if (left + tipRect.width > window.innerWidth - 8) {
+                    left = e.clientX - tipRect.width - paddingX;
+                }
+                if (top + tipRect.height > window.innerHeight - 8) {
+                    top = e.clientY - tipRect.height - paddingY;
+                }
+
+                tooltipEl.style.left = `${left}px`;
+                tooltipEl.style.top = `${top}px`;
+            };
+
+            const hideTooltip = () => {
+                if (!tooltipEl) return;
+                tooltipEl.style.opacity = "0";
+                el.removeEventListener("mousemove", moveTooltip);
+                setTimeout(() => {
+                    tooltipEl?.remove();
+                    tooltipEl = null;
+                }, 200);
+            };
+
+            // Mouse
+            el.addEventListener("mouseenter", showTooltip);
+            el.addEventListener("mouseleave", hideTooltip);
+
+            // Keyboard
+            el.addEventListener("focus", showTooltip);
+            el.addEventListener("blur", hideTooltip);
+
+            // Optional: hide on scroll or resize
+            window.addEventListener("scroll", hideTooltip, { passive: true });
+            window.addEventListener("resize", hideTooltip, { passive: true });
+        });
+    });
+}
+
+setupTooltipsWithAlpine();
+
+// ===================================================================
 // SINGLE CONSOLIDATED INITIALIZATION SYSTEM
 // ===================================================================
 
@@ -4078,6 +4167,8 @@ document.addEventListener("DOMContentLoaded", () => {
     console.log("🔐 DOM loaded - initializing secure admin interface...");
 
     try {
+        // initializeTooltips();
+
         // 1. Initialize CodeMirror editors first
         initializeCodeMirrorEditors();
 
