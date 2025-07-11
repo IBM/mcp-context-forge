@@ -45,8 +45,8 @@ ARG ROOTFS_PATH
 RUN set -euo pipefail \
     && dnf upgrade -y \
     && dnf install -y \
-         python${PYTHON_VERSION} \
-         python${PYTHON_VERSION}-devel \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-devel \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && dnf clean all
 
@@ -75,8 +75,8 @@ RUN set -euo pipefail \
     && mkdir -p "${ROOTFS_PATH}" \
     && dnf --installroot="${ROOTFS_PATH}" --releasever=9 upgrade -y \
     && dnf --installroot="${ROOTFS_PATH}" --releasever=9 install -y \
-         --setopt=install_weak_deps=0 \
-         python${PYTHON_VERSION} \
+        --setopt=install_weak_deps=0 \
+        python${PYTHON_VERSION} \
     && dnf clean all --installroot="${ROOTFS_PATH}"
 
 # ----------------------------------------------------------------------------
