@@ -266,6 +266,7 @@ class ToolCreate(BaseModel):
         auth (Optional[AuthenticationValues]): Authentication credentials (Basic or Bearer Token or custom headers) if required.
         gateway_id (Optional[str]): ID of the gateway for the tool.
     """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the tool")
@@ -632,6 +633,7 @@ class ResourceCreate(BaseModel):
         template (Optional[str]): Optional URI template for parameterized resources.
         content (Union[str, bytes]): Content of the resource, which can be text or binary.
     """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     uri: str = Field(..., description="Unique URI for the resource")
@@ -940,6 +942,7 @@ class PromptCreate(BaseModel):
         template (str): Template text for the prompt.
         arguments (List[PromptArgument]): List of arguments for the template.
     """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the prompt")
@@ -1134,6 +1137,7 @@ class GatewayCreate(BaseModel):
         auth_header_value (Optional[str]): Value for custom headers authentication.
         auth_value (Optional[str]): Alias for authentication value, used for better access post-validation.
     """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
@@ -1734,6 +1738,7 @@ class ServerCreate(BaseModel):
         associated_resources (Optional[List[str]]): Optional list of associated resource IDs.
         associated_prompts (Optional[List[str]]): Optional list of associated prompt IDs.
     """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="The server's name")
