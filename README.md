@@ -1876,6 +1876,7 @@ pysonar-scanner      - Run scan with Python wrapper (pysonar-scanner)
 sonar-info           - How to create a token & which env vars to export
 🛡️ SECURITY & PACKAGE SCANNING
 trivy                - Scan container image for CVEs (HIGH/CRIT). Needs podman socket enabled
+grype-scan           - Scan container for security audit and vulnerability scanning
 dockle               - Lint the built container image via tarball (no daemon/socket needed)
 hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 pip-audit            - Audit Python dependencies for published CVEs
