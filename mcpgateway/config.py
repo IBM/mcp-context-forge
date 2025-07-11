@@ -33,7 +33,9 @@ Environment variables:
 from functools import lru_cache
 from importlib.resources import files
 import json
+import logging
 from pathlib import Path
+import re
 from typing import Annotated, Any, Dict, List, Optional, Set, Union
 
 # Third-Party
@@ -43,16 +45,15 @@ from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
-import re
-import logging
 
 logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 logger = logging.getLogger(__name__)
+
 
 class Settings(BaseSettings):
     """MCP Gateway configuration settings."""
@@ -216,12 +217,15 @@ class Settings(BaseSettings):
     @field_validator("gateway_tool_name_separator")
     @classmethod
     def must_be_allowed_sep(cls, v: str) -> str:
+        """Validate the gateway tool name separator.
+        
+        Args:
+            v (str): The separator value to validate.
+        Returns:
+            str: The validated separator, defaults to '-' if invalid.
+        """
         if not re.fullmatch(r"^(-{1,2}|_)$", v):
-            logger.warning(
-                f"Invalid gateway_tool_name_separator '{v}'. "
-                "Must be '-', '--', or '_'. Defaulting to '-'.",
-                stacklevel=2
-            )
+            logger.warning(f"Invalid gateway_tool_name_separator '{v}'. " "Must be '-', '--', or '_'. Defaulting to '-'.", stacklevel=2)
             return "-"
         return v
 

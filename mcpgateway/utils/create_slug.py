@@ -2,6 +2,8 @@
 # Standard
 import re
 from unicodedata import normalize
+
+# First-Party
 from mcpgateway.config import settings
 
 # Helper regex patterns

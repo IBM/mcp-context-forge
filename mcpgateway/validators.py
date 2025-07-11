@@ -48,6 +48,7 @@ from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class SecurityValidator:
     """Configurable validation with MCP-compliant limits"""
 

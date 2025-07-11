@@ -145,6 +145,7 @@ MOCK_GATEWAY_READ = {
     "updated_at": "2023-01-01T00:00:00+00:00",
     "enabled": True,
     "reachable": True,
+    "auth_type": None,
 }
 
 MOCK_ROOT = {
@@ -212,7 +213,7 @@ class TestHealthAndInfrastructure:
     def test_root_redirect(self, test_client):
         """Test that root path behavior depends on UI configuration."""
         response = test_client.get("/", follow_redirects=False)
-        
+
         # Check if UI is enabled
         if settings.mcpgateway_ui_enabled:
             # When UI is enabled, should redirect to admin

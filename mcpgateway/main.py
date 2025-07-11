@@ -60,7 +60,7 @@ from mcpgateway.admin import admin_router
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.models import (
     InitializeRequest,
@@ -121,7 +121,6 @@ from mcpgateway.transports.streamablehttp_transport import (
     streamable_http_auth,
 )
 from mcpgateway.utils.db_isready import wait_for_db_ready
-from mcpgateway.db import refresh_slugs_on_startup
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.verify_credentials import require_auth, require_auth_override
 from mcpgateway.validation.jsonrpc import (
@@ -243,6 +242,7 @@ app = FastAPI(
     root_path=settings.app_root_path,
     lifespan=lifespan,
 )
+
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
     """

@@ -123,7 +123,10 @@ def utc_now() -> datetime:
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
 def refresh_slugs_on_startup():
+    """Refresh slugs for all gateways and names of tools on startup."""
+
     with SessionLocal() as session:
         gateways = session.query(Gateway).all()
         updated = False
@@ -139,11 +142,15 @@ def refresh_slugs_on_startup():
         for tool in tools:
             session.expire(tool, ["gateway"])
 
+        updated = False
         for tool in tools:
             new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
-            if tool._computed_name != new_name:
-                tool._computed_name = new_name
-        session.commit()
+            if tool.name != new_name:
+                tool.name = new_name
+                updated = True
+        if updated:
+            session.commit()
+
 
 class Base(DeclarativeBase):
     """Base class for all models."""
@@ -1230,3 +1237,18 @@ if __name__ == "__main__":
     wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
     init_db()
+
+
+@event.listens_for(Gateway, "before_insert")
+def set_gateway_slug(_mapper, _conn, target):
+    """Set the slug for a Gateway before insert."""
+
+    target.slug = slugify(target.name)
+
+@event.listens_for(Tool, "before_insert")
+def set_tool_name(_mapper, _conn, target):
+    """Set the computed name for a Tool before insert."""
+
+    sep = settings.gateway_tool_name_separator
+    gateway_slug = target.gateway.slug if target.gateway_id else ""
+    target.name = f"{gateway_slug}{sep}{slugify(target.original_name)}"

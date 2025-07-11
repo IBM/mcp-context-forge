@@ -249,6 +249,8 @@ class AuthenticationValues(BaseModelWithConfigDict):
 
 
 class ToolCreate(BaseModel):
+    """Schema for creating a new tool."""
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the tool")
@@ -603,6 +605,8 @@ class ToolResult(BaseModelWithConfigDict):
 
 
 class ResourceCreate(BaseModel):
+    """Schema for creating a new resource."""
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     uri: str = Field(..., description="Unique URI for the resource")
@@ -901,6 +905,8 @@ class PromptArgument(BaseModelWithConfigDict):
 
 
 class PromptCreate(BaseModel):
+    """Schema for creating a new prompt."""
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the prompt")
@@ -1078,6 +1084,8 @@ class PromptInvocation(BaseModelWithConfigDict):
 
 
 class GatewayCreate(BaseModel):
+    """Schema for creating a new federation gateway."""
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
@@ -1409,30 +1417,31 @@ class GatewayRead(BaseModelWithConfigDict):
     slug: str = Field(None, description="Slug for gateway endpoint URL")
 
     # This will be the main method to automatically populate fields
-    @model_validator(mode="after")
+    @model_validator(mode="before")
+    @classmethod
     def _populate_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        auth_type = values.auth_type
-        auth_value_encoded = values.auth_value
+        auth_type = values.get("auth_type")
+        auth_value_encoded = values.get("auth_value")
         auth_value = decode_auth(auth_value_encoded)
         if auth_type == "basic":
             u = auth_value.get("username")
             p = auth_value.get("password")
             if not u or not p:
                 raise ValueError("basic auth requires both username and password")
-            values.auth_username, values.auth_password = u, p
+            values["auth_username"], values["auth_password"] = u, p
 
         elif auth_type == "bearer":
             auth = auth_value.get("Authorization")
             if not (isinstance(auth, str) and auth.startswith("Bearer ")):
                 raise ValueError("bearer auth requires an Authorization header of the form 'Bearer <token>'")
-            values.auth_token = auth.removeprefix("Bearer ")
+            values["auth_token"] = auth.removeprefix("Bearer ")
 
         elif auth_type == "authheaders":
             # must be exactly one header
             if len(auth_value) != 1:
                 raise ValueError("authheaders requires exactly one key/value pair")
             k, v = next(iter(auth_value.items()))
-            values.auth_header_key, values.auth_header_value = k, v
+            values["auth_header_key"], values["auth_header_value"] = k, v
 
         return values
 
@@ -1526,9 +1535,6 @@ class RPCRequest(BaseModel):
             return v
 
         # Check size limits (MCP recommends max 256KB for params)
-        # Standard
-        import json
-
         param_size = len(json.dumps(v))
         if param_size > settings.validation_max_rpc_param_size:
             raise ValueError(f"Parameters exceed maximum size of {settings.validation_max_rpc_param_size} bytes")
@@ -1668,6 +1674,8 @@ class ListFilters(BaseModelWithConfigDict):
 
 
 class ServerCreate(BaseModel):
+    """Schema for creating a new server."""
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="The server's name")
