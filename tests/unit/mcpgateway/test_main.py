@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway import __version__
 from mcpgateway.config import settings
 from mcpgateway.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.schemas import (
@@ -212,7 +213,7 @@ class TestHealthAndInfrastructure:
     def test_root_redirect(self, test_client):
         """Test that root path behavior depends on UI configuration."""
         response = test_client.get("/", follow_redirects=False)
-        
+
         # Check if UI is enabled
         if settings.mcpgateway_ui_enabled:
             # When UI is enabled, should redirect to admin
@@ -253,7 +254,7 @@ class TestProtocolEndpoints:
         mock_result = InitializeResult(
             protocolVersion=PROTOCOL_VERSION,
             capabilities=mock_capabilities,
-            serverInfo={"name": "MCP Gateway", "version": "1.0.0"},
+            serverInfo={"name": settings.app_name, "version": __version__},
             instructions="MCP Gateway providing federated tools, resources and prompts.",
         )
         mock_handle_initialize.return_value = mock_result

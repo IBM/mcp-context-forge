@@ -267,8 +267,13 @@ class TestGatewayService:
         """Inactive gateway is not returned unless explicitly asked for."""
         mock_gateway.enabled = False
         test_db.get = Mock(return_value=mock_gateway)
+        result = await gateway_service.get_gateway(test_db, 1, include_inactive=True)
+        assert result.id == 1
+        assert result.enabled == False
+        test_db.get.reset_mock()
+        test_db.get = Mock(return_value=mock_gateway)
         with pytest.raises(GatewayNotFoundError):
-            await gateway_service.get_gateway(test_db, 1)
+            result = await gateway_service.get_gateway(test_db, 1, include_inactive=False)
 
     # ────────────────────────────────────────────────────────────────────
     # UPDATE

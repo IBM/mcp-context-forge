@@ -58,7 +58,6 @@ class Settings(BaseSettings):
     templates_dir: Path = files("mcpgateway") / "templates"
     static_dir: Path = files("mcpgateway") / "static"
     app_root_path: str = ""
-
     # Protocol
     protocol_version: str = "2025-03-26"
 
