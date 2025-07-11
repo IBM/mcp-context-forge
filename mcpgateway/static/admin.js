@@ -4084,7 +4084,9 @@ function setupTooltipsWithAlpine() {
 
             const showTooltip = (event) => {
                 const text = evaluate(expression);
-                if (!text) return;
+                if (!text) {
+                    return;
+                }
 
                 tooltipEl = document.createElement("div");
                 tooltipEl.textContent = text;
@@ -4112,7 +4114,9 @@ function setupTooltipsWithAlpine() {
             };
 
             const moveTooltip = (e) => {
-                if (!tooltipEl) return;
+                if (!tooltipEl) {
+                    return;
+                }
 
                 const paddingX = 12;
                 const paddingY = 20;
@@ -4133,7 +4137,9 @@ function setupTooltipsWithAlpine() {
             };
 
             const hideTooltip = () => {
-                if (!tooltipEl) return;
+                if (!tooltipEl) {
+                    return;
+                }
                 tooltipEl.style.opacity = "0";
                 el.removeEventListener("mousemove", moveTooltip);
                 setTimeout(() => {
