@@ -184,7 +184,10 @@ class GatewayService:
 
         Raises:
             GatewayNameConflictError: If gateway name already exists
-            []: When ExceptionGroup found
+            GatewayConnectionError: If there was an error connecting to the gateway
+            ValueError: If required values are missing
+            RuntimeError: If there is an error during processing that is not covered by other exceptions
+            BaseException: If an unexpected error occurs
         """
         try:
             # Check for name conflicts (both active and inactive)
@@ -246,18 +249,18 @@ class GatewayService:
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(gateway)
-        except* GatewayConnectionError as ge:
-            logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
-            raise ge.exceptions[0]
-        except* ValueError as ve:
-            logger.error(f"ValueErrors in group: {ve.exceptions}")
-            raise ve.exceptions[0]
-        except* RuntimeError as re:
-            logger.error(f"RuntimeErrors in group: {re.exceptions}")
-            raise re.exceptions[0]
-        except* BaseException as other:  # catches every other sub-exception
-            logger.error(f"Other grouped errors: {other.exceptions}")
-            raise other.exceptions[0]
+        except GatewayConnectionError as ge:
+            logger.error(f"GatewayConnectionError: {ge}")
+            raise ge
+        except ValueError as ve:
+            logger.error(f"ValueError: {ve}")
+            raise ve
+        except RuntimeError as re:
+            logger.error(f"RuntimeError: {re}")
+            raise re
+        except BaseException as other:
+            logger.error(f"Other errors: {other}")
+            raise other
 
     async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
         """List all registered gateways.

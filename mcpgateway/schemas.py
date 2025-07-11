@@ -249,6 +249,24 @@ class AuthenticationValues(BaseModelWithConfigDict):
 
 
 class ToolCreate(BaseModel):
+    """
+    Represents the configuration for creating a tool with various attributes and settings.
+
+    Attributes:
+        model_config (ConfigDict): Configuration for the model.
+        name (str): Unique name for the tool.
+        url (Union[str, AnyHttpUrl]): Tool endpoint URL.
+        description (Optional[str]): Tool description.
+        integration_type (Literal["MCP", "REST"]): Tool integration type. 'MCP' for MCP-compliant tools, 'REST' for REST integrations.
+        request_type (Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"]): HTTP method to be used for invoking the tool.
+        headers (Optional[Dict[str, str]]): Additional headers to send when invoking the tool.
+        input_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool parameters. Alias 'inputSchema'.
+        annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints such as title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint.
+        jsonpath_filter (Optional[str]): JSON modification filter.
+        auth (Optional[AuthenticationValues]): Authentication credentials (Basic or Bearer Token or custom headers) if required.
+        gateway_id (Optional[str]): ID of the gateway for the tool.
+    """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the tool")
@@ -603,6 +621,19 @@ class ToolResult(BaseModelWithConfigDict):
 
 
 class ResourceCreate(BaseModel):
+    """
+    Schema for creating a new resource.
+
+    Attributes:
+        model_config (ConfigDict): Configuration for the model.
+        uri (str): Unique URI for the resource.
+        name (str): Human-readable name for the resource.
+        description (Optional[str]): Optional description of the resource.
+        mime_type (Optional[str]): Optional MIME type of the resource.
+        template (Optional[str]): Optional URI template for parameterized resources.
+        content (Union[str, bytes]): Content of the resource, which can be text or binary.
+    """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     uri: str = Field(..., description="Unique URI for the resource")
@@ -901,6 +932,17 @@ class PromptArgument(BaseModelWithConfigDict):
 
 
 class PromptCreate(BaseModel):
+    """
+    Schema for creating a new prompt.
+
+    Attributes:
+        model_config (ConfigDict): Configuration for the model.
+        name (str): Unique name for the prompt.
+        description (Optional[str]): Optional description of the prompt.
+        template (str): Template text for the prompt.
+        arguments (List[PromptArgument]): List of arguments for the template.
+    """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the prompt")
@@ -1078,6 +1120,24 @@ class PromptInvocation(BaseModelWithConfigDict):
 
 
 class GatewayCreate(BaseModel):
+    """
+    Schema for creating a new gateway.
+
+    Attributes:
+        model_config (ConfigDict): Configuration for the model.
+        name (str): Unique name for the gateway.
+        url (Union[str, AnyHttpUrl]): Gateway endpoint URL.
+        description (Optional[str]): Optional description of the gateway.
+        transport (str): Transport used by the MCP server, default is "SSE".
+        auth_type (Optional[str]): Type of authentication (basic, bearer, headers, or none).
+        auth_username (Optional[str]): Username for basic authentication.
+        auth_password (Optional[str]): Password for basic authentication.
+        auth_token (Optional[str]): Token for bearer authentication.
+        auth_header_key (Optional[str]): Key for custom headers authentication.
+        auth_header_value (Optional[str]): Value for custom headers authentication.
+        auth_value (Optional[str]): Alias for authentication value, used for better access post-validation.
+    """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
@@ -1409,6 +1469,7 @@ class GatewayRead(BaseModelWithConfigDict):
     slug: str = Field(None, description="Slug for gateway endpoint URL")
 
     # This will be the main method to automatically populate fields
+    @classmethod
     @model_validator(mode="after")
     def _populate_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         auth_type = values.auth_type
@@ -1526,9 +1587,6 @@ class RPCRequest(BaseModel):
             return v
 
         # Check size limits (MCP recommends max 256KB for params)
-        # Standard
-        import json
-
         param_size = len(json.dumps(v))
         if param_size > settings.validation_max_rpc_param_size:
             raise ValueError(f"Parameters exceed maximum size of {settings.validation_max_rpc_param_size} bytes")
@@ -1668,6 +1726,19 @@ class ListFilters(BaseModelWithConfigDict):
 
 
 class ServerCreate(BaseModel):
+    """
+    Schema for creating a new server.
+
+    Attributes:
+        model_config (ConfigDict): Configuration for the model, such as stripping whitespace from strings.
+        name (str): The server's name.
+        description (Optional[str]): Optional description of the server.
+        icon (Optional[str]): Optional URL for the server's icon.
+        associated_tools (Optional[List[str]]): Optional list of associated tool IDs.
+        associated_resources (Optional[List[str]]): Optional list of associated resource IDs.
+        associated_prompts (Optional[List[str]]): Optional list of associated prompt IDs.
+    """
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="The server's name")
