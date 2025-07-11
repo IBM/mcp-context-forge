@@ -184,7 +184,10 @@ class GatewayService:
 
         Raises:
             GatewayNameConflictError: If gateway name already exists
-            []: When ExceptionGroup found
+            GatewayConnectionError: If there was an error connecting to the gateway
+            ValueError: If required values are missing
+            RuntimeError: If there is an error during processing that is not covered by other exceptions
+            BaseException: If an unexpected error occurs
         """
         try:
             # Check for name conflicts (both active and inactive)
