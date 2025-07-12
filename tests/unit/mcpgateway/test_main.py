@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway import __version__
 from mcpgateway.config import settings
 from mcpgateway.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.schemas import (
@@ -253,7 +254,7 @@ class TestProtocolEndpoints:
         mock_result = InitializeResult(
             protocolVersion=PROTOCOL_VERSION,
             capabilities=mock_capabilities,
-            serverInfo={"name": "MCP Gateway", "version": "1.0.0"},
+            serverInfo={"name": settings.app_name, "version": __version__},
             instructions="MCP Gateway providing federated tools, resources and prompts.",
         )
         mock_handle_initialize.return_value = mock_result
