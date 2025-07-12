@@ -61,8 +61,7 @@ env:
   GITHUB_SHA: ${{ github.sha }}
   CACHE_DIR: /tmp/.buildx-cache # BuildKit layer cache dir
 
-  # IBM Cloud authentication (secret) & region (variable)
-  IBM_CLOUD_API_KEY: ${{ secrets.IBM_CLOUD_API_KEY }}
+  # IBM Cloud region (variable)
   IBM_CLOUD_REGION: ${{ vars.IBM_CLOUD_REGION }}
 
   # Registry coordinates (variables)
@@ -109,22 +108,20 @@ jobs:
           restore-keys: ${{ runner.os }}-buildx-
 
       # -----------------------------------------------------------
-      # 3️⃣  Install IBM Cloud CLI + plugins
+      # 3️⃣  Install IBM Cloud CLI + plugins & login
       # -----------------------------------------------------------
       - name: 🧰  Install IBM Cloud CLI
-        run: |
-          curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
-          ibmcloud config --check-version=false
-          ibmcloud plugin install -f container-registry
-          ibmcloud plugin install -f code-engine
-          ibmcloud --version
+        uses: IBM/actions-ibmcloud-cli@v1
+        with:
+          api_key: ${{ secrets.IBM_CLOUD_API_KEY }}
+          region: ${{ vars.IBM_CLOUD_REGION }}
+          plugins: container-registry, code-engine
 
       # -----------------------------------------------------------
-      # 4️⃣  Authenticate to IBM Cloud & select Code Engine project
+      # 4️⃣  Authenticate to IBM Cloud Code Engine project
       # -----------------------------------------------------------
-      - name: 🔐  IBM Cloud login
+      - name: 🔐  IBM Cloud Code Engine login
         run: |
-          ibmcloud login --apikey "$IBM_CLOUD_API_KEY" -r "$IBM_CLOUD_REGION" -g default
           ibmcloud cr region-set "$IBM_CLOUD_REGION"
           ibmcloud cr login
           ibmcloud ce project select --name "$CODE_ENGINE_PROJECT"
