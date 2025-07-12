@@ -75,7 +75,7 @@ Our security pipeline operates at multiple levels:
 
 **Supply Chain Security**: We maintain strict oversight of our software supply chain through automated dependency vulnerability scanning, Software Bill of Materials (SBOM) generation, and license compliance checking to ensure all components meet security standards.
 
-**Container Security Hardening**: Our containerized deployments follow security best practices including multi-stage builds, minimal base images (UBI Micro) with the latest updates, non-root user execution, read-only filesystems, and comprehensive container scanning with tools like Trivy, Dockle, and OSV-Scanner.
+**Container Security Hardening**: Our containerized deployments follow security best practices including multi-stage builds, minimal base images (UBI Micro) with the latest updates, non-root user execution, read-only filesystems, and comprehensive container scanning with tools like Trivy, Grype, Dockle, and OSV-Scanner.
 
 **Runtime Security Monitoring**: Beyond build-time security, we implement runtime monitoring and security policies to detect and respond to potential threats in production environments.
 
@@ -84,8 +84,8 @@ Our security pipeline operates at multiple levels:
 Our security toolchain includes **24+ different security and quality tools**, each serving a specific purpose in our defense strategy and executed on every pull request:
 
 - **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, and multiple type checkers
-- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, npm audit, and GitHub dependency review
-- **Container Security**: Hadolint for Dockerfile linting, Dockle for container security, and Trivy for vulnerability scanning
+- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, Grype, npm audit, and GitHub dependency review
+- **Container Security**: Hadolint for Dockerfile linting, Dockle for container security, and Trivy/Grype for vulnerability scanning
 - **Code Quality & Complexity**: Multiple linters ensuring code maintainability and reducing attack surface
 - **Documentation Security**: Spellcheck and markdown validation to prevent information disclosure
 
@@ -98,6 +98,7 @@ We believe that security should enhance rather than hinder the development proce
 - `make test` - Full test suite with coverage analysis and security validation
 - `make bandit` - Security scanner for Python code vulnerabilities
 - `make trivy` - Container vulnerability scanning
+- `make grype-scan` - Container security audit and vulnerability scanning
 - `make dockle` - Container security and best practices analysis
 - `make hadolint` - Dockerfile linting for security issues
 - `make osv-scan` - Open Source Vulnerability database scanning
@@ -307,7 +308,8 @@ flowchart TD
     S --> S1[Hadolint - Dockerfile Linting]
     S --> S2[Dockle - Container Security]
     S --> S3[Trivy - Vulnerability Scanner]
-    S --> S4[OSV-Scanner - Open Source Vulns]
+    S --> S4[Grype - Security Audit]
+    S --> S5[OSV-Scanner - Open Source Vulns]
 
     T[Local Development] --> U[Make Targets]
 
@@ -323,9 +325,10 @@ flowchart TD
     W --> W1[make bandit - Security Scanner]
     W --> W2[make osv-scan - Vulnerability Check]
     W --> W3[make trivy - Container Security]
-    W --> W4[make dockle - Image Analysis]
-    W --> W5[make hadolint - Dockerfile Linting]
-    W --> W6[make pip-audit - Dependency Scanning]
+    W --> W4[make grype-scan - Container Vulnerability Scan]
+    W --> W5[make dockle - Image Analysis]
+    W --> W6[make hadolint - Dockerfile Linting]
+    W --> W7[make pip-audit - Dependency Scanning]
 
     X --> X1[CycloneDX SBOM Generation]
     X --> X2[Dependency Inventory]
