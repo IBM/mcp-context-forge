@@ -45,15 +45,43 @@ Usage examples
 Shell ::
 
     python3 db_isready.py
-    python3 db_isready.py --database-url "postgresql://user:pw@db:5432/mcp" \
-                         --max-tries 20 --interval 1 --timeout 1
+    python3 db_isready.py --database-url "sqlite:///./mcp.db" --max-tries 2 --interval 1 --timeout 1
 
 Python ::
 
-    from db_isready import wait_for_db_ready
+    from mcpgateway.utils.db_isready import wait_for_db_ready
 
-    await wait_for_db_ready()          # asynchronous
-    wait_for_db_ready(sync=True)       # synchronous / blocking
+    # Synchronous/blocking
+    wait_for_db_ready(sync=True)
+
+    # Asynchronous
+    import asyncio
+    asyncio.run(wait_for_db_ready())
+
+Doctest examples
+----------------
+>>> from mcpgateway.utils.db_isready import wait_for_db_ready
+>>> import logging
+>>> class DummyLogger:
+...     def __init__(self): self.infos = []
+...     def info(self, msg): self.infos.append(msg)
+...     def debug(self, msg): pass
+...     def error(self, msg): pass
+...     @property
+...     def handlers(self): return [True]
+>>> import sys
+>>> sys.modules['sqlalchemy'] = type('sqlalchemy', (), {
+...     'create_engine': lambda *a, **k: type('E', (), {'connect': lambda self: type('C', (), {'execute': lambda self, q: 1, '__enter__': lambda self: self, '__exit__': lambda self, exc_type, exc_val, exc_tb: None})()})(),
+...     'text': lambda q: q,
+...     'engine': type('engine', (), {'Engine': object, 'URL': object, 'url': type('url', (), {'make_url': lambda u: type('U', (), {'get_backend_name': lambda self: "sqlite"})()}),}),
+...     'exc': type('exc', (), {'OperationalError': Exception})
+... })
+>>> wait_for_db_ready(database_url='sqlite:///./mcp.db', max_tries=1, interval=1, timeout=1, logger=DummyLogger(), sync=True)
+>>> try:
+...     wait_for_db_ready(database_url='sqlite:///./mcp.db', max_tries=0, interval=1, timeout=1, logger=DummyLogger(), sync=True)
+... except RuntimeError as e:
+...     print('error')
+error
 """
 
 # Future
@@ -173,7 +201,8 @@ def wait_for_db_ready(
     logger: Optional[logging.Logger] = None,
     sync: bool = False,
 ) -> None:
-    """Block until the database replies to ``SELECT 1``.
+    """
+    Block until the database replies to ``SELECT 1``.
 
     The helper can be awaited **asynchronously** *or* called in *blocking*
     mode by passing ``sync=True``.
@@ -194,6 +223,30 @@ def wait_for_db_ready(
     Raises:
         RuntimeError: If *invalid* parameters are supplied or the database is
             still unavailable after the configured number of attempts.
+
+    Doctest:
+    >>> from mcpgateway.utils.db_isready import wait_for_db_ready
+    >>> import logging
+    >>> class DummyLogger:
+    ...     def __init__(self): self.infos = []
+    ...     def info(self, msg): self.infos.append(msg)
+    ...     def debug(self, msg): pass
+    ...     def error(self, msg): pass
+    ...     @property
+    ...     def handlers(self): return [True]
+    >>> import sys
+    >>> sys.modules['sqlalchemy'] = type('sqlalchemy', (), {
+    ...     'create_engine': lambda *a, **k: type('E', (), {'connect': lambda self: type('C', (), {'execute': lambda self, q: 1, '__enter__': lambda self: self, '__exit__': lambda self, exc_type, exc_val, exc_tb: None})()})(),
+    ...     'text': lambda q: q,
+    ...     'engine': type('engine', (), {'Engine': object, 'URL': object, 'url': type('url', (), {'make_url': lambda u: type('U', (), {'get_backend_name': lambda self: "sqlite"})()}),}),
+    ...     'exc': type('exc', (), {'OperationalError': Exception})
+    ... })
+    >>> wait_for_db_ready(database_url='sqlite:///./mcp.db', max_tries=1, interval=1, timeout=1, logger=DummyLogger(), sync=True)
+    >>> try:
+    ...     wait_for_db_ready(database_url='sqlite:///./mcp.db', max_tries=0, interval=1, timeout=1, logger=DummyLogger(), sync=True)
+    ... except RuntimeError as e:
+    ...     print('error')
+    error
     """
 
     log = logger or logging.getLogger("db_isready")

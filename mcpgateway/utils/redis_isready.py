@@ -43,15 +43,41 @@ Usage examples
 Shell ::
 
     python3 redis_isready.py
-    python3 redis_isready.py --redis-url "redis://localhost:6379/0" \
+    python3 redis_isready.py --redis-url "redis://localhost:6379/0"
                             --max-retries 5 --retry-interval-ms 500
 
 Python ::
 
-    from redis_isready import wait_for_redis_ready
+    from mcpgateway.utils.redis_isready import wait_for_redis_ready
 
-    await wait_for_redis_ready()           # asynchronous
-    wait_for_redis_ready(sync=True)        # synchronous / blocking
+    # Synchronous/blocking
+    wait_for_redis_ready(sync=True)
+
+    # Asynchronous
+    import asyncio
+    asyncio.run(wait_for_redis_ready())
+
+Doctest examples
+----------------
+>>> from mcpgateway.utils.redis_isready import wait_for_redis_ready
+>>> import logging
+>>> class DummyLogger:
+...     def __init__(self): self.infos = []
+...     def info(self, msg): self.infos.append(msg)
+...     def debug(self, msg): pass
+...     def error(self, msg): pass
+...     @property
+...     def handlers(self): return [True]
+>>> def dummy_probe(*args, **kwargs): return None
+>>> import sys
+>>> sys.modules['redis'] = type('redis', (), {'Redis': type('Redis', (), {'from_url': lambda url: type('R', (), {'ping': lambda self: True})()})})
+>>> wait_for_redis_ready(redis_url='redis://localhost:6379/0', max_retries=1, retry_interval_ms=1, logger=DummyLogger(), sync=True)
+
+>>> try:
+...     wait_for_redis_ready(redis_url='redis://localhost:6379/0', max_retries=0, retry_interval_ms=1, logger=DummyLogger(), sync=True)
+... except RuntimeError as e:
+...     print('error')
+error
 """
 
 # Standard
@@ -105,6 +131,25 @@ def wait_for_redis_ready(
 
     Raises:
         RuntimeError: If Redis does not respond successfully after all retry attempts.
+
+    Doctest:
+    >>> from mcpgateway.utils.redis_isready import wait_for_redis_ready
+    >>> import logging
+    >>> class DummyLogger:
+    ...     def __init__(self): self.infos = []
+    ...     def info(self, msg): self.infos.append(msg)
+    ...     def debug(self, msg): pass
+    ...     def error(self, msg): pass
+    ...     @property
+    ...     def handlers(self): return [True]
+    >>> import sys
+    >>> sys.modules['redis'] = type('redis', (), {'Redis': type('Redis', (), {'from_url': lambda url: type('R', (), {'ping': lambda self: True})()})})
+    >>> wait_for_redis_ready(redis_url='redis://localhost:6379/0', max_retries=1, retry_interval_ms=1, logger=DummyLogger(), sync=True)
+    >>> try:
+    ...     wait_for_redis_ready(redis_url='redis://localhost:6379/0', max_retries=0, retry_interval_ms=1, logger=DummyLogger(), sync=True)
+    ... except RuntimeError as e:
+    ...     print('error')
+    error
     """
     log = logger or logging.getLogger("redis_isready")
     if not log.handlers:  # basicConfig **once** - respects *log.setLevel* later
