@@ -86,18 +86,19 @@ def test_validate_transport_accepts_and_rejects():
 
 
 def test_cors_settings_branches():
-    """cors_settings property depends on dynamically present cors_enabled flag."""
-    s = Settings(_env_file=None)
-
-    # With flag missing -> AttributeError when property accessed
-    with pytest.raises(AttributeError):
-        _ = s.cors_settings
-
-    # Manually inject the flag then verify dictionary
-    object.__setattr__(s, "cors_enabled", True)
-    result = s.cors_settings
+    """cors_settings property returns CORS configuration based on cors_enabled flag."""
+    # Test with cors_enabled = True (default)
+    s_enabled = Settings(cors_enabled=True, _env_file=None)
+    result = s_enabled.cors_settings
     assert result["allow_methods"] == ["*"]
-    assert s.allowed_origins.issubset(set(result["allow_origins"]))
+    assert result["allow_headers"] == ["*"]
+    assert result["allow_credentials"] is True
+    assert s_enabled.allowed_origins.issubset(set(result["allow_origins"]))
+
+    # Test with cors_enabled = False
+    s_disabled = Settings(cors_enabled=False, _env_file=None)
+    result = s_disabled.cors_settings
+    assert result == {}  # Empty dict when disabled
 
 
 # --------------------------------------------------------------------------- #
