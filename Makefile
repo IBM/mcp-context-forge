@@ -510,6 +510,30 @@ check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@$(VENV_DIR)/bin/check-manifest
 
 # -----------------------------------------------------------------------------
+# 📑 GRYPE SECURITY/VULNERABILITY SCANNING
+# -----------------------------------------------------------------------------
+# help: grype-install             - Install Grype
+# help: grype-scan                - Scan all files using grype
+# help: grype-sarif               - Generate SARIF report
+# help: security-scan             - Run Trivy security-scan
+.PHONY: grype-install grype-scan grype-sarif security-scan
+
+grype-install:
+	@echo "📥 Installing Grype CLI..."
+	@curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
+grype-scan:
+	@echo "🔍 Grype vulnerability scan..."
+	@grype $(IMG):latest --scope all-layers --only-fixed
+
+grype-sarif:
+	@echo "📄 Generating Grype SARIF report..."
+	@grype $(IMG):latest --scope all-layers --output sarif --file grype-results.sarif
+
+security-scan: trivy grype-scan
+	@echo "✅ Multi-engine security scan complete"
+
+# -----------------------------------------------------------------------------
 # 📑 YAML / JSON / TOML LINTERS
 # -----------------------------------------------------------------------------
 # help: yamllint             - Lint YAML files (uses .yamllint)
@@ -731,12 +755,18 @@ sonar-info:
 # 🛡️  SECURITY & PACKAGE SCANNING
 # =============================================================================
 # help: 🛡️ SECURITY & PACKAGE SCANNING
+# help: trivy-install 		 - Install Trivy
 # help: trivy                - Scan container image for CVEs (HIGH/CRIT). Needs podman socket enabled
-.PHONY: trivy
+.PHONY: trivy-install trivy
+
+trivy-install:
+	@echo "📥 Installing Trivy..."
+	@curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
 trivy:
 	@systemctl --user enable --now podman.socket
 	@echo "🔎  trivy vulnerability scan..."
-	@trivy --format table --severity HIGH,CRITICAL image $(PROJECT_NAME)/$(PROJECT_NAME)
+	@trivy --format table --severity HIGH,CRITICAL image $(IMG)
 
 # help: dockle               - Lint the built container image via tarball (no daemon/socket needed)
 .PHONY: dockle
