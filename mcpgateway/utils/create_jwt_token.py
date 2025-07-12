@@ -16,12 +16,24 @@ CLI (default secret, default payload):
     $ python3 jwt_cli.py
 
 Library:
-```python
-from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
+    from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 
-# inside async context
-jwt = await create_jwt_token({"username": "alice"})
-```
+    # inside async context
+    jwt = await create_jwt_token({"username": "alice"})
+
+Doctest examples
+----------------
+>>> from mcpgateway.utils import create_jwt_token as jwt_util
+>>> jwt_util.settings.jwt_secret_key = 'secret'
+>>> jwt_util.settings.jwt_algorithm = 'HS256'
+>>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='secret', algorithm='HS256')
+>>> import jwt
+>>> jwt.decode(token, 'secret', algorithms=['HS256'])['sub'] == 'alice'
+True
+>>> import asyncio
+>>> t = asyncio.run(jwt_util.create_jwt_token({'sub': 'bob'}, expires_in_minutes=1, secret='secret', algorithm='HS256'))
+>>> jwt.decode(t, 'secret', algorithms=['HS256'])['sub'] == 'bob'
+True
 """
 
 # Future
@@ -67,7 +79,8 @@ def _create_jwt_token(
     secret: str = DEFAULT_SECRET,
     algorithm: str = DEFAULT_ALGO,
 ) -> str:
-    """Return a signed JWT string (synchronous, timezone-aware).
+    """
+    Return a signed JWT string (synchronous, timezone-aware).
 
     Args:
         data: Dictionary containing payload data to encode in the token.
@@ -78,6 +91,15 @@ def _create_jwt_token(
 
     Returns:
         The JWT token string.
+
+    Doctest:
+    >>> from mcpgateway.utils import create_jwt_token as jwt_util
+    >>> jwt_util.settings.jwt_secret_key = 'secret'
+    >>> jwt_util.settings.jwt_algorithm = 'HS256'
+    >>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='secret', algorithm='HS256')
+    >>> import jwt
+    >>> jwt.decode(token, 'secret', algorithms=['HS256'])['sub'] == 'alice'
+    True
     """
     payload = data.copy()
     if expires_in_minutes > 0:
@@ -98,7 +120,8 @@ async def create_jwt_token(
     secret: str = DEFAULT_SECRET,
     algorithm: str = DEFAULT_ALGO,
 ) -> str:
-    """Async facade for historic code. Internally synchronous-almost instant.
+    """
+    Async facade for historic code. Internally synchronous-almost instant.
 
     Args:
         data: Dictionary containing payload data to encode in the token.
@@ -109,6 +132,16 @@ async def create_jwt_token(
 
     Returns:
         The JWT token string.
+
+    Doctest:
+    >>> from mcpgateway.utils import create_jwt_token as jwt_util
+    >>> jwt_util.settings.jwt_secret_key = 'secret'
+    >>> jwt_util.settings.jwt_algorithm = 'HS256'
+    >>> import asyncio
+    >>> t = asyncio.run(jwt_util.create_jwt_token({'sub': 'bob'}, expires_in_minutes=1, secret='secret', algorithm='HS256'))
+    >>> import jwt
+    >>> jwt.decode(t, 'secret', algorithms=['HS256'])['sub'] == 'bob'
+    True
     """
     return _create_jwt_token(data, expires_in_minutes, secret, algorithm)
 

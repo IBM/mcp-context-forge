@@ -7,6 +7,21 @@ Authors: Mihai Criveti
 
 This module provides a registry for SSE sessions with support for distributed deployment
 using Redis or SQLAlchemy as optional backends for shared state between workers.
+
+Doctest examples (memory backend only)
+--------------------------------------
+>>> from mcpgateway.cache.session_registry import SessionRegistry
+>>> class DummyTransport:
+...     pass
+>>> reg = SessionRegistry(backend='memory')
+>>> import asyncio
+>>> asyncio.run(reg.add_session('sid', DummyTransport()))
+>>> t = asyncio.run(reg.get_session('sid'))
+>>> isinstance(t, DummyTransport)
+True
+>>> asyncio.run(reg.remove_session('sid'))
+>>> asyncio.run(reg.get_session('sid')) is None
+True
 """
 
 # Standard
@@ -106,7 +121,8 @@ class SessionBackend:
 
 
 class SessionRegistry(SessionBackend):
-    """Registry for SSE sessions with optional distributed state.
+    """
+    Registry for SSE sessions with optional distributed state.
 
     Supports three backend modes:
     - memory: In-memory storage (default, no dependencies)
@@ -115,6 +131,20 @@ class SessionRegistry(SessionBackend):
 
     In distributed mode (redis/database), session existence is tracked in the shared
     backend while transports themselves remain local to each worker process.
+
+    Doctest (memory backend only):
+    >>> from mcpgateway.cache.session_registry import SessionRegistry
+    >>> class DummyTransport:
+    ...     pass
+    >>> reg = SessionRegistry(backend='memory')
+    >>> import asyncio
+    >>> asyncio.run(reg.add_session('sid', DummyTransport()))
+    >>> t = asyncio.run(reg.get_session('sid'))
+    >>> isinstance(t, DummyTransport)
+    True
+    >>> asyncio.run(reg.remove_session('sid'))
+    >>> asyncio.run(reg.get_session('sid')) is None
+    True
     """
 
     def __init__(

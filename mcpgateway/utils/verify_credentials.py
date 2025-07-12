@@ -5,6 +5,34 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Doctest examples
+----------------
+>>> from mcpgateway.utils import verify_credentials as vc
+>>> class DummySettings:
+...     jwt_secret_key = 'secret'
+...     jwt_algorithm = 'HS256'
+...     basic_auth_user = 'user'
+...     basic_auth_password = 'pass'
+...     auth_required = True
+>>> vc.settings = DummySettings()
+>>> import jwt
+>>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
+>>> import asyncio
+>>> asyncio.run(vc.verify_jwt_token(token))['sub'] == 'alice'
+True
+>>> payload = asyncio.run(vc.verify_credentials(token))
+>>> payload['token'] == token
+True
+>>> from fastapi.security import HTTPBasicCredentials
+>>> creds = HTTPBasicCredentials(username='user', password='pass')
+>>> asyncio.run(vc.verify_basic_credentials(creds)) == 'user'
+True
+>>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')
+>>> try:
+...     asyncio.run(vc.verify_basic_credentials(creds_bad))
+... except Exception as e:
+...     print('error')
+error
 """
 
 # Standard
@@ -30,7 +58,8 @@ security = HTTPBearer(auto_error=False)
 
 
 async def verify_jwt_token(token: str) -> dict:
-    """Verify and decode a JWT token.
+    """
+    Verify and decode a JWT token.
 
     Args:
         token: The JWT token to verify.
@@ -40,6 +69,21 @@ async def verify_jwt_token(token: str) -> dict:
 
     Raises:
         HTTPException: If the token has expired or is invalid.
+
+    Doctest:
+    >>> from mcpgateway.utils import verify_credentials as vc
+    >>> class DummySettings:
+    ...     jwt_secret_key = 'secret'
+    ...     jwt_algorithm = 'HS256'
+    ...     basic_auth_user = 'user'
+    ...     basic_auth_password = 'pass'
+    ...     auth_required = True
+    >>> vc.settings = DummySettings()
+    >>> import jwt
+    >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
+    >>> import asyncio
+    >>> asyncio.run(vc.verify_jwt_token(token))['sub'] == 'alice'
+    True
     """
     try:
         # Decode and validate token
@@ -65,7 +109,8 @@ async def verify_jwt_token(token: str) -> dict:
 
 
 async def verify_credentials(token: str) -> dict:
-    """Verify credentials using a JWT token.
+    """
+    Verify credentials using a JWT token.
 
     This function uses verify_jwt_token internally which may raise exceptions.
 
@@ -74,6 +119,22 @@ async def verify_credentials(token: str) -> dict:
 
     Returns:
         dict: The validated token payload with the original token added.
+
+    Doctest:
+    >>> from mcpgateway.utils import verify_credentials as vc
+    >>> class DummySettings:
+    ...     jwt_secret_key = 'secret'
+    ...     jwt_algorithm = 'HS256'
+    ...     basic_auth_user = 'user'
+    ...     basic_auth_password = 'pass'
+    ...     auth_required = True
+    >>> vc.settings = DummySettings()
+    >>> import jwt
+    >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
+    >>> import asyncio
+    >>> payload = asyncio.run(vc.verify_credentials(token))
+    >>> payload['token'] == token
+    True
     """
     payload = await verify_jwt_token(token)
     payload["token"] = token
@@ -107,7 +168,8 @@ async def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Dep
 
 
 async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
-    """Verify provided credentials.
+    """
+    Verify provided credentials.
 
     Args:
         credentials: HTTP Basic credentials.
@@ -117,6 +179,27 @@ async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
 
     Raises:
         HTTPException: If credentials are invalid.
+
+    Doctest:
+    >>> from mcpgateway.utils import verify_credentials as vc
+    >>> class DummySettings:
+    ...     jwt_secret_key = 'secret'
+    ...     jwt_algorithm = 'HS256'
+    ...     basic_auth_user = 'user'
+    ...     basic_auth_password = 'pass'
+    ...     auth_required = True
+    >>> vc.settings = DummySettings()
+    >>> from fastapi.security import HTTPBasicCredentials
+    >>> creds = HTTPBasicCredentials(username='user', password='pass')
+    >>> import asyncio
+    >>> asyncio.run(vc.verify_basic_credentials(creds)) == 'user'
+    True
+    >>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')
+    >>> try:
+    ...     asyncio.run(vc.verify_basic_credentials(creds_bad))
+    ... except Exception as e:
+    ...     print('error')
+    error
     """
     is_valid_user = credentials.username == settings.basic_auth_user
     is_valid_pass = credentials.password == settings.basic_auth_password
