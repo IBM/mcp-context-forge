@@ -6,7 +6,7 @@ This guide helps you to set up your local environment for contributing to the Mo
 
 -   **Python** (>= 3.10)
     -   Download from [python.org](https://www.python.org/downloads/) or use your package manager (e.g., `brew install python` on macOS, `sudo apt-get install python3` on Ubuntu).
-    -   Verify: `python --version`.
+    -   Verify: `python3 --version`.
 -   **Docker or Podman**
     -   **Docker**: Install `docker.io`, `buildx`, and `docker-compose v2`.
         -   [Docker Desktop](https://www.docker.com/products/docker-desktop/) for macOS/Windows.

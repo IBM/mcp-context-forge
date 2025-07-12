@@ -14,7 +14,7 @@ You can now run the bridge in either direction:
 Usage
 -----
 # 1. expose an MCP server that talks JSON-RPC on stdio at :9000/sse
-python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
+python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 
 # 2. from another shell / browser subscribe to the SSE stream
 curl -N http://localhost:9000/sse          # receive the stream
@@ -523,5 +523,5 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
         sys.exit(1)
 
 
-if __name__ == "__main__":  # python -m mcpgateway.translate ...
+if __name__ == "__main__":  # python3 -m mcpgateway.translate ...
     main()

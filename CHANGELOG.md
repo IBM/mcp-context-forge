@@ -67,7 +67,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
   * Expose local stdio MCP servers over SSE endpoints with session management
   * Bridge remote SSE endpoints to local stdio for seamless integration
   * Built-in keepalive mechanisms and unique session identifiers
-  * Full CLI support: `python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000`
+  * Full CLI support: `python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000`
 
 * **Tool Annotations & Metadata** - comprehensive tool annotation system:
   * New `annotations` JSON column in tools table for storing rich metadata

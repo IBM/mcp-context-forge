@@ -325,7 +325,7 @@ migration:
     tag: latest                    # Should match mcpContextForge.image.tag
 
   command:
-    waitForDb: "python /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"
+    waitForDb: "python3 /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"
     migrate: "alembic upgrade head || echo '⚠️ Migration check failed'"
 ---
 

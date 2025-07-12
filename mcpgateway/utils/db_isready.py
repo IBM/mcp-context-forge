@@ -44,8 +44,8 @@ Usage examples
 --------------
 Shell ::
 
-    python db_isready.py
-    python db_isready.py --database-url "postgresql://user:pw@db:5432/mcp" \
+    python3 db_isready.py
+    python3 db_isready.py --database-url "postgresql://user:pw@db:5432/mcp" \
                          --max-tries 20 --interval 1 --timeout 1
 
 Python ::

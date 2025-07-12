@@ -243,7 +243,7 @@ kubectl describe deployment -n {{ $ns }} {{ $gatewaySvc }}
 kubectl logs -n {{ $ns }} -l app={{ $gatewaySvc }} --tail=50
 
 # === Database Connectivity ===
-kubectl exec -n {{ $ns }} deployment/{{ $gatewaySvc }} -- python /app/mcpgateway/utils/db_isready.py
+kubectl exec -n {{ $ns }} deployment/{{ $gatewaySvc }} -- python3 /app/mcpgateway/utils/db_isready.py
 {{- if .Values.postgres.enabled }}
 kubectl exec -n {{ $ns }} deployment/{{ $postgresSvc }} -- pg_isready -U {{ .Values.postgres.credentials.user }}
 {{- end }}

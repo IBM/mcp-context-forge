@@ -199,7 +199,7 @@ def _payload_from_cli(args) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Entry point for ``python jwt_cli.py``
+# Entry point for ``python3 jwt_cli.py``
 # ---------------------------------------------------------------------------
 
 

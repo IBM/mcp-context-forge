@@ -27,16 +27,16 @@ from the web, or tidying a repository before committing.
 Usage examples::
 
     # See which files would change and view a coloured unified diff
-    python normalize_characters.py "**/*.py" --dry-run --diff
+    python3 normalize_characters.py "**/*.py" --dry-run --diff
 
     # Clean the entire project tree, keeping *.bak* backups of changed files
-    python normalize_characters.py . --backup-ext .bak
+    python3 normalize_characters.py . --backup-ext .bak
 
     # Normalise Markdown docs verbosely; ignore the vendor directory
-    python normalize_characters.py "docs/**/*.md" -v -i "vendor/**/*"
+    python3 normalize_characters.py "docs/**/*.md" -v -i "vendor/**/*"
 
     # Process only Python files in src/ directory
-    python normalize_characters.py "src/**/*.py" --verbose
+    python3 normalize_characters.py "src/**/*.py" --verbose
 
 Exit codes:
 
