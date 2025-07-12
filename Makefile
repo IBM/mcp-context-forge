@@ -3,7 +3,7 @@
 #   (An enterprise-ready Model Context Protocol Gateway)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
-# Author: Mihai Criveti
+# Authors: Mihai Criveti, Manav Gupta
 # Description: Build & automation helpers for the MCP Gateway project
 # Usage: run `make` or `make help` to view available targets
 #
@@ -182,8 +182,12 @@ clean:
 # help: htmlcov              - (re)build just the HTML coverage report into docs
 # help: test-curl            - Smoke-test API endpoints with curl script
 # help: pytest-examples      - Run README / examples through pytest-examples
+# help: doctest              - Run doctest on all modules with summary report
+# help: doctest-verbose      - Run doctest with detailed output (-v flag)
+# help: doctest-coverage     - Generate coverage report for doctest examples
+# help: doctest-check        - Check doctest coverage percentage (fail if < 100%)
 
-.PHONY: smoketest test coverage pytest-examples test-curl htmlcov
+.PHONY: smoketest test coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -238,6 +242,43 @@ pytest-examples:
 
 test-curl:
 	./test_endpoints.sh
+
+## --- Doctest targets ---------------------------------------------------------
+doctest:
+	@echo "🧪 Running doctest on all modules..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pytest --doctest-modules mcpgateway/ --tb=short"
+
+doctest-verbose:
+	@echo "🧪 Running doctest with verbose output..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pytest --doctest-modules mcpgateway/ -v --tb=short"
+
+doctest-coverage:
+	@echo "📊 Generating doctest coverage report..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(TEST_DOCS_DIR)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pytest --doctest-modules mcpgateway/ \
+		--cov=mcpgateway --cov-report=term --cov-report=html:htmlcov-doctest \
+		--cov-report=xml:coverage-doctest.xml"
+	@echo "✅ Doctest coverage report generated in htmlcov-doctest/"
+
+doctest-check:
+	@echo "🔍 Checking doctest coverage..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -c \"import subprocess, sys; \
+		result = subprocess.run(['python', '-m', 'pytest', '--doctest-modules', 'mcpgateway/', '--tb=no', '-q'], capture_output=True); \
+		if result.returncode == 0: \
+			print('✅ All doctests passing'); \
+		else: \
+			print('❌ Doctest failures detected'); \
+			print(result.stdout.decode()); \
+			print(result.stderr.decode()); \
+			sys.exit(1)\""
 
 # =============================================================================
 # 📊 METRICS
@@ -304,8 +345,8 @@ images:
 	@mkdir -p $(DOCS_DIR)/docs/design/images
 	@code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pip install snakefood3"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m snakefood3 . mcpgateway > snakefood.dot"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install snakefood3"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m snakefood3 . mcpgateway > snakefood.dot"
 	@dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
 	@pyreverse --colorized mcpgateway || true
 	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true
@@ -403,7 +444,13 @@ pycodestyle:                        ## 📝  Simple PEP-8 checker
 	@$(VENV_DIR)/bin/pycodestyle mcpgateway --max-line-length=200
 
 pre-commit:                         ## 🪄  Run pre-commit hooks
-	@$(VENV_DIR)/bin/pre-commit run --all-files --show-diff-on-failure
+	@echo "🪄  Running pre-commit hooks..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv install install-dev
+	@if [ ! -f "$(VENV_DIR)/bin/pre-commit" ]; then \
+		echo "📦  Installing pre-commit..."; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --quiet pre-commit"; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pre-commit run --all-files --show-diff-on-failure"
 
 ruff:                               ## ⚡  Ruff lint + format
 	@$(VENV_DIR)/bin/ruff check mcpgateway && $(VENV_DIR)/bin/ruff format mcpgateway tests
@@ -460,7 +507,7 @@ spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 
 tox:                                ## 🧪  Multi-Python tox matrix (uv)
 	@echo "🧪  Running tox with uv ..."
-	python -m tox -p auto $(TOXARGS)
+	python3 -m tox -p auto $(TOXARGS)
 
 sbom:								## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report..."
@@ -470,7 +517,7 @@ sbom:								## 🛡️  Generate SBOM & security report
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install cyclonedx-bom sbom2doc"
 	@echo "🔍  Generating SBOM from environment..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python -m cyclonedx_py environment \
+		python3 -m cyclonedx_py environment \
 			--output-format XML \
 			--output-file $(PROJECT_NAME).sbom.xml \
 			--no-validate \
@@ -843,7 +890,7 @@ pip-audit:
 deps-update:
 	@echo "⬆️  Updating project dependencies via update-deps.py..."
 	@test -f update-deps.py || { echo "❌ update-deps.py not found in root directory."; exit 1; }
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python update-deps.py"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 update-deps.py"
 	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
 
 containerfile-update:
@@ -2090,7 +2137,7 @@ devpi-unconfigure-pip:
 # 📦  Version helper (defaults to the version in pyproject.toml)
 #      override on the CLI:  make VER=0.2.1 devpi-delete
 # ─────────────────────────────────────────────────────────────────────────────
-VER ?= $(shell python -c "import tomllib, pathlib; \
+VER ?= $(shell python3 -c "import tomllib, pathlib; \
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
 2>/dev/null || echo 0.0.0)
 

@@ -82,7 +82,7 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 ??? example "Generate a 24 h token"
 
     ```bash
-    python -m mcpgateway.utils.create_jwt_token \
+    python3 -m mcpgateway.utils.create_jwt_token \
       --username alice --exp 1440 --secret "$JWT_SECRET_KEY"
     ```
 

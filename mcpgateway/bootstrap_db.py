@@ -15,8 +15,8 @@ The script:
 4. Otherwise, it applies any outstanding Alembic revisions.
 5. Logs a **"Database ready"** message on success.
 
-It is intended to be invoked via ``python -m mcpgateway.bootstrap_db`` or
-directly with ``python mcpgateway/bootstrap_db.py``.
+It is intended to be invoked via ``python3 -m mcpgateway.bootstrap_db`` or
+directly with ``python3 mcpgateway/bootstrap_db.py``.
 """
 
 # Standard

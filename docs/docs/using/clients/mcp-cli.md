@@ -124,7 +124,7 @@ Create a `server_config.json` file to define your MCP Context Forge Gateway conn
 
 ```bash
 # From your mcp-context-forge directory
-python -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-test-key
+python3 -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-test-key
 ```
 
 > **⚠️ Important Notes**

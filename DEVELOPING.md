@@ -12,8 +12,8 @@ export MCP_AUTH_TOKEN="<your_bearer_token>"
 | Mode                                                        | Command                                                                      | Notes                                                                         |
 | ----------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | **SSE (direct)**                                            | `npx @modelcontextprotocol/inspector`                                        | Connects straight to the Gateway's SSE endpoint.                              |
-| **Stdio wrapper** <br/>*(for clients that can't speak SSE)* | `npx @modelcontextprotocol/inspector python -m mcpgateway.wrapper`           | Spins up the wrapper **in-process** and points Inspector to its stdio stream. |
-| **Stdio wrapper via uv / uvx**                            | `npx @modelcontextprotocol/inspector uvx python -m mcpgateway.wrapper` | Uses the lightning-fast `uv` virtual-env if installed.                        |
+| **Stdio wrapper** <br/>*(for clients that can't speak SSE)* | `npx @modelcontextprotocol/inspector python3 -m mcpgateway.wrapper`           | Spins up the wrapper **in-process** and points Inspector to its stdio stream. |
+| **Stdio wrapper via uv / uvx**                            | `npx @modelcontextprotocol/inspector uvx python3 -m mcpgateway.wrapper` | Uses the lightning-fast `uv` virtual-env if installed.                        |
 
 🔍 MCP Inspector boots at **[http://localhost:5173](http://localhost:5173)** - open it in a browser and add:
 

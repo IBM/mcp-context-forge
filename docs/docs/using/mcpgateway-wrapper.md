@@ -23,7 +23,7 @@ while connecting securely to the gateway using `SSE` + `JWT`.
 Ensure you have a valid JWT tokens:
 
 ```bash
-export MCP_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+export MCP_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
       --username admin --exp 10080 --secret my-test-key)
 ```
 
@@ -38,13 +38,13 @@ export MCP_WRAPPER_LOG_LEVEL=INFO         # DEBUG | INFO | OFF
 
 Configure via Pip or Docker. Note that lauching the wrapper should be done from an MCP Client (ex: via the JSON configuration).
 
-Launching it in your terminal (ex: `python -m mcpgateway.wrapper`) is useful for testing.
+Launching it in your terminal (ex: `python3 -m mcpgateway.wrapper`) is useful for testing.
 
 === "Local shell (venv)"
 
     ```bash
     pip install mcp-contextforge-gateway
-    python -m mcpgateway.wrapper
+    python3 -m mcpgateway.wrapper
     ```
 
 === "Docker / Podman"
@@ -54,7 +54,7 @@ Launching it in your terminal (ex: `python -m mcpgateway.wrapper`) is useful for
       -e MCP_SERVER_CATALOG_URLS=$MCP_SERVER_CATALOG_URLS \
       -e MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN \
       ghcr.io/ibm/mcp-context-forge:latest \
-      python -m mcpgateway.wrapper
+      python3 -m mcpgateway.wrapper
     ```
 
 === "pipx (one-liner)"
@@ -63,7 +63,7 @@ Launching it in your terminal (ex: `python -m mcpgateway.wrapper`) is useful for
     pipx install --include-deps mcp-contextforge-gateway
     MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN \
     MCP_SERVER_CATALOG_URLS=$MCP_SERVER_CATALOG_URLS \
-    python -m mcpgateway.wrapper
+    python3 -m mcpgateway.wrapper
     ```
 
 === "uv / uvx (ultra-fast)"
@@ -72,7 +72,7 @@ Launching it in your terminal (ex: `python -m mcpgateway.wrapper`) is useful for
     curl -Ls https://astral.sh/uv/install.sh | sh
     uv venv ~/.venv/mcpgw && source ~/.venv/mcpgw/bin/activate
     uv pip install mcp-contextforge-gateway
-    uv python -m mcpgateway.wrapper
+    uv python3 -m mcpgateway.wrapper
     ```
 
 The wrapper now waits for JSON-RPC on **stdin** and emits replies on **stdout**.
@@ -192,14 +192,14 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
 
 ```bash
 # Hot-reload wrapper code while hacking
-uv --dev run python -m mcpgateway.wrapper
+uv --dev run python3 -m mcpgateway.wrapper
 ```
 
 ### 🔎 MCP Inspector
 
 ```bash
 npx @modelcontextprotocol/inspector \
-     python -m mcpgateway.wrapper -- \
+     python3 -m mcpgateway.wrapper -- \
      --log-level DEBUG
 ```
 

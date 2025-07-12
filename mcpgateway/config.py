@@ -3,7 +3,7 @@
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Manav Gupta
 
 This module defines configuration settings for the MCP Gateway using Pydantic.
 It loads configuration from environment variables with sensible defaults.
@@ -210,6 +210,14 @@ class Settings(BaseSettings):
 
         Returns:
             str: API key string in the format "username:password".
+
+        Examples:
+            >>> settings = Settings(basic_auth_user="admin", basic_auth_password="secret")
+            >>> settings.api_key
+            'admin:secret'
+            >>> settings = Settings(basic_auth_user="user123", basic_auth_password="pass456")
+            >>> settings.api_key
+            'user123:pass456'
         """
         return f"{self.basic_auth_user}:{self.basic_auth_password}"
 
@@ -219,6 +227,17 @@ class Settings(BaseSettings):
 
         Returns:
             bool: True if HTTP transport is enabled, False otherwise.
+
+        Examples:
+            >>> settings = Settings(transport_type="http")
+            >>> settings.supports_http
+            True
+            >>> settings = Settings(transport_type="all")
+            >>> settings.supports_http
+            True
+            >>> settings = Settings(transport_type="ws")
+            >>> settings.supports_http
+            False
         """
         return self.transport_type in ["http", "all"]
 
@@ -228,6 +247,17 @@ class Settings(BaseSettings):
 
         Returns:
             bool: True if WebSocket transport is enabled, False otherwise.
+
+        Examples:
+            >>> settings = Settings(transport_type="ws")
+            >>> settings.supports_websocket
+            True
+            >>> settings = Settings(transport_type="all")
+            >>> settings.supports_websocket
+            True
+            >>> settings = Settings(transport_type="http")
+            >>> settings.supports_websocket
+            False
         """
         return self.transport_type in ["ws", "all"]
 
@@ -237,6 +267,17 @@ class Settings(BaseSettings):
 
         Returns:
             bool: True if SSE transport is enabled, False otherwise.
+
+        Examples:
+            >>> settings = Settings(transport_type="sse")
+            >>> settings.supports_sse
+            True
+            >>> settings = Settings(transport_type="all")
+            >>> settings.supports_sse
+            True
+            >>> settings = Settings(transport_type="http")
+            >>> settings.supports_sse
+            False
         """
         return self.transport_type in ["sse", "all"]
 

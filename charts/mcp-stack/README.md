@@ -177,7 +177,7 @@ Kubernetes: `>=1.21.0`
 | migration.activeDeadlineSeconds | int | `600` |  |
 | migration.backoffLimit | int | `3` |  |
 | migration.command.migrate | string | `"alembic upgrade head || echo '⚠️ Migration check failed'"` |  |
-| migration.command.waitForDb | string | `"python /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"` |  |
+| migration.command.waitForDb | string | `"python3 /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"` |  |
 | migration.enabled | bool | `true` |  |
 | migration.image.pullPolicy | string | `"Always"` |  |
 | migration.image.repository | string | `"ghcr.io/ibm/mcp-context-forge"` |  |

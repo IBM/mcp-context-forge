@@ -42,8 +42,8 @@ Usage examples
 --------------
 Shell ::
 
-    python redis_isready.py
-    python redis_isready.py --redis-url "redis://localhost:6379/0" \
+    python3 redis_isready.py
+    python3 redis_isready.py --redis-url "redis://localhost:6379/0" \
                             --max-retries 5 --retry-interval-ms 500
 
 Python ::

@@ -238,7 +238,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 ```powershell
 # 1️⃣  Isolated env + install from PyPI
 mkdir mcpgateway ; cd mcpgateway
-python -m venv .venv ; .\.venv\Scripts\Activate.ps1
+python3 -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install mcp-contextforge-gateway
 
@@ -255,7 +255,7 @@ mcpgateway.exe --host 0.0.0.0 --port 4444
 # Start-Process -FilePath "mcpgateway.exe" -ArgumentList "--host 0.0.0.0 --port 4444"
 
 # 4️⃣  Bearer token and smoke-test
-$Env:MCPGATEWAY_BEARER_TOKEN = python -m mcpgateway.utils.create_jwt_token `
+$Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
     --username admin --exp 10080 --secret my-test-key
 
 curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
@@ -389,7 +389,7 @@ docker logs -f mcpgateway
 
 # Generating an API key
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.3.1 \
-  python -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
+  python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `admin` / pass `changeme`).
