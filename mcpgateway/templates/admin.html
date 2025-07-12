@@ -1705,15 +1705,14 @@
     <div id="gateway-test-modal"
       class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden">
       <div class="bg-white dark:bg-gray-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-lg p-6">
-        <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">Test Server Connectivity</h2>
-
+        <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">Test Gateway Connectivity</h2>
         <form id="gateway-test-form" class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700">Server URL</label>
+            <label for="gateway-test-url" class="block text-sm font-medium text-gray-700">Server URL</label>
             <input name="url" type="text" id="gateway-test-url" class="mt-1 block w-full rounded-md shadow-sm p-1" />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700">Method</label>
+            <label for="gateway-test-method" class="block text-sm font-medium text-gray-700">Method</label>
             <select name="method" id="gateway-test-method" class="mt-1 block w-full rounded-md shadow-sm p-1">
               <option>GET</option>
               <option>POST</option>
@@ -1723,18 +1722,18 @@
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700">Path</label>
+            <label for="gateway-test-path" class="block text-sm font-medium text-gray-700">Path</label>
             <input id="gateway-test-path" name="path" type="text" placeholder="/health"
               class="mt-1 block w-full rounded-md shadow-sm p-1" />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
-            <textarea id="headers-json" class="mt-1 block w-full rounded-md shadow-sm p-1"></textarea>
+            <label for="gateway-test-headers" class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
+            <textarea id="gateway-test-headers" class="mt-1 block w-full rounded-md shadow-sm p-1"></textarea>
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700">Body (JSON)</label>
-            <textarea id="body-json" class="mt-1 block w-full rounded-md shadow-sm p-1"></textarea>
+            <label for="gateway-test-body" class="block text-sm font-medium text-gray-700">Body (JSON)</label>
+            <textarea id="gateway-test-body" class="mt-1 block w-full rounded-md shadow-sm p-1"></textarea>
           </div>
 
           <div class="flex">
@@ -1749,15 +1748,17 @@
             </button>
           </div>
 
-          <div id="test-result" class="hidden">
+          <div id="gateway-test-loading" class="mt-4 hidden flex items-center justify-center">
+            <div class="spinner border-t-4 border-blue-600 w-6 h-6 rounded-full animate-spin"></div>
+          </div>
+
+          <div id="gateway-test-result" class="hidden">
             <label class="block text-sm font-medium text-gray-700">Response</label>
-            <pre id="response-json" class="bg-gray-100 p-2 rounded overflow-auto text-sm text-gray-800 max-h-64"></pre>
+            <div id="gateway-test-response-json"
+              class="bg-gray-100 p-2 rounded overflow-auto text-sm text-gray-800 max-h-64"></div>
           </div>
         </form>
 
-        <div id="loading" class="mt-4 hidden">
-          <div class="spinner border-t-4 border-blue-600 w-6 h-6 rounded-full animate-spin"></div>
-        </div>
       </div>
     </div>
 
