@@ -19,7 +19,7 @@ The mcp-cli supports **stdio** connections out-of-the-box through the bundled **
 
 * **Python ≥ 3.11**
 * **uv** (recommended) or pip for dependency management
-* **MCP Context Forge Gateway** running locally or remotely (default: http://localhost:8000)
+* **MCP Context Forge Gateway** running locally or remotely (default: http://localhost:4444)
 * **JWT or Basic Auth credentials** for Gateway access
 * **LLM Provider API keys** (optional, for chat mode):
   * OpenAI: `OPENAI_API_KEY` environment variable
@@ -62,7 +62,7 @@ cd mcp-context-forge
 
 # Install and start the gateway
 make venv install serve
-# Gateway will be available at http://localhost:8000
+# Gateway will be available at http://localhost:4444
 ```
 
 ---
@@ -81,7 +81,7 @@ Create a `server_config.json` file to define your MCP Context Forge Gateway conn
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
         "MCP_AUTH_TOKEN": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImFkbWluIn0.qQDiQwWsVy_FP4mUu0hUUTLNrCPbAxP1NgRIebW6tjo",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:8000",
+        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
@@ -101,7 +101,7 @@ Create a `server_config.json` file to define your MCP Context Forge Gateway conn
         "--rm",
         "-i",
         "-e",
-        "MCP_SERVER_CATALOG_URLS=http://host.docker.internal:8000",
+        "MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444",
         "-e",
         "MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}",
         "--entrypoint",
@@ -129,7 +129,7 @@ python -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-tes
 
 > **⚠️ Important Notes**
 > - Use the **full path** to your virtual environment's Python to avoid import errors
-> - Make sure your MCP Context Forge Gateway is running on the correct port (default: 8000)
+> - Make sure your MCP Context Forge Gateway is running on the correct port (default: 4444)
 > - The wrapper requires `MCP_SERVER_CATALOG_URLS` environment variable
 
 ---
@@ -321,7 +321,7 @@ In interactive mode, use these commands:
 ```bash
 # MCP Context Forge Gateway connection
 export MCP_AUTH_TOKEN="your-jwt-token"
-export MCP_SERVER_CATALOG_URLS="http://localhost:8000"
+export MCP_SERVER_CATALOG_URLS="http://localhost:4444"
 
 # LLM Provider API keys
 export OPENAI_API_KEY="sk-your-openai-key"
@@ -450,7 +450,7 @@ The mcp-cli integrates with MCP Context Forge Gateway through multiple connectio
 1. **Start the Gateway:**
    ```bash
    cd mcp-context-forge
-   make dev  # Starts on http://localhost:8000
+   make serve  # Starts on http://localhost:4444
    ```
 
 2. **Configure mcp-cli:**
@@ -462,7 +462,7 @@ The mcp-cli integrates with MCP Context Forge Gateway through multiple connectio
          "args": ["-m", "mcpgateway.wrapper"],
          "env": {
            "MCP_AUTH_TOKEN": "your-jwt-token",
-           "MCP_SERVER_CATALOG_URLS": "http://localhost:8000"
+           "MCP_SERVER_CATALOG_URLS": "http://localhost:4444"
          }
        }
      }
@@ -481,7 +481,7 @@ Use the official Docker image for production environments:
 ```bash
 # Start the gateway
 docker run -d --name mcpgateway \
-  -p 8000:4444 \
+  -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-secret-key \
   -e BASIC_AUTH_USER=admin \
@@ -492,7 +492,7 @@ docker run -d --name mcpgateway \
 export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-secret-key)
 
 # Test connection
-curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:8000/tools
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
 ```
 
 ---
@@ -552,7 +552,7 @@ Your MCP Context Forge Gateway provides these tool categories:
 
 - [ ] Install mcp-cli: `pip install -e ".[cli,dev]"`
 - [ ] Install MCP Context Forge Gateway
-- [ ] Start gateway: `make dev` (runs on localhost:8000)
+- [ ] Start gateway: `make serve` (runs on localhost:4444)
 - [ ] Create `server_config.json` with correct Python path
 - [ ] Generate JWT token for authentication
 - [ ] Test connection: `mcp-cli ping --server mcpgateway-wrapper`
