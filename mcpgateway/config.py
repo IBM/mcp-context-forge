@@ -79,6 +79,7 @@ class Settings(BaseSettings):
 
     # Security
     skip_ssl_verify: bool = False
+    cors_enabled: bool = True
 
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
     # Tell pydantic *not* to touch this env var - our validator will.
