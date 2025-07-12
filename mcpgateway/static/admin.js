@@ -3400,17 +3400,21 @@ async function handleGatewayTestSubmit(e) {
                     <h4>✅ Connection Successful</h4>
                     <p><strong>Status Code:</strong> ${result.statusCode}</p>
                     <p><strong>Response Time:</strong> ${result.latencyMs}ms</p>
-                    ${result.body ? `<details>
+                    ${
+                        result.body
+                            ? `<details>
                         <summary class='cursor-pointer'>Response Body</summary>
                         <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto">${JSON.stringify(result.body, null, 2)}</pre>
-                    </details>` : ''}
+                    </details>`
+                            : ""
+                    }
                 </div>
             `;
         } else {
-        responseDiv.innerHTML = `
+            responseDiv.innerHTML = `
             <div class="alert alert-error">
                 <h4>❌ Connection Failed</h4>
-                <p>${result.error || 'Unable to connect to the server'}</p>
+                <p>${result.error || "Unable to connect to the server"}</p>
             </div>
         `;
         }
