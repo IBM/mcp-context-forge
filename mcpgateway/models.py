@@ -14,6 +14,22 @@ It includes:
   - Protocol initialization types
   - Sampling message types
   - Capability definitions
+
+Doctest examples
+----------------
+>>> from mcpgateway.models import Role
+>>> Role.ASSISTANT.value
+'assistant'
+>>> from mcpgateway.models import Tool
+>>> t = Tool(name='t', url='http://x')
+>>> t.name
+'t'
+>>> str(t.url)
+'http://x/'
+>>> from mcpgateway.models import Root
+>>> r = Root(uri='file:///tmp', name='tmp')
+>>> r.name
+'tmp'
 """
 
 # Standard
@@ -26,11 +42,15 @@ from pydantic import AnyHttpUrl, AnyUrl, BaseModel, ConfigDict, Field
 
 
 class Role(str, Enum):
-    """Message role in conversations.
+    """
+    Message role in conversations.
 
-    Attributes:
-        ASSISTANT (str): Indicates the assistant's role.
-        USER (str): Indicates the user's role.
+    Doctest:
+    >>> from mcpgateway.models import Role
+    >>> Role.ASSISTANT.value
+    'assistant'
+    >>> Role.USER.value
+    'user'
     """
 
     ASSISTANT = "assistant"
@@ -368,21 +388,16 @@ class PromptResult(BaseModel):
 
 # Tool types
 class Tool(BaseModel):
-    """A tool that can be invoked.
+    """
+    A tool that can be invoked.
 
-    Attributes:
-        name (str): The unique name of the tool.
-        url (AnyHttpUrl): The URL of the tool.
-        description (Optional[str]): A description of the tool.
-        integrationType (str): The integration type of the tool (e.g. MCP or REST).
-        requestType (str): The HTTP method used to invoke the tool (GET, POST, PUT, DELETE, SSE, STDIO).
-        headers (Dict[str, Any]): A JSON object representing HTTP headers.
-        input_schema (Dict[str, Any]): A JSON Schema for validating the tool's input.
-        annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints.
-        auth_type (Optional[str]): The type of authentication used ("basic", "bearer", or None).
-        auth_username (Optional[str]): The username for basic authentication.
-        auth_password (Optional[str]): The password for basic authentication.
-        auth_token (Optional[str]): The token for bearer authentication.
+    Doctest:
+    >>> from mcpgateway.models import Tool
+    >>> t = Tool(name='t', url='http://x')
+    >>> t.name
+    't'
+    >>> str(t.url)
+    'http://x/'
     """
 
     name: str
@@ -525,11 +540,14 @@ class FileUrl(AnyUrl):
 
 
 class Root(BaseModel):
-    """A root directory or file.
+    """
+    A root directory or file.
 
-    Attributes:
-        uri (Union[FileUrl, AnyUrl]): The unique identifier for the root.
-        name (Optional[str]): An optional human-readable name.
+    Doctest:
+    >>> from mcpgateway.models import Root
+    >>> r = Root(uri='file:///tmp', name='tmp')
+    >>> r.name
+    'tmp'
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

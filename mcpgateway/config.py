@@ -44,9 +44,57 @@ from jsonpath_ng.jsonpath import JSONPath
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+"""
+MCP Gateway Configuration.
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti, Manav Gupta
+
+This module defines configuration settings for the MCP Gateway using Pydantic.
+It loads configuration from environment variables with sensible defaults.
+
+Doctest examples
+----------------
+>>> from mcpgateway.config import Settings
+>>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')
+>>> s.api_key
+'admin:secret'
+>>> s2 = Settings(transport_type='http')
+>>> s2.validate_transport()  # no error
+>>> s3 = Settings(transport_type='invalid')
+>>> try:
+...     s3.validate_transport()
+... except ValueError as e:
+...     print('error')
+error
+>>> s4 = Settings(database_url='sqlite:///./test.db')
+>>> isinstance(s4.database_settings, dict)
+True
+"""
+
 
 class Settings(BaseSettings):
-    """MCP Gateway configuration settings."""
+    """
+    MCP Gateway configuration settings.
+
+    Doctest:
+    >>> from mcpgateway.config import Settings
+    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')
+    >>> s.api_key
+    'admin:secret'
+    >>> s2 = Settings(transport_type='http')
+    >>> s2.validate_transport()  # no error
+    >>> s3 = Settings(transport_type='invalid')
+    >>> try:
+    ...     s3.validate_transport()
+    ... except ValueError as e:
+    ...     print('error')
+    error
+    >>> s4 = Settings(database_url='sqlite:///./test.db')
+    >>> isinstance(s4.database_settings, dict)
+    True
+    """
 
     # Basic Settings
     app_name: str = "MCP_Gateway"
@@ -206,12 +254,14 @@ class Settings(BaseSettings):
 
     @property
     def api_key(self) -> str:
-        """Generate API key from auth credentials.
+        """
+        Generate API key from auth credentials.
 
         Returns:
             str: API key string in the format "username:password".
 
         Examples:
+            >>> from mcpgateway.config import Settings
             >>> settings = Settings(basic_auth_user="admin", basic_auth_password="secret")
             >>> settings.api_key
             'admin:secret'
@@ -283,10 +333,17 @@ class Settings(BaseSettings):
 
     @property
     def database_settings(self) -> dict:
-        """Get SQLAlchemy database settings.
+        """
+        Get SQLAlchemy database settings.
 
         Returns:
             dict: Dictionary containing SQLAlchemy database configuration options.
+
+        Doctest:
+        >>> from mcpgateway.config import Settings
+        >>> s = Settings(database_url='sqlite:///./test.db')
+        >>> isinstance(s.database_settings, dict)
+        True
         """
         return {
             "pool_size": self.db_pool_size,
@@ -315,10 +372,22 @@ class Settings(BaseSettings):
         )
 
     def validate_transport(self) -> None:
-        """Validate transport configuration.
+        """
+        Validate transport configuration.
 
         Raises:
             ValueError: If the transport type is not one of the valid options.
+
+        Doctest:
+        >>> from mcpgateway.config import Settings
+        >>> s = Settings(transport_type='http')
+        >>> s.validate_transport()  # no error
+        >>> s2 = Settings(transport_type='invalid')
+        >>> try:
+        ...     s2.validate_transport()
+        ... except ValueError as e:
+        ...     print('error')
+        error
         """
         valid_types = {"http", "ws", "sse", "all"}
         if self.transport_type not in valid_types:

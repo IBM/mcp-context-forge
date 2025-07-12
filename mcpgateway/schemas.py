@@ -17,6 +17,25 @@ It implements schemas for:
 
 The schemas ensure proper validation according to the MCP specification while adding
 gateway-specific extensions for federation support.
+
+Doctest examples
+----------------
+>>> from mcpgateway.schemas import to_camel_case
+>>> to_camel_case('hello_world_example')
+'helloWorldExample'
+>>> from mcpgateway.schemas import ToolCreate
+>>> t = ToolCreate(name='mytool', url='http://example.com')
+>>> t.name
+'mytool'
+>>> t.url
+'http://example.com'
+>>> from mcpgateway.schemas import BaseModelWithConfigDict
+>>> class M(BaseModelWithConfigDict):
+...     a: int
+...     b: str
+>>> m = M(a=1, b='x')
+>>> m.to_dict() == {'a': 1, 'b': 'x'}
+True
 """
 
 # Standard
@@ -54,6 +73,7 @@ def to_camel_case(s: str) -> str:
         str: The string converted to camelCase.
 
     Example:
+        >>> from mcpgateway.schemas import to_camel_case
         >>> to_camel_case("hello_world_example")
         'helloWorldExample'
     """
@@ -85,6 +105,15 @@ class BaseModelWithConfigDict(BaseModel):
     - ORM mode for SQLAlchemy integration
     - JSON encoders for datetime handling
     - Automatic conversion from snake_case to camelCase for output
+
+    Doctest:
+    >>> from mcpgateway.schemas import BaseModelWithConfigDict
+    >>> class M(BaseModelWithConfigDict):
+    ...     a: int
+    ...     b: str
+    >>> m = M(a=1, b='x')
+    >>> m.to_dict() == {'a': 1, 'b': 'x'}
+    True
     """
 
     model_config = ConfigDict(
@@ -252,19 +281,13 @@ class ToolCreate(BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
 
-    Attributes:
-        model_config (ConfigDict): Configuration for the model.
-        name (str): Unique name for the tool.
-        url (Union[str, AnyHttpUrl]): Tool endpoint URL.
-        description (Optional[str]): Tool description.
-        integration_type (Literal["MCP", "REST"]): Tool integration type. 'MCP' for MCP-compliant tools, 'REST' for REST integrations.
-        request_type (Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"]): HTTP method to be used for invoking the tool.
-        headers (Optional[Dict[str, str]]): Additional headers to send when invoking the tool.
-        input_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool parameters. Alias 'inputSchema'.
-        annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints such as title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint.
-        jsonpath_filter (Optional[str]): JSON modification filter.
-        auth (Optional[AuthenticationValues]): Authentication credentials (Basic or Bearer Token or custom headers) if required.
-        gateway_id (Optional[str]): ID of the gateway for the tool.
+    Doctest:
+    >>> from mcpgateway.schemas import ToolCreate
+    >>> t = ToolCreate(name='mytool', url='http://example.com')
+    >>> t.name
+    'mytool'
+    >>> t.url
+    'http://example.com'
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -1123,19 +1146,13 @@ class GatewayCreate(BaseModel):
     """
     Schema for creating a new gateway.
 
-    Attributes:
-        model_config (ConfigDict): Configuration for the model.
-        name (str): Unique name for the gateway.
-        url (Union[str, AnyHttpUrl]): Gateway endpoint URL.
-        description (Optional[str]): Optional description of the gateway.
-        transport (str): Transport used by the MCP server, default is "SSE".
-        auth_type (Optional[str]): Type of authentication (basic, bearer, headers, or none).
-        auth_username (Optional[str]): Username for basic authentication.
-        auth_password (Optional[str]): Password for basic authentication.
-        auth_token (Optional[str]): Token for bearer authentication.
-        auth_header_key (Optional[str]): Key for custom headers authentication.
-        auth_header_value (Optional[str]): Value for custom headers authentication.
-        auth_value (Optional[str]): Alias for authentication value, used for better access post-validation.
+    Doctest:
+    >>> from mcpgateway.schemas import GatewayCreate
+    >>> g = GatewayCreate(name='gw', url='http://gw')
+    >>> g.name
+    'gw'
+    >>> g.url
+    'http://gw'
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
