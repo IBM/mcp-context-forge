@@ -1,5 +1,10 @@
+# -*- coding: utf-8 -*-
 """
 End-to-end tests for MCP Gateway main APIs.
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 This module contains comprehensive end-to-end tests for all main API endpoints in main.py.
 These tests are designed to exercise the entire application stack with minimal mocking,
@@ -26,6 +31,10 @@ database that is created fresh for each test run, ensuring complete isolation
 and reproducibility.
 
 Note: Admin API endpoints (/admin/*) are tested separately when MCPGATEWAY_ADMIN_API_ENABLED=true
+
+TODO:
+1. Test redis
+2. Test with sample MCP server(s) in test scripts
 """
 
 # Standard
