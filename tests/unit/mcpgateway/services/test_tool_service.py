@@ -732,7 +732,7 @@ class TestToolService:
 
     @pytest.mark.asyncio
     async def test_notify_tool_publish_event(self, tool_service, mock_tool, monkeypatch):
-        # Arrange – freeze the publish method so we can inspect the call
+        # Arrange - freeze the publish method so we can inspect the call
         publish_mock = AsyncMock()
         monkeypatch.setattr(tool_service, "_publish_event", publish_mock)
 
@@ -806,7 +806,7 @@ class TestToolService:
         # Act
         await tool_service._publish_event(event)
 
-        # Assert – the event was put on the queue
+        # Assert - the event was put on the queue
         queued_event = await q.get()
         assert queued_event == event
         assert q.empty()
