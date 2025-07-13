@@ -82,7 +82,6 @@ def _build_app(monkeypatch: pytest.MonkeyPatch, auth_ok: bool = True) -> FastAPI
     # Stub heavy helpers
     monkeypatch.setattr(ver_mod, "_database_version", lambda: ("db-vX", True))
     monkeypatch.setattr(ver_mod, "_system_metrics", lambda: {"stub": True})
-    monkeypatch.setattr(ver_mod, "_git_revision", lambda: "deadbeef")
     monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", False, raising=False)
 
     # Auth override
@@ -114,7 +113,6 @@ def test_version_json_ok(client: TestClient) -> None:
     payload: Dict[str, Any] = rsp.json()
     assert payload["database"]["server_version"] == "db-vX"
     assert payload["system"] == {"stub": True}
-    assert payload["app"]["git_revision"] == "deadbeef"
 
 
 def test_version_html_query_param(client: TestClient) -> None:
@@ -165,30 +163,6 @@ def test_sanitize_url() -> None:
 
     url = "postgres://u:p@host:5432/db"
     assert ver_mod._sanitize_url(url) == "postgres://u@host:5432/db"
-
-
-def test_git_revision_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    # First-Party
-    from mcpgateway import version as ver_mod
-
-    monkeypatch.setenv("GIT_COMMIT", "0123456789abcdef")
-    assert ver_mod._git_revision() == "012345678"
-
-
-def test_git_revision_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure subprocess branch returns short hash."""
-    # First-Party
-    from mcpgateway import version as ver_mod
-
-    # Remove env override
-    monkeypatch.delenv("GIT_COMMIT", raising=False)
-
-    fake_subprocess = types.SimpleNamespace(
-        check_output=lambda *a, **kw: b"abc123\n",
-        DEVNULL=-3,  # needed by _git_revision
-    )
-    monkeypatch.setattr(ver_mod, "subprocess", fake_subprocess)
-    assert ver_mod._git_revision() == "abc123"
 
 
 # --------------------------------------------------------------------------- #
