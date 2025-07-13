@@ -11,11 +11,10 @@ This module defines SQLAlchemy models for storing MCP entities including:
 - Prompts with argument templates
 - Federated gateways with capability tracking
 
-Doctest examples
-----------------
->>> from mcpgateway.db import connect_args
->>> isinstance(connect_args, dict)
-True
+Examples:
+    >>> from mcpgateway.db import connect_args
+    >>> isinstance(connect_args, dict)
+    True
 """
 
 # Standard
