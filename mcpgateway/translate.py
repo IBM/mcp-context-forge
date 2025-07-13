@@ -207,8 +207,11 @@ class StdIOEndpoint:
         Creates the subprocess and starts the stdout pump task. The subprocess
         is created with stdin/stdout pipes and stderr passed through.
 
+        Raises:
+            RuntimeError: If the subprocess fails to create stdin/stdout pipes.
+
         Examples:
-            >>> import asyncio
+            >>> import asyncio # doctest: +SKIP
             >>> async def test_start(): # doctest: +SKIP
             ...     pubsub = _PubSub()
             ...     stdio = StdIOEndpoint("cat", pubsub)
@@ -224,7 +227,11 @@ class StdIOEndpoint:
             stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr,  # passthrough for visibility
         )
-        assert self._proc.stdin and self._proc.stdout
+
+        # Replace assert with explicit error checking
+        if not self._proc.stdin or not self._proc.stdout:
+            raise RuntimeError(f"Failed to create subprocess with stdin/stdout pipes for command: {self._cmd}")
+
         self._stdin = self._proc.stdin
         self._pump_task = asyncio.create_task(self._pump_stdout())
 
