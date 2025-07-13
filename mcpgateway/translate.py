@@ -18,7 +18,7 @@ Examples:
 
     >>> import asyncio
     >>> from mcpgateway.translate import start_stdio
-    >>> asyncio.run(start_stdio("uvx mcp-server-git", 9000, "info", None))  # doctest: +SKIP
+    >>> asyncio.run(start_stdio("uvx mcp-server-git", 9000, "info", None, "127.0.0.1"))  # doctest: +SKIP
 
 Usage:
     Command line usage::
@@ -492,6 +492,9 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         'info'
         >>> args.host
         '127.0.0.1'
+        >>> args = _parse_args(["--stdio", "cat"]) # Test default parameters
+        >>> args.host
+        '127.0.0.1'
     """
     p = argparse.ArgumentParser(
         prog="mcpgateway.translate",
@@ -662,7 +665,7 @@ def start_stdio(cmd: str, port: int, log_level: str, cors: Optional[List[str]], 
     return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors, host))
 
 
-def start_sse(url: str, bearer: Optional[str]) -> None:
+def start_sse(url: str, bearer: Optional[str], timeout: float = 30.0) -> None:
     """Start SSE bridge.
 
     Entry point for starting an SSE to stdio bridge client.
@@ -670,6 +673,7 @@ def start_sse(url: str, bearer: Optional[str]) -> None:
     Args:
         url: The SSE endpoint URL to connect to.
         bearer: Optional OAuth2 bearer token for authentication.
+        timeout: HTTP client timeout in seconds. Defaults to 30.0.
 
     Returns:
         None: This function does not return a value.
@@ -677,7 +681,7 @@ def start_sse(url: str, bearer: Optional[str]) -> None:
     Examples:
         >>> start_sse("http://example.com/sse", "token123")  # doctest: +SKIP
     """
-    return asyncio.run(_run_sse_to_stdio(url, bearer))
+    return asyncio.run(_run_sse_to_stdio(url, bearer, timeout))
 
 
 def main(argv: Optional[Sequence[str]] | None = None) -> None:
