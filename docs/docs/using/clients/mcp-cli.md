@@ -80,7 +80,7 @@ Create a `server_config.json` file to define your MCP Context Forge Gateway conn
       "command": "/path/to/mcp-context-forge/.venv/bin/python",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_AUTH_TOKEN": "***REMOVED***",
+        "MCP_AUTH_TOKEN": "<YOUR_AUTH_TOKEN_HERE>",
         "MCP_SERVER_CATALOG_URLS": "http://localhost:4444",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
