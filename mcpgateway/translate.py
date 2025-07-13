@@ -228,7 +228,7 @@ class StdIOEndpoint:
             stderr=sys.stderr,  # passthrough for visibility
         )
 
-        # Replace assert with explicit error checking
+        # Explicit error checking
         if not self._proc.stdin or not self._proc.stdout:
             raise RuntimeError(f"Failed to create subprocess with stdin/stdout pipes for command: {self._cmd}")
 
@@ -294,9 +294,12 @@ class StdIOEndpoint:
         to the pubsub system. Runs until EOF or exception.
 
         Raises:
-            Exception: For any error encountered while pumping stdout.
+            RuntimeError: If process or stdout is not properly initialized.
+            Exception: For any other error encountered while pumping stdout.
         """
-        assert self._proc and self._proc.stdout
+        if not self._proc or not self._proc.stdout:
+            raise RuntimeError("Process not properly initialized: missing stdout")
+
         reader = self._proc.stdout
         try:
             while True:
@@ -487,6 +490,8 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         9000
         >>> args.logLevel
         'info'
+        >>> args.host
+        '127.0.0.1'
     """
     p = argparse.ArgumentParser(
         prog="mcpgateway.translate",
@@ -498,6 +503,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     src.add_argument("--streamableHttp", help="[NOT IMPLEMENTED]")
 
     p.add_argument("--port", type=int, default=8000, help="HTTP port to bind")
+    p.add_argument("--host", default="127.0.0.1", help="Host interface to bind (default: 127.0.0.1)")
     p.add_argument(
         "--logLevel",
         default="info",
@@ -520,7 +526,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return args
 
 
-async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: Optional[List[str]] = None) -> None:
+async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: Optional[List[str]] = None, host: str = "127.0.0.1") -> None:
     """Run stdio to SSE bridge.
 
     Starts a subprocess and exposes it via HTTP/SSE endpoints. Handles graceful
@@ -531,6 +537,7 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
         port: The port to bind the HTTP server to.
         log_level: The logging level to use. Defaults to "info".
         cors: Optional list of CORS allowed origins.
+        host: The host interface to bind to. Defaults to "127.0.0.1" for security.
 
     Examples:
         >>> import asyncio # doctest: +SKIP
@@ -547,7 +554,7 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
     app = _build_fastapi(pubsub, stdio, cors_origins=cors)
     config = uvicorn.Config(
         app,
-        host="0.0.0.0",
+        host=host,  # Changed from hardcoded "0.0.0.0"
         port=port,
         log_level=log_level,
         lifespan="off",
@@ -569,12 +576,12 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
         with suppress(NotImplementedError):  # Windows lacks add_signal_handler
             loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
 
-    LOGGER.info(f"Bridge ready → http://127.0.0.1:{port}/sse")
+    LOGGER.info(f"Bridge ready → http://{host}:{port}/sse")
     await server.serve()
     await _shutdown()  # final cleanup
 
 
-async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
+async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str], timeout: float = 30.0) -> None:
     """Run SSE to stdio bridge.
 
     Connects to a remote SSE endpoint and bridges it to local stdio.
@@ -582,6 +589,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
     Args:
         url: The SSE endpoint URL to connect to.
         oauth2_bearer: Optional OAuth2 bearer token for authentication.
+        timeout: HTTP client timeout in seconds. Defaults to 30.0.
 
     Raises:
         ImportError: If httpx package is not available.
@@ -602,7 +610,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
     if oauth2_bearer:
         headers["Authorization"] = f"Bearer {oauth2_bearer}"
 
-    async with httpx.AsyncClient(headers=headers, timeout=None) as client:
+    async with httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout=timeout, connect=10.0)) as client:
         process = await asyncio.create_subprocess_shell(
             "cat",  # Placeholder command; replace with actual stdio server command if needed
             stdin=asyncio.subprocess.PIPE,
@@ -611,7 +619,9 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
         )
 
         async def read_stdout() -> None:
-            assert process.stdout
+            if not process.stdout:
+                raise RuntimeError("Process stdout not available")
+
             while True:
                 line = await process.stdout.readline()
                 if not line:
@@ -631,7 +641,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
         await asyncio.gather(read_stdout(), pump_sse_to_stdio())
 
 
-def start_stdio(cmd: str, port: int, log_level: str, cors: Optional[List[str]]) -> None:
+def start_stdio(cmd: str, port: int, log_level: str, cors: Optional[List[str]], host: str = "127.0.0.1") -> None:
     """Start stdio bridge.
 
     Entry point for starting a stdio to SSE bridge server.
@@ -641,6 +651,7 @@ def start_stdio(cmd: str, port: int, log_level: str, cors: Optional[List[str]]) 
         port: The port to bind the HTTP server to.
         log_level: The logging level to use.
         cors: Optional list of CORS allowed origins.
+        host: The host interface to bind to. Defaults to "127.0.0.1".
 
     Returns:
         None: This function does not return a value.
@@ -648,7 +659,7 @@ def start_stdio(cmd: str, port: int, log_level: str, cors: Optional[List[str]]) 
     Examples:
         >>> start_stdio("uvx mcp-server-git", 9000, "info", None)  # doctest: +SKIP
     """
-    return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors))
+    return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors, host))
 
 
 def start_sse(url: str, bearer: Optional[str]) -> None:
@@ -697,7 +708,7 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
     )
     try:
         if args.stdio:
-            start_stdio(args.stdio, args.port, args.logLevel, args.cors)
+            start_stdio(args.stdio, args.port, args.logLevel, args.cors, args.host)
         elif args.sse:
             start_sse(args.sse, args.oauth2Bearer)
     except KeyboardInterrupt:
