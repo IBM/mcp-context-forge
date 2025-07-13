@@ -10,6 +10,8 @@ This module defines SQLAlchemy models for storing MCP entities including:
 - Resources with subscription tracking
 - Prompts with argument templates
 - Federated gateways with capability tracking
+- Updated to record server associations independently using many-to-many relationships,
+- and to record tool execution metrics.
 
 Examples:
     >>> from mcpgateway.db import connect_args
