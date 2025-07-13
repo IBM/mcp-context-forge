@@ -203,7 +203,7 @@ Once connected to your MCP Context Forge Gateway, mcp-cli automatically discover
 1. **Test connection:** `mcp-cli ping --server mcpgateway-wrapper`
 2. **List tools:** `mcp-cli tools list --server mcpgateway-wrapper`
 3. **Start Chat Mode:** `mcp-cli chat --server mcpgateway-wrapper --provider ollama --model mistral-nemo:latest`
-4. **Type `/tools`** – your Gateway tools should list automatically
+4. **Type `/tools`** - your Gateway tools should list automatically
 5. **Try asking:** `"What tools are available?"` and the LLM will show discovered tools
 6. **Test GitHub integration:** `"What issues have been assigned to me?"`
 
