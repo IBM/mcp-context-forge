@@ -29,7 +29,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import case, delete, func, literal, not_, select
+from sqlalchemy import delete, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -398,17 +398,9 @@ class ToolService:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
         """
-        separator = literal(settings.gateway_tool_name_separator)
-        slug_expr = case(
-            (
-                DbTool.gateway_slug.is_(None),  # pylint: disable=no-member
-                DbTool.original_name_slug,
-            ),  # WHEN gateway_slug IS NULL
-            else_=DbTool.gateway_slug + separator + DbTool.original_name_slug,  # ELSE gateway_slug||sep||original
-        )
-        tool = db.execute(select(DbTool).where(slug_expr == name).where(DbTool.enabled)).scalar_one_or_none()
+        tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
         if not tool:
-            inactive_tool = db.execute(select(DbTool).where(slug_expr == name).where(not_(DbTool.enabled))).scalar_one_or_none()
+            inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")

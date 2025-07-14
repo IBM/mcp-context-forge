@@ -14,6 +14,9 @@ contraction processing to generate clean, readable slugs.
 import re
 from unicodedata import normalize
 
+# First-Party
+from mcpgateway.config import settings
+
 # Helper regex patterns
 CONTRACTION_PATTERN = re.compile(r"(\w)[''](\w)")
 NON_ALPHANUMERIC_PATTERN = re.compile(r"[\W_]+")
@@ -73,7 +76,7 @@ def slugify(text):
     # Make lower case and delete apostrophes from contractions
     slug = CONTRACTION_PATTERN.sub(r"\1\2", text.lower())
     # Convert runs of non-alphanumeric characters to single hyphens, strip ends
-    slug = NON_ALPHANUMERIC_PATTERN.sub("-", slug).strip("-")
+    slug = NON_ALPHANUMERIC_PATTERN.sub(settings.gateway_tool_name_separator, slug).strip(settings.gateway_tool_name_separator)
     # Replace special characters from the map
     for special_char, replacement in SPECIAL_CHAR_MAP.items():
         slug = slug.replace(special_char, replacement)
