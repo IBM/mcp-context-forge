@@ -1417,31 +1417,30 @@ class GatewayRead(BaseModelWithConfigDict):
     slug: str = Field(None, description="Slug for gateway endpoint URL")
 
     # This will be the main method to automatically populate fields
-    @model_validator(mode="before")
-    @classmethod
+    @model_validator(mode="after")
     def _populate_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        auth_type = values.get("auth_type")
-        auth_value_encoded = values.get("auth_value")
+        auth_type = values.auth_type
+        auth_value_encoded = values.auth_value
         auth_value = decode_auth(auth_value_encoded)
         if auth_type == "basic":
             u = auth_value.get("username")
             p = auth_value.get("password")
             if not u or not p:
                 raise ValueError("basic auth requires both username and password")
-            values["auth_username"], values["auth_password"] = u, p
+            values.auth_username, values.auth_password = u, p
 
         elif auth_type == "bearer":
             auth = auth_value.get("Authorization")
             if not (isinstance(auth, str) and auth.startswith("Bearer ")):
                 raise ValueError("bearer auth requires an Authorization header of the form 'Bearer <token>'")
-            values["auth_token"] = auth.removeprefix("Bearer ")
+            values.auth_token = auth.removeprefix("Bearer ")
 
         elif auth_type == "authheaders":
             # must be exactly one header
             if len(auth_value) != 1:
                 raise ValueError("authheaders requires exactly one key/value pair")
             k, v = next(iter(auth_value.items()))
-            values["auth_header_key"], values["auth_header_value"] = k, v
+            values.auth_header_key, values.auth_header_value = k, v
 
         return values
 
