@@ -238,7 +238,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 ```powershell
 # 1️⃣  Isolated env + install from PyPI
 mkdir mcpgateway ; cd mcpgateway
-python -m venv .venv ; .\.venv\Scripts\Activate.ps1
+python3 -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install mcp-contextforge-gateway
 
@@ -255,7 +255,7 @@ mcpgateway.exe --host 0.0.0.0 --port 4444
 # Start-Process -FilePath "mcpgateway.exe" -ArgumentList "--host 0.0.0.0 --port 4444"
 
 # 4️⃣  Bearer token and smoke-test
-$Env:MCPGATEWAY_BEARER_TOKEN = python -m mcpgateway.utils.create_jwt_token `
+$Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
     --username admin --exp 10080 --secret my-test-key
 
 curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
@@ -375,7 +375,7 @@ Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e MCPGATEWAY_UI_ENABLED=true \
-  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
@@ -389,7 +389,7 @@ docker logs -f mcpgateway
 
 # Generating an API key
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.3.1 \
-  python -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
+  python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `admin` / pass `changeme`).
@@ -410,7 +410,7 @@ docker run -d --name mcpgateway \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
   -e MCPGATEWAY_UI_ENABLED=true \
-  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
@@ -435,7 +435,7 @@ chmod 777 $(pwd)/data
 docker run -d --name mcpgateway \
   --network=host \
   -e MCPGATEWAY_UI_ENABLED=true \
-  -e MCPGATEWAY_ADMIN_API_ENABLED=true \  
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e PORT=4444 \
   -e DATABASE_URL=sqlite:////data/mcp.db \
@@ -1876,6 +1876,7 @@ pysonar-scanner      - Run scan with Python wrapper (pysonar-scanner)
 sonar-info           - How to create a token & which env vars to export
 🛡️ SECURITY & PACKAGE SCANNING
 trivy                - Scan container image for CVEs (HIGH/CRIT). Needs podman socket enabled
+grype-scan           - Scan container for security audit and vulnerability scanning
 dockle               - Lint the built container image via tarball (no daemon/socket needed)
 hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 pip-audit            - Audit Python dependencies for published CVEs

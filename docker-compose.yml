@@ -49,6 +49,8 @@ services:
       - JWT_SECRET_KEY=my-test-key
       - BASIC_AUTH_USER=admin
       - BASIC_AUTH_PASSWORD=changeme
+      - MCPGATEWAY_UI_ENABLED=true
+      - MCPGATEWAY_ADMIN_API_ENABLED=true
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem

@@ -19,7 +19,7 @@ exercises:
   network binding occurs.
 * `_run_sse_to_stdio` ingestion path with patched `httpx` and a dummy shell
   command.
-* The module's CLI entry-point executed via `python -m mcpgateway.translate`
+* The module's CLI entry-point executed via `python3 -m mcpgateway.translate`
   (tested with `runpy`).
 
 Run with:
@@ -929,7 +929,7 @@ async def test_pump_sse_to_stdio_full(monkeypatch, translate):
 
 
 # ---------------------------------------------------------------------------#
-# Tests: CLI entry-point (`python -m mcpgateway.translate`)                  #
+# Tests: CLI entry-point (`python3 -m mcpgateway.translate`)                  #
 # ---------------------------------------------------------------------------#
 
 

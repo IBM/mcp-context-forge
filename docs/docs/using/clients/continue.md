@@ -57,7 +57,7 @@ There are **two ways** to attach Continue to a gateway:
 *Generate a token*:
 
 ```bash
-export MCP_AUTH_TOKEN=$(python -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+export MCP_AUTH_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
 ```
 
 ### Option B - Local stdio bridge (`mcpgateway.wrapper`)

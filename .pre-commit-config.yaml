@@ -510,3 +510,17 @@ repos:
   #         - mdformat-gfm
   #         - mdformat-tables
   #         - mdformat-black
+
+  # -----------------------------------------------------------------------------
+  # 🧪 DOCTEST VALIDATION
+  # -----------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: doctest
+        name: 🧪 Doctest - Validate Documentation Examples
+        description: Runs doctest on all Python modules to ensure documentation examples work.
+        entry: python3 -m pytest --doctest-modules mcpgateway/ --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+        types: [python]

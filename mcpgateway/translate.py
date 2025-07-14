@@ -1,42 +1,52 @@
 # -*- coding: utf-8 -*-
-""" mcpgateway.translate - bridges local JSON-RPC/stdio servers to HTTP/SSE
+r"""Bridges local JSON-RPC/stdio servers to HTTP/SSE.
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
-You can now run the bridge in either direction:
+This module provides bidirectional bridging between MCP servers that communicate
+via stdio/JSON-RPC and HTTP/SSE endpoints. It enables exposing local MCP servers
+over HTTP or consuming remote SSE endpoints as local stdio servers.
 
-- stdio to SSE (expose local stdio MCP server over SSE)
-- SSE to stdio (bridge remote SSE endpoint to local stdio)
+The bridge supports two modes of operation:
+- stdio to SSE: Expose a local stdio MCP server over HTTP/SSE
+- SSE to stdio: Bridge a remote SSE endpoint to local stdio
 
+Examples:
+    Programmatic usage:
 
-Usage
------
-# 1. expose an MCP server that talks JSON-RPC on stdio at :9000/sse
-python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
+    >>> import asyncio
+    >>> from mcpgateway.translate import start_stdio
+    >>> asyncio.run(start_stdio("uvx mcp-server-git", 9000, "info", None, "127.0.0.1"))  # doctest: +SKIP
 
-# 2. from another shell / browser subscribe to the SSE stream
-curl -N http://localhost:9000/sse          # receive the stream
+Usage:
+    Command line usage::
 
-# 3. send a test echo request
-curl -X POST http://localhost:9000/message \\
-     -H 'Content-Type: application/json'   \\
-     -d '{"jsonrpc":"2.0","id":1,"method":"echo","params":{"value":"hi"}}'
+        # 1. Expose an MCP server that talks JSON-RPC on stdio at :9000/sse
+        python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 
-# 4. proper MCP handshake and tool listing
-curl -X POST http://localhost:9000/message \\
-     -H 'Content-Type: application/json' \\
-     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0.0.1"}}}'
+        # 2. From another shell / browser subscribe to the SSE stream
+        curl -N http://localhost:9000/sse          # receive the stream
 
-curl -X POST http://localhost:9000/message \\
-     -H 'Content-Type: application/json' \\
-     -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+        # 3. Send a test echo request
+        curl -X POST http://localhost:9000/message \
+             -H 'Content-Type: application/json'   \
+             -d '{"jsonrpc":"2.0","id":1,"method":"echo","params":{"value":"hi"}}'
 
-The SSE stream now emits JSON-RPC responses as `event: message` frames and sends
-regular `event: keepalive` frames (default every 30s) so that proxies and
-clients never time out.  Each client receives a unique *session-id* that is
-appended as a query parameter to the back-channel `/message` URL.
+        # 4. Proper MCP handshake and tool listing
+        curl -X POST http://localhost:9000/message \
+             -H 'Content-Type: application/json' \
+             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0.0.1"}}}'
+
+        curl -X POST http://localhost:9000/message \
+             -H 'Content-Type: application/json' \
+             -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+
+    The SSE stream now emits JSON-RPC responses as ``event: message`` frames and sends
+    regular ``event: keepalive`` frames (default every 30s) so that proxies and
+    clients never time out. Each client receives a unique *session-id* that is
+    appended as a query parameter to the back-channel ``/message`` URL.
 """
 
 # Future
@@ -76,7 +86,23 @@ __all__ = ["main"]  # for console-script entry-point
 # Helpers - trivial in-process Pub/Sub                                       #
 # ---------------------------------------------------------------------------#
 class _PubSub:
-    """Very small fan-out helper - one async Queue per subscriber."""
+    """Very small fan-out helper - one async Queue per subscriber.
+
+    This class implements a simple publish-subscribe pattern using asyncio queues
+    for distributing messages from stdio subprocess to multiple SSE clients.
+
+    Examples:
+        >>> import asyncio
+        >>> async def test_pubsub():
+        ...     pubsub = _PubSub()
+        ...     q = pubsub.subscribe()
+        ...     await pubsub.publish("hello")
+        ...     result = await q.get()
+        ...     pubsub.unsubscribe(q)
+        ...     return result
+        >>> asyncio.run(test_pubsub())
+        'hello'
+    """
 
     def __init__(self) -> None:
         self._subscribers: List[asyncio.Queue[str]] = []
@@ -84,8 +110,19 @@ class _PubSub:
     async def publish(self, data: str) -> None:
         """Publish data to all subscribers.
 
+        Dead queues (full) are automatically removed from the subscriber list.
+
         Args:
             data: The data string to publish to all subscribers.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_publish():
+            ...     pubsub = _PubSub()
+            ...     await pubsub.publish("test")  # No subscribers, no error
+            ...     return True
+            >>> asyncio.run(test_publish())
+            True
         """
         dead: List[asyncio.Queue[str]] = []
         for q in self._subscribers:
@@ -100,8 +137,19 @@ class _PubSub:
     def subscribe(self) -> "asyncio.Queue[str]":
         """Subscribe to published data.
 
+        Creates a new queue for receiving published messages with a maximum
+        size of 1024 items.
+
         Returns:
             asyncio.Queue[str]: A queue that will receive published data.
+
+        Examples:
+            >>> pubsub = _PubSub()
+            >>> q = pubsub.subscribe()
+            >>> isinstance(q, asyncio.Queue)
+            True
+            >>> q.maxsize
+            1024
         """
         q: asyncio.Queue[str] = asyncio.Queue(maxsize=1024)
         self._subscribers.append(q)
@@ -110,8 +158,17 @@ class _PubSub:
     def unsubscribe(self, q: "asyncio.Queue[str]") -> None:
         """Unsubscribe from published data.
 
+        Removes the queue from the subscriber list. Safe to call even if
+        the queue is not in the list.
+
         Args:
             q: The queue to unsubscribe from published data.
+
+        Examples:
+            >>> pubsub = _PubSub()
+            >>> q = pubsub.subscribe()
+            >>> pubsub.unsubscribe(q)
+            >>> pubsub.unsubscribe(q)  # No error on double unsubscribe
         """
         with suppress(ValueError):
             self._subscribers.remove(q)
@@ -121,7 +178,21 @@ class _PubSub:
 # StdIO endpoint (child process ↔ async queues)                              #
 # ---------------------------------------------------------------------------#
 class StdIOEndpoint:
-    """Wrap a child process whose stdin/stdout speak line-delimited JSON-RPC."""
+    """Wrap a child process whose stdin/stdout speak line-delimited JSON-RPC.
+
+    This class manages a subprocess that communicates via stdio using JSON-RPC
+    protocol, pumping messages between the subprocess and a pubsub system.
+
+    Examples:
+        >>> import asyncio
+        >>> async def test_stdio():
+        ...     pubsub = _PubSub()
+        ...     stdio = StdIOEndpoint("echo hello", pubsub)
+        ...     # Would start a real subprocess
+        ...     return isinstance(stdio, StdIOEndpoint)
+        >>> asyncio.run(test_stdio())
+        True
+    """
 
     def __init__(self, cmd: str, pubsub: _PubSub) -> None:
         self._cmd = cmd
@@ -133,7 +204,21 @@ class StdIOEndpoint:
     async def start(self) -> None:
         """Start the stdio subprocess.
 
-        Creates the subprocess and starts the stdout pump task.
+        Creates the subprocess and starts the stdout pump task. The subprocess
+        is created with stdin/stdout pipes and stderr passed through.
+
+        Raises:
+            RuntimeError: If the subprocess fails to create stdin/stdout pipes.
+
+        Examples:
+            >>> import asyncio # doctest: +SKIP
+            >>> async def test_start(): # doctest: +SKIP
+            ...     pubsub = _PubSub()
+            ...     stdio = StdIOEndpoint("cat", pubsub)
+            ...     # await stdio.start()  # doctest: +SKIP
+            ...     return True
+            >>> asyncio.run(test_start()) # doctest: +SKIP
+            True
         """
         LOGGER.info(f"Starting stdio subprocess: {self._cmd}")
         self._proc = await asyncio.create_subprocess_exec(
@@ -142,14 +227,29 @@ class StdIOEndpoint:
             stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr,  # passthrough for visibility
         )
-        assert self._proc.stdin and self._proc.stdout
+
+        # Explicit error checking
+        if not self._proc.stdin or not self._proc.stdout:
+            raise RuntimeError(f"Failed to create subprocess with stdin/stdout pipes for command: {self._cmd}")
+
         self._stdin = self._proc.stdin
         self._pump_task = asyncio.create_task(self._pump_stdout())
 
     async def stop(self) -> None:
         """Stop the stdio subprocess.
 
-        Terminates the subprocess and cancels the pump task.
+        Terminates the subprocess gracefully with a 5-second timeout,
+        then cancels the pump task.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_stop():
+            ...     pubsub = _PubSub()
+            ...     stdio = StdIOEndpoint("cat", pubsub)
+            ...     await stdio.stop()  # Safe to call even if not started
+            ...     return True
+            >>> asyncio.run(test_stop())
+            True
         """
         if self._proc is None:
             return
@@ -168,6 +268,18 @@ class StdIOEndpoint:
 
         Raises:
             RuntimeError: If the stdio endpoint is not started.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_send():
+            ...     pubsub = _PubSub()
+            ...     stdio = StdIOEndpoint("cat", pubsub)
+            ...     try:
+            ...         await stdio.send("test")
+            ...     except RuntimeError as e:
+            ...         return str(e)
+            >>> asyncio.run(test_send())
+            'stdio endpoint not started'
         """
         if not self._stdin:
             raise RuntimeError("stdio endpoint not started")
@@ -179,12 +291,15 @@ class StdIOEndpoint:
         """Pump stdout from subprocess to pubsub.
 
         Continuously reads lines from the subprocess stdout and publishes them
-        to the pubsub system.
+        to the pubsub system. Runs until EOF or exception.
 
         Raises:
+            RuntimeError: If process or stdout is not properly initialized.
             Exception: For any other error encountered while pumping stdout.
         """
-        assert self._proc and self._proc.stdout
+        if not self._proc or not self._proc.stdout:
+            raise RuntimeError("Process not properly initialized: missing stdout")
+
         reader = self._proc.stdout
         try:
             while True:
@@ -214,6 +329,9 @@ def _build_fastapi(
 ) -> FastAPI:
     """Build FastAPI application with SSE and message endpoints.
 
+    Creates a FastAPI app with SSE streaming endpoint and message posting
+    endpoint for bidirectional communication with the stdio subprocess.
+
     Args:
         pubsub: The publish/subscribe system for message routing.
         stdio: The stdio endpoint for subprocess communication.
@@ -224,6 +342,17 @@ def _build_fastapi(
 
     Returns:
         FastAPI: The configured FastAPI application.
+
+    Examples:
+        >>> pubsub = _PubSub()
+        >>> stdio = StdIOEndpoint("cat", pubsub)
+        >>> app = _build_fastapi(pubsub, stdio)
+        >>> isinstance(app, FastAPI)
+        True
+        >>> "/sse" in [r.path for r in app.routes]
+        True
+        >>> "/message" in [r.path for r in app.routes]
+        True
     """
     app = FastAPI()
 
@@ -341,6 +470,9 @@ def _build_fastapi(
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     """Parse command line arguments.
 
+    Validates mutually exclusive source options and sets defaults for
+    port and logging configuration.
+
     Args:
         argv: Sequence of command line arguments.
 
@@ -349,6 +481,20 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
     Raises:
         NotImplementedError: If streamableHttp option is specified.
+
+    Examples:
+        >>> args = _parse_args(["--stdio", "cat", "--port", "9000"])
+        >>> args.stdio
+        'cat'
+        >>> args.port
+        9000
+        >>> args.logLevel
+        'info'
+        >>> args.host
+        '127.0.0.1'
+        >>> args = _parse_args(["--stdio", "cat"]) # Test default parameters
+        >>> args.host
+        '127.0.0.1'
     """
     p = argparse.ArgumentParser(
         prog="mcpgateway.translate",
@@ -360,6 +506,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     src.add_argument("--streamableHttp", help="[NOT IMPLEMENTED]")
 
     p.add_argument("--port", type=int, default=8000, help="HTTP port to bind")
+    p.add_argument("--host", default="127.0.0.1", help="Host interface to bind (default: 127.0.0.1)")
     p.add_argument(
         "--logLevel",
         default="info",
@@ -382,14 +529,26 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return args
 
 
-async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: Optional[List[str]] = None) -> None:
+async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: Optional[List[str]] = None, host: str = "127.0.0.1") -> None:
     """Run stdio to SSE bridge.
+
+    Starts a subprocess and exposes it via HTTP/SSE endpoints. Handles graceful
+    shutdown on SIGINT/SIGTERM.
 
     Args:
         cmd: The command to run as a stdio subprocess.
         port: The port to bind the HTTP server to.
         log_level: The logging level to use. Defaults to "info".
         cors: Optional list of CORS allowed origins.
+        host: The host interface to bind to. Defaults to "127.0.0.1" for security.
+
+    Examples:
+        >>> import asyncio # doctest: +SKIP
+        >>> async def test_run(): # doctest: +SKIP
+        ...     await _run_stdio_to_sse("cat", 9000)  # doctest: +SKIP
+        ...     return True
+        >>> asyncio.run(test_run()) # doctest: +SKIP
+        True
     """
     pubsub = _PubSub()
     stdio = StdIOEndpoint(cmd, pubsub)
@@ -398,7 +557,7 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
     app = _build_fastapi(pubsub, stdio, cors_origins=cors)
     config = uvicorn.Config(
         app,
-        host="0.0.0.0",
+        host=host,  # Changed from hardcoded "0.0.0.0"
         port=port,
         log_level=log_level,
         lifespan="off",
@@ -420,20 +579,32 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
         with suppress(NotImplementedError):  # Windows lacks add_signal_handler
             loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
 
-    LOGGER.info(f"Bridge ready → http://127.0.0.1:{port}/sse")
+    LOGGER.info(f"Bridge ready → http://{host}:{port}/sse")
     await server.serve()
     await _shutdown()  # final cleanup
 
 
-async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
+async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str], timeout: float = 30.0) -> None:
     """Run SSE to stdio bridge.
+
+    Connects to a remote SSE endpoint and bridges it to local stdio.
 
     Args:
         url: The SSE endpoint URL to connect to.
         oauth2_bearer: Optional OAuth2 bearer token for authentication.
+        timeout: HTTP client timeout in seconds. Defaults to 30.0.
 
     Raises:
         ImportError: If httpx package is not available.
+
+    Examples:
+        >>> import asyncio
+        >>> async def test_sse():
+        ...     try:
+        ...         await _run_sse_to_stdio("http://example.com/sse", None)  # doctest: +SKIP
+        ...     except ImportError as e:
+        ...         return "httpx" in str(e)
+        >>> asyncio.run(test_sse())  # Would return True if httpx not installed # doctest: +SKIP
     """
     if not httpx:
         raise ImportError("httpx package is required for SSE to stdio bridging")
@@ -442,7 +613,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
     if oauth2_bearer:
         headers["Authorization"] = f"Bearer {oauth2_bearer}"
 
-    async with httpx.AsyncClient(headers=headers, timeout=None) as client:
+    async with httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout=timeout, connect=10.0)) as client:
         process = await asyncio.create_subprocess_shell(
             "cat",  # Placeholder command; replace with actual stdio server command if needed
             stdin=asyncio.subprocess.PIPE,
@@ -451,7 +622,9 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
         )
 
         async def read_stdout() -> None:
-            assert process.stdout
+            if not process.stdout:
+                raise RuntimeError("Process stdout not available")
+
             while True:
                 line = await process.stdout.readline()
                 if not line:
@@ -471,39 +644,66 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str]) -> None:
         await asyncio.gather(read_stdout(), pump_sse_to_stdio())
 
 
-def start_stdio(cmd: str, port: int, log_level: str, cors: Optional[List[str]]) -> None:
+def start_stdio(cmd: str, port: int, log_level: str, cors: Optional[List[str]], host: str = "127.0.0.1") -> None:
     """Start stdio bridge.
+
+    Entry point for starting a stdio to SSE bridge server.
 
     Args:
         cmd: The command to run as a stdio subprocess.
         port: The port to bind the HTTP server to.
         log_level: The logging level to use.
         cors: Optional list of CORS allowed origins.
+        host: The host interface to bind to. Defaults to "127.0.0.1".
 
     Returns:
         None: This function does not return a value.
+
+    Examples:
+        >>> start_stdio("uvx mcp-server-git", 9000, "info", None)  # doctest: +SKIP
     """
-    return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors))
+    return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors, host))
 
 
-def start_sse(url: str, bearer: Optional[str]) -> None:
+def start_sse(url: str, bearer: Optional[str], timeout: float = 30.0) -> None:
     """Start SSE bridge.
+
+    Entry point for starting an SSE to stdio bridge client.
 
     Args:
         url: The SSE endpoint URL to connect to.
         bearer: Optional OAuth2 bearer token for authentication.
+        timeout: HTTP client timeout in seconds. Defaults to 30.0.
 
     Returns:
         None: This function does not return a value.
+
+    Examples:
+        >>> start_sse("http://example.com/sse", "token123")  # doctest: +SKIP
     """
-    return asyncio.run(_run_sse_to_stdio(url, bearer))
+    return asyncio.run(_run_sse_to_stdio(url, bearer, timeout))
 
 
 def main(argv: Optional[Sequence[str]] | None = None) -> None:
     """Entry point for the translate module.
 
+    Configures logging, parses arguments, and starts the appropriate bridge
+    based on command line options. Handles keyboard interrupts gracefully.
+
     Args:
         argv: Optional sequence of command line arguments. If None, uses sys.argv[1:].
+
+    Examples:
+        >>> # Test argument parsing
+        >>> try:
+        ...     main(["--stdio", "cat", "--port", "9000"])  # doctest: +SKIP
+        ... except SystemExit:
+        ...     pass  # Would normally start the server
+        >>> try: # doctest: +SKIP
+        ...     main(["--streamableHttp", "test"])
+        ... except SystemExit as e:
+        ...     e.code
+        1
     """
     args = _parse_args(argv or sys.argv[1:])
     logging.basicConfig(
@@ -512,7 +712,7 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
     )
     try:
         if args.stdio:
-            start_stdio(args.stdio, args.port, args.logLevel, args.cors)
+            start_stdio(args.stdio, args.port, args.logLevel, args.cors, args.host)
         elif args.sse:
             start_sse(args.sse, args.oauth2Bearer)
     except KeyboardInterrupt:
@@ -523,5 +723,5 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
         sys.exit(1)
 
 
-if __name__ == "__main__":  # python -m mcpgateway.translate ...
+if __name__ == "__main__":  # python3 -m mcpgateway.translate ...
     main()

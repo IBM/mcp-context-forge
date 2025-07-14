@@ -3,7 +3,7 @@
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Manav Gupta
 
 This module defines configuration settings for the MCP Gateway using Pydantic.
 It loads configuration from environment variables with sensible defaults.
@@ -27,6 +27,23 @@ Environment variables:
 - TOOL_TIMEOUT: Tool invocation timeout (default: 60)
 - PROMPT_CACHE_SIZE: Max cached prompts (default: 100)
 - HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 60)
+
+Examples:
+    >>> from mcpgateway.config import Settings
+    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')
+    >>> s.api_key
+    'admin:secret'
+    >>> s2 = Settings(transport_type='http')
+    >>> s2.validate_transport()  # no error
+    >>> s3 = Settings(transport_type='invalid')
+    >>> try:
+    ...     s3.validate_transport()
+    ... except ValueError as e:
+    ...     print('error')
+    error
+    >>> s4 = Settings(database_url='sqlite:///./test.db')
+    >>> isinstance(s4.database_settings, dict)
+    True
 """
 
 # Standard
@@ -56,7 +73,26 @@ logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
-    """MCP Gateway configuration settings."""
+    """
+    MCP Gateway configuration settings.
+
+    Examples:
+        >>> from mcpgateway.config import Settings
+        >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')
+        >>> s.api_key
+        'admin:secret'
+        >>> s2 = Settings(transport_type='http')
+        >>> s2.validate_transport()  # no error
+        >>> s3 = Settings(transport_type='invalid')
+        >>> try:
+        ...     s3.validate_transport()
+        ... except ValueError as e:
+        ...     print('error')
+        error
+        >>> s4 = Settings(database_url='sqlite:///./test.db')
+        >>> isinstance(s4.database_settings, dict)
+        True
+    """
 
     # Basic Settings
     app_name: str = "MCP_Gateway"
@@ -89,6 +125,7 @@ class Settings(BaseSettings):
 
     # Security
     skip_ssl_verify: bool = False
+    cors_enabled: bool = True
 
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
     # Tell pydantic *not* to touch this env var - our validator will.
@@ -127,9 +164,6 @@ class Settings(BaseSettings):
 
     # For federation_peers strip out quotes to ensure we're passing valid JSON via env
     federation_peers: Annotated[List[str], NoDecode] = []
-
-    # Lock file path for initializing gateway service initialize
-    lock_file_path: str = "/tmp/gateway_init.done"
 
     @field_validator("federation_peers", mode="before")
     @classmethod
@@ -235,10 +269,20 @@ class Settings(BaseSettings):
 
     @property
     def api_key(self) -> str:
-        """Generate API key from auth credentials.
+        """
+        Generate API key from auth credentials.
 
         Returns:
             str: API key string in the format "username:password".
+
+        Examples:
+            >>> from mcpgateway.config import Settings
+            >>> settings = Settings(basic_auth_user="admin", basic_auth_password="secret")
+            >>> settings.api_key
+            'admin:secret'
+            >>> settings = Settings(basic_auth_user="user123", basic_auth_password="pass456")
+            >>> settings.api_key
+            'user123:pass456'
         """
         return f"{self.basic_auth_user}:{self.basic_auth_password}"
 
@@ -248,6 +292,17 @@ class Settings(BaseSettings):
 
         Returns:
             bool: True if HTTP transport is enabled, False otherwise.
+
+        Examples:
+            >>> settings = Settings(transport_type="http")
+            >>> settings.supports_http
+            True
+            >>> settings = Settings(transport_type="all")
+            >>> settings.supports_http
+            True
+            >>> settings = Settings(transport_type="ws")
+            >>> settings.supports_http
+            False
         """
         return self.transport_type in ["http", "all"]
 
@@ -257,6 +312,17 @@ class Settings(BaseSettings):
 
         Returns:
             bool: True if WebSocket transport is enabled, False otherwise.
+
+        Examples:
+            >>> settings = Settings(transport_type="ws")
+            >>> settings.supports_websocket
+            True
+            >>> settings = Settings(transport_type="all")
+            >>> settings.supports_websocket
+            True
+            >>> settings = Settings(transport_type="http")
+            >>> settings.supports_websocket
+            False
         """
         return self.transport_type in ["ws", "all"]
 
@@ -266,15 +332,33 @@ class Settings(BaseSettings):
 
         Returns:
             bool: True if SSE transport is enabled, False otherwise.
+
+        Examples:
+            >>> settings = Settings(transport_type="sse")
+            >>> settings.supports_sse
+            True
+            >>> settings = Settings(transport_type="all")
+            >>> settings.supports_sse
+            True
+            >>> settings = Settings(transport_type="http")
+            >>> settings.supports_sse
+            False
         """
         return self.transport_type in ["sse", "all"]
 
     @property
     def database_settings(self) -> dict:
-        """Get SQLAlchemy database settings.
+        """
+        Get SQLAlchemy database settings.
 
         Returns:
             dict: Dictionary containing SQLAlchemy database configuration options.
+
+        Examples:
+            >>> from mcpgateway.config import Settings
+            >>> s = Settings(database_url='sqlite:///./test.db')
+            >>> isinstance(s.database_settings, dict)
+            True
         """
         return {
             "pool_size": self.db_pool_size,
@@ -303,10 +387,22 @@ class Settings(BaseSettings):
         )
 
     def validate_transport(self) -> None:
-        """Validate transport configuration.
+        """
+        Validate transport configuration.
 
         Raises:
             ValueError: If the transport type is not one of the valid options.
+
+        Examples:
+            >>> from mcpgateway.config import Settings
+            >>> s = Settings(transport_type='http')
+            >>> s.validate_transport()  # no error
+            >>> s2 = Settings(transport_type='invalid')
+            >>> try:
+            ...     s2.validate_transport()
+            ... except ValueError as e:
+            ...     print('error')
+            error
         """
         valid_types = {"http", "ws", "sse", "all"}
         if self.transport_type not in valid_types:
