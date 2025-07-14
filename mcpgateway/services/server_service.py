@@ -164,6 +164,24 @@ class ServerService:
             ServerNameConflictError: If a server with the same name already exists.
             ServerError: If any associated tool, resource, or prompt does not exist, or if any other
                         registration error occurs.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from mcpgateway.schemas import ServerRead
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> server_in = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> db.add = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> service._notify_server_added = AsyncMock()
+            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> ServerRead.model_validate = MagicMock(return_value='server_read')
+            >>> import asyncio
+            >>> asyncio.run(service.register_server(db, server_in))
+            'server_read'
         """
         try:
             # Check for an existing server with the same name.
@@ -249,6 +267,19 @@ class ServerService:
 
         Returns:
             A list of ServerRead objects.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> server_read = MagicMock()
+            >>> service._convert_server_to_read = MagicMock(return_value=server_read)
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> import asyncio
+            >>> result = asyncio.run(service.list_servers(db))
+            >>> isinstance(result, list)
+            True
         """
         query = select(DbServer)
         if not include_inactive:
@@ -268,6 +299,18 @@ class ServerService:
 
         Raises:
             ServerNotFoundError: If no server with the given ID exists.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> server = MagicMock()
+            >>> db.get.return_value = server
+            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> import asyncio
+            >>> asyncio.run(service.get_server(db, 'server_id'))
+            'server_read'
         """
         server = db.get(DbServer, server_id)
         if not server:
@@ -302,6 +345,23 @@ class ServerService:
             ServerNotFoundError: If the server is not found.
             ServerNameConflictError: If a new name conflicts with an existing server.
             ServerError: For other update errors.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from mcpgateway.schemas import ServerRead
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> server = MagicMock()
+            >>> db.get.return_value = server
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> ServerRead.model_validate = MagicMock(return_value='server_read')
+            >>> import asyncio
+            >>> asyncio.run(service.update_server(db, 'server_id', MagicMock()))
+            'server_read'
         """
         try:
             server = db.get(DbServer, server_id)
@@ -392,6 +452,24 @@ class ServerService:
         Raises:
             ServerNotFoundError: If the server is not found.
             ServerError: For other errors.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from mcpgateway.schemas import ServerRead
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> server = MagicMock()
+            >>> db.get.return_value = server
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> service._notify_server_activated = AsyncMock()
+            >>> service._notify_server_deactivated = AsyncMock()
+            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> ServerRead.model_validate = MagicMock(return_value='server_read')
+            >>> import asyncio
+            >>> asyncio.run(service.toggle_server_status(db, 'server_id', True))
+            'server_read'
         """
         try:
             server = db.get(DbServer, server_id)
@@ -437,6 +515,19 @@ class ServerService:
         Raises:
             ServerNotFoundError: If the server is not found.
             ServerError: For other deletion errors.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> server = MagicMock()
+            >>> db.get.return_value = server
+            >>> db.delete = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> service._notify_server_deleted = AsyncMock()
+            >>> import asyncio
+            >>> asyncio.run(service.delete_server(db, 'server_id'))
         """
         try:
             server = db.get(DbServer, server_id)
@@ -590,6 +681,17 @@ class ServerService:
 
         Returns:
             ServerMetrics: Aggregated metrics computed from all ServerMetric records.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar.return_value = 0
+            >>> import asyncio
+            >>> result = asyncio.run(service.aggregate_metrics(db))
+            >>> hasattr(result, 'total_executions')
+            True
         """
         total_executions = db.execute(select(func.count()).select_from(ServerMetric)).scalar() or 0  # pylint: disable=not-callable
 
@@ -622,6 +724,16 @@ class ServerService:
 
         Args:
             db: Database session
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> db.execute = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> import asyncio
+            >>> asyncio.run(service.reset_metrics(db))
         """
         db.execute(delete(ServerMetric))
         db.commit()
