@@ -4083,7 +4083,9 @@ function setupTooltipsWithAlpine() {
             let tooltipEl = null;
 
             const moveTooltip = (e) => {
-                if (!tooltipEl) return;
+                if (!tooltipEl) {
+                    return;
+                }
 
                 const paddingX = 12;
                 const paddingY = 20;
@@ -4133,9 +4135,12 @@ function setupTooltipsWithAlpine() {
                 requestAnimationFrame(() => {
                     tooltipEl.style.opacity = "1";
                 });
-
-                window.addEventListener("scroll", hideTooltip, { passive: true });
-                window.addEventListener("resize", hideTooltip, { passive: true });
+                window.addEventListener("scroll", hideTooltip, {
+                    passive: true,
+                });
+                window.addEventListener("resize", hideTooltip, {
+                    passive: true,
+                });
             };
 
             const hideTooltip = () => {
@@ -4148,20 +4153,15 @@ function setupTooltipsWithAlpine() {
                 window.removeEventListener("scroll", hideTooltip);
                 window.removeEventListener("resize", hideTooltip);
                 el.addEventListener("click", hideTooltip);
-
-
                 const toRemove = tooltipEl;
                 tooltipEl = null;
-
                 setTimeout(() => toRemove.remove(), 200);
             };
-
             el.addEventListener("mouseenter", showTooltip);
             el.addEventListener("mouseleave", hideTooltip);
             el.addEventListener("focus", showTooltip);
             el.addEventListener("blur", hideTooltip);
             el.addEventListener("click", hideTooltip);
-
         });
     });
 }
