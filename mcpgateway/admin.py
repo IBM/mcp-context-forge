@@ -1374,10 +1374,10 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
     full_url = full_url.rstrip("/")
     logger.debug(f"User {user} testing server at {request.base_url}.")
     try:
+        start_time = time.monotonic()
         async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
-            start_time = time.monotonic()
             response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
-            latency_ms = int((time.monotonic() - start_time) * 1000)
+        latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
             response_body: Union[dict, str] = response.json()
         except json.JSONDecodeError:
@@ -1387,4 +1387,5 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
 
     except httpx.RequestError as e:
         logger.warning(f"Gateway test failed: {e}")
-        return GatewayTestResponse(status_code=502, latency_ms=0, body={"error": "Request failed", "details": str(e)})
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
