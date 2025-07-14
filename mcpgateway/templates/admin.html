@@ -1742,11 +1742,11 @@
         <form id="gateway-test-form" class="space-y-4">
           <div>
             <label for="gateway-test-url" class="block text-sm font-medium text-gray-700">Server URL</label>
-            <input name="url" type="text" id="gateway-test-url" class="mt-1 block w-full rounded-md shadow-sm p-1" />
+            <input required name="url" type="text" id="gateway-test-url" class="mt-1 block w-full rounded-md shadow-sm p-1" />
           </div>
           <div>
             <label for="gateway-test-method" class="block text-sm font-medium text-gray-700">Method</label>
-            <select name="method" id="gateway-test-method" class="mt-1 block w-full rounded-md shadow-sm p-1">
+            <select required name="method" id="gateway-test-method" class="mt-1 block w-full rounded-md shadow-sm p-1">
               <option>GET</option>
               <option>POST</option>
               <option>PUT</option>
@@ -1772,7 +1772,7 @@
           <div class="flex">
             <button type="submit" id="gateway-test-submit"
               class="w-full text-center px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700">
-              Send
+              Test
             </button>
             <p class="p-1"></p>
             <button id="gateway-test-close" type="button"
