@@ -53,9 +53,13 @@ def to_camel_case(s: str) -> str:
     Returns:
         str: The string converted to camelCase.
 
-    Example:
+    Examples:
         >>> to_camel_case("hello_world_example")
         'helloWorldExample'
+        >>> to_camel_case("alreadyCamel")
+        'alreadyCamel'
+        >>> to_camel_case("")
+        ''
     """
     return "".join(word.capitalize() if i else word for i, word in enumerate(s.split("_")))
 
@@ -70,7 +74,8 @@ def encode_datetime(v: datetime) -> str:
     Returns:
         str: The ISO 8601 formatted string representation of the datetime object.
 
-    Example:
+    Examples:
+        >>> from datetime import datetime
         >>> encode_datetime(datetime(2023, 5, 22, 14, 30, 0))
         '2023-05-22T14:30:00'
     """
@@ -107,6 +112,14 @@ class BaseModelWithConfigDict(BaseModel):
         Returns:
             Dict[str, Any]: A dictionary where keys are field names and values are corresponding field values,
                              with any nested models recursively converted to dictionaries.
+
+        Examples:
+            >>> class ExampleModel(BaseModelWithConfigDict):
+            ...     foo: int
+            ...     bar: str
+            >>> m = ExampleModel(foo=1, bar='baz')
+            >>> m.to_dict()
+            {'foo': 1, 'bar': 'baz'}
         """
         output = {}
         for key, value in self.dict(by_alias=use_alias).items():
@@ -294,6 +307,15 @@ class ToolCreate(BaseModel):
 
         Returns:
             str: Value if validated as safe
+
+        Examples:
+            >>> from mcpgateway.schemas import ToolCreate
+            >>> ToolCreate.validate_name('valid_tool')
+            'valid_tool'
+            >>> ToolCreate.validate_name('Invalid Tool!')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         return SecurityValidator.validate_tool_name(v)
 
@@ -307,6 +329,15 @@ class ToolCreate(BaseModel):
 
         Returns:
             str: Value if validated as safe
+
+        Examples:
+            >>> from mcpgateway.schemas import ToolCreate
+            >>> ToolCreate.validate_url('https://example.com')
+            'https://example.com'
+            >>> ToolCreate.validate_url('ftp://example.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         return SecurityValidator.validate_url(v, "Tool URL")
 
@@ -323,6 +354,15 @@ class ToolCreate(BaseModel):
 
         Raises:
             ValueError: When value is unsafe
+
+        Examples:
+            >>> from mcpgateway.schemas import ToolCreate
+            >>> ToolCreate.validate_description('A safe description')
+            'A safe description'
+            >>> ToolCreate.validate_description('x' * 5000)
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         if v is None:
             return v
@@ -340,6 +380,15 @@ class ToolCreate(BaseModel):
 
         Returns:
             dict: Value if validated as safe
+
+        Examples:
+            >>> from mcpgateway.schemas import ToolCreate
+            >>> ToolCreate.validate_json_fields({'a': 1})
+            {'a': 1}
+            >>> ToolCreate.validate_json_fields({'a': {'b': {'c': {'d': {'e': {'f': {'g': {'h': {'i': {'j': {'k': 1}}}}}}}}}}})
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         SecurityValidator.validate_json_depth(v)
         return v

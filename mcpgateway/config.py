@@ -53,7 +53,7 @@ import json
 import logging
 from pathlib import Path
 import re
-from typing import Annotated, Any, Dict, List, Optional, Set, Union, ClassVar
+from typing import Annotated, Any, ClassVar, Dict, List, Optional, Set, Union
 
 # Third-Party
 from fastapi import HTTPException
@@ -410,7 +410,13 @@ class Settings(BaseSettings):
             raise ValueError(f"Invalid transport type. Must be one of: {valid_types}")
 
     def validate_database(self) -> None:
-        """Validate database configuration."""
+        """Validate database configuration.
+
+        Examples:
+            >>> from mcpgateway.config import Settings
+            >>> s = Settings(database_url='sqlite:///./test.db')
+            >>> s.validate_database()  # Should create the directory if it does not exist
+        """
         if self.database_url.startswith("sqlite"):
             db_path = Path(self.database_url.replace("sqlite:///", ""))
             db_dir = db_path.parent
@@ -469,6 +475,18 @@ def extract_using_jq(data, jq_filter=""):
 
     Returns:
         The result of applying the jq filter to the input data.
+
+    Examples:
+        >>> extract_using_jq('{"a": 1, "b": 2}', '.a')
+        [1]
+        >>> extract_using_jq({'a': 1, 'b': 2}, '.b')
+        [2]
+        >>> extract_using_jq('[{"a": 1}, {"a": 2}]', '.[].a')
+        [1, 2]
+        >>> extract_using_jq('not a json', '.a')
+        ['Invalid JSON string provided.']
+        >>> extract_using_jq({'a': 1}, '')
+        {'a': 1}
     """
     if jq_filter == "":
         return data
@@ -513,6 +531,16 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
 
     Raises:
         HTTPException: If there's an error parsing or executing the JSONPath expressions.
+
+    Examples:
+        >>> jsonpath_modifier({'a': 1, 'b': 2}, '$.a')
+        [1]
+        >>> jsonpath_modifier([{'a': 1}, {'a': 2}], '$[*].a')
+        [1, 2]
+        >>> jsonpath_modifier({'a': {'b': 2}}, '$.a.b')
+        [2]
+        >>> jsonpath_modifier({'a': 1}, '$.b')
+        []
     """
     if not jsonpath:
         jsonpath = "$[*]"

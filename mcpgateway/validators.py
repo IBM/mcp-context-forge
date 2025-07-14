@@ -112,6 +112,14 @@ class SecurityValidator:
 
         Raises:
             ValueError: When input is not acceptable
+
+        Examples:
+            >>> SecurityValidator.validate_name('valid_name')
+            'valid_name'
+            >>> SecurityValidator.validate_name('Invalid Name!')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -142,6 +150,14 @@ class SecurityValidator:
 
         Raises:
             ValueError: When input is not acceptable
+
+        Examples:
+            >>> SecurityValidator.validate_identifier('valid_id', 'ID')
+            'valid_id'
+            >>> SecurityValidator.validate_identifier('Invalid/ID', 'ID')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -172,6 +188,14 @@ class SecurityValidator:
 
         Raises:
             ValueError: When input is not acceptable
+
+        Examples:
+            >>> SecurityValidator.validate_uri('/valid/uri', 'URI')
+            '/valid/uri'
+            >>> SecurityValidator.validate_uri('..', 'URI')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -203,6 +227,14 @@ class SecurityValidator:
 
         Raises:
             ValueError: When input is not acceptable
+
+        Examples:
+            >>> SecurityValidator.validate_tool_name('tool_1')
+            'tool_1'
+            >>> SecurityValidator.validate_tool_name('1tool')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         if not value:
             raise ValueError("Tool name cannot be empty")
@@ -252,17 +284,25 @@ class SecurityValidator:
 
     @classmethod
     def validate_url(cls, value: str, field_name: str = "URL") -> str:
-        """Validate URL format and ensure safe display
+        """Validate URLs for allowed schemes and safe display
 
         Args:
             value (str): Value to validate
-            field_name (str): Name of the field being validated
+            field_name (str): Name of field being validated
 
         Returns:
             str: Value if acceptable
 
         Raises:
             ValueError: When input is not acceptable
+
+        Examples:
+            >>> SecurityValidator.validate_url('https://example.com')
+            'https://example.com'
+            >>> SecurityValidator.validate_url('ftp://example.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -294,17 +334,25 @@ class SecurityValidator:
 
     @classmethod
     def validate_json_depth(cls, obj: Any, max_depth: int = None, current_depth: int = 0) -> None:
-        """Check JSON structure doesn't exceed maximum depth
+        """Validate the maximum depth of a JSON object
 
         Args:
-            obj (Any): JSON object to validate
-            max_depth (int): Max allowed depth for a JSON
-            current_depth (int): Depth of nested structure in JSON
+            obj (Any): The JSON object to check
+            max_depth (int, optional): Maximum allowed depth. Defaults to class setting.
+            current_depth (int): Used for recursion, do not set manually.
 
         Raises:
-            ValueError: When input is not acceptable
+            ValueError: If the object exceeds the maximum allowed depth
+
+        Examples:
+            >>> SecurityValidator.validate_json_depth({'a': {'b': {'c': 1}}}, max_depth=3)
+            >>> SecurityValidator.validate_json_depth({'a': {'b': {'c': {'d': 1}}}}, max_depth=3)
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
-        max_depth = max_depth or cls.MAX_JSON_DEPTH
+        if max_depth is None:
+            max_depth = cls.MAX_JSON_DEPTH
 
         if current_depth > max_depth:
             raise ValueError(f"JSON structure exceeds maximum depth of {max_depth}")
