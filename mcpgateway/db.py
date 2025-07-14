@@ -63,7 +63,6 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.validators import SecurityValidator
 
-
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", ...)
 #    and the specific driver ("psycopg2", "asyncpg", empty string = default).
@@ -121,6 +120,12 @@ def utc_now() -> datetime:
     Returns:
         datetime: A timezone-aware `datetime` whose `tzinfo` is
         `datetime.timezone.utc`.
+
+    Examples:
+        >>> from mcpgateway.db import utc_now
+        >>> now = utc_now()
+        >>> now.tzinfo is not None
+        True
     """
     return datetime.now(timezone.utc)
 
