@@ -27,18 +27,21 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import sys
 import json
 import logging
 import re
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, Mock, patch
+import importlib
+import logging
 
 # Third-Party
 from fastapi import HTTPException
 import pytest
 
 # First-Party
-from mcpgateway.cache.session_registry import SessionRegistry
+from mcpgateway.cache.session_registry import SessionRegistry, SessionMessageRecord
 from mcpgateway.config import settings
 
 
@@ -219,6 +222,141 @@ async def test_broadcast_and_respond(payload, monkeypatch, registry: SessionRegi
     assert captured["message"] == payload
 
 
+async def test_broadcast_redis_input(monkeypatch, registry: SessionRegistry):
+    """test input to publish for redis"""
+
+    monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
+    registry._backend = "redis"
+
+    mock_redis = AsyncMock()
+    registry._redis = mock_redis
+
+    fixed_ts = 1_234_567.890
+    monkeypatch.setattr("mcpgateway.cache.session_registry.time.time", lambda: fixed_ts)
+
+    msg = {"a": 1}
+    expected_msg_json = json.dumps(msg)
+
+    expected_payload = json.dumps({"type": "message", "message": expected_msg_json, "timestamp": fixed_ts})
+
+    await registry.broadcast("B", msg)
+
+    mock_redis.publish.assert_awaited_once_with("B", expected_payload)
+
+    mock_redis.publish.reset_mock()
+
+    msg = ["a", "b", "c"]
+    expected_msg_json = json.dumps(msg)
+
+    expected_payload = json.dumps({"type": "message", "message": expected_msg_json, "timestamp": fixed_ts})
+
+    await registry.broadcast("B", msg)
+
+    mock_redis.publish.assert_awaited_once_with("B", expected_payload)
+
+    mock_redis.publish.reset_mock()
+
+    msg = 123
+    expected_msg_json = json.dumps(str(msg))
+
+    expected_payload = json.dumps({"type": "message", "message": expected_msg_json, "timestamp": fixed_ts})
+
+    await registry.broadcast("B", msg)
+
+    mock_redis.publish.assert_awaited_once_with("B", expected_payload)
+
+    mock_redis.publish.reset_mock()
+
+    msg = "hello\nworld"
+    expected_msg_json = json.dumps(str(msg))
+
+    expected_payload = json.dumps({"type": "message", "message": expected_msg_json, "timestamp": fixed_ts})
+
+    await registry.broadcast("B", msg)
+
+    mock_redis.publish.assert_awaited_once_with("B", expected_payload)
+
+    mock_redis.publish.reset_mock()
+
+
+async def test_broadcast_database_input(monkeypatch, registry: SessionRegistry, caplog):
+    """test input to publish for database"""
+
+    monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
+    registry._backend = "database"
+
+    mock_db = AsyncMock()
+    monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
+    monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db]), raising=True)
+
+    monkeypatch.setattr("asyncio.to_thread", lambda func, *a, **k: func(*a, **k))
+
+    fixed_ts = 1_234_567.890
+    monkeypatch.setattr("mcpgateway.cache.session_registry.time.time", lambda: fixed_ts)
+
+    msg = {"a": 1}
+    expected_msg_json = json.dumps(msg)
+
+    await registry.broadcast("B", msg)
+
+    assert mock_db.add.call_count == 1
+    actual_record = mock_db.add.call_args[0][0]
+    assert isinstance(actual_record, SessionMessageRecord)
+    assert actual_record.session_id == "B"
+    assert actual_record.message == expected_msg_json
+
+    mock_db.add.reset_mock()
+
+    msg = ["a", "b", "c"]
+    expected_msg_json = json.dumps(msg)
+
+    await registry.broadcast("B", msg)
+
+    assert mock_db.add.call_count == 1
+    actual_record = mock_db.add.call_args[0][0]
+    assert isinstance(actual_record, SessionMessageRecord)
+    assert actual_record.session_id == "B"
+    assert actual_record.message == expected_msg_json
+
+    mock_db.add.reset_mock()
+
+    msg = 123
+    expected_msg_json = json.dumps(str(msg))
+
+    await registry.broadcast("B", msg)
+
+    assert mock_db.add.call_count == 1
+    actual_record = mock_db.add.call_args[0][0]
+    assert isinstance(actual_record, SessionMessageRecord)
+    assert actual_record.session_id == "B"
+    assert actual_record.message == expected_msg_json
+
+    mock_db.add.reset_mock()
+
+    msg = "hello\nworld"
+    expected_msg_json = json.dumps(str(msg))
+
+    await registry.broadcast("B", msg)
+
+    assert mock_db.add.call_count == 1
+    actual_record = mock_db.add.call_args[0][0]
+    assert isinstance(actual_record, SessionMessageRecord)
+    assert actual_record.session_id == "B"
+    assert actual_record.message == expected_msg_json
+
+    mock_db.add.reset_mock()
+    mock_db.commit = Mock(side_effect=Exception("db error"))
+
+    msg = "hello\nworld"
+    expected_msg_json = json.dumps(str(msg))
+
+    await registry.broadcast("B", msg)
+
+    mock_db.rollback.assert_called_once()
+
+    assert "Database error during broadcast" in caplog.text
+
+
 # --------------------------------------------------------------------------- #
 # Fixtures to stub get_db and the three *Service objects                      #
 # --------------------------------------------------------------------------- #
@@ -254,6 +392,60 @@ def stub_services(monkeypatch):
     monkeypatch.setattr(f"{mod}.prompt_service.list_server_prompts", _return_items, raising=False)
     monkeypatch.setattr(f"{mod}.resource_service.list_resources", _return_items, raising=False)
     monkeypatch.setattr(f"{mod}.resource_service.list_server_resources", _return_items, raising=False)
+
+
+def test_redis_importerror_isolated():
+    # Backup original sys.modules state
+    original_redis_asyncio = sys.modules.get("redis.asyncio")
+    original_my_module = sys.modules.get("mcpgateway.cache.session_registry")
+
+    # Simulate ImportError for redis.asyncio
+    with patch.dict(sys.modules, {"redis.asyncio": None}):
+        # if 'mcpgateway.cache.session_registry' in sys.modules:
+        #     del sys.modules['mcpgateway.cache.session_registry']  # Force re-import
+
+        import mcpgateway.cache.session_registry
+
+        importlib.reload(mcpgateway.cache.session_registry)
+        assert not mcpgateway.cache.session_registry.REDIS_AVAILABLE
+
+    # Cleanup: restore the original sys.modules entries
+    if original_redis_asyncio is not None:
+        sys.modules["redis.asyncio"] = original_redis_asyncio
+    else:
+        sys.modules.pop("redis.asyncio", None)
+
+    if original_my_module is not None:
+        sys.modules["mcpgateway.cache.session_registry"] = original_my_module
+    else:
+        sys.modules.pop("mcpgateway.cache.session_registry", None)
+
+
+def test_sqlalchemy_importerror_isolated():
+    # Backup original sys.modules state
+    original_sqlalchemy = sys.modules.get("sqlalchemy")
+    original_my_module = sys.modules.get("mcpgateway.cache.session_registry")
+
+    # Simulate ImportError for redis.asyncio
+    with patch.dict(sys.modules, {"sqlalchemy": None}):
+        # if 'mcpgateway.cache.session_registry' in sys.modules:
+        # del sys.modules['mcpgateway.cache.session_registry']  # Force re-import
+
+        import mcpgateway.cache.session_registry
+
+        importlib.reload(mcpgateway.cache.session_registry)
+        assert not mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE
+
+    # Cleanup: restore the original sys.modules entries
+    if original_sqlalchemy is not None:
+        sys.modules["sqlalchemy"] = original_sqlalchemy
+    else:
+        sys.modules.pop("sqlalchemy", None)
+
+    if original_my_module is not None:
+        sys.modules["mcpgateway.cache.session_registry"] = original_my_module
+    else:
+        sys.modules.pop("mcpgateway.cache.session_registry", None)
 
 
 # --------------------------------------------------------------------------- #
@@ -422,6 +614,46 @@ async def test_generate_response_server_specific_tools_list(registry: SessionReg
     reply = tr.sent[-1]
     assert reply["id"] == 46
     assert reply["result"]["tools"] == [{"name": "demo"}]
+
+
+@pytest.mark.asyncio
+async def test_generate_response_server_specific_resources_list(registry: SessionRegistry, stub_db, stub_services):
+    """*resources/list* responds with server_id calls server-specific method."""
+    tr = FakeSSETransport("resources")
+    await registry.add_session("resources", tr)
+
+    msg = {"method": "resources/list", "id": 43, "params": {}}
+    await registry.generate_response(
+        message=msg,
+        transport=tr,
+        server_id="server123",
+        user={},
+        base_url="http://host",
+    )
+
+    reply = tr.sent[-1]
+    assert reply["id"] == 43
+    assert reply["result"]["resources"] == [{"name": "demo"}]
+
+
+@pytest.mark.asyncio
+async def test_generate_response_server_specific_prompts_list(registry: SessionRegistry, stub_db, stub_services):
+    """*prompts/list* responds with server_id calls server-specific method."""
+    tr = FakeSSETransport("prompts")
+    await registry.add_session("prompts", tr)
+
+    msg = {"method": "prompts/list", "id": 44, "params": {}}
+    await registry.generate_response(
+        message=msg,
+        transport=tr,
+        server_id="server123",
+        user={},
+        base_url="http://host",
+    )
+
+    reply = tr.sent[-1]
+    assert reply["id"] == 44
+    assert reply["result"]["prompts"] == [{"name": "demo"}]
 
 
 @pytest.mark.asyncio
@@ -615,10 +847,12 @@ async def test_redis_session_operations(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_redis_error_handling(monkeypatch):
+async def test_redis_error_handling(monkeypatch, caplog):
     """Test Redis backend error handling."""
     mock_redis = MockRedis()
     mock_redis.should_fail = True
+
+    caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
 
     monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
 
@@ -628,7 +862,7 @@ async def test_redis_error_handling(monkeypatch):
         def from_url(cls, url):
             return mock_redis
 
-    with patch("mcpgateway.cache.session_registry.Redis", MockRedis):
+    with patch("mcpgateway.cache.session_registry.Redis", MockRedisClass):
         registry = SessionRegistry(backend="redis", redis_url="redis://localhost:6379")
         await registry.initialize()
 
@@ -643,6 +877,16 @@ async def test_redis_error_handling(monkeypatch):
 
         finally:
             await registry.shutdown()
+
+    with patch("mcpgateway.cache.session_registry.Redis", MockRedisClass), patch("mcpgateway.cache.session_registry.SessionRegistry", "_backend", "redis"):
+        registry = SessionRegistry(backend="redis", redis_url="redis://localhost:6379")
+        await registry.initialize()
+
+        tr = FakeSSETransport("redis_error")
+
+        await registry.add_session("redis_error", tr)
+
+        assert "Redis error adding session redis_error" in caplog.text
 
 
 # --------------------------------------------------------------------------- #
@@ -689,6 +933,155 @@ async def test_database_session_operations(monkeypatch):
 
     finally:
         await registry.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_database_add_session_exception(monkeypatch, caplog):
+    """Test database backend session operations."""
+    mock_db_session = Mock()
+    mock_db_session.add = Mock()  # okay
+    mock_db_session.commit = Mock()
+    mock_db_session.rollback = Mock()
+    mock_db_session.close = Mock()
+
+    monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
+    monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db_session]), raising=True)
+
+    monkeypatch.setattr("asyncio.to_thread", lambda func, *a, **k: func(*a, **k))
+
+    caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+
+    registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
+    await registry.initialize()
+
+    mock_db_session.commit = Mock(side_effect=Exception("db error"))
+    mock_db_session.rollback.reset_mock()
+    mock_db_session.close.reset_mock()
+
+    tr = FakeSSETransport("db_session")
+    await registry.add_session("db_session", tr)
+
+    mock_db_session.rollback.assert_called_once()
+    mock_db_session.close.assert_called_once()
+
+    assert "Database error adding session db_session" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_database_remove_session_exception(monkeypatch, caplog):
+    """Test database backend session operations."""
+    mock_db_session = Mock()
+    mock_db_session.filter.return_value.delete = Mock()
+    mock_db_session.query = Mock(return_value=mock_db_session)
+    mock_db_session.commit = Mock(side_effect=Exception("db error"))
+    mock_db_session.rollback = Mock()
+    mock_db_session.close = Mock()
+
+    monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
+    monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db_session]), raising=True)
+
+    monkeypatch.setattr("asyncio.to_thread", lambda func, *a, **k: func(*a, **k))
+
+    caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+
+    registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
+    await registry.initialize()
+
+    mock_db_session.rollback.reset_mock()
+    mock_db_session.close.reset_mock()
+
+    tr = FakeSSETransport("db_session")
+    tr.disconnect = AsyncMock()
+
+    monkeypatch.setattr(registry, "_sessions", {"db_session": tr})
+
+    await registry.remove_session("db_session")
+
+    tr.disconnect.assert_awaited_once()
+
+    # 8) And the DB path hit the commit‐>exception branch:
+    mock_db_session.rollback.assert_called_once()
+    mock_db_session.close.assert_called_once()
+
+    assert "Database error removing session db_session" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_database_remove_session_exception(monkeypatch, caplog):
+    """Test database backend session operations."""
+    mock_db_session = Mock()
+    mock_db_session.filter.return_value.delete = Mock()
+    mock_db_session.query = Mock(return_value=mock_db_session)
+    mock_db_session.commit = Mock(side_effect=Exception("db error"))
+    mock_db_session.rollback = Mock()
+    mock_db_session.close = Mock()
+
+    monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
+    monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db_session]), raising=True)
+
+    monkeypatch.setattr("asyncio.to_thread", lambda func, *a, **k: func(*a, **k))
+
+    caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+
+    registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
+    await registry.initialize()
+
+    mock_db_session.rollback.reset_mock()
+    mock_db_session.close.reset_mock()
+
+    tr = FakeSSETransport("db_session")
+    tr.disconnect = AsyncMock()
+
+    monkeypatch.setattr(registry, "_sessions", {"db_session": tr})
+
+    await registry.remove_session("db_session")
+
+    tr.disconnect.assert_awaited_once()
+
+    # 8) And the DB path hit the commit‐>exception branch:
+    mock_db_session.rollback.assert_called_once()
+    mock_db_session.close.assert_called_once()
+
+    assert "Database error removing session db_session" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_database_remove_session_exception(monkeypatch, caplog):
+    """Test database backend session operations."""
+    mock_db_session = Mock()
+    mock_db_session.filter.return_value.delete = Mock()
+    mock_db_session.query = Mock(return_value=mock_db_session)
+    mock_db_session.commit = Mock(side_effect=Exception("db error"))
+    mock_db_session.rollback = Mock()
+    mock_db_session.close = Mock()
+
+    monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
+    monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db_session]), raising=True)
+
+    monkeypatch.setattr("asyncio.to_thread", lambda func, *a, **k: func(*a, **k))
+
+    caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+
+    registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
+    await registry.initialize()
+
+    mock_db_session.rollback.reset_mock()
+    mock_db_session.close.reset_mock()
+
+    tr = FakeSSETransport("db_session")
+    tr.disconnect = AsyncMock()
+
+    monkeypatch.setattr(registry, "_sessions", {"db_session": tr})
+
+    await registry.remove_session("db_session")
+
+    tr.disconnect.assert_awaited_once()
+
+    # 8) And the DB path hit the commit‐>exception branch:
+    mock_db_session.rollback.assert_called_once()
+    mock_db_session.close.assert_called_once()
+
+    assert "Database error removing session db_session" in caplog.text
 
 
 # --------------------------------------------------------------------------- #
@@ -763,6 +1156,40 @@ async def test_memory_cleanup_task():
 
     finally:
         await registry.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_redis_shutdown(monkeypatch):
+    """shutdown() should swallow Redis / PubSub aclose() errors."""
+
+    # Tell the registry that the Redis extras are present
+    monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
+
+    # ── fake PubSub object ────────────────────────────────────────────────
+    mock_pubsub = AsyncMock(name="MockPubSub")
+    mock_pubsub.aclose = AsyncMock()
+
+    # ── fake Redis client ────────────────────────────────────────────────
+    mock_redis = AsyncMock(name="MockRedis")
+    mock_redis.aclose = AsyncMock()
+    # pubsub() is **not** awaited in prod code, so a plain Mock is fine
+    mock_redis.pubsub = Mock(return_value=mock_pubsub)
+
+    # ── patch the Redis class the module imported ────────────────────────
+    with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
+        MockRedis.from_url.return_value = mock_redis
+
+        registry = SessionRegistry(
+            backend="redis",
+            redis_url="redis://localhost:6379",
+        )
+        await registry.initialize()  # calls mock_redis.pubsub()
+
+        # must swallow both aclose() exceptions
+        await registry.shutdown()
+
+        mock_pubsub.aclose.assert_awaited_once()
+        mock_redis.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
