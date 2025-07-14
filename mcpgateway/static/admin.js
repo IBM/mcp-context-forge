@@ -178,18 +178,32 @@ function fetchWithTimeout(url, options = {}, timeout = 10000) {
     })
         .then((response) => {
             clearTimeout(timeoutId);
-
-            // Handle empty responses explicitly
             if (
                 response.status === 0 ||
-                (response.ok &&
-                    response.status === 200 &&
-                    !response.headers.get("content-length"))
+                (response.ok && response.status === 200)
             ) {
-                console.warn(`Empty response received from ${url}`);
-                throw new Error("Server returned an empty response");
-            }
+                const contentLength = response.headers.get("content-length");
 
+                // Check Content-Length if present
+                if (contentLength !== null) {
+                    if (parseInt(contentLength, 10) === 0) {
+                        throw new Error(
+                            "Server returned an empty response (via header)",
+                        );
+                    }
+                } else {
+                    // Fallback: check actual body
+                    const cloned = response.clone();
+                    return cloned.text().then((text) => {
+                        if (!text.trim()) {
+                            throw new Error(
+                                "Server returned an empty response (via body)",
+                            );
+                        }
+                        return response;
+                    });
+                }
+            }
             return response;
         })
         .catch((error) => {
