@@ -218,14 +218,18 @@ class Settings(BaseSettings):
     @classmethod
     def must_be_allowed_sep(cls, v: str) -> str:
         """Validate the gateway tool name separator.
-        
+
         Args:
-            v (str): The separator value to validate.
+            v: The separator value to validate.
+
         Returns:
-            str: The validated separator, defaults to '-' if invalid.
+            The validated separator, defaults to '-' if invalid.
         """
         if not re.fullmatch(r"^(-{1,2}|_)$", v):
-            logger.warning(f"Invalid gateway_tool_name_separator '{v}'. " "Must be '-', '--', or '_'. Defaulting to '-'.", stacklevel=2)
+            logger.warning(
+                f"Invalid gateway_tool_name_separator '{v}'. Must be '-', '--', or '_'. Defaulting to '-'.",
+                stacklevel=2,
+            )
             return "-"
         return v
 

@@ -1241,13 +1241,26 @@ if __name__ == "__main__":
 
 @event.listens_for(Gateway, "before_insert")
 def set_gateway_slug(_mapper, _conn, target):
-    """Set the slug for a Gateway before insert."""
+    """Set the slug for a Gateway before insert.
+
+    Args:
+        _mapper: Mapper
+        _conn: Connection
+        target: Target Gateway instance
+    """
 
     target.slug = slugify(target.name)
 
+
 @event.listens_for(Tool, "before_insert")
 def set_tool_name(_mapper, _conn, target):
-    """Set the computed name for a Tool before insert."""
+    """Set the computed name for a Tool before insert.
+
+    Args:
+        _mapper: Mapper
+        _conn: Connection
+        target: Target Tool instance
+    """
 
     sep = settings.gateway_tool_name_separator
     gateway_slug = target.gateway.slug if target.gateway_id else ""
