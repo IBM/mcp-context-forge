@@ -1371,6 +1371,7 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
         HTTPException: If the gateway request fails (e.g., connection error, timeout).
     """
     full_url = str(request.base_url).rstrip("/") + "/" + request.path.lstrip("/")
+    full_url = full_url.rstrip("/")
     logger.debug(f"User {user} testing server at {request.base_url}.")
     try:
         async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
@@ -1380,10 +1381,10 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
         try:
             response_body: Union[dict, str] = response.json()
         except json.JSONDecodeError:
-            response_body = response.text
+            response_body = {"details": response.text}
 
         return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
 
     except httpx.RequestError as e:
         logger.warning(f"Gateway test failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Request failed: {str(e)}")
+        return GatewayTestResponse(status_code=502, latency_ms=0, body={"error": "Request failed", "details": str(e)})
