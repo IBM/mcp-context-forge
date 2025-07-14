@@ -4082,41 +4082,8 @@ function setupTooltipsWithAlpine() {
         Alpine.directive("tooltip", (el, { expression }, { evaluate }) => {
             let tooltipEl = null;
 
-            const showTooltip = (event) => {
-                const text = evaluate(expression);
-                if (!text) {
-                    return;
-                }
-
-                tooltipEl = document.createElement("div");
-                tooltipEl.textContent = text;
-                tooltipEl.setAttribute("role", "tooltip");
-                tooltipEl.className =
-                    "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
-
-                document.body.appendChild(tooltipEl);
-
-                // Position tooltip
-                if (event?.clientX && event?.clientY) {
-                    moveTooltip(event);
-                    el.addEventListener("mousemove", moveTooltip);
-                } else {
-                    const rect = el.getBoundingClientRect();
-                    const scrollY = window.scrollY || window.pageYOffset;
-                    const scrollX = window.scrollX || window.pageXOffset;
-                    tooltipEl.style.left = `${rect.left + scrollX}px`;
-                    tooltipEl.style.top = `${rect.bottom + scrollY + 10}px`;
-                }
-
-                requestAnimationFrame(() => {
-                    tooltipEl.style.opacity = "1";
-                });
-            };
-
             const moveTooltip = (e) => {
-                if (!tooltipEl) {
-                    return;
-                }
+                if (!tooltipEl) return;
 
                 const paddingX = 12;
                 const paddingY = 20;
@@ -4136,29 +4103,65 @@ function setupTooltipsWithAlpine() {
                 tooltipEl.style.top = `${top}px`;
             };
 
+            const showTooltip = (event) => {
+                const text = evaluate(expression);
+                if (!text) {
+                    return;
+                }
+
+                hideTooltip(); // Clean up any existing tooltip
+
+                tooltipEl = document.createElement("div");
+                tooltipEl.textContent = text;
+                tooltipEl.setAttribute("role", "tooltip");
+                tooltipEl.className =
+                    "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
+
+                document.body.appendChild(tooltipEl);
+
+                if (event?.clientX && event?.clientY) {
+                    moveTooltip(event);
+                    el.addEventListener("mousemove", moveTooltip);
+                } else {
+                    const rect = el.getBoundingClientRect();
+                    const scrollY = window.scrollY || window.pageYOffset;
+                    const scrollX = window.scrollX || window.pageXOffset;
+                    tooltipEl.style.left = `${rect.left + scrollX}px`;
+                    tooltipEl.style.top = `${rect.bottom + scrollY + 10}px`;
+                }
+
+                requestAnimationFrame(() => {
+                    tooltipEl.style.opacity = "1";
+                });
+
+                window.addEventListener("scroll", hideTooltip, { passive: true });
+                window.addEventListener("resize", hideTooltip, { passive: true });
+            };
+
             const hideTooltip = () => {
                 if (!tooltipEl) {
                     return;
                 }
+
                 tooltipEl.style.opacity = "0";
                 el.removeEventListener("mousemove", moveTooltip);
-                setTimeout(() => {
-                    tooltipEl?.remove();
-                    tooltipEl = null;
-                }, 200);
+                window.removeEventListener("scroll", hideTooltip);
+                window.removeEventListener("resize", hideTooltip);
+                el.addEventListener("click", hideTooltip);
+
+
+                const toRemove = tooltipEl;
+                tooltipEl = null;
+
+                setTimeout(() => toRemove.remove(), 200);
             };
 
-            // Mouse
             el.addEventListener("mouseenter", showTooltip);
             el.addEventListener("mouseleave", hideTooltip);
-
-            // Keyboard
             el.addEventListener("focus", showTooltip);
             el.addEventListener("blur", hideTooltip);
+            el.addEventListener("click", hideTooltip);
 
-            // Optional: hide on scroll or resize
-            window.addEventListener("scroll", hideTooltip, { passive: true });
-            window.addEventListener("resize", hideTooltip, { passive: true });
         });
     });
 }
