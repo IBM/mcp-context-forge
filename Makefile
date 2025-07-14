@@ -270,15 +270,8 @@ doctest-check:
 	@echo "🔍 Checking doctest coverage..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -c \"import subprocess, sys; \
-		result = subprocess.run(['python', '-m', 'pytest', '--doctest-modules', 'mcpgateway/', '--tb=no', '-q'], capture_output=True); \
-		if result.returncode == 0: \
-			print('✅ All doctests passing'); \
-		else: \
-			print('❌ Doctest failures detected'); \
-			print(result.stdout.decode()); \
-			print(result.stderr.decode()); \
-			sys.exit(1)\""
+		python3 -m pytest --doctest-modules mcpgateway/ --tb=no -q && \
+		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)"
 
 # =============================================================================
 # 📊 METRICS
