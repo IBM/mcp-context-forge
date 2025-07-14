@@ -280,13 +280,14 @@ class GatewayService:
         gateways = db.execute(query).scalars().all()
         return [GatewayRead.model_validate(g) for g in gateways]
 
-    async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate) -> GatewayRead:
+    async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate, include_inactive: bool = True) -> GatewayRead:
         """Update a gateway.
 
         Args:
             db: Database session
             gateway_id: Gateway ID to update
             gateway_update: Updated gateway data
+            include_inactive: Whether to include inactive gateways
 
         Returns:
             Updated gateway information
@@ -302,88 +303,86 @@ class GatewayService:
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-            if not gateway.enabled:
-                raise GatewayNotFoundError(f"Gateway '{gateway.name}' exists but is inactive")
+            if gateway.enabled or include_inactive:
+                # Check for name conflicts if name is being changed
+                if gateway_update.name is not None and gateway_update.name != gateway.name:
+                    existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway_update.name).where(DbGateway.id != gateway_id)).scalar_one_or_none()
 
-            # Check for name conflicts if name is being changed
-            if gateway_update.name is not None and gateway_update.name != gateway.name:
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway_update.name).where(DbGateway.id != gateway_id)).scalar_one_or_none()
+                    if existing_gateway:
+                        raise GatewayNameConflictError(
+                            gateway_update.name,
+                            enabled=existing_gateway.enabled,
+                            gateway_id=existing_gateway.id,
+                        )
 
-                if existing_gateway:
-                    raise GatewayNameConflictError(
-                        gateway_update.name,
-                        enabled=existing_gateway.enabled,
-                        gateway_id=existing_gateway.id,
-                    )
+                # Update fields if provided
+                if gateway_update.name is not None:
+                    gateway.name = gateway_update.name
+                    gateway.slug = slugify(gateway_update.name)
+                if gateway_update.url is not None:
+                    gateway.url = gateway_update.url
+                if gateway_update.description is not None:
+                    gateway.description = gateway_update.description
+                if gateway_update.transport is not None:
+                    gateway.transport = gateway_update.transport
 
-            # Update fields if provided
-            if gateway_update.name is not None:
-                gateway.name = gateway_update.name
-                gateway.slug = slugify(gateway_update.name)
-            if gateway_update.url is not None:
-                gateway.url = gateway_update.url
-            if gateway_update.description is not None:
-                gateway.description = gateway_update.description
-            if gateway_update.transport is not None:
-                gateway.transport = gateway_update.transport
+                if getattr(gateway, "auth_type", None) is not None:
+                    gateway.auth_type = gateway_update.auth_type
 
-            if getattr(gateway, "auth_type", None) is not None:
-                gateway.auth_type = gateway_update.auth_type
+                    # if auth_type is not None and only then check auth_value
+                    if getattr(gateway, "auth_value", {}) != {}:
+                        gateway.auth_value = gateway_update.auth_value
 
-                # if auth_type is not None and only then check auth_value
-                if getattr(gateway, "auth_value", {}) != {}:
-                    gateway.auth_value = gateway_update.auth_value
+                # Try to reinitialize connection if URL changed
+                if gateway_update.url is not None:
+                    try:
+                        capabilities, tools = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
+                        new_tool_names = [tool.name for tool in tools]
 
-            # Try to reinitialize connection if URL changed
-            if gateway_update.url is not None:
-                try:
-                    capabilities, tools = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
-                    new_tool_names = [tool.name for tool in tools]
-
-                    for tool in tools:
-                        existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
-                        if not existing_tool:
-                            gateway.tools.append(
-                                DbTool(
-                                    original_name=tool.name,
-                                    original_name_slug=slugify(tool.name),
-                                    url=gateway.url,
-                                    description=tool.description,
-                                    integration_type=tool.integration_type,
-                                    request_type=tool.request_type,
-                                    headers=tool.headers,
-                                    input_schema=tool.input_schema,
-                                    jsonpath_filter=tool.jsonpath_filter,
-                                    auth_type=gateway.auth_type,
-                                    auth_value=gateway.auth_value,
+                        for tool in tools:
+                            existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
+                            if not existing_tool:
+                                gateway.tools.append(
+                                    DbTool(
+                                        original_name=tool.name,
+                                        original_name_slug=slugify(tool.name),
+                                        url=gateway.url,
+                                        description=tool.description,
+                                        integration_type=tool.integration_type,
+                                        request_type=tool.request_type,
+                                        headers=tool.headers,
+                                        input_schema=tool.input_schema,
+                                        jsonpath_filter=tool.jsonpath_filter,
+                                        auth_type=gateway.auth_type,
+                                        auth_value=gateway.auth_value,
+                                    )
                                 )
-                            )
 
-                    gateway.capabilities = capabilities
-                    gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
-                    gateway.last_seen = datetime.now(timezone.utc)
+                        gateway.capabilities = capabilities
+                        gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
+                        gateway.last_seen = datetime.now(timezone.utc)
 
-                    # Update tracking with new URL
-                    self._active_gateways.discard(gateway.url)
-                    self._active_gateways.add(gateway.url)
-                except Exception as e:
-                    logger.warning(f"Failed to initialize updated gateway: {e}")
+                        # Update tracking with new URL
+                        self._active_gateways.discard(gateway.url)
+                        self._active_gateways.add(gateway.url)
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize updated gateway: {e}")
 
-            gateway.updated_at = datetime.now(timezone.utc)
-            db.commit()
-            db.refresh(gateway)
+                gateway.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                db.refresh(gateway)
 
-            # Notify subscribers
-            await self._notify_gateway_updated(gateway)
+                # Notify subscribers
+                await self._notify_gateway_updated(gateway)
 
-            logger.info(f"Updated gateway: {gateway.name}")
-            return GatewayRead.model_validate(gateway)
+                logger.info(f"Updated gateway: {gateway.name}")
+                return GatewayRead.model_validate(gateway)
 
         except Exception as e:
             db.rollback()
             raise GatewayError(f"Failed to update gateway: {str(e)}")
 
-    async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = False) -> GatewayRead:
+    async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = True) -> GatewayRead:
         """Get a specific gateway by ID.
 
         Args:
@@ -401,10 +400,10 @@ class GatewayService:
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-        if not gateway.enabled and not include_inactive:
-            raise GatewayNotFoundError(f"Gateway '{gateway.name}' exists but is inactive")
+        if gateway.enabled or include_inactive:
+            return GatewayRead.model_validate(gateway)
 
-        return GatewayRead.model_validate(gateway)
+        raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
     async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False) -> GatewayRead:
         """Toggle gateway active status.

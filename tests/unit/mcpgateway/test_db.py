@@ -8,7 +8,7 @@ Authors: Mihai Criveti
 """
 
 # Standard
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 # Third-Party
@@ -18,17 +18,20 @@ from sqlalchemy.exc import SQLAlchemyError
 # First-Party
 import mcpgateway.db as db
 
+
 # --- utc_now ---
 def test_utc_now_returns_utc_datetime():
     now = db.utc_now()
     assert isinstance(now, datetime)
     assert now.tzinfo == timezone.utc
 
+
 # --- Tool metrics properties ---
 def make_tool_with_metrics(metrics):
     tool = db.Tool()
     tool.metrics = metrics
     return tool
+
 
 def test_tool_metrics_properties():
     now = datetime.now(timezone.utc)
@@ -49,6 +52,7 @@ def test_tool_metrics_properties():
     assert summary["total_executions"] == 2
     assert summary["failure_rate"] == 0.5
 
+
 def test_tool_metrics_properties_empty():
     tool = db.Tool()
     tool.metrics = []
@@ -61,11 +65,13 @@ def test_tool_metrics_properties_empty():
     assert tool.avg_response_time is None
     assert tool.last_execution_time is None
 
+
 # --- Resource metrics properties ---
 def make_resource_with_metrics(metrics):
     resource = db.Resource()
     resource.metrics = metrics
     return resource
+
 
 def test_resource_metrics_properties():
     now = datetime.now(timezone.utc)
@@ -96,11 +102,13 @@ def test_resource_metrics_properties_empty():
     assert resource.avg_response_time is None
     assert resource.last_execution_time is None
 
+
 # --- Prompt metrics properties ---
 def make_prompt_with_metrics(metrics):
     prompt = db.Prompt()
     prompt.metrics = metrics
     return prompt
+
 
 def test_prompt_metrics_properties():
     now = datetime.now(timezone.utc)
@@ -118,6 +126,7 @@ def test_prompt_metrics_properties():
     assert prompt.avg_response_time == 1.5
     assert prompt.last_execution_time == now + timedelta(seconds=1)
 
+
 def test_prompt_metrics_properties_empty():
     prompt = db.Prompt()
     prompt.metrics = []
@@ -130,11 +139,13 @@ def test_prompt_metrics_properties_empty():
     assert prompt.avg_response_time is None
     assert prompt.last_execution_time is None
 
+
 # --- Server metrics properties ---
 def make_server_with_metrics(metrics):
     server = db.Server()
     server.metrics = metrics
     return server
+
 
 def test_server_metrics_properties():
     now = datetime.now(timezone.utc)
@@ -152,6 +163,7 @@ def test_server_metrics_properties():
     assert server.avg_response_time == 1.5
     assert server.last_execution_time == now + timedelta(seconds=1)
 
+
 def test_server_metrics_properties_empty():
     server = db.Server()
     server.metrics = []
@@ -163,6 +175,7 @@ def test_server_metrics_properties_empty():
     assert server.max_response_time is None
     assert server.avg_response_time is None
     assert server.last_execution_time is None
+
 
 # --- Resource content property ---
 def test_resource_content_text():
@@ -177,6 +190,7 @@ def test_resource_content_text():
     assert content.uri == "uri"
     assert content.mime_type == "text/plain"
 
+
 def test_resource_content_binary():
     resource = db.Resource()
     resource.text_content = None
@@ -187,12 +201,14 @@ def test_resource_content_binary():
     assert content.blob == b"data"
     assert content.mime_type == "application/octet-stream"
 
+
 def test_resource_content_none():
     resource = db.Resource()
     resource.text_content = None
     resource.binary_content = None
     with pytest.raises(ValueError):
         _ = resource.content
+
 
 def test_resource_content_text_and_binary():
     resource = db.Resource()
@@ -204,11 +220,13 @@ def test_resource_content_text_and_binary():
     assert content.text == "text"
     assert not hasattr(content, "blob") or content.blob is None
 
+
 # --- Prompt argument validation ---
 def test_prompt_validate_arguments_valid():
     prompt = db.Prompt()
     prompt.argument_schema = {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]}
     prompt.validate_arguments({"a": "x"})
+
 
 def test_prompt_validate_arguments_invalid():
     prompt = db.Prompt()
@@ -216,66 +234,87 @@ def test_prompt_validate_arguments_invalid():
     with pytest.raises(ValueError):
         prompt.validate_arguments({})
 
+
 def test_prompt_validate_arguments_missing_schema():
     prompt = db.Prompt()
     prompt.argument_schema = None
     with pytest.raises(Exception):
         prompt.validate_arguments({"a": "x"})
 
+
 # --- Validation listeners ---
 def test_validate_tool_schema_valid():
     class Target:
         input_schema = {"type": "object"}
+
     db.validate_tool_schema(None, None, Target())
+
 
 def test_validate_tool_schema_invalid():
     class Target:
         input_schema = {"type": "invalid"}
+
     with pytest.raises(ValueError):
         db.validate_tool_schema(None, None, Target())
+
 
 def test_validate_tool_name_valid():
     class Target:
         name = "valid_name-123"
+
     db.validate_tool_name(None, None, Target())
+
 
 def test_validate_tool_name_invalid():
     class Target:
         name = "invalid name!"
+
     with pytest.raises(ValueError):
         db.validate_tool_name(None, None, Target())
+
 
 def test_validate_prompt_schema_valid():
     class Target:
         argument_schema = {"type": "object"}
+
     db.validate_prompt_schema(None, None, Target())
+
 
 def test_validate_prompt_schema_invalid():
     class Target:
         argument_schema = {"type": "invalid"}
+
     with pytest.raises(ValueError):
         db.validate_prompt_schema(None, None, Target())
+
 
 def test_validate_tool_schema_missing():
     class Target:
         pass
+
     db.validate_tool_schema(None, None, Target())  # Should not raise
+
 
 def test_validate_tool_name_missing():
     class Target:
         pass
+
     db.validate_tool_name(None, None, Target())  # Should not raise
+
 
 def test_validate_prompt_schema_missing():
     class Target:
         pass
+
     db.validate_prompt_schema(None, None, Target())  # Should not raise
+
 
 # --- get_db generator ---
 def test_get_db_yields_and_closes(monkeypatch):
     class DummySession:
         def close(self):
             self.closed = True
+
     dummy = DummySession()
     monkeypatch.setattr(db, "SessionLocal", lambda: dummy)
     gen = db.get_db()
@@ -286,6 +325,7 @@ def test_get_db_yields_and_closes(monkeypatch):
     except StopIteration:
         pass
     assert hasattr(dummy, "closed")
+
 
 def test_get_db_closes_on_exception(monkeypatch):
     class DummySession:
@@ -305,41 +345,52 @@ def test_get_db_closes_on_exception(monkeypatch):
         pass
 
     assert hasattr(dummy, "closed")
+
+
 # --- init_db ---
 def test_init_db_success(monkeypatch):
     monkeypatch.setattr(db.Base.metadata, "create_all", lambda bind: True)
     db.init_db()
 
+
 def test_init_db_failure(monkeypatch):
     def fail(*a, **k):
         raise SQLAlchemyError("fail")
+
     monkeypatch.setattr(db.Base.metadata, "create_all", fail)
     with pytest.raises(Exception):
         db.init_db()
+
 
 # --- Gateway event listener ---
 def test_update_tool_names_on_gateway_update(monkeypatch):
     class DummyGateway:
         id = "gwid"
         name = "GatewayName"
+
     class DummyConnection:
         def execute(self, stmt):
             self.executed = True
+
     class DummyMapper:
         pass
+
     monkeypatch.setattr(db.Tool, "__table__", MagicMock())
     monkeypatch.setattr(db, "slugify", lambda name: "slug")
     monkeypatch.setattr(db.settings, "gateway_tool_name_separator", "-")
     dummy_gateway = DummyGateway()
     dummy_connection = DummyConnection()
     dummy_mapper = DummyMapper()
+
     # Simulate get_history returning an object with has_changes = True
     class DummyHistory:
         def has_changes(self):
             return True
+
     monkeypatch.setattr(db, "get_history", lambda target, name: DummyHistory())
     db.update_tool_names_on_gateway_update(dummy_mapper, dummy_connection, dummy_gateway)
     assert hasattr(dummy_connection, "executed")
+
 
 # --- SessionRecord and SessionMessageRecord ---
 def test_session_record_and_message_record():
