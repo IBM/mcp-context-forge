@@ -3319,6 +3319,7 @@ async function handleGatewayTestSubmit(e) {
     const loading = safeGetElement("gateway-test-loading");
     const responseDiv = safeGetElement("gateway-test-response-json");
     const resultDiv = safeGetElement("gateway-test-result");
+    const testButton = safeGetElement("gateway-test-submit");
 
     try {
         // Show loading
@@ -3327,6 +3328,10 @@ async function handleGatewayTestSubmit(e) {
         }
         if (resultDiv) {
             resultDiv.classList.add("hidden");
+        }
+        if (testButton) {
+            testButton.disabled = true;
+            testButton.textContent = "Testing...";
         }
 
         const form = e.target;
@@ -3393,31 +3398,32 @@ async function handleGatewayTestSubmit(e) {
 
         const result = await response.json();
 
-        if (responseDiv) {
-            // Display result safely
-            responseDiv.innerHTML = `
-                <div class="alert alert-success">
-                    <h4>✅ Connection Successful</h4>
-                    <p><strong>Status Code:</strong> ${result.statusCode}</p>
-                    <p><strong>Response Time:</strong> ${result.latencyMs}ms</p>
-                    ${
-                        result.body
-                            ? `<details>
-                        <summary class='cursor-pointer'>Response Body</summary>
-                        <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto">${JSON.stringify(result.body, null, 2)}</pre>
-                    </details>`
-                            : ""
-                    }
-                </div>
-            `;
-        } else {
-            responseDiv.innerHTML = `
-            <div class="alert alert-error">
-                <h4>❌ Connection Failed</h4>
-                <p>${result.error || "Unable to connect to the server"}</p>
-            </div>
+        const isSuccess =
+            result.statusCode &&
+            result.statusCode >= 200 &&
+            result.statusCode < 300;
+
+        const alertType = isSuccess ? "success" : "error";
+        const icon = isSuccess ? "✅" : "❌";
+        const title = isSuccess ? "Connection Successful" : "Connection Failed";
+        const statusCode = result.statusCode || "Unknown";
+        const latency =
+            result.latencyMs != null ? `${result.latencyMs}ms` : "NA";
+        const body = result.body
+            ? `<details open>
+                <summary class='cursor-pointer'><strong>Response Body</strong></summary>
+                <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto">${JSON.stringify(result.body, null, 2)}</pre>
+            </details>`
+            : "";
+
+        responseDiv.innerHTML = `
+        <div class="alert alert-${alertType}">
+            <h4><strong>${icon} ${title}</strong></h4>
+            <p><strong>Status Code:</strong> ${statusCode}</p>
+            <p><strong>Response Time:</strong> ${latency}</p>
+            ${body}
+        </div>
         `;
-        }
     } catch (error) {
         console.error("Gateway test error:", error);
         if (responseDiv) {
@@ -3434,6 +3440,9 @@ async function handleGatewayTestSubmit(e) {
         if (resultDiv) {
             resultDiv.classList.remove("hidden");
         }
+
+        testButton.disabled = false;
+        testButton.textContent = "Test";
     }
 }
 
