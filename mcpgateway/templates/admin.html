@@ -16,6 +16,7 @@
   </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="{{ root_path }}/static/admin.js"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css" rel="stylesheet" />
@@ -190,19 +191,21 @@
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   {% if server.isActive %}
                   <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/toggle" class="inline mr-2"
-                    title="Deactivate: This will temporarily disable the server without deleting it."
                     onsubmit="return handleToggleSubmit(event, 'servers')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" class="text-yellow-600 hover:text-yellow-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
+                      class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
                     </button>
                   </form>
                   {% else %}
                   <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/toggle" class="inline mr-2"
-                    title="Activate: This will re-enable the server."
                     onsubmit="return handleToggleSubmit(event, 'servers')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" class="text-blue-600 hover:text-blue-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Re-enable an inactive item.'"
+                      class="text-blue-600 hover:text-blue-900">
                       Activate
                     </button>
                   </form>
@@ -216,7 +219,9 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'servers')">
-                    <button type="submit" class="text-red-600 hover:text-red-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Permanently delete this item – cannot be undone.'"
+                      class="text-red-600 hover:text-red-900">
                       Delete
                     </button>
                   </form>
@@ -280,6 +285,7 @@
           </div>
           <div class="mt-6">
             <button type="submit"
+              x-tooltip="'💡Creates a new Virtual Server by combining Tools, Resources & Prompts from global catalogs.'"
               class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
               Add Server
             </button>
@@ -452,33 +458,37 @@
                     <div
                       class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">
                       {% if not enabled %}
-                      Tool is Manually Deactivated.
+                      💡Tool is Manually Deactivated.
                       {% elif not reachable %}
-                      The host gateway for this tool is unreachable.
+                      💡The host gateway for this tool is unreachable.
                       {% else %}
-                      Everything stable.
+                      💡Everything stable.
                       {% endif %}
                     </div>
                   </div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <button onclick="testTool('{{ tool.id }}')" class="text-purple-600 hover:text-purple-900 mr-2"
-                    title="Test this tool">
+                    x-tooltip="'💡Execute this Tool with sample inputs.'">
                     Test
                   </button>
                   {% if tool.enabled %}
                   <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle" class="inline mr-2"
-                    title="Deactivate" onsubmit="return handleToggleSubmit(event, 'tools')">
+                    onsubmit="return handleToggleSubmit(event, 'tools')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" class="text-yellow-600 hover:text-yellow-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
+                      class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
                     </button>
                   </form>
                   {% else %}
                   <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle" class="inline mr-2"
-                    title="Activate" onsubmit="return handleToggleSubmit(event, 'tools')">
+                    onsubmit="return handleToggleSubmit(event, 'tools')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" class="text-blue-600 hover:text-blue-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Re-enable an inactive item.'"
+                      class="text-blue-600 hover:text-blue-900">
                       Activate
                     </button>
                   </form>
@@ -492,7 +502,9 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'tools')">
-                    <button type="submit" class="text-red-600 hover:text-red-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Permanently delete this item – cannot be undone.'"
+                      class="text-red-600 hover:text-red-900">
                       Delete
                     </button>
                   </form>
@@ -619,6 +631,7 @@
           </div>
           <div class="mt-6">
             <button type="submit"
+              x-tooltip="'💡	Registers a new Tool from an existing REST or MCP endpoint.'"
               class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
               Add Tool
             </button>
@@ -706,19 +719,22 @@
                   {% if resource.isActive %}
                   <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
                     class="inline mr-2"
-                    title="Deactivate: This will temporarily disable the resource without deleting it."
                     onsubmit="return handleToggleSubmit(event, 'resources')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" class="text-yellow-600 hover:text-yellow-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
+                      class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
                     </button>
                   </form>
                   {% else %}
                   <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
-                    class="inline mr-2" title="Activate: This will re-enable the resource."
+                    class="inline mr-2" 
                     onsubmit="return handleToggleSubmit(event, 'resources')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" class="text-blue-600 hover:text-blue-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Re-enable an inactive item.'"
+                      class="text-blue-600 hover:text-blue-900">
                       Activate
                     </button>
                   </form>
@@ -732,7 +748,9 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.uri }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'resources')">
-                    <button type="submit" class="text-red-600 hover:text-red-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Permanently delete this item – cannot be undone.'"
+                      class="text-red-600 hover:text-red-900">
                       Delete
                     </button>
                   </form>
@@ -780,6 +798,7 @@
           </div>
           <div class="mt-6">
             <button type="submit"
+              x-tooltip="'💡Uploads or links a reusable data asset (file, URI, or text).'"
               class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
               Add Resource
             </button>
@@ -856,19 +875,21 @@
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   {% if prompt.isActive %}
                   <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle" class="inline mr-2"
-                    title="Deactivate: This will temporarily disable the prompt without deleting it."
                     onsubmit="return handleToggleSubmit(event, 'prompts')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" class="text-yellow-600 hover:text-yellow-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
+                      class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
                     </button>
                   </form>
                   {% else %}
                   <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle" class="inline mr-2"
-                    title="Activate: This will re-enable the prompt."
                     onsubmit="return handleToggleSubmit(event, 'prompts')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" class="text-blue-600 hover:text-blue-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Re-enable an inactive item.'"
+                      class="text-blue-600 hover:text-blue-900">
                       Activate
                     </button>
                   </form>
@@ -882,7 +903,9 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.name }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'prompts')">
-                    <button type="submit" class="text-red-600 hover:text-red-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Permanently delete this item – cannot be undone.'"
+                      class="text-red-600 hover:text-red-900">
                       Delete
                     </button>
                   </form>
@@ -925,6 +948,7 @@
           </div>
           <div class="mt-6">
             <button type="submit"
+              x-tooltip="'💡Creates a reusable message template with parameters.'"
               class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
               Add Prompt
             </button>
@@ -1034,11 +1058,11 @@
                     <div
                       class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">
                       {% if not enabled %}
-                      Gateway is Manually Deactivated
+                      💡Gateway is Manually Deactivated
                       {% elif not reachable %}
-                      Gateway is Not Reachable
+                      💡Gateway is Not Reachable
                       {% else %}
-                      Everything stable.
+                      💡Everything stable.
                       {% endif %}
                     </div>
                   </div>
@@ -1054,19 +1078,22 @@
                   {% if gateway.enabled %}
                   <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
                     class="inline mr-2"
-                    title="Deactivate: This will temporarily disable the gateway without deleting it."
                     onsubmit="return handleToggleSubmit(event, 'gateways')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" class="text-yellow-600 hover:text-yellow-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
+                      class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
                     </button>
                   </form>
                   {% else %}
                   <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
-                    class="inline mr-2" title="Activate: This will re-enable the gateway."
+                    class="inline mr-2" 
                     onsubmit="return handleToggleSubmit(event, 'gateways')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" class="text-blue-600 hover:text-blue-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Re-enable an inactive item.'"
+                      class="text-blue-600 hover:text-blue-900">
                       Activate
                     </button>
                   </form>
@@ -1080,7 +1107,9 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'gateways')">
-                    <button type="submit" class="text-red-600 hover:text-red-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Permanently delete this item – cannot be undone.'"
+                      class="text-red-600 hover:text-red-900">
                       Delete
                     </button>
                   </form>
@@ -1168,6 +1197,7 @@
           </div>
           <div class="mt-6">
             <button type="submit"
+              x-tooltip="'💡Registers an external MCP server and imports its catalogs - Tools, Prompts, Resources, etc.'"
               class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
               Add Gateway
             </button>
@@ -1235,7 +1265,9 @@
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <form method="POST" action="{{ root_path }}/admin/roots/{{ root.uri }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'roots')">
-                    <button type="submit" class="text-red-600 hover:text-red-900">
+                    <button type="submit" 
+                      x-tooltip="'💡Permanently delete this item – cannot be undone.'"
+                      class="text-red-600 hover:text-red-900">
                       Delete
                     </button>
                   </form>
@@ -1268,6 +1300,7 @@
           </div>
           <div class="mt-6">
             <button type="submit"
+              x-tooltip="'💡Registers a base directory that MCP servers can browse for files.'"
               class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
               Add Root
             </button>
@@ -1976,7 +2009,7 @@
     window.ROOT_PATH = {{ root_path | tojson }};
     window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  
 </body>
 
 </html>
