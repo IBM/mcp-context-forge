@@ -3346,7 +3346,7 @@ async function handleGatewayTestSubmit(e) {
         // Validate URL
         const urlValidation = validateUrl(baseUrl);
         if (!urlValidation.valid) {
-            return new Error(`Invalid URL: ${urlValidation.error}`);
+            throw new Error(`Invalid URL: ${urlValidation.error}`);
         }
 
         // Get CodeMirror content safely
