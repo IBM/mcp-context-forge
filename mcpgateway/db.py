@@ -1271,4 +1271,7 @@ def set_tool_name(_mapper, _conn, target):
 
     sep = settings.gateway_tool_name_separator
     gateway_slug = target.gateway.slug if target.gateway_id else ""
-    target.name = f"{gateway_slug}{sep}{slugify(target.original_name)}"
+    if gateway_slug:
+        target.name = f"{gateway_slug}{sep}{slugify(target.original_name)}"
+    else:
+        target.name = slugify(target.original_name)
