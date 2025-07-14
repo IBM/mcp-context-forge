@@ -30,21 +30,11 @@
     </div>
   </div>
 
-  {% if payload.app.version or payload.app.git_revision %}
+  {% if payload.app.version %}
   <div class="mt-4 pt-4 border-t border-blue-300">
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {% if payload.app.version %}
-      <div class="text-center">
-        <div class="text-lg font-medium">Version</div>
-        <div class="text-blue-100 font-mono text-sm">{{ payload.app.version }}</div>
-      </div>
-      {% endif %}
-      {% if payload.app.git_revision %}
-      <div class="text-center">
-        <div class="text-lg font-medium">Git Revision</div>
-        <div class="text-blue-100 font-mono text-sm">{{ payload.app.git_revision }}</div>
-      </div>
-      {% endif %}
+    <div class="text-center">
+      <div class="text-lg font-medium">Version</div>
+      <div class="text-blue-100 font-mono text-sm">{{ payload.app.version }}</div>
     </div>
   </div>
   {% endif %}

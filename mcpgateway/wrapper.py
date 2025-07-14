@@ -66,8 +66,8 @@ SERVER_CATALOG_URLS: List[str] = [u.strip() for u in RAW_CATALOGS.split(",") if 
 AUTH_TOKEN: str = os.getenv(ENV_AUTH_TOKEN, "")
 TOOL_CALL_TIMEOUT: int = int(os.getenv(ENV_TIMEOUT, "90"))
 
-# Validate required configuration
-if not SERVER_CATALOG_URLS:
+# Validate required configuration (only when run as script)
+if __name__ == "__main__" and not SERVER_CATALOG_URLS:
     print(f"Error: {ENV_SERVER_CATALOGS} environment variable is required", file=sys.stderr)
     sys.exit(1)
 
@@ -498,9 +498,6 @@ async def handle_get_prompt(name: str, arguments: Optional[Dict[str, str]] = Non
 
     Raises:
         ValueError: If fetching or formatting fails.
-
-    Example:
-        >>> await handle_get_prompt("greet", {"username": "Alice"})
     """
     try:
         url = f"{BASE_URL}/prompts/{name}"

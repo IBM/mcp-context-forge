@@ -23,7 +23,7 @@ Pick an install method below, generate an auth token, then walk through a real t
         ```bash
         mkdir mcpgateway && cd mcpgateway
         python3 -m venv .venv && source .venv/bin/activate
-        python -m pip install --upgrade pip
+        python3 -m pip install --upgrade pip
         ```
 
     2. **Install the gateway from pypi**
@@ -46,7 +46,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     4. **Generate a bearer token with an expiration time of 10080 seconds (1 week)**
 
         ```bash
-        export MCP_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+        export MCP_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
             --username admin --exp 10080 --secret my-test-key)
         ```
 
@@ -95,7 +95,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     3. **Generate a token inside the container**
 
         ```bash
-        docker exec mcpgateway python -m mcpgateway.utils.create_jwt_token \
+        docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token \
           --username admin --exp 10080 --secret my-test-key
         ```
 
@@ -194,7 +194,7 @@ npx -y @modelcontextprotocol/inspector
 ```bash
 export MCP_AUTH_TOKEN=$MCP_BEARER_TOKEN
 export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1
-python -m mcpgateway.wrapper   # behaves as a local MCP stdio server - run from MCP client
+python3 -m mcpgateway.wrapper   # behaves as a local MCP stdio server - run from MCP client
 ```
 
 Use this in GUI clients (Claude Desktop, Continue, etc.) that prefer stdio. Example:

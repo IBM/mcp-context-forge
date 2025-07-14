@@ -8,7 +8,7 @@
 #   - Lints the Dockerfile with **Hadolint** (CLI) → SARIF
 #   - Lints the finished image with **Dockle** (CLI) → SARIF
 #   - Generates an SPDX SBOM with **Syft**
-#   - Scans the image for CRITICAL CVEs with **Trivy**
+#   - Scans the image for CRITICAL CVEs with **Trivy/Grype**
 #   - Uploads Hadolint, Dockle and Trivy results as SARIF files
 #   - Pushes the image to **GitHub Container Registry (GHCR)**
 #   - Signs & attests the image with **Cosign (key-less OIDC)**
@@ -142,7 +142,7 @@ jobs:
           output-file: sbom.spdx.json
 
       # -------------------------------------------------------------
-      # 6️⃣  Trivy CVE scan → SARIF
+      # 6️⃣  Trivy, Grype CVE scan → SARIF
       # -------------------------------------------------------------
       - name: 🛡️  Trivy vulnerability scan
         id: trivy
@@ -160,6 +160,21 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
+      - name: 📥 Installing Grype CLI
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+      - name: 🔍 Grype vulnerability scan
+        run: |
+          grype ${{ env.IMAGE_NAME }}:latest --scope all-layers --only-fixed
+      - name: 📄 Generating Grype SARIF report
+        run: |
+          grype ${{ env.IMAGE_NAME }}:latest --scope all-layers --output sarif --file grype-results.sarif
+      - name: ☁️  Upload Grype SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: grype-results.sarif
+
       # -------------------------------------------------------------
       # 7️⃣  Push both tags to GHCR
       # -------------------------------------------------------------
@@ -170,7 +185,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🚀  Push image to GHCR
+      - name: 🚀 Push image to GHCR
+        if: github.ref == 'refs/heads/main'
         run: |
           docker push $IMAGE_NAME:${{ env.TAG }}
           docker push $IMAGE_NAME:latest
@@ -179,9 +195,11 @@ jobs:
       # 8️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
       # -------------------------------------------------------------
       - name: 📥 Install Cosign
+        if: github.ref == 'refs/heads/main'
         uses: sigstore/cosign-installer@v3 # provides the matching CLI
 
       - name: 🔏 Sign & attest images (latest + timestamp)
+        if: github.ref == 'refs/heads/main'
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |

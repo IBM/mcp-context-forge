@@ -62,7 +62,7 @@ jobs:
       # -----------------------------------------------------------
       - name: 📦 Install dependencies (editable + dev extra)
         run: |
-          python -m pip install --upgrade pip
+          python3 -m pip install --upgrade pip
           # install the project itself in *editable* mode so tests import the same codebase
           # and pull in every dev / test extra declared in pyproject.toml
           pip install -e .[dev]
@@ -81,6 +81,30 @@ jobs:
             --cov-report=term \
             --cov-branch \
             --cov-fail-under=40
+
+      # -----------------------------------------------------------
+      # 4️⃣  Run doctests
+      # -----------------------------------------------------------
+      - name: 🧪  Run doctests
+        run: |
+          pytest --doctest-modules mcpgateway/ --tb=short
+
+      # -----------------------------------------------------------
+      # 5️⃣  Doctest coverage check
+      # -----------------------------------------------------------
+      - name: 📊  Doctest coverage validation
+        run: |
+          python3 -c "
+          import subprocess, sys
+          result = subprocess.run(['python', '-m', 'pytest', '--doctest-modules', 'mcpgateway/', '--tb=no', '-q'], capture_output=True)
+          if result.returncode == 0:
+              print('✅ All doctests passing')
+          else:
+              print('❌ Doctest failures detected')
+              print(result.stdout.decode())
+              print(result.stderr.decode())
+              sys.exit(1)
+          "
 
     # -----------------------------------------------------------
     # 4️⃣  Upload coverage artifacts (XML + HTML)
@@ -130,7 +154,7 @@ jobs:
 #         echo "| File | Stmts | Miss | Branch | BrMiss | Cover |" >> "$GITHUB_STEP_SUMMARY"
 #         echo "|------|------:|-----:|-------:|-------:|------:|" >> "$GITHUB_STEP_SUMMARY"
 #         coverage json -q -o cov.json
-#         python - <<'PY'
+#         python3 - <<'PY'
 # import json, pathlib, sys, os
 # data = json.load(open("cov.json"))
 # root = pathlib.Path().resolve()

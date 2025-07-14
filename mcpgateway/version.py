@@ -13,7 +13,8 @@ Features:
 - Cross-platform system metrics (Windows/macOS/Linux), with fallbacks where APIs are unavailable
 - Optional dependencies: psutil (for richer metrics) and redis.asyncio (for Redis health); omitted gracefully if absent
 - Authentication enforcement via `require_auth`; unauthenticated browsers see login form, API clients get JSON 401
-- Redacted environment variables, sanitized DB/Redis URLs, Git commit detection
+- Redacted environment variables, sanitized DB/Redis URLs
+
 """
 
 # Future
@@ -25,7 +26,6 @@ import json
 import os
 import platform
 import socket
-import subprocess
 import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
@@ -87,26 +87,6 @@ def _public_env() -> Dict[str, str]:
         Dict[str, str]: A map of environment variable names to values.
     """
     return {k: v for k, v in os.environ.items() if not _is_secret(k)}
-
-
-def _git_revision() -> Optional[str]:
-    """
-    Retrieve the current Git revision (short) if available.
-
-    Returns:
-        Optional[str]: The Git commit hash prefix or None if unavailable.
-    """
-    rev = os.getenv("GIT_COMMIT")
-    if rev:
-        return rev[:9]
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-        )
-        return out.decode().strip()
-    except Exception:
-        return None
 
 
 def _sanitize_url(url: Optional[str]) -> Optional[str]:
@@ -261,7 +241,6 @@ def _build_payload(
             "name": settings.app_name,
             "version": __version__,
             "mcp_protocol_version": settings.protocol_version,
-            "git_revision": _git_revision(),
         },
         "platform": {
             "python": platform.python_version(),
