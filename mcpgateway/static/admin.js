@@ -3319,7 +3319,7 @@ async function handleGatewayTestSubmit(e) {
     const loading = safeGetElement("gateway-test-loading");
     const responseDiv = safeGetElement("gateway-test-response-json");
     const resultDiv = safeGetElement("gateway-test-result");
-    const testButton = safeGetElement("gateway-test-submit")
+    const testButton = safeGetElement("gateway-test-submit");
 
     try {
         // Show loading
@@ -3398,19 +3398,23 @@ async function handleGatewayTestSubmit(e) {
 
         const result = await response.json();
 
-        const isSuccess = result.statusCode && result.statusCode >= 200 && result.statusCode < 300;
+        const isSuccess =
+            result.statusCode &&
+            result.statusCode >= 200 &&
+            result.statusCode < 300;
 
         const alertType = isSuccess ? "success" : "error";
         const icon = isSuccess ? "✅" : "❌";
         const title = isSuccess ? "Connection Successful" : "Connection Failed";
         const statusCode = result.statusCode || "Unknown";
-        const latency = result.latencyMs != null ? `${result.latencyMs}ms` : "NA";
+        const latency =
+            result.latencyMs != null ? `${result.latencyMs}ms` : "NA";
         const body = result.body
-        ? `<details open>
+            ? `<details open>
                 <summary class='cursor-pointer'><strong>Response Body</strong></summary>
                 <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto">${JSON.stringify(result.body, null, 2)}</pre>
             </details>`
-        : "";
+            : "";
 
         responseDiv.innerHTML = `
         <div class="alert alert-${alertType}">
