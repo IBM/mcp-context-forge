@@ -193,7 +193,7 @@
                   <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/toggle" class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'servers')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
                       class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
@@ -203,7 +203,7 @@
                   <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/toggle" class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'servers')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Re-enable an inactive item.'"
                       class="text-blue-600 hover:text-blue-900">
                       Activate
@@ -219,7 +219,7 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'servers')">
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Permanently delete this item – cannot be undone.'"
                       class="text-red-600 hover:text-red-900">
                       Delete
@@ -476,7 +476,7 @@
                   <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle" class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'tools')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
                       class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
@@ -486,7 +486,7 @@
                   <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle" class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'tools')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Re-enable an inactive item.'"
                       class="text-blue-600 hover:text-blue-900">
                       Activate
@@ -502,7 +502,7 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'tools')">
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Permanently delete this item – cannot be undone.'"
                       class="text-red-600 hover:text-red-900">
                       Delete
@@ -631,7 +631,7 @@
           </div>
           <div class="mt-6">
             <button type="submit"
-              x-tooltip="'💡	Registers a new Tool from an existing REST or MCP endpoint.'"
+              x-tooltip="'💡  Registers a new Tool from an existing REST or MCP endpoint.'"
               class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
               Add Tool
             </button>
@@ -721,7 +721,7 @@
                     class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'resources')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
                       class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
@@ -729,10 +729,10 @@
                   </form>
                   {% else %}
                   <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
-                    class="inline mr-2" 
+                    class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'resources')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Re-enable an inactive item.'"
                       class="text-blue-600 hover:text-blue-900">
                       Activate
@@ -748,7 +748,7 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.uri }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'resources')">
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Permanently delete this item – cannot be undone.'"
                       class="text-red-600 hover:text-red-900">
                       Delete
@@ -877,7 +877,7 @@
                   <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle" class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'prompts')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
                       class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
@@ -887,7 +887,7 @@
                   <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle" class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'prompts')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Re-enable an inactive item.'"
                       class="text-blue-600 hover:text-blue-900">
                       Activate
@@ -903,7 +903,7 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.name }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'prompts')">
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Permanently delete this item – cannot be undone.'"
                       class="text-red-600 hover:text-red-900">
                       Delete
@@ -1080,7 +1080,7 @@
                     class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'gateways')">
                     <input type="hidden" name="activate" value="false" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Temporarily disable this item (can be re-activated).'"
                       class="text-yellow-600 hover:text-yellow-900">
                       Deactivate
@@ -1088,10 +1088,10 @@
                   </form>
                   {% else %}
                   <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
-                    class="inline mr-2" 
+                    class="inline mr-2"
                     onsubmit="return handleToggleSubmit(event, 'gateways')">
                     <input type="hidden" name="activate" value="true" />
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Re-enable an inactive item.'"
                       class="text-blue-600 hover:text-blue-900">
                       Activate
@@ -1107,7 +1107,7 @@
                   </button>
                   <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'gateways')">
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Permanently delete this item – cannot be undone.'"
                       class="text-red-600 hover:text-red-900">
                       Delete
@@ -1265,7 +1265,7 @@
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <form method="POST" action="{{ root_path }}/admin/roots/{{ root.uri }}/delete" class="inline"
                     onsubmit="return handleSubmitWithConfirmation(event, 'roots')">
-                    <button type="submit" 
+                    <button type="submit"
                       x-tooltip="'💡Permanently delete this item – cannot be undone.'"
                       class="text-red-600 hover:text-red-900">
                       Delete
@@ -2009,7 +2009,7 @@
     window.ROOT_PATH = {{ root_path | tojson }};
     window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
   </script>
-  
+
 </body>
 
 </html>

@@ -2155,7 +2155,7 @@ else:
             dict: API info with app name, version, and UI/admin API status.
         """
         logger.info("UI disabled, serving API info at root path")
-        return {"name": settings.app_name, "version": "1.0.0", "description": f"{settings.app_name} API - UI is disabled", "ui_enabled": False, "admin_api_enabled": ADMIN_API_ENABLED}
+        return {"name": settings.app_name, "version": __version__, "description": f"{settings.app_name} API - UI is disabled", "ui_enabled": False, "admin_api_enabled": ADMIN_API_ENABLED}
 
 
 # Expose some endpoints at the root level as well
