@@ -60,7 +60,7 @@ from mcpgateway.admin import admin_router
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.models import (
     InitializeRequest,
@@ -216,6 +216,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await sampling_handler.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
+        refresh_slugs_on_startup()
 
         logger.info("All services initialized successfully")
         yield

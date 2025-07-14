@@ -21,7 +21,6 @@ Examples:
 
 # Standard
 from datetime import datetime, timezone
-import re
 from typing import Any, Dict, List, Optional
 import uuid
 
@@ -62,6 +61,8 @@ from mcpgateway.config import settings
 from mcpgateway.models import ResourceContent
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
+from mcpgateway.validators import SecurityValidator
+
 
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", ...)
@@ -128,34 +129,40 @@ def utc_now() -> datetime:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def refresh_slugs_on_startup():
+    """Refresh slugs for all gateways and names of tools on startup."""
+
+    with SessionLocal() as session:
+        gateways = session.query(Gateway).all()
+        updated = False
+        for gateway in gateways:
+            new_slug = slugify(gateway.name)
+            if gateway.slug != new_slug:
+                gateway.slug = new_slug
+                updated = True
+        if updated:
+            session.commit()
+
+        tools = session.query(Tool).all()
+        for tool in tools:
+            session.expire(tool, ["gateway"])
+
+        updated = False
+        for tool in tools:
+            if tool.gateway:
+                new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
+            else:
+                new_name = slugify(tool.original_name)
+            if tool.name != new_name:
+                tool.name = new_name
+                updated = True
+        if updated:
+            session.commit()
+
+
 class Base(DeclarativeBase):
     """Base class for all models."""
 
-
-# TODO: cleanup, not sure why this is commented out?
-# # Association table for tools and gateways (federation)
-# tool_gateway_table = Table(
-#     "tool_gateway_association",
-#     Base.metadata,
-#     Column("tool_id", String, ForeignKey("tools.id"), primary_key=True),
-#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
-# )
-
-# # Association table for resources and gateways (federation)
-# resource_gateway_table = Table(
-#     "resource_gateway_association",
-#     Base.metadata,
-#     Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
-#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
-# )
-
-# # Association table for prompts and gateways (federation)
-# prompt_gateway_table = Table(
-#     "prompt_gateway_association",
-#     Base.metadata,
-#     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
-#     Column("gateway_id", String, ForeignKey("gateways.id"), primary_key=True),
-# )
 
 # Association table for servers and tools
 server_tool_association = Table(
@@ -1168,8 +1175,10 @@ def validate_tool_name(mapper, connection, target):
     _ = mapper
     _ = connection
     if hasattr(target, "name"):
-        if not re.match(r"^[a-zA-Z0-9_-]+$", target.name):
-            raise ValueError(f"Invalid tool name '{target.name}'. Only alphanumeric characters, hyphens, and underscores are allowed.")
+        try:
+            SecurityValidator.validate_tool_name(target.name)
+        except ValueError as e:
+            raise ValueError(f"Invalid tool name: {str(e)}")
 
 
 def validate_prompt_schema(mapper, connection, target):
@@ -1238,3 +1247,34 @@ if __name__ == "__main__":
     wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
     init_db()
+
+
+@event.listens_for(Gateway, "before_insert")
+def set_gateway_slug(_mapper, _conn, target):
+    """Set the slug for a Gateway before insert.
+
+    Args:
+        _mapper: Mapper
+        _conn: Connection
+        target: Target Gateway instance
+    """
+
+    target.slug = slugify(target.name)
+
+
+@event.listens_for(Tool, "before_insert")
+def set_tool_name(_mapper, _conn, target):
+    """Set the computed name for a Tool before insert.
+
+    Args:
+        _mapper: Mapper
+        _conn: Connection
+        target: Target Tool instance
+    """
+
+    sep = settings.gateway_tool_name_separator
+    gateway_slug = target.gateway.slug if target.gateway_id else ""
+    if gateway_slug:
+        target.name = f"{gateway_slug}{sep}{slugify(target.original_name)}"
+    else:
+        target.name = slugify(target.original_name)

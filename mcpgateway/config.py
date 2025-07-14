@@ -50,8 +50,10 @@ Examples:
 from functools import lru_cache
 from importlib.resources import files
 import json
+import logging
 from pathlib import Path
-from typing import Annotated, Any, Dict, List, Optional, Set, Union
+import re
+from typing import Annotated, Any, Dict, List, Optional, Set, Union, ClassVar
 
 # Third-Party
 from fastapi import HTTPException
@@ -60,6 +62,14 @@ from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%H:%M:%S",
+)
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -237,6 +247,26 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
+    valid_slug_separator_regexp: ClassVar[str] = r"^(-{1,2}|[_.])$"
+
+    @field_validator("gateway_tool_name_separator")
+    @classmethod
+    def must_be_allowed_sep(cls, v: str) -> str:
+        """Validate the gateway tool name separator.
+
+        Args:
+            v: The separator value to validate.
+
+        Returns:
+            The validated separator, defaults to '-' if invalid.
+        """
+        if not re.fullmatch(cls.valid_slug_separator_regexp, v):
+            logger.warning(
+                f"Invalid gateway_tool_name_separator '{v}'. Must be '-', '--', '_' or '.'. Defaulting to '-'.",
+                stacklevel=2,
+            )
+            return "-"
+        return v
 
     @property
     def api_key(self) -> str:
@@ -393,11 +423,11 @@ class Settings(BaseSettings):
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
-    validation_name_pattern: str = r"^[a-zA-Z0-9_\-\s]+$"  # Allow spaces for names
+    validation_name_pattern: str = r"^[a-zA-Z0-9_.\-\s]+$"  # Allow spaces for names
     validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
-    validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_-]*$"  # MCP tool naming
+    validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # MCP tool naming
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255

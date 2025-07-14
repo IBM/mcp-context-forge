@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 import logging
 import os
 import tempfile
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING
 import uuid
 
 # Third-Party
@@ -249,18 +249,26 @@ class GatewayService:
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(gateway)
-        except GatewayConnectionError as ge:
-            logger.error(f"GatewayConnectionError: {ge}")
-            raise ge
-        except ValueError as ve:
-            logger.error(f"ValueError: {ve}")
-            raise ve
-        except RuntimeError as re:
-            logger.error(f"RuntimeError: {re}")
-            raise re
-        except BaseException as other:
-            logger.error(f"Other errors: {other}")
-            raise other
+        except* GatewayConnectionError as ge:
+            if TYPE_CHECKING:
+                ge: ExceptionGroup[GatewayConnectionError]
+            logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
+            raise ge.exceptions[0]
+        except* ValueError as ve:
+            if TYPE_CHECKING:
+                ve: ExceptionGroup[ValueError]
+            logger.error(f"ValueErrors in group: {ve.exceptions}")
+            raise ve.exceptions[0]
+        except* RuntimeError as re:
+            if TYPE_CHECKING:
+                re: ExceptionGroup[RuntimeError]
+            logger.error(f"RuntimeErrors in group: {re.exceptions}")
+            raise re.exceptions[0]
+        except* BaseException as other:  # catches every other sub-exception
+            if TYPE_CHECKING:
+                other: ExceptionGroup[BaseException]
+            logger.error(f"Other grouped errors: {other.exceptions}")
+            raise other.exceptions[0]
 
     async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
         """List all registered gateways.
