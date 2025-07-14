@@ -53,7 +53,7 @@ import json
 import logging
 from pathlib import Path
 import re
-from typing import Annotated, Any, Dict, List, Optional, Set, Union
+from typing import Annotated, Any, Dict, List, Optional, Set, Union, ClassVar
 
 # Third-Party
 from fastapi import HTTPException
@@ -247,6 +247,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
+    valid_slug_separator_regexp: ClassVar[str] = r"^(-{1,2}|[_.])$"
 
     @field_validator("gateway_tool_name_separator")
     @classmethod
@@ -259,9 +260,9 @@ class Settings(BaseSettings):
         Returns:
             The validated separator, defaults to '-' if invalid.
         """
-        if not re.fullmatch(r"^(-{1,2}|_)$", v):
+        if not re.fullmatch(cls.valid_slug_separator_regexp, v):
             logger.warning(
-                f"Invalid gateway_tool_name_separator '{v}'. Must be '-', '--', or '_'. Defaulting to '-'.",
+                f"Invalid gateway_tool_name_separator '{v}'. Must be '-', '--', '_' or '.'. Defaulting to '-'.",
                 stacklevel=2,
             )
             return "-"
@@ -422,11 +423,11 @@ class Settings(BaseSettings):
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
-    validation_name_pattern: str = r"^[a-zA-Z0-9_\-\s]+$"  # Allow spaces for names
+    validation_name_pattern: str = r"^[a-zA-Z0-9_.\-\s]+$"  # Allow spaces for names
     validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
-    validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_-]*$"  # MCP tool naming
+    validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # MCP tool naming
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255

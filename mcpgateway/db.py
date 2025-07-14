@@ -62,6 +62,8 @@ from mcpgateway.config import settings
 from mcpgateway.models import ResourceContent
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
+from mcpgateway.validators import SecurityValidator
+
 
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", ...)
@@ -1174,8 +1176,7 @@ def validate_tool_name(mapper, connection, target):
     _ = mapper
     _ = connection
     if hasattr(target, "name"):
-        if not re.match(r"^[a-zA-Z0-9_-]+$", target.name):
-            raise ValueError(f"Invalid tool name '{target.name}'. Only alphanumeric characters, hyphens, and underscores are allowed.")
+        SecurityValidator.validate_tool_name(target.name)
 
 
 def validate_prompt_schema(mapper, connection, target):
