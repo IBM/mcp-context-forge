@@ -10,7 +10,6 @@ from alembic import context
 # access to the values within the .ini file in use.
 from alembic.config import Config
 from sqlalchemy import engine_from_config, pool
-from alembic import context
 
 # First-Party
 from mcpgateway.config import settings
