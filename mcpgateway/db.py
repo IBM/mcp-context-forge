@@ -21,7 +21,6 @@ Examples:
 
 # Standard
 from datetime import datetime, timezone
-import re
 from typing import Any, Dict, List, Optional
 import uuid
 
@@ -1176,7 +1175,10 @@ def validate_tool_name(mapper, connection, target):
     _ = mapper
     _ = connection
     if hasattr(target, "name"):
-        SecurityValidator.validate_tool_name(target.name)
+        try:
+            SecurityValidator.validate_tool_name(target.name)
+        except ValueError as e:
+            raise ValueError(f"Invalid tool name: {str(e)}")
 
 
 def validate_prompt_schema(mapper, connection, target):
