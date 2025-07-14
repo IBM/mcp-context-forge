@@ -187,6 +187,21 @@ async def test_add_get_remove(registry: SessionRegistry):
     assert not await tr.is_connected()
     assert registry.get_session_sync("A") is None
 
+@pytest.mark.asyncio
+async def test_add_with_exception(registry: SessionRegistry, monkeypatch):
+    """Add ➜ get (async & sync) ➜ remove and verify cache/state."""
+    tr = FakeSSETransport("A")
+    
+    registry._backend = "redis"
+
+    mock_redis = AsyncMock(name="MockRedis")
+    mock_redis.aclose = AsyncMock(side_effect=Exception("Redis close error"))
+
+    monkeypatch.setattr(registry, "_backend", "redis")
+    monkeypatch.setattr(registry, "_redis", mock_redis)
+
+    await registry.add_session("A", tr)
+
 # --------------------------------------------------------------------------- #
 # broadcast ➜ respond with different payload types                            #
 # --------------------------------------------------------------------------- #
