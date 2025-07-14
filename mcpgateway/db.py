@@ -148,7 +148,10 @@ def refresh_slugs_on_startup():
 
         updated = False
         for tool in tools:
-            new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
+            if tool.gateway:
+                new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
+            else:
+                new_name = slugify(tool.original_name)
             if tool.name != new_name:
                 tool.name = new_name
                 updated = True
