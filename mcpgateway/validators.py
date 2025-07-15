@@ -338,8 +338,8 @@ class SecurityValidator:
 
         Args:
             obj (Any): The JSON object to check
-            max_depth (Optional[int]): Maximum allowed depth. Defaults to class setting.
-            current_depth (int): Used for recursion, do not set manually.
+            max_depth (int): Maximum allowed depth. Defaults to class setting.
+            current_depth (int): Current depth for recursion. Used internally. Do not set manually.
 
         Raises:
             ValueError: If the object exceeds the maximum allowed depth
