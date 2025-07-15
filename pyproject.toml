@@ -154,6 +154,14 @@ dev = [
     "yamllint>=1.37.1",
 ]
 
+# UI Testing
+playwright = [
+    "playwright>=1.53.0",
+    "pytest-playwright>=0.7.0",
+    "pytest-html>=4.1.1",
+    "pytest-timeout>=2.4.0",
+]
+
 # Convenience meta-extras
 all = [
     "mcp-contextforge-gateway[redis]>=0.3.1",
@@ -317,7 +325,7 @@ exclude = [
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --cov=mcpgateway"
+addopts = "-ra -q --cov=mcpgateway --ignore=tests/playwright"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [
@@ -329,6 +337,31 @@ env = [
     "MCPGATEWAY_ADMIN_API_ENABLED=true",
     "MCPGATEWAY_UI_ENABLED=true"
 ]
+
+# ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====
+# Playwright test markers
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "ui: marks tests as UI tests",
+    "api: marks tests as API tests",
+    "smoke: marks tests as smoke tests for quick validation",
+    "e2e: marks tests as end-to-end tests",
+]
+
+# Playwright-specific test discovery patterns
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Playwright browser configuration (can be overridden via CLI)
+# These are custom options that your conftest.py can read
+playwright_browser = "chromium"  # default browser
+playwright_headed = false        # run headless by default
+playwright_slow_mo = 0          # milliseconds delay between actions
+playwright_screenshot = "only-on-failure"
+playwright_video = "retain-on-failure"
+playwright_trace = "retain-on-failure"
+
 # ── fawltydeps ─────────────────────────────────────────────────────
 [tool.fawltydeps]
 # only parse main pyproject.toml
