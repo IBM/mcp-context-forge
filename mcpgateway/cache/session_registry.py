@@ -33,7 +33,6 @@ from typing import Any, Dict, Optional
 
 # Third-Party
 from fastapi import HTTPException, status
-import httpx
 
 # First-Party
 from mcpgateway import __version__
@@ -42,6 +41,7 @@ from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
 from mcpgateway.models import Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.transports import SSETransport
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 
 logger = logging.getLogger(__name__)
 
@@ -780,7 +780,7 @@ class SessionRegistry(SessionBackend):
                 }
                 headers = {"Authorization": f"Bearer {user['token']}", "Content-Type": "application/json"}
                 rpc_url = base_url + "/rpc"
-                async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
+                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
                     rpc_response = await client.post(
                         url=rpc_url,
                         json=rpc_input,

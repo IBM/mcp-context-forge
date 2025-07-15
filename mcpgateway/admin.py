@@ -68,6 +68,7 @@ from mcpgateway.services.tool_service import (
     ToolService,
 )
 from mcpgateway.utils.create_jwt_token import get_jwt_token
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 from mcpgateway.utils.error_formatter import ErrorFormatter
 
@@ -1383,7 +1384,7 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
     logger.debug(f"User {user} testing server at {request.base_url}.")
     try:
         start_time = time.monotonic()
-        async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
+        async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
             response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         try:

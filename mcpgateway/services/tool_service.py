@@ -25,7 +25,6 @@ import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
-import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -46,6 +45,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 
 # Local
@@ -104,7 +104,7 @@ class ToolService:
     def __init__(self):
         """Initialize the tool service."""
         self._event_subscribers: List[asyncio.Queue] = []
-        self._http_client = httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify)
+        self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
 
     async def initialize(self) -> None:
         """Initialize the service."""
