@@ -1596,6 +1596,32 @@ make test            # Run unit tests
 make lint            # Run lint tools
 ```
 
+## Doctest Coverage
+
+MCP Context Forge implements comprehensive doctest coverage to ensure all code examples in documentation are tested and verified:
+
+```bash
+make doctest         # Run all doctests
+make doctest-verbose # Run with detailed output
+make doctest-coverage # Generate coverage report
+make doctest-check   # Check coverage percentage
+```
+
+**Coverage Status:**
+- ✅ **Transport Modules**: 100% (base, stdio, SSE, WebSocket, streamable HTTP)
+- ✅ **Utility Functions**: 100% (slug generation, JWT tokens, validation)
+- ✅ **Configuration**: 100% (settings, environment variables)
+- 🔄 **Service Classes**: ~60% (in progress)
+- 🔄 **Complex Classes**: ~40% (in progress)
+
+**Benefits:**
+- All documented examples are automatically tested
+- Documentation stays accurate and up-to-date
+- Developers can run examples directly from docstrings
+- Regression prevention through automated verification
+
+For detailed information, see the [Doctest Coverage Guide](https://ibm.github.io/mcp-context-forge/development/doctest-coverage/).
+
 ---
 
 ## Project Structure

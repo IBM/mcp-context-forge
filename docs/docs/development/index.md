@@ -10,6 +10,7 @@ Welcome! This guide is for developers contributing to MCP Gateway. Whether you'r
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [Building Locally](building.md)                                                   | How to install dependencies, set up a virtual environment, and run the gateway |
 | [Packaging](packaging.md)                                                         | How to build a release, container image, or prebuilt binary                    |
+| [Doctest Coverage](doctest-coverage.md)                                           | Comprehensive doctest coverage implementation and guidelines                    |
 | [DEVELOPING.md](https://github.com/IBM/mcp-context-forge/blob/main/DEVELOPING.md) | Coding standards, commit conventions, and review workflow                      |
 
 ---
