@@ -64,6 +64,17 @@ os-deps: $(OS_DEPS_SCRIPT)
 	@bash $(OS_DEPS_SCRIPT)
 
 
+# -----------------------------------------------------------------------------
+# 🔧 HELPER SCRIPTS
+# -----------------------------------------------------------------------------
+# Helper to ensure a Python package is installed in venv
+define ensure_pip_package
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip show $(1) >/dev/null 2>&1 || \
+		python3 -m pip install -q $(1)"
+endef
+
 # =============================================================================
 # 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
 # =============================================================================
@@ -291,9 +302,23 @@ pip-licenses:
 	@echo "📜  License inventory written to $(LICENSES_MD)"
 
 scc:
+	@command -v scc >/dev/null 2>&1 || { \
+		echo "❌ scc not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • macOS: brew install scc"; \
+		echo "   • Linux: Download from https://github.com/boyter/scc/releases"; \
+		exit 1; \
+	}
 	@scc --by-file -i py,sh .
 
 scc-report:
+	@command -v scc >/dev/null 2>&1 || { \
+		echo "❌ scc not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • macOS: brew install scc"; \
+		echo "   • Linux: Download from https://github.com/boyter/scc/releases"; \
+		exit 1; \
+	}
 	@mkdir -p $(dir $(METRICS_MD))
 	@printf "# Lines of Code Report\n\n" > $(METRICS_MD)
 	@scc . --format=html-table >> $(METRICS_MD)
@@ -318,16 +343,12 @@ endif
 .PHONY: docs
 docs: images sbom
 	@echo "📚  Generating documentation with handsdown..."
-	uv handsdown --external https://github.com/yourorg/$(PROJECT_NAME)/ \
-	             -o $(DOCS_DIR)/docs \
-	             -n app --name "$(PROJECT_NAME)" --cleanup
-
-	@echo "🔧  Rewriting GitHub links..."
-	@find $(DOCS_DIR)/docs/app -type f \
-	      -exec sed $(SED_INPLACE) 's#https://github.com/yourorg#https://github.com/ibm/mcp-context-forge#g' {} +
-
-	@sed $(SED_INPLACE) 's#https://github.com/yourorg#https://github.com/ibm/mcp-context-forge#g' \
-	      $(DOCS_DIR)/docs/README.md
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q handsdown && \
+		python3 -m handsdown --external https://github.com/IBM/mcp-context-forge/ \
+		         -o $(DOCS_DIR)/docs \
+		         -n app --name '$(PROJECT_NAME)' --cleanup"
 
 	@cp README.md $(DOCS_DIR)/docs/index.md
 	@echo "✅  Docs ready in $(DOCS_DIR)/docs"
@@ -336,14 +357,26 @@ docs: images sbom
 images:
 	@echo "🖼️   Generating documentation diagrams..."
 	@mkdir -p $(DOCS_DIR)/docs/design/images
-	@code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true
-	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install snakefood3"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m snakefood3 . mcpgateway > snakefood.dot"
-	@dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
-	@pyreverse --colorized mcpgateway || true
-	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true
-	@dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black classes.dot -o $(DOCS_DIR)/docs/design/images/classes.svg || true
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q code2flow && \
+		$(VENV_DIR)/bin/code2flow mcpgateway/ --output $(DOCS_DIR)/docs/design/images/code2flow.dot || true"
+	@command -v dot >/dev/null 2>&1 || { \
+		echo "⚠️  Graphviz (dot) not installed - skipping diagram generation"; \
+		echo "💡  Install with: brew install graphviz (macOS) or apt-get install graphviz (Linux)"; \
+	} && \
+	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black $(DOCS_DIR)/docs/design/images/code2flow.dot -o $(DOCS_DIR)/docs/design/images/code2flow.svg || true
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q snakefood3 && \
+		python3 -m snakefood3 . mcpgateway > snakefood.dot"
+	@command -v dot >/dev/null 2>&1 && \
+	dot -Tpng -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=12 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=10 -Efontcolor=black snakefood.dot -o $(DOCS_DIR)/docs/design/images/snakefood.png || true
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pylint && \
+		$(VENV_DIR)/bin/pyreverse --colorized mcpgateway || true"
+	@command -v dot >/dev/null 2>&1 && \
+	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black packages.dot -o $(DOCS_DIR)/docs/design/images/packages.svg || true && \
+	dot -Tsvg -Gbgcolor=transparent -Gfontname="Arial" -Nfontname="Arial" -Nfontsize=14 -Nfontcolor=black -Nfillcolor=white -Nshape=box -Nstyle="filled,rounded" -Ecolor=gray -Efontname="Arial" -Efontsize=14 -Efontcolor=black classes.dot -o $(DOCS_DIR)/docs/design/images/classes.svg || true
 	@rm -f packages.dot classes.dot snakefood.dot || true
 
 # =============================================================================
@@ -473,9 +506,13 @@ fawltydeps:                         ## 🏗️  Dependency sanity
 	@$(VENV_DIR)/bin/fawltydeps --detailed --exclude 'docs/**' . || true
 
 wily:                               ## 📈  Maintainability report
+	@echo "📈  Maintainability report..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@git stash --quiet
-	@wily build -n 10 . > /dev/null || true
-	@wily report . || true
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q wily && \
+		python3 -m wily build -n 10 . > /dev/null || true && \
+		python3 -m wily report . || true"
 	@git stash pop --quiet
 
 pyre:                               ## 🧠  Facebook Pyre analysis
@@ -485,15 +522,28 @@ pyrefly:                            ## 🧠  Facebook Pyrefly analysis (faster, 
 	@$(VENV_DIR)/bin/pyrefly check mcpgateway
 
 depend:                             ## 📦  List dependencies
-	pdm list --freeze
+	@echo "📦  List dependencies"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pdm && \
+		python3 -m pdm list --freeze"
 
 snakeviz:                           ## 🐍  Interactive profile visualiser
-	@python3 -m cProfile -o mcp.prof app/server.py && snakeviz mcp.prof --server
+	@echo "🐍  Interactive profile visualiser..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q snakeviz && \
+		python3 -m cProfile -o mcp.prof mcpgateway/main.py && \
+		python3 -m snakeviz mcp.prof --server"
 
 pstats:                             ## 📊  Static call-graph image
-	@python3 -m cProfile -o mcp.pstats app/server.py && \
-	 gprof2dot -w -e 3 -n 3 -s -f pstats mcp.pstats | \
-	 dot -Tpng -o $(DOCS_DIR)/pstats.png
+	@echo "📊  Static call-graph image"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q gprof2dot && \
+		python3 -m cProfile -o mcp.pstats mcpgateway/main.py && \
+		$(VENV_DIR)/bin/gprof2dot -w -e 3 -n 3 -s -f pstats mcp.pstats | \
+		dot -Tpng -o $(DOCS_DIR)/pstats.png"
 
 spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 	sort -d -f -o $< $<
@@ -563,10 +613,24 @@ grype-install:
 	@curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
 
 grype-scan:
+	@command -v grype >/dev/null 2>&1 || { \
+		echo "❌ grype not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin"; \
+		echo "   • Or run: make grype-install"; \
+		exit 1; \
+	}
 	@echo "🔍 Grype vulnerability scan..."
 	@grype $(IMG):latest --scope all-layers --only-fixed
 
 grype-sarif:
+	@command -v grype >/dev/null 2>&1 || { \
+		echo "❌ grype not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin"; \
+		echo "   • Or run: make grype-install"; \
+		exit 1; \
+	}
 	@echo "📄 Generating Grype SARIF report..."
 	@grype $(IMG):latest --scope all-layers --output sarif --file grype-results.sarif
 
@@ -587,22 +651,31 @@ LINTERS += yamllint jsonlint tomllint
 .PHONY: yamllint jsonlint tomllint
 
 yamllint:                         ## 📑 YAML linting
-	@command -v yamllint >/dev/null 2>&1 || { \
-	  echo '❌  yamllint not installed  ➜  pip install yamllint'; exit 1; }
-	@echo '📑  yamllint ...' && $(VENV_DIR)/bin/yamllint -c .yamllint .
+	@echo '📑  yamllint ...'
+	$(call ensure_pip_package,yamllint)
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q yamllint 2>/dev/null || true"
+	@$(VENV_DIR)/bin/yamllint -c .yamllint .
 
 jsonlint:                         ## 📑 JSON validation (jq)
 	@command -v jq >/dev/null 2>&1 || { \
-	  echo '❌  jq not installed  ➜  sudo apt-get install jq'; exit 1; }
+		echo "❌ jq not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • macOS: brew install jq"; \
+		echo "   • Linux: sudo apt-get install jq"; \
+		exit 1; \
+	}
 	@echo '📑  jsonlint (jq) ...'
 	@find . -type f -name '*.json' -not -path './node_modules/*' -print0 \
 	  | xargs -0 -I{} sh -c 'jq empty "{}"' \
 	&& echo '✅  All JSON valid'
 
 tomllint:                         ## 📑 TOML validation (tomlcheck)
-	@command -v tomlcheck >/dev/null 2>&1 || { \
-	  echo '❌  tomlcheck not installed  ➜  pip install tomlcheck'; exit 1; }
 	@echo '📑  tomllint (tomlcheck) ...'
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q tomlcheck 2>/dev/null || true"
 	@find . -type f -name '*.toml' -print0 \
 	  | xargs -0 -I{} $(VENV_DIR)/bin/tomlcheck "{}"
 
@@ -666,11 +739,25 @@ osv-install:                  ## Install/upgrade osv-scanner
 
 # ─────────────── Source directory scan ────────────────────────────────────────
 osv-scan-source:
+	@command -v osv-scanner >/dev/null 2>&1 || { \
+		echo "❌ osv-scanner not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest"; \
+		echo "   • Or run: make osv-install"; \
+		exit 1; \
+	}
 	@echo "🔍  osv-scanner source scan..."
 	@osv-scanner scan source --recursive .
 
 # ─────────────── Container image scan ─────────────────────────────────────────
 osv-scan-image:
+	@command -v osv-scanner >/dev/null 2>&1 || { \
+		echo "❌ osv-scanner not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest"; \
+		echo "   • Or run: make osv-install"; \
+		exit 1; \
+	}
 	@echo "🔍  osv-scanner image scan..."
 	@CONTAINER_CLI=$$(command -v docker || command -v podman) ; \
 	  if [ -n "$$CONTAINER_CLI" ]; then \
@@ -804,7 +891,15 @@ trivy-install:
 	@curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
 trivy:
-	@systemctl --user enable --now podman.socket
+	@command -v trivy >/dev/null 2>&1 || { \
+		echo "❌ trivy not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • macOS: brew install trivy"; \
+		echo "   • Linux: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin"; \
+		echo "   • Or run: make trivy-install"; \
+		exit 1; \
+	}
+	@systemctl --user enable --now podman.socket 2>/dev/null || true
 	@echo "🔎  trivy vulnerability scan..."
 	@trivy --format table --severity HIGH,CRITICAL image $(IMG)
 
@@ -813,8 +908,13 @@ trivy:
 DOCKLE_IMAGE ?= $(IMG):latest         # mcpgateway/mcpgateway:latest from your build
 dockle:
 	@echo "🔎  dockle scan (tar mode) on $(DOCKLE_IMAGE)..."
-	@command -v dockle >/dev/null || { \
-		echo '❌  Dockle not installed. See https://github.com/goodwithtech/dockle'; exit 1; }
+	@command -v dockle >/dev/null 2>&1 || { \
+		echo "❌ dockle not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • macOS: brew install goodwithtech/r/dockle"; \
+		echo "   • Linux: Download from https://github.com/goodwithtech/dockle/releases"; \
+		exit 1; \
+	}
 
 	# Pick docker or podman-whichever is on PATH
 	@CONTAINER_CLI=$$(command -v docker || command -v podman) ; \
@@ -2191,11 +2291,17 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 
 shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
 	@echo "🔍  Running shfmt (diff-only)..."
-	@shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true
+	@command -v shfmt >/dev/null 2>&1 || { \
+		echo "⚠️  shfmt not installed - skipping"; \
+		echo "💡  Install with: go install mvdan.cc/sh/v3/cmd/shfmt@latest"; \
+	} && shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true
 	@echo "🔍  Running ShellCheck..."
-	@shellcheck $(SHELL_SCRIPTS) || true
+	@command -v shellcheck >/dev/null 2>&1 || { \
+		echo "⚠️  shellcheck not installed - skipping"; \
+		echo "💡  Install with: brew install shellcheck (macOS) or apt-get install shellcheck (Linux)"; \
+	} && shellcheck $(SHELL_SCRIPTS) || true
 	@echo "🔍  Running bashate..."
-	@$(VENV_DIR)/bin/bashate -C $(SHELL_SCRIPTS) || true
+	@$(VENV_DIR)/bin/bashate $(SHELL_SCRIPTS) || true
 	@echo "✅  Shell lint complete."
 
 
