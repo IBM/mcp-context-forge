@@ -53,6 +53,9 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
+
 
 # First-Party
 from mcpgateway import __version__
@@ -127,6 +130,8 @@ from mcpgateway.validation.jsonrpc import (
     JSONRPCError,
     validate_request,
 )
+
+from mcpgateway.utils.error_formatter import ErrorFormatter
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
@@ -242,6 +247,24 @@ app = FastAPI(
     root_path=settings.app_root_path,
     lifespan=lifespan,
 )
+
+
+# Global exceptions handlers
+
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    return JSONResponse(
+        status_code=422,
+        content=ErrorFormatter.format_validation_error(exc)
+    )
+
+
+@app.exception_handler(IntegrityError)
+async def database_exception_handler(request: Request, exc: IntegrityError):
+    return JSONResponse(
+        status_code=409,
+        content=ErrorFormatter.format_database_error(exc)
+    )
 
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
@@ -419,9 +442,7 @@ async def invalidate_resource_cache(uri: Optional[str] = None) -> None:
         resource_cache.clear()
 
 
-#################
 # Protocol APIs #
-#################
 @protocol_router.post("/initialize")
 async def initialize(request: Request, user: str = Depends(require_auth)) -> InitializeResult:
     """
