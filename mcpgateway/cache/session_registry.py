@@ -780,11 +780,7 @@ class SessionRegistry(SessionBackend):
                 }
                 headers = {"Authorization": f"Bearer {user['token']}", "Content-Type": "application/json"}
                 rpc_url = base_url + "/rpc"
-                async with ResilientHttpClient(
-                    client_args={
-                        "timeout": settings.federation_timeout,
-                        "verify": not settings.skip_ssl_verify
-                    }) as client:
+                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
                     rpc_response = await client.post(
                         url=rpc_url,
                         json=rpc_input,

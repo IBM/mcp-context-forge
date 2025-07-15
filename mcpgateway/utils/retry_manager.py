@@ -12,17 +12,19 @@ network reliability is a concern.
 
 """
 
+# Standard
 import asyncio
-import httpx
-import random
 import logging
-from time import time
-from typing import Optional, Dict, Any
+import random
+from typing import Any, Dict, Optional
+
+# Third-Party
+import httpx
 
 # Configure logger
 logger = logging.getLogger(__name__)
 
-RETRYABLE_STATUS_CODES = { 
+RETRYABLE_STATUS_CODES = {
     429,  # Too Many Requests
     503,  # Service Unavailable
     502,  # Bad Gateway
@@ -30,7 +32,7 @@ RETRYABLE_STATUS_CODES = {
     408,  # Request Timeout
 }
 
-NON_RETRYABLE_STATUS_CODES = { 
+NON_RETRYABLE_STATUS_CODES = {
     401,  # Unauthorized
     400,  # Bad Request
     403,  # Forbidden
@@ -40,10 +42,10 @@ NON_RETRYABLE_STATUS_CODES = {
 }
 
 
-class ResilientHttpClient :
+class ResilientHttpClient:
     """
-    A resilient HTTP client that automatically retries requests in the event of 
-    certain errors or status codes. It supports exponential backoff with jitter 
+    A resilient HTTP client that automatically retries requests in the event of
+    certain errors or status codes. It supports exponential backoff with jitter
     for retrying requests.
 
     Attributes:
@@ -52,6 +54,7 @@ class ResilientHttpClient :
         client_args (dict): Optional arguments to configure the HTTP client.
         client (httpx.AsyncClient): The underlying HTTP client.
     """
+
     def __init__(self, max_retries: int = 3, base_backoff: float = 0.5, client_args: Optional[Dict[str, Any]] = None):
         """
         Initializes the ResilientHttpClient.
@@ -147,7 +150,7 @@ class ResilientHttpClient :
                 logger.warning(f"Retrying due to error: {exc}")
 
             # Backoff calculation
-            delay = self.base_backoff * (2 ** attempt)
+            delay = self.base_backoff * (2**attempt)
             jitter = delay * 0.5
             await self._sleep_with_jitter(delay, jitter)
             attempt += 1
@@ -233,5 +236,3 @@ class ResilientHttpClient :
         Closes the HTTP client after use.
         """
         await self.aclose()
-
-

@@ -216,7 +216,7 @@ def _patch_client(monkeypatch, wrapper, *, json=None, exc=None):
                 raise exc
             return _Resp(json_data=json)
 
-    monkeypatch.setattr(wrapper,"ResilientHttpClient", _Client)
+    monkeypatch.setattr(wrapper, "ResilientHttpClient", _Client)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -261,6 +261,7 @@ def test_extract_base_url_invalid(wrapper):
 
 # --- fetch_url success / error paths --------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_fetch_url_ok(monkeypatch, wrapper):
     class _Client:
@@ -286,6 +287,7 @@ async def test_fetch_url_ok(monkeypatch, wrapper):
     # Verify the response and the URL used
     assert r.json() == {"ok": 1}
     assert _Client.url == "u"
+
 
 @pytest.mark.asyncio
 async def test_fetch_url_request_error(monkeypatch, wrapper):
@@ -329,13 +331,14 @@ async def test_fetch_url_http_status(monkeypatch, wrapper):
 
     # Monkeypatch to replace ResilientHttpClient with _Client
     monkeypatch.setattr(wrapper, "ResilientHttpClient", _Client)
-    
+
     # Third-Party
     import httpx
 
     # Run the test to ensure that an HTTPStatusError is raised
     with pytest.raises(httpx.HTTPStatusError):
         await wrapper.fetch_url("u")
+
 
 # --- handle_call_tool ------------------------------------------------------ #
 

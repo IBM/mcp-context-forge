@@ -44,8 +44,8 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 
 # Local
@@ -104,12 +104,7 @@ class ToolService:
     def __init__(self):
         """Initialize the tool service."""
         self._event_subscribers: List[asyncio.Queue] = []
-        self._http_client = ResilientHttpClient(
-            client_args={ 
-                "timeout": settings.federation_timeout, 
-                "verify": not settings.skip_ssl_verify
-                }
-            )
+        self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
 
     async def initialize(self) -> None:
         """Initialize the service."""

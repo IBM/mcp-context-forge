@@ -46,12 +46,12 @@ import httpx
 from mcp import types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
-from mcpgateway.utils.retry_manager import ResilientHttpClient
 import mcp.server.stdio
 from pydantic import AnyUrl
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 
 # -----------------------------------------------------------------------------
 # Configuration

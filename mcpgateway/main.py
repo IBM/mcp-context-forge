@@ -119,9 +119,9 @@ from mcpgateway.transports.streamablehttp_transport import (
     SessionManagerWrapper,
     streamable_http_auth,
 )
-from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_auth_override
 from mcpgateway.validation.jsonrpc import (
     JSONRPCError,
@@ -1827,10 +1827,7 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             try:
                 data = await websocket.receive_text()
-                client_args = {
-                    "timeout": settings.federation_timeout,
-                    "verify": not settings.skip_ssl_verify
-                }
+                client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
                         f"http://localhost:{settings.port}/rpc",
