@@ -18,8 +18,10 @@
 ###########################
 # Build-time arguments
 ###########################
-ARG ROOTFS_PATH=/tmp/rootfs        # Temporary dir for assembling the scratch rootfs
-ARG PYTHON_VERSION=3.11            # Python major.minor series to track
+# Temporary dir for assembling the scratch rootfs
+ARG ROOTFS_PATH=/tmp/rootfs
+# Python major.minor series to track
+ARG PYTHON_VERSION=3.11
 
 ###########################
 # Base image for copying into scratch
