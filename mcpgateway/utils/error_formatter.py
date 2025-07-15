@@ -9,13 +9,12 @@ Authors: Mihai Criveti
 """
 
 # Standard
-from typing import Dict, Any
 import logging
+from typing import Any, Dict
 
 # Third-Party
 from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError, DatabaseError
-
+from sqlalchemy.exc import DatabaseError, IntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +23,7 @@ class ErrorFormatter:
     """
     Transform technical errors into user-friendly messages.
     """
+
     @staticmethod
     def format_validation_error(error: ValidationError) -> Dict[str, Any]:
         """
@@ -38,25 +38,18 @@ class ErrorFormatter:
         errors = []
 
         for err in error.errors():
-            field = err.get('loc', ['field'])[-1]
-            msg = err.get('msg', 'Invalid value')
+            field = err.get("loc", ["field"])[-1]
+            msg = err.get("msg", "Invalid value")
 
             # Map technical messages to user-friendly ones
             user_message = ErrorFormatter._get_user_message(field, msg)
-            errors.append({
-                "field": field,
-                "message": user_message
-            })
+            errors.append({"field": field, "message": user_message})
 
         # Log the full error for debugging
         logger.debug(f"Validation error: {error}")
         print(type(error))
 
-        return {
-            "message": "Validation failed",
-            "details": errors,
-            "success": False
-        }
+        return {"message": "Validation failed", "details": errors, "success": False}
 
     @staticmethod
     def _get_user_message(field: str, technical_msg: str) -> str:
@@ -96,7 +89,7 @@ class ErrorFormatter:
         Returns:
             Dict[str, Any]: A dictionary with formatted error details.
         """
-        error_str = str(error.orig) if hasattr(error, 'orig') else str(error)
+        error_str = str(error.orig) if hasattr(error, "orig") else str(error)
 
         # Log full error
         logger.error(f"Database error: {error}")

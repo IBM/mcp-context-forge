@@ -67,9 +67,9 @@ This human-centered approach ensures that security is not just a technical imple
 
 Our security pipeline operates at multiple levels:
 
-**Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include security scanners like Bandit, which identifies common security issues in Python code, along with type checking and code quality enforcement. Developers can run `make pre-commit bandit lint` locally to execute these same security checks before pushing code.
+**Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include multiple security scanners like Bandit for common security issues, Semgrep for semantic pattern matching, and Dodgy for hardcoded secrets detection, along with type checking and code quality enforcement. Developers can run `make security-all` or `make pre-commit bandit semgrep dodgy lint` locally to execute these same security checks before pushing code.
 
-**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **24+ security scans** triggering automatically on every PR, including CodeQL semantic analysis for vulnerability detection, dependency vulnerability scanning, and container security assessment.
+**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **30+ security scans** triggering automatically on every PR, including CodeQL and Semgrep for semantic analysis, Gitleaks for secret detection, comprehensive dependency vulnerability scanning with pip-audit, and container security assessment.
 
 **Code Review Security**: All code changes undergo mandatory peer review with security-focused review criteria, ensuring that security considerations are evaluated by human experts in addition to automated tooling.
 
@@ -81,28 +81,43 @@ Our security pipeline operates at multiple levels:
 
 ### Automated Security Toolchain
 
-Our security toolchain includes **24+ different security and quality tools**, each serving a specific purpose in our defense strategy and executed on every pull request:
+Our security toolchain includes **30+ different security and quality tools**, each serving a specific purpose in our defense strategy and executed on every pull request:
 
-- **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, and multiple type checkers
-- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, Grype, npm audit, and GitHub dependency review
+- **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, Semgrep, and multiple type checkers
+- **Secret Detection**: Gitleaks for git history scanning, Dodgy for hardcoded secrets in code
+- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, Grype, pip-audit, npm audit, and GitHub dependency review
 - **Container Security**: Hadolint for Dockerfile linting, Dockle for container security, and Trivy/Grype for vulnerability scanning
-- **Code Quality & Complexity**: Multiple linters ensuring code maintainability and reducing attack surface
-- **Documentation Security**: Spellcheck and markdown validation to prevent information disclosure
+- **Code Quality & Best Practices**: Prospector comprehensive analysis, dlint for Python best practices, Interrogate for docstring coverage
+- **Code Modernization**: pyupgrade for syntax modernization to latest Python versions
+- **Documentation Security**: Spellcheck and markdown validation and gitleaks to prevent information disclosure
 
 ### Developer Experience & Security
 
 We believe that security should enhance rather than hinder the development process. Our comprehensive `make` targets provide developers with easy access to the full security suite, allowing them to run the same checks locally that will be executed in CI/CD:
 
+**Core Security Commands**:
+- `make security-all` - Run all security tools in one command
+- `make security-report` - Generate comprehensive security report
+- `make security-fix` - Auto-fix security issues where possible
+
+**Individual Security Tools**:
 - `make pre-commit` - Run all pre-commit hooks locally (includes security scanning)
-- `make lint` - Comprehensive linting and security checking (24+ tools)
+- `make lint` - Comprehensive linting and security checking (30+ tools)
 - `make test` - Full test suite with coverage analysis and security validation
 - `make bandit` - Security scanner for Python code vulnerabilities
+- `make semgrep` - Advanced semantic code analysis for security patterns
+- `make dodgy` - Detect hardcoded passwords, API keys, and secrets
+- `make gitleaks` - Scan git history for accidentally committed secrets
+- `make dlint` - Python security best practices enforcement
+- `make interrogate` - Ensure comprehensive docstring coverage
+- `make prospector` - Comprehensive code analysis combining multiple tools
+- `make pyupgrade` - Modernize Python syntax for security improvements
+- `make pip-audit` - Python dependency vulnerability scanning
 - `make trivy` - Container vulnerability scanning
 - `make grype-scan` - Container security audit and vulnerability scanning
 - `make dockle` - Container security and best practices analysis
 - `make hadolint` - Dockerfile linting for security issues
 - `make osv-scan` - Open Source Vulnerability database scanning
-- `make pip-audit` - Python dependency vulnerability scanning
 - `make sbom` - Software Bill of Materials generation and vulnerability assessment
 - `make lint-web` - Frontend security validation (HTML, CSS, JS vulnerability scanning)
 
@@ -238,12 +253,16 @@ flowchart TD
     B --> E[isort - Import Sorter]
     B --> F[mypy - Type Checking]
     B --> G[Bandit - Security Scanner]
+    B --> G1[Semgrep - Semantic Security]
+    B --> G2[Dodgy - Secret Detection]
 
     C --> H[Pre-commit Success?]
     D --> H
     E --> H
     F --> H
     G --> H
+    G1 --> H
+    G2 --> H
 
     H -->|No| I[Fix Issues & Retry]
     I --> B
@@ -254,7 +273,7 @@ flowchart TD
 
     K --> L[Python Package Build]
     K --> M[CodeQL Analysis]
-    K --> N[Bandit Security Scan]
+    K --> N[Python Security Suite]
     K --> O[Dependency Review]
     K --> P[Tests & Coverage]
     K --> Q[Lint & Static Analysis]
@@ -268,13 +287,18 @@ flowchart TD
     M --> M2[Security Vulnerability Detection]
     M --> M3[Data Flow Analysis]
 
-    N --> N1[Security Issue Detection]
-    N --> N2[Common Security Patterns]
-    N --> N3[Hardcoded Secrets Check]
+    N --> N1[Bandit - Security Issues]
+    N --> N2[Semgrep - Semantic Patterns]
+    N --> N3[Dodgy - Hardcoded Secrets]
+    N --> N4[Gitleaks - Git History Secrets]
+    N --> N5[dlint - Best Practices]
+    N --> N6[Prospector - Comprehensive Analysis]
+    N --> N7[Interrogate - Docstring Coverage]
 
     O --> O1[Dependency Vulnerability Check]
     O --> O2[License Compliance]
     O --> O3[Supply Chain Security]
+    O --> O4[pip-audit - Python CVEs]
 
     P --> P1[pytest Unit Tests]
     P --> P2[Coverage Analysis]
@@ -300,6 +324,7 @@ flowchart TD
     Q2 --> Q2F[importchecker - Import Analysis]
     Q2 --> Q2G[fawltydeps - Dependency Analysis]
     Q2 --> Q2H[check-manifest - Package Completeness]
+    Q2 --> Q2I[pyupgrade - Syntax Modernization]
 
     R --> R1[Docker Build]
     R --> R2[Multi-stage Build Process]
@@ -314,7 +339,7 @@ flowchart TD
     T[Local Development] --> U[Make Targets]
 
     U --> V[make lint - Full Lint Suite]
-    U --> W[Individual Security Tools]
+    U --> W[Security Make Targets]
     U --> X[make sbom - Software Bill of Materials]
     U --> Y[make lint-web - Frontend Security]
 
@@ -322,13 +347,23 @@ flowchart TD
     V --> V2[Code Quality Checks]
     V --> V3[Style Enforcement]
 
-    W --> W1[make bandit - Security Scanner]
-    W --> W2[make osv-scan - Vulnerability Check]
-    W --> W3[make trivy - Container Security]
-    W --> W4[make grype-scan - Container Vulnerability Scan]
-    W --> W5[make dockle - Image Analysis]
-    W --> W6[make hadolint - Dockerfile Linting]
-    W --> W7[make pip-audit - Dependency Scanning]
+    W --> W1[make security-all - Run All Security Tools]
+    W --> W2[make security-report - Generate Report]
+    W --> W3[make security-fix - Auto-fix Issues]
+    W --> W4[make bandit - Security Scanner]
+    W --> W5[make semgrep - Semantic Analysis]
+    W --> W6[make dodgy - Secret Detection]
+    W --> W7[make gitleaks - Git History Scan]
+    W --> W8[make dlint - Best Practices]
+    W --> W9[make interrogate - Docstring Coverage]
+    W --> W10[make prospector - Comprehensive Analysis]
+    W --> W11[make pyupgrade - Modernize Syntax]
+    W --> W12[make pip-audit - Dependency Scanning]
+    W --> W13[make osv-scan - Vulnerability Check]
+    W --> W14[make trivy - Container Security]
+    W --> W15[make grype-scan - Container Vulnerability]
+    W --> W16[make dockle - Image Analysis]
+    W --> W17[make hadolint - Dockerfile Linting]
 
     X --> X1[CycloneDX SBOM Generation]
     X --> X2[Dependency Inventory]
@@ -373,11 +408,11 @@ flowchart TD
     classDef process fill:#fdcb6e,stroke:#e17055,stroke-width:2px
     classDef success fill:#55a3ff,stroke:#2d3436,stroke-width:2px
 
-    class G,M,N,O,W,W1,W2,W3,W4,Z1,Z2,AA security
-    class C,D,E,F,Q,Q1,Q1A,Q1B,Q1C,Q1D,Q1E,Q1F,Q1G,Q1H,V linting
-    class R,S,S1,S2,S3,S4,AA,AA1,AA2,AA3,AA4 container
+    class G,G1,G2,M,N,O,W,W1,W2,W3,W4,W5,W6,W7,W8,W12,W13,Z1,Z2,AA,N1,N2,N3,N4,N5,N6,N7,O4 security
+    class C,D,E,F,Q,Q1,Q1A,Q1B,Q1C,Q1D,Q1E,Q1F,Q1G,Q1H,V,W9,W10,W11,Q2I linting
+    class R,S,S1,S2,S3,S4,S5,AA,AA1,AA2,AA3,AA4,W14,W15,W16,W17 container
     class B,H,K,L,P,T,U,V,W,X,Y,Z process
-    class L1,L2,M1,M2,M3,N1,N2,N3,P1,P2,P3 success
+    class L1,L2,M1,M2,M3,P1,P2,P3 success
 ```
 
 </details>

@@ -970,15 +970,6 @@ hadolint:
 	fi
 
 
-# help: pip-audit            - Audit Python dependencies for published CVEs
-.PHONY: pip-audit
-pip-audit:
-	@echo "🔒  pip-audit vulnerability scan..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install --quiet --upgrade pip-audit && \
-		pip-audit --progress-spinner ascii --strict || true"
-
 # =============================================================================
 # 📦 DEPENDENCY MANAGEMENT
 # =============================================================================
@@ -2509,3 +2500,161 @@ test-all: test test-ui-headless
 # Add UI tests to your existing test suite if needed
 test-full: coverage test-ui-report
 	@echo "📊 Full test suite completed with coverage and UI tests!"
+
+
+# =============================================================================
+# 🔒 SECURITY TOOLS
+# =============================================================================
+# help: 🔒 SECURITY TOOLS
+# help: security-all        - Run all security tools (semgrep, dodgy, gitleaks, etc.)
+# help: security-report     - Generate comprehensive security report in docs/security/
+# help: security-fix        - Auto-fix security issues where possible (pyupgrade, etc.)
+# help: semgrep             - Static analysis for security patterns
+# help: dodgy               - Check for suspicious code patterns (passwords, keys)
+# help: dlint               - Best practices linter for Python
+# help: pyupgrade           - Upgrade Python syntax to newer versions
+# help: interrogate         - Check docstring coverage
+# help: prospector          - Comprehensive Python code analysis
+# help: pip-audit           - Audit Python dependencies for published CVEs
+# help: gitleaks-install    - Install gitleaks secret scanner
+# help: gitleaks            - Scan git history for secrets
+
+# List of security tools to run with security-all
+SECURITY_TOOLS := semgrep dodgy dlint interrogate prospector pip-audit
+
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade
+
+## --------------------------------------------------------------------------- ##
+##  Master security target
+## --------------------------------------------------------------------------- ##
+security-all:
+	@echo "🔒  Running full security tool suite..."
+	@set -e; for t in $(SECURITY_TOOLS); do \
+	    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	    echo "- $$t"; \
+	    $(MAKE) $$t || true; \
+	done
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "🔍  Running gitleaks (if installed)..."
+	@command -v gitleaks >/dev/null 2>&1 && $(MAKE) gitleaks || echo "⚠️  gitleaks not installed - run 'make gitleaks-install'"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅  Security scan complete!"
+
+## --------------------------------------------------------------------------- ##
+##  Individual security tools
+## --------------------------------------------------------------------------- ##
+semgrep:                            ## 🔍 Security patterns & anti-patterns
+	@echo "🔍  semgrep - scanning for security patterns..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q semgrep && \
+		$(VENV_DIR)/bin/semgrep --config=auto mcpgateway tests || true"
+
+dodgy:                              ## 🔐 Suspicious code patterns
+	@echo "🔐  dodgy - scanning for hardcoded secrets..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q dodgy && \
+		$(VENV_DIR)/bin/dodgy mcpgateway tests || true"
+
+dlint:                              ## 📏 Python best practices
+	@echo "📏  dlint - checking Python best practices..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q dlint && \
+		$(VENV_DIR)/bin/python -m flake8 --select=DUO mcpgateway"
+
+pyupgrade:                          ## ⬆️  Upgrade Python syntax
+	@echo "⬆️  pyupgrade - checking for syntax upgrade opportunities..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pyupgrade && \
+		find mcpgateway tests -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus --diff {} + || true"
+	@echo "💡  To apply changes, run: find mcpgateway tests -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
+
+interrogate:                        ## 📝 Docstring coverage
+	@echo "📝  interrogate - checking docstring coverage..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q interrogate && \
+		$(VENV_DIR)/bin/interrogate -vv mcpgateway || true"
+
+prospector:                         ## 🔬 Comprehensive code analysis
+	@echo "🔬  prospector - running comprehensive analysis..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q prospector[with_everything] && \
+		$(VENV_DIR)/bin/prospector mcpgateway || true"
+
+pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
+	@echo "🔒  pip-audit vulnerability scan..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install --quiet --upgrade pip-audit && \
+		pip-audit --strict || true"
+
+## --------------------------------------------------------------------------- ##
+##  Gitleaks (Go binary - separate installation)
+## --------------------------------------------------------------------------- ##
+gitleaks-install:                   ## 📥 Install gitleaks secret scanner
+	@echo "📥 Installing gitleaks..."
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		brew install gitleaks; \
+	elif [ "$$(uname)" = "Linux" ]; then \
+		VERSION=$$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | cut -d '"' -f 4); \
+		curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/$$VERSION/gitleaks_$${VERSION#v}_linux_x64.tar.gz | tar -xz -C /tmp; \
+		sudo mv /tmp/gitleaks /usr/local/bin/; \
+		sudo chmod +x /usr/local/bin/gitleaks; \
+	else \
+		echo "❌ Unsupported OS. Download from https://github.com/gitleaks/gitleaks/releases"; \
+		exit 1; \
+	fi
+	@echo "✅  gitleaks installed successfully!"
+
+gitleaks:                           ## 🔍 Scan for secrets in git history
+	@command -v gitleaks >/dev/null 2>&1 || { \
+		echo "❌ gitleaks not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • macOS: brew install gitleaks"; \
+		echo "   • Linux: Run 'make gitleaks-install'"; \
+		echo "   • Or download from https://github.com/gitleaks/gitleaks/releases"; \
+		exit 1; \
+	}
+	@echo "🔍 Scanning for secrets with gitleaks..."
+	@gitleaks detect --source . -v || true
+	@echo "💡 To scan git history: gitleaks detect --source . --log-opts='--all'"
+
+## --------------------------------------------------------------------------- ##
+##  Security reporting and advanced targets
+## --------------------------------------------------------------------------- ##
+security-report:                    ## 📊 Generate comprehensive security report
+	@echo "📊 Generating security report..."
+	@mkdir -p $(DOCS_DIR)/docs/security
+	@echo "# Security Scan Report - $$(date)" > $(DOCS_DIR)/docs/security/report.md
+	@echo "" >> $(DOCS_DIR)/docs/security/report.md
+	@echo "## Code Security Patterns (semgrep)" >> $(DOCS_DIR)/docs/security/report.md
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q semgrep && \
+		$(VENV_DIR)/bin/semgrep --config=auto mcpgateway tests --quiet || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
+	@echo "" >> $(DOCS_DIR)/docs/security/report.md
+	@echo "## Suspicious Code Patterns (dodgy)" >> $(DOCS_DIR)/docs/security/report.md
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q dodgy && \
+		$(VENV_DIR)/bin/dodgy mcpgateway tests || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
+	@echo "✅ Security report saved to $(DOCS_DIR)/docs/security/report.md"
+
+security-fix:                       ## 🔧 Auto-fix security issues where possible
+	@echo "🔧 Attempting to auto-fix security issues..."
+	@echo "➤ Upgrading Python syntax with pyupgrade..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pyupgrade && \
+		find mcpgateway tests -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
+	@echo "➤ Updating dependencies to latest secure versions..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install --upgrade pip setuptools && \
+		python3 -m pip list --outdated"
+	@echo "✅ Auto-fixes applied where possible"
+	@echo "⚠️  Manual review still required for:"
+	@echo "   - Dependency updates (run 'make update')"
+	@echo "   - Secrets in code (review dodgy/gitleaks output)"
+	@echo "   - Security patterns (review semgrep output)"
