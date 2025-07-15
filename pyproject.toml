@@ -131,6 +131,7 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.2.1",
+    "pytest-env>=1.1.5",
     "pytest-examples>=0.0.18",
     "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=15.1",
@@ -321,6 +322,11 @@ filterwarnings = [
   "ignore:Passing 'msg' argument to .*\\.cancel\\(\\) is deprecated:DeprecationWarning", # From 3rd party libraries
 ]
 
+# Set environment variables for all tests
+env = [
+    "MCPGATEWAY_ADMIN_API_ENABLED=true",
+    "MCPGATEWAY_UI_ENABLED=true"
+]
 # ── fawltydeps ─────────────────────────────────────────────────────
 [tool.fawltydeps]
 # only parse main pyproject.toml

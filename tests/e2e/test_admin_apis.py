@@ -28,7 +28,13 @@ and reproducibility.
 """
 
 # Standard
+# CRITICAL: Set environment variables BEFORE any mcpgateway imports!
 import os
+
+os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
+os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
+
+# Standard
 import tempfile
 from typing import AsyncGenerator
 from unittest.mock import patch
