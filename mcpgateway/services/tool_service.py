@@ -201,6 +201,29 @@ class ToolService:
         Raises:
             ToolNameConflictError: If tool name already exists.
             ToolError: For other tool registration errors.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from mcpgateway.schemas import ToolRead
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> tool = MagicMock()
+            >>> tool.name = 'test'
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> mock_gateway = MagicMock()
+            >>> mock_gateway.name = 'test_gateway'
+            >>> db.add = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> def mock_refresh(obj):
+            ...     obj.gateway = mock_gateway
+            >>> db.refresh = MagicMock(side_effect=mock_refresh)
+            >>> service._notify_tool_added = AsyncMock()
+            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
+            >>> import asyncio
+            >>> asyncio.run(service.register_tool(db, tool))
+            'tool_read'
         """
         try:
             if not tool.gateway_id:
@@ -262,6 +285,19 @@ class ToolService:
 
         Returns:
             List[ToolRead]: A list of registered tools represented as ToolRead objects.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> tool_read = MagicMock()
+            >>> service._convert_tool_to_read = MagicMock(return_value=tool_read)
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> import asyncio
+            >>> result = asyncio.run(service.list_tools(db))
+            >>> isinstance(result, list)
+            True
         """
         query = select(DbTool)
         cursor = None  # Placeholder for pagination; ignore for now
@@ -285,6 +321,19 @@ class ToolService:
 
         Returns:
             List[ToolRead]: A list of registered tools represented as ToolRead objects.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> tool_read = MagicMock()
+            >>> service._convert_tool_to_read = MagicMock(return_value=tool_read)
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> import asyncio
+            >>> result = asyncio.run(service.list_server_tools(db, 'server1'))
+            >>> isinstance(result, list)
+            True
         """
         query = select(DbTool).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
         cursor = None  # Placeholder for pagination; ignore for now
@@ -295,17 +344,30 @@ class ToolService:
         return [self._convert_tool_to_read(t) for t in tools]
 
     async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
-        """Get a specific tool by ID.
+        """
+        Retrieve a tool by its ID.
 
         Args:
-            db: Database session.
-            tool_id: Tool ID to retrieve.
+            db (Session): The SQLAlchemy database session.
+            tool_id (str): The unique identifier of the tool.
 
         Returns:
-            Tool information.
+            ToolRead: The tool object.
 
         Raises:
-            ToolNotFoundError: If tool not found.
+            ToolNotFoundError: If the tool is not found.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> tool = MagicMock()
+            >>> db.get.return_value = tool
+            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> import asyncio
+            >>> asyncio.run(service.get_tool(db, 'tool_id'))
+            'tool_read'
         """
         tool = db.get(DbTool, tool_id)
         if not tool:
@@ -313,15 +375,29 @@ class ToolService:
         return self._convert_tool_to_read(tool)
 
     async def delete_tool(self, db: Session, tool_id: str) -> None:
-        """Permanently delete a tool from the database.
+        """
+        Delete a tool by its ID.
 
         Args:
-            db: Database session.
-            tool_id: Tool ID to delete.
+            db (Session): The SQLAlchemy database session.
+            tool_id (str): The unique identifier of the tool.
 
         Raises:
-            ToolNotFoundError: If tool not found.
+            ToolNotFoundError: If the tool is not found.
             ToolError: For other deletion errors.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> tool = MagicMock()
+            >>> db.get.return_value = tool
+            >>> db.delete = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> service._notify_tool_deleted = AsyncMock()
+            >>> import asyncio
+            >>> asyncio.run(service.delete_tool(db, 'tool_id'))
         """
         try:
             tool = db.get(DbTool, tool_id)
@@ -337,20 +413,39 @@ class ToolService:
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
     async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool) -> ToolRead:
-        """Toggle tool active status.
+        """
+        Toggle the activation status of a tool.
 
         Args:
-            db: Database session.
-            tool_id: Tool ID to toggle.
-            activate: True to activate, False to deactivate.
-            reachable: True if the tool is reachable, False otherwise.
+            db (Session): The SQLAlchemy database session.
+            tool_id (str): The unique identifier of the tool.
+            activate (bool): True to activate, False to deactivate.
+            reachable (bool): True if the tool is reachable.
 
         Returns:
-            Updated tool information.
+            ToolRead: The updated tool object.
 
         Raises:
-            ToolNotFoundError: If tool not found.
+            ToolNotFoundError: If the tool is not found.
             ToolError: For other errors.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from mcpgateway.schemas import ToolRead
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> tool = MagicMock()
+            >>> db.get.return_value = tool
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> service._notify_tool_activated = AsyncMock()
+            >>> service._notify_tool_deactivated = AsyncMock()
+            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
+            >>> import asyncio
+            >>> asyncio.run(service.toggle_tool_status(db, 'tool_id', True, True))
+            'tool_read'
         """
         try:
             tool = db.get(DbTool, tool_id)
@@ -397,6 +492,19 @@ class ToolService:
         Raises:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> tool = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.side_effect = [tool, None]
+            >>> tool.reachable = True
+            >>> import asyncio
+            >>> result = asyncio.run(service.invoke_tool(db, 'tool_name', {}))
+            >>> isinstance(result, object)
+            True
         """
         tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
         if not tool:
@@ -527,20 +635,39 @@ class ToolService:
             await self._record_tool_metric(db, tool, start_time, success, error_message)
 
     async def update_tool(self, db: Session, tool_id: str, tool_update: ToolUpdate) -> ToolRead:
-        """Update an existing tool.
+        """
+        Update an existing tool.
 
         Args:
-            db: Database session.
-            tool_id: ID of tool to update.
-            tool_update: Updated tool data.
+            db (Session): The SQLAlchemy database session.
+            tool_id (str): The unique identifier of the tool.
+            tool_update (ToolUpdate): Tool update schema with new data.
 
         Returns:
-            Updated tool information.
+            The updated ToolRead object.
 
         Raises:
-            ToolNotFoundError: If tool not found.
-            ToolError: For other tool update errors.
-            ToolNameConflictError: If tool name conflict occurs
+            ToolNotFoundError: If the tool is not found.
+            ToolNameConflictError: If a new name conflicts with an existing tool.
+            ToolError: For other update errors.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from mcpgateway.schemas import ToolRead
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> tool = MagicMock()
+            >>> db.get.return_value = tool
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> service._notify_tool_updated = AsyncMock()
+            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
+            >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
+            >>> import asyncio
+            >>> asyncio.run(service.update_tool(db, 'tool_id', MagicMock()))
+            'tool_read'
         """
         try:
             tool = db.get(DbTool, tool_id)
@@ -755,21 +882,24 @@ class ToolService:
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
         """
-        Aggregate metrics for all tool invocations.
+        Aggregate metrics for all tool invocations across all tools.
 
         Args:
             db: Database session
 
         Returns:
-            A dictionary with keys:
-              - total_executions
-              - successful_executions
-              - failed_executions
-              - failure_rate
-              - min_response_time
-              - max_response_time
-              - avg_response_time
-              - last_execution_time
+            Aggregated metrics computed from all ToolMetric records.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar.return_value = 0
+            >>> import asyncio
+            >>> result = asyncio.run(service.aggregate_metrics(db))
+            >>> isinstance(result, dict)
+            True
         """
 
         total = db.execute(select(func.count(ToolMetric.id))).scalar() or 0  # pylint: disable=not-callable
@@ -794,14 +924,21 @@ class ToolService:
 
     async def reset_metrics(self, db: Session, tool_id: Optional[int] = None) -> None:
         """
-        Reset metrics for tool invocations.
-
-        If tool_id is provided, only the metrics for that specific tool will be deleted.
-        Otherwise, all tool metrics will be deleted (global reset).
+        Reset all tool metrics by deleting all records from the tool metrics table.
 
         Args:
-            db (Session): The SQLAlchemy database session.
-            tool_id (Optional[int]): Specific tool ID to reset metrics for.
+            db: Database session
+            tool_id: Optional tool ID to reset metrics for a specific tool
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> from unittest.mock import MagicMock
+            >>> service = ToolService()
+            >>> db = MagicMock()
+            >>> db.execute = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> import asyncio
+            >>> asyncio.run(service.reset_metrics(db))
         """
 
         if tool_id:

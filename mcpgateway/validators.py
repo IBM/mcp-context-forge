@@ -40,7 +40,7 @@ Example usage:
 import html
 import logging
 import re
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 # First-Party
@@ -333,14 +333,13 @@ class SecurityValidator:
         return value
 
     @classmethod
-    def validate_json_depth(cls, obj: Any, max_depth: int = None, current_depth: int = 0) -> None:
+    def validate_json_depth(cls, obj: Any, max_depth: Optional[int] = None, current_depth: int = 0) -> None:
         """Validate the maximum depth of a JSON object
 
         Args:
             obj (Any): The JSON object to check
             max_depth (int): Maximum allowed depth. Defaults to class setting.
-            current_depth (int): Current depth for recursion. Used internally.
-
+            current_depth (int): Current depth for recursion. Used internally. Do not set manually.
 
         Raises:
             ValueError: If the object exceeds the maximum allowed depth

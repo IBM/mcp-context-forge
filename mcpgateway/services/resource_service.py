@@ -156,6 +156,24 @@ class ResourceService:
         Raises:
             ResourceURIConflictError: If resource URI already exists
             ResourceError: For other resource registration errors
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from mcpgateway.schemas import ResourceRead
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> resource = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> db.add = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> service._notify_resource_added = AsyncMock()
+            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
+            >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
+            >>> import asyncio
+            >>> asyncio.run(service.register_resource(db, resource))
+            'resource_read'
         """
         try:
             # Check for URI conflicts (both active and inactive)
@@ -222,6 +240,19 @@ class ResourceService:
 
         Returns:
             List[ResourceRead]: A list of resources represented as ResourceRead objects.
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> resource_read = MagicMock()
+            >>> service._convert_resource_to_read = MagicMock(return_value=resource_read)
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> import asyncio
+            >>> result = asyncio.run(service.list_resources(db))
+            >>> isinstance(result, list)
+            True
         """
         query = select(DbResource)
         if not include_inactive:
@@ -247,6 +278,19 @@ class ResourceService:
 
         Returns:
             List[ResourceRead]: A list of resources represented as ResourceRead objects.
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> resource_read = MagicMock()
+            >>> service._convert_resource_to_read = MagicMock(return_value=resource_read)
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> import asyncio
+            >>> result = asyncio.run(service.list_server_resources(db, 'server1'))
+            >>> isinstance(result, list)
+            True
         """
         query = select(DbResource).join(server_resource_association, DbResource.id == server_resource_association.c.resource_id).where(server_resource_association.c.server_id == server_id)
         if not include_inactive:
@@ -267,6 +311,18 @@ class ResourceService:
 
         Raises:
             ResourceNotFoundError: If resource not found
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> uri = 'resource_uri'
+            >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock(content='test')
+            >>> import asyncio
+            >>> result = asyncio.run(service.read_resource(db, uri))
+            >>> result == 'test'
+            True
         """
         # Check for template
         if "{" in uri and "}" in uri:
@@ -288,19 +344,38 @@ class ResourceService:
         return resource.content
 
     async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool) -> ResourceRead:
-        """Toggle resource active status.
+        """
+        Toggle the activation status of a resource.
 
         Args:
             db: Database session
-            resource_id: Resource ID to toggle
+            resource_id: Resource ID
             activate: True to activate, False to deactivate
 
         Returns:
-            Updated resource information
+            The updated ResourceRead object
 
         Raises:
-            ResourceNotFoundError: If resource not found
+            ResourceNotFoundError: If the resource is not found
             ResourceError: For other errors
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from mcpgateway.schemas import ResourceRead
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> resource = MagicMock()
+            >>> db.get.return_value = resource
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> service._notify_resource_activated = AsyncMock()
+            >>> service._notify_resource_deactivated = AsyncMock()
+            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
+            >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
+            >>> import asyncio
+            >>> asyncio.run(service.toggle_resource_status(db, 1, True))
+            'resource_read'
         """
         try:
             resource = db.get(DbResource, resource_id)
@@ -329,15 +404,25 @@ class ResourceService:
             raise ResourceError(f"Failed to toggle resource status: {str(e)}")
 
     async def subscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
-        """Subscribe to resource updates.
+        """
+        Subscribe to a resource.
 
         Args:
             db: Database session
-            subscription: Subscription details
+            subscription: Resource subscription object
 
         Raises:
-            ResourceNotFoundError: If resource not found
+            ResourceNotFoundError: If the resource is not found or is inactive
             ResourceError: For other subscription errors
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> subscription = MagicMock()
+            >>> import asyncio
+            >>> asyncio.run(service.subscribe_resource(db, subscription))
         """
         try:
             # Verify resource exists
@@ -364,11 +449,23 @@ class ResourceService:
             raise ResourceError(f"Failed to subscribe: {str(e)}")
 
     async def unsubscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
-        """Unsubscribe from resource updates.
+        """
+        Unsubscribe from a resource.
 
         Args:
             db: Database session
-            subscription: Subscription to remove
+            subscription: Resource subscription object
+
+        Raises:
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> subscription = MagicMock()
+            >>> import asyncio
+            >>> asyncio.run(service.unsubscribe_resource(db, subscription))
         """
         try:
             # Find resource
@@ -388,20 +485,38 @@ class ResourceService:
             logger.error(f"Failed to unsubscribe: {str(e)}")
 
     async def update_resource(self, db: Session, uri: str, resource_update: ResourceUpdate) -> ResourceRead:
-        """Update a resource.
+        """
+        Update a resource.
 
         Args:
             db: Database session
-            uri: Resource URI to update
-            resource_update: Updated resource data
+            uri: Resource URI
+            resource_update: Resource update object
 
         Returns:
-            Updated resource information
+            The updated ResourceRead object
 
         Raises:
-            ResourceNotFoundError: If resource not found
+            ResourceNotFoundError: If the resource is not found
             ResourceError: For other update errors
-            Exception: If resource not found
+            Exception: For unexpected errors
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from mcpgateway.schemas import ResourceRead
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> resource = MagicMock()
+            >>> db.get.return_value = resource
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> service._notify_resource_updated = AsyncMock()
+            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
+            >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
+            >>> import asyncio
+            >>> asyncio.run(service.update_resource(db, 'uri', MagicMock()))
+            'resource_read'
         """
         try:
             # Find resource
@@ -454,15 +569,29 @@ class ResourceService:
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
     async def delete_resource(self, db: Session, uri: str) -> None:
-        """Permanently delete a resource.
+        """
+        Delete a resource.
 
         Args:
             db: Database session
-            uri: Resource URI to delete
+            uri: Resource URI
 
         Raises:
-            ResourceNotFoundError: If resource not found
+            ResourceNotFoundError: If the resource is not found
             ResourceError: For other deletion errors
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> resource = MagicMock()
+            >>> db.get.return_value = resource
+            >>> db.delete = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> service._notify_resource_deleted = AsyncMock()
+            >>> import asyncio
+            >>> asyncio.run(service.delete_resource(db, 'uri'))
         """
         try:
             # Find resource by its URI.
@@ -500,7 +629,8 @@ class ResourceService:
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
     async def get_resource_by_uri(self, db: Session, uri: str, include_inactive: bool = False) -> ResourceRead:
-        """Get resource by URI.
+        """
+        Get a resource by URI.
 
         Args:
             db: Database session
@@ -508,10 +638,22 @@ class ResourceService:
             include_inactive: Whether to include inactive resources
 
         Returns:
-            Resource information
+            ResourceRead object
 
         Raises:
-            ResourceNotFoundError: If resource not found
+            ResourceNotFoundError: If the resource is not found
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> resource = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = resource
+            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
+            >>> import asyncio
+            >>> asyncio.run(service.get_resource_by_uri(db, 'uri'))
+            'resource_read'
         """
         query = select(DbResource).where(DbResource.uri == uri)
 
@@ -784,20 +926,28 @@ class ResourceService:
     # --- Resource templates ---
     async def list_resource_templates(self, db: Session, include_inactive: bool = False) -> List[ResourceTemplate]:
         """
-        Retrieve a list of resource templates from the database.
-
-        This method retrieves resource templates (resources with a defined template field) from the database
-        and converts them into a list of ResourceTemplate objects. It supports filtering out inactive templates
-        based on the include_inactive parameter. The cursor parameter is reserved for future pagination support
-        but is currently not implemented.
+        List resource templates.
 
         Args:
-            db (Session): The SQLAlchemy database session.
-            include_inactive (bool): If True, include inactive resource templates in the result.
-                Defaults to False.
+            db: Database session
+            include_inactive: Whether to include inactive templates
 
         Returns:
-            List[ResourceTemplate]: A list of resource templates.
+            List of ResourceTemplate objects
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock, patch
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> template_obj = MagicMock()
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [template_obj]
+            >>> with patch('mcpgateway.services.resource_service.ResourceTemplate') as MockResourceTemplate:
+            ...     MockResourceTemplate.model_validate.return_value = 'resource_template'
+            ...     import asyncio
+            ...     result = asyncio.run(service.list_resource_templates(db))
+            ...     result == ['resource_template']
+            True
         """
         query = select(DbResource).where(DbResource.template.isnot(None))
         if not include_inactive:
@@ -816,6 +966,17 @@ class ResourceService:
 
         Returns:
             ResourceMetrics: Aggregated metrics computed from all ResourceMetric records.
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar.return_value = 0
+            >>> import asyncio
+            >>> result = asyncio.run(service.aggregate_metrics(db))
+            >>> hasattr(result, 'total_executions')
+            True
         """
         total_executions = db.execute(select(func.count()).select_from(ResourceMetric)).scalar() or 0  # pylint: disable=not-callable
 
@@ -848,6 +1009,16 @@ class ResourceService:
 
         Args:
             db: Database session
+
+        Examples:
+            >>> from mcpgateway.services.resource_service import ResourceService
+            >>> from unittest.mock import MagicMock
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> db.execute = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> import asyncio
+            >>> asyncio.run(service.reset_metrics(db))
         """
         db.execute(delete(ResourceMetric))
         db.commit()
