@@ -27,21 +27,20 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-import sys
+import importlib
 import json
 import logging
 import re
+import sys
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, Mock, patch
-import importlib
-import logging
 
 # Third-Party
 from fastapi import HTTPException
 import pytest
 
 # First-Party
-from mcpgateway.cache.session_registry import SessionRegistry, SessionMessageRecord
+from mcpgateway.cache.session_registry import SessionMessageRecord, SessionRegistry
 from mcpgateway.config import settings
 
 
@@ -404,6 +403,7 @@ def test_redis_importerror_isolated():
         # if 'mcpgateway.cache.session_registry' in sys.modules:
         #     del sys.modules['mcpgateway.cache.session_registry']  # Force re-import
 
+        # First-Party
         import mcpgateway.cache.session_registry
 
         importlib.reload(mcpgateway.cache.session_registry)
@@ -431,6 +431,7 @@ def test_sqlalchemy_importerror_isolated():
         # if 'mcpgateway.cache.session_registry' in sys.modules:
         # del sys.modules['mcpgateway.cache.session_registry']  # Force re-import
 
+        # First-Party
         import mcpgateway.cache.session_registry
 
         importlib.reload(mcpgateway.cache.session_registry)
