@@ -151,7 +151,7 @@ class TestPromptService:
             await prompt_service.register_prompt(test_db, pc)
 
         assert "already exists" in str(exc_info.value)
-    
+
     @pytest.mark.asyncio
     async def test_register_prompt_template_validation_error(self, prompt_service, test_db):
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -198,7 +198,7 @@ class TestPromptService:
 
         with pytest.raises(PromptNotFoundError):
             await prompt_service.get_prompt(test_db, "missing")
-    
+
     @pytest.mark.asyncio
     async def test_get_prompt_inactive(self, prompt_service, test_db):
         inactive = _build_db_prompt(is_active=False)
@@ -209,7 +209,7 @@ class TestPromptService:
         with pytest.raises(PromptNotFoundError) as exc_info:
             await prompt_service.get_prompt(test_db, "hello")
         assert "inactive" in str(exc_info.value)
-    
+
     @pytest.mark.asyncio
     async def test_get_prompt_render_error(self, prompt_service, test_db):
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
@@ -417,13 +417,13 @@ class TestPromptService:
         required = prompt_service._get_required_arguments(template)
         assert "name" in required
         assert "code" in required
-    
+
     def test_get_required_arguments(self, prompt_service):
         template = "Hello, {{ name }}! Your code is {{ code }}."
         required = prompt_service._get_required_arguments(template)
         assert "name" in required
         assert "code" in required
-    
+
     def test_render_template_fallback_and_error(self, prompt_service):
         # Patch jinja_env.from_string to raise
         prompt_service._jinja_env.from_string = Mock(side_effect=Exception("bad"))

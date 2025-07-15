@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Standard
 import asyncio
 from unittest.mock import AsyncMock, patch
