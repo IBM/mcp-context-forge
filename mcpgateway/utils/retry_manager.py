@@ -146,6 +146,9 @@ class ResilientHttpClient:
                 logger.debug(f"Attempt {attempt + 1} to {method} {url}")
                 response = await self.client.request(method, url, **kwargs)
 
+                if response.status_code in NON_RETRYABLE_STATUS_CODES or response.is_success:
+                    return response
+
                 # Handle 429 - Retry-After header
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After")
@@ -155,9 +158,6 @@ class ResilientHttpClient:
                         await asyncio.sleep(retry_after_sec)
                         attempt += 1
                         continue
-
-                if response.status_code in NON_RETRYABLE_STATUS_CODES or response.is_success:
-                    return response
 
                 if not self._should_retry(Exception(), response):
                     return response
