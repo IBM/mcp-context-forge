@@ -2500,7 +2500,7 @@ function createParameterForm(parameterCount) {
     header.className = "flex justify-between items-center";
 
     const title = document.createElement("span");
-    title.className = "font-semibold text-gray-800";
+    title.className = "font-semibold text-gray-800 dark:text-gray-200";
     title.textContent = `Parameter ${parameterCount}`;
 
     const deleteBtn = document.createElement("button");
@@ -2521,7 +2521,8 @@ function createParameterForm(parameterCount) {
     // Parameter name field with validation
     const nameGroup = document.createElement("div");
     const nameLabel = document.createElement("label");
-    nameLabel.className = "block text-sm font-medium text-gray-700";
+    nameLabel.className =
+        "block text-sm font-medium text-gray-700 dark:text-gray-300";
     nameLabel.textContent = "Parameter Name";
 
     const nameInput = document.createElement("input");
@@ -2549,7 +2550,8 @@ function createParameterForm(parameterCount) {
     // Type field
     const typeGroup = document.createElement("div");
     const typeLabel = document.createElement("label");
-    typeLabel.className = "block text-sm font-medium text-gray-700";
+    typeLabel.className =
+        "block text-sm font-medium text-gray-700 dark:text-gray-300";
     typeLabel.textContent = "Type";
 
     const typeSelect = document.createElement("select");
@@ -2584,7 +2586,8 @@ function createParameterForm(parameterCount) {
     descGroup.className = "mt-4";
 
     const descLabel = document.createElement("label");
-    descLabel.className = "block text-sm font-medium text-gray-700";
+    descLabel.className =
+        "block text-sm font-medium text-gray-700 dark:text-gray-300";
     descLabel.textContent = "Description";
 
     const descTextarea = document.createElement("textarea");
@@ -2609,7 +2612,8 @@ function createParameterForm(parameterCount) {
         "h-4 w-4 text-indigo-600 border border-gray-300 rounded";
 
     const requiredLabel = document.createElement("label");
-    requiredLabel.className = "ml-2 text-sm font-medium text-gray-700";
+    requiredLabel.className =
+        "ml-2 text-sm font-medium text-gray-700 dark:text-gray-300";
     requiredLabel.textContent = "Required";
 
     requiredGroup.appendChild(requiredInput);
@@ -2942,7 +2946,8 @@ async function testTool(toolId) {
                 // Field label - use textContent to avoid double escaping
                 const label = document.createElement("label");
                 label.textContent = keyValidation.value;
-                label.className = "block text-sm font-medium text-gray-700";
+                label.className =
+                    "block text-sm font-medium text-gray-700 dark:text-gray-300";
                 fieldDiv.appendChild(label);
 
                 // Description help text - use textContent
@@ -2960,7 +2965,7 @@ async function testTool(toolId) {
                 input.required =
                     schema.required && schema.required.includes(key);
                 input.className =
-                    "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                    "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                 // Add validation based on type
                 if (prop.type === "number") {
@@ -2968,7 +2973,7 @@ async function testTool(toolId) {
                 } else if (prop.type === "boolean") {
                     input.type = "checkbox";
                     input.className =
-                        "mt-1 h-4 w-4 text-indigo-600 border-gray-300 rounded";
+                        "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded";
                 }
 
                 fieldDiv.appendChild(input);
@@ -3549,7 +3554,7 @@ async function viewTool(toolId) {
         // Create annotation badges safely - NO ESCAPING since we're using textContent
         const renderAnnotations = (annotations) => {
             if (!annotations || Object.keys(annotations).length === 0) {
-                return '<p><strong>Annotations:</strong> <span class="text-gray-500">None</span></p>';
+                return '<p><strong>Annotations:</strong> <span class="text-gray-600 dark:text-gray-300">None</span></p>';
             }
 
             const badges = [];
@@ -3599,7 +3604,7 @@ async function viewTool(toolId) {
                 ) {
                     const value = annotations[key];
                     badges.push(
-                        `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mr-1 mb-1 custom-annotation" data-key="${key}" data-value="${value}"></span>`,
+                        `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:text-gray-200 mr-1 mb-1 custom-annotation" data-key="${key}" data-value="${value}"></span>`,
                     );
                 }
             });
@@ -3618,7 +3623,7 @@ async function viewTool(toolId) {
         if (toolDetailsDiv) {
             // Create structure safely without double-escaping
             const safeHTML = `
-        <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
+        <div class="space-y-2 dark:bg-gray-800 dark:text-gray-300">
           <p><strong>Name:</strong> <span class="tool-name"></span></p>
           <p><strong>URL:</strong> <span class="tool-url"></span></p>
           <p><strong>Type:</strong> <span class="tool-type"></span></p>
@@ -3628,11 +3633,11 @@ async function viewTool(toolId) {
           ${renderAnnotations(tool.annotations)}
           <div>
             <strong>Headers:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100 tool-headers"></pre>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-200 tool-headers"></pre>
           </div>
           <div>
             <strong>Input Schema:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100 tool-schema"></pre>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-200 tool-schema"></pre>
           </div>
           <div>
             <strong>Metrics:</strong>
