@@ -12,9 +12,9 @@ from typing import Sequence, Union
 import uuid
 
 # Third-Party
+from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
-from alembic import op
 
 # First-Party
 from mcpgateway.config import settings

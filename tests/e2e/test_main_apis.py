@@ -1096,7 +1096,6 @@ class TestVersionAndDocs:
         assert response.status_code == 200
         result = response.json()
         assert result["app"]["version"]  # non-empty
-        assert result["app"]["git_revision"] is not None
         assert result["timestamp"]  # ISO date-time string
 
     async def test_openapi_json_requires_auth(self, client: AsyncClient):

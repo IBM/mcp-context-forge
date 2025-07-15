@@ -95,20 +95,20 @@ All doctests follow the Google docstring format with an "Examples:" section:
 ```python
 def create_slug(text: str) -> str:
     """Convert text to URL-friendly slug.
-    
+
     Args:
         text: Input text to convert
-        
+
     Returns:
         URL-friendly slug string
-        
+
     Examples:
         >>> create_slug("Hello World!")
         'hello-world'
-        
+
         >>> create_slug("Special@#$Characters")
         'special-characters'
-        
+
         >>> create_slug("  Multiple   Spaces  ")
         'multiple-spaces'
     """
@@ -128,7 +128,7 @@ def create_slug(text: str) -> str:
 ```python
 async def connect(self) -> None:
     """Set up transport connection.
-    
+
     Examples:
         >>> transport = MyTransport()
         >>> import asyncio
@@ -143,7 +143,7 @@ async def connect(self) -> None:
 ```python
 def send_message(self, message: Dict[str, Any]) -> None:
     """Send message over transport.
-    
+
     Examples:
         >>> from unittest.mock import Mock, AsyncMock
         >>> mock_transport = Mock()
@@ -210,29 +210,29 @@ When adding new functions or methods:
 ```python
 def new_function(param1: str, param2: int) -> bool:
     """Brief description of what the function does.
-    
+
     Longer description explaining the function's purpose, behavior,
     and any important implementation details.
-    
+
     Args:
         param1: Description of first parameter
         param2: Description of second parameter
-        
+
     Returns:
         Description of return value
-        
+
     Raises:
         ValueError: When parameters are invalid
-        
+
     Examples:
         >>> # Normal usage
         >>> new_function("test", 42)
         True
-        
+
         >>> # Edge case
         >>> new_function("", 0)
         False
-        
+
         >>> # Error condition
         >>> try:
         ...     new_function("test", -1)
@@ -328,4 +328,4 @@ python -m py_compile module.py
 - [Development Guide](index.md) - General development information
 - [Testing Guide](../testing/index.md) - Testing strategies and tools
 - [Contributing Guidelines](https://github.com/IBM/mcp-context-forge/blob/main/CONTRIBUTING.md) - How to contribute to the project
-- [Makefile Targets](../../../README.md#makefile-targets) - Available make targets including doctest commands 
+- [Makefile Targets](../../../README.md#makefile-targets) - Available make targets including doctest commands
