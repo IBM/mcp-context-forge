@@ -17,10 +17,12 @@ import asyncio
 import logging
 import random
 from typing import Any, Dict, Optional
-from mcpgateway.config import settings
 
 # Third-Party
 import httpx
+
+# First-Party
+from mcpgateway.config import settings
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -58,9 +60,14 @@ class ResilientHttpClient:
         client (httpx.AsyncClient): The underlying HTTP client.
     """
 
-    def __init__(self, max_retries: int = settings.retry_max_attempts, base_backoff: float = settings.retry_base_delay, 
-                 max_delay: float = settings.retry_max_delay, jitter_max: float = settings.retry_jitter_max, 
-                 client_args: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        max_retries: int = settings.retry_max_attempts,
+        base_backoff: float = settings.retry_base_delay,
+        max_delay: float = settings.retry_max_delay,
+        jitter_max: float = settings.retry_jitter_max,
+        client_args: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initializes the ResilientHttpClient with configurable retry behavior.
 
@@ -127,6 +134,8 @@ class ResilientHttpClient:
 
         Raises:
             Exception: If the request fails after the maximum number of retries.
+            last_exc: The last exception encountered during the retries, raised if the request
+                    ultimately fails after all retry attempts.
         """
         attempt = 0
         last_exc = None
@@ -244,5 +253,9 @@ class ResilientHttpClient:
         Asynchronous context manager exit point.
 
         Closes the HTTP client after use.
+
+        Args:
+            *args: Variable length argument list passed by the context manager.
+                Typically contains exception information (if any) or other context.
         """
         await self.aclose()

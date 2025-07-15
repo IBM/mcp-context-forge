@@ -135,9 +135,9 @@ class Settings(BaseSettings):
     }
 
     # Max retries for HTTP requests
-    retry_max_attempts: int = 3  
-    retry_base_delay: float = 1.0  # seconds 
-    retry_max_delay: int = 60    # seconds 
+    retry_max_attempts: int = 3
+    retry_base_delay: float = 1.0  # seconds
+    retry_max_delay: int = 60  # seconds
     retry_jitter_max: float = 0.5  # fraction of base delay
 
     @field_validator("allowed_origins", mode="before")
