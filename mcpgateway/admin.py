@@ -28,6 +28,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import httpx
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from pydantic import ValidationError
 
 # First-Party
 from mcpgateway.config import settings
@@ -66,7 +68,9 @@ from mcpgateway.services.tool_service import (
     ToolService,
 )
 from mcpgateway.utils.create_jwt_token import get_jwt_token
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
+from mcpgateway.utils.error_formatter import ErrorFormatter
 
 # Initialize services
 server_service = ServerService()
@@ -807,6 +811,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         auth_header_key=form.get("auth_header_key", ""),
         auth_header_value=form.get("auth_header_value", ""),
     )
+
     try:
         await gateway_service.register_gateway(db, gateway)
         return JSONResponse(
@@ -821,6 +826,13 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         if isinstance(ex, RuntimeError):
             return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        if isinstance(ex, ValidationError):
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            return JSONResponse(
+                status_code=409,
+                content=ErrorFormatter.format_database_error(ex)
+            )
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -1366,24 +1378,23 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
 
     Returns:
         GatewayTestResponse: The response from the gateway, including status code, latency, and body
-
-    Raises:
-        HTTPException: If the gateway request fails (e.g., connection error, timeout).
     """
     full_url = str(request.base_url).rstrip("/") + "/" + request.path.lstrip("/")
+    full_url = full_url.rstrip("/")
     logger.debug(f"User {user} testing server at {request.base_url}.")
     try:
-        async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
-            start_time = time.monotonic()
+        start_time = time.monotonic()
+        async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
             response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
-            latency_ms = int((time.monotonic() - start_time) * 1000)
+        latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
             response_body: Union[dict, str] = response.json()
         except json.JSONDecodeError:
-            response_body = response.text
+            response_body = {"details": response.text}
 
         return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
 
     except httpx.RequestError as e:
         logger.warning(f"Gateway test failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Request failed: {str(e)}")
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})

@@ -216,7 +216,7 @@ def _patch_client(monkeypatch, wrapper, *, json=None, exc=None):
                 raise exc
             return _Resp(json_data=json)
 
-    monkeypatch.setattr(wrapper.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(wrapper, "ResilientHttpClient", _Client)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -275,12 +275,18 @@ async def test_fetch_url_ok(monkeypatch, wrapper):
             return False
 
         async def get(self, url, **_):
-            _Client.url = url
-            return _Resp(json_data={"ok": 1})
+            _Client.url = url  # Track the URL for verification
+            return _Resp(json_data={"ok": 1})  # Simulate a successful response
 
-    monkeypatch.setattr(wrapper.httpx, "AsyncClient", _Client)
+    # Monkeypatch ResilientHttpClient with our mock
+    monkeypatch.setattr(wrapper, "ResilientHttpClient", _Client)
+
+    # Run the fetch_url method
     r = await wrapper.fetch_url("u")
-    assert r.json() == {"ok": 1} and _Client.url == "u"
+
+    # Verify the response and the URL used
+    assert r.json() == {"ok": 1}
+    assert _Client.url == "u"
 
 
 @pytest.mark.asyncio
@@ -308,6 +314,7 @@ async def test_fetch_url_request_error(monkeypatch, wrapper):
 
 @pytest.mark.asyncio
 async def test_fetch_url_http_status(monkeypatch, wrapper):
+    # Simulate ResilientHttpClient
     class _Client:
         def __init__(self, *_, **__):
             pass
@@ -319,12 +326,16 @@ async def test_fetch_url_http_status(monkeypatch, wrapper):
             return False
 
         async def get(self, *_a, **_k):
+            # Simulating a 500 Internal Server Error
             return _Resp(status=500)
 
-    monkeypatch.setattr(wrapper.httpx, "AsyncClient", _Client)
+    # Monkeypatch to replace ResilientHttpClient with _Client
+    monkeypatch.setattr(wrapper, "ResilientHttpClient", _Client)
+
     # Third-Party
     import httpx
 
+    # Run the test to ensure that an HTTPStatusError is raised
     with pytest.raises(httpx.HTTPStatusError):
         await wrapper.fetch_url("u")
 

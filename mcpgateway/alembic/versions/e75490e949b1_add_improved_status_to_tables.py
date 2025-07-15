@@ -10,9 +10,10 @@ Create Date: 2025-07-02 17:12:40.678256
 from typing import Sequence, Union
 
 # Third-Party
-# Alembic / SQLAlchemy
-from alembic import op
 import sqlalchemy as sa
+
+# First-Party
+from alembic import op
 
 # Revision identifiers.
 revision: str = "e75490e949b1"

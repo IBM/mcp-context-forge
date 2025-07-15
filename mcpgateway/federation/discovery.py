@@ -29,6 +29,7 @@ from zeroconf import ServiceInfo, ServiceStateChange
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
 
 # First-Party
+from mcpgateway import __version__
 from mcpgateway.config import settings
 from mcpgateway.models import ServerCapabilities
 
@@ -64,7 +65,7 @@ class LocalDiscoveryService:
             port=settings.port,
             properties={
                 "name": settings.app_name,
-                "version": "1.0.0",
+                "version": __version__,
                 "protocol": PROTOCOL_VERSION,
             },
         )
@@ -350,7 +351,7 @@ class DiscoveryService(LocalDiscoveryService):
             "params": {
                 "protocol_version": PROTOCOL_VERSION,
                 "capabilities": {"roots": {"listChanged": True}, "sampling": {}},
-                "client_info": {"name": settings.app_name, "version": "1.0.0"},
+                "client_info": {"name": settings.app_name, "version": __version__},
             },
         }
 

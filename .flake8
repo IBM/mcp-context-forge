@@ -1,2 +1,4 @@
 [flake8]
 max-line-length = 600
+per-file-ignores =
+    mcpgateway/services/gateway_service.py: DAR401,DAR402

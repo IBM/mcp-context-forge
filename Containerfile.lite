@@ -18,8 +18,10 @@
 ###########################
 # Build-time arguments
 ###########################
-ARG ROOTFS_PATH=/tmp/rootfs        # Temporary dir for assembling the scratch rootfs
-ARG PYTHON_VERSION=3.11            # Python major.minor series to track
+# Temporary dir for assembling the scratch rootfs
+ARG ROOTFS_PATH=/tmp/rootfs
+# Python major.minor series to track
+ARG PYTHON_VERSION=3.11
 
 ###########################
 # Base image for copying into scratch
@@ -132,6 +134,12 @@ EXPOSE 4444
 # Run as non-root user (1001)
 # ----------------------------------------------------------------------------
 USER 1001
+
+# ----------------------------------------------------------------------------
+# Health check
+# ----------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD ["python3", "-c", "import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)"]
 
 # ----------------------------------------------------------------------------
 # Entrypoint

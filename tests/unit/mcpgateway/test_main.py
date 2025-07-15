@@ -145,6 +145,7 @@ MOCK_GATEWAY_READ = {
     "updated_at": "2023-01-01T00:00:00+00:00",
     "enabled": True,
     "reachable": True,
+    "auth_type": None,
 }
 
 MOCK_ROOT = {
@@ -884,7 +885,7 @@ class TestRPCEndpoints:
 class TestRealtimeEndpoints:
     """Tests for real-time communication: WebSocket, SSE, message handling, etc."""
 
-    @patch("mcpgateway.main.httpx.AsyncClient")  # stub network calls
+    @patch("mcpgateway.main.ResilientHttpClient")  # stub network calls
     def test_websocket_endpoint(self, mock_client, test_client):
         # Standard
         from types import SimpleNamespace
