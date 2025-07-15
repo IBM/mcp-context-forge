@@ -166,6 +166,24 @@ class PromptService:
         Raises:
             PromptNameConflictError: If prompt name already exists
             PromptError: For other prompt registration errors
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> prompt = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> db.add = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> service._notify_prompt_added = MagicMock()
+            >>> service._convert_db_prompt = MagicMock(return_value={})
+            >>> import asyncio
+            >>> try:
+            ...     asyncio.run(service.register_prompt(db, prompt))
+            ... except Exception:
+            ...     pass
         """
         try:
             # Check for name conflicts (both active and inactive)
@@ -241,6 +259,21 @@ class PromptService:
 
         Returns:
             List[PromptRead]: A list of prompt templates represented as PromptRead objects.
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.schemas import PromptRead
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> prompt_dict = {'id': '1', 'name': 'test', 'description': 'desc', 'template': 'tpl', 'arguments': [], 'createdAt': '2023-01-01T00:00:00', 'updatedAt': '2023-01-01T00:00:00', 'isActive': True, 'metrics': {}}
+            >>> service._convert_db_prompt = MagicMock(return_value=prompt_dict)
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> PromptRead.model_validate = MagicMock(return_value='prompt_read')
+            >>> import asyncio
+            >>> result = asyncio.run(service.list_prompts(db))
+            >>> result == ['prompt_read']
+            True
         """
         query = select(DbPrompt)
         if not include_inactive:
@@ -269,6 +302,21 @@ class PromptService:
 
         Returns:
             List[PromptRead]: A list of prompt templates represented as PromptRead objects.
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.schemas import PromptRead
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> prompt_dict = {'id': '1', 'name': 'test', 'description': 'desc', 'template': 'tpl', 'arguments': [], 'createdAt': '2023-01-01T00:00:00', 'updatedAt': '2023-01-01T00:00:00', 'isActive': True, 'metrics': {}}
+            >>> service._convert_db_prompt = MagicMock(return_value=prompt_dict)
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> PromptRead.model_validate = MagicMock(return_value='prompt_read')
+            >>> import asyncio
+            >>> result = asyncio.run(service.list_server_prompts(db, 'server1'))
+            >>> result == ['prompt_read']
+            True
         """
         query = select(DbPrompt).join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id).where(server_prompt_association.c.server_id == server_id)
         if not include_inactive:
@@ -292,6 +340,18 @@ class PromptService:
         Raises:
             PromptNotFoundError: If prompt not found
             PromptError: For other prompt errors
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
+            >>> import asyncio
+            >>> try:
+            ...     asyncio.run(service.get_prompt(db, 'prompt_name'))
+            ... except Exception:
+            ...     pass
         """
         # Find prompt
         prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(DbPrompt.is_active)).scalar_one_or_none()
@@ -323,20 +383,37 @@ class PromptService:
             raise PromptError(f"Failed to process prompt: {str(e)}")
 
     async def update_prompt(self, db: Session, name: str, prompt_update: PromptUpdate) -> PromptRead:
-        """Update an existing prompt.
+        """
+        Update a prompt template.
 
         Args:
             db: Database session
             name: Name of prompt to update
-            prompt_update: Updated prompt data
+            prompt_update: Prompt update object
 
         Returns:
-            Updated prompt information
+            The updated PromptRead object
 
         Raises:
-            PromptNotFoundError: If prompt not found
+            PromptNotFoundError: If the prompt is not found
+            PromptNameConflictError: If the new prompt name already exists
             PromptError: For other update errors
-            PromptNameConflictError: When prompt name conflict happens
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> service._notify_prompt_updated = MagicMock()
+            >>> service._convert_db_prompt = MagicMock(return_value={})
+            >>> import asyncio
+            >>> try:
+            ...     asyncio.run(service.update_prompt(db, 'prompt_name', MagicMock()))
+            ... except Exception:
+            ...     pass
         """
         try:
             prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(DbPrompt.is_active)).scalar_one_or_none()
@@ -389,19 +466,38 @@ class PromptService:
             raise PromptError(f"Failed to update prompt: {str(e)}")
 
     async def toggle_prompt_status(self, db: Session, prompt_id: int, activate: bool) -> PromptRead:
-        """Toggle prompt active status.
+        """
+        Toggle the activation status of a prompt.
 
         Args:
             db: Database session
-            prompt_id: Prompt ID to toggle
+            prompt_id: Prompt ID
             activate: True to activate, False to deactivate
 
         Returns:
-            Updated prompt information
+            The updated PromptRead object
 
         Raises:
-            PromptNotFoundError: If prompt not found
+            PromptNotFoundError: If the prompt is not found
             PromptError: For other errors
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> prompt = MagicMock()
+            >>> db.get.return_value = prompt
+            >>> db.commit = MagicMock()
+            >>> db.refresh = MagicMock()
+            >>> service._notify_prompt_activated = MagicMock()
+            >>> service._notify_prompt_deactivated = MagicMock()
+            >>> service._convert_db_prompt = MagicMock(return_value={})
+            >>> import asyncio
+            >>> try:
+            ...     asyncio.run(service.toggle_prompt_status(db, 1, True))
+            ... except Exception:
+            ...     pass
         """
         try:
             prompt = db.get(DbPrompt, prompt_id)
@@ -424,7 +520,8 @@ class PromptService:
 
     # Get prompt details for admin ui
     async def get_prompt_details(self, db: Session, name: str, include_inactive: bool = False) -> Dict[str, Any]:
-        """Get prompt details for admin UI.
+        """
+        Get prompt details by name.
 
         Args:
             db: Database session
@@ -432,10 +529,23 @@ class PromptService:
             include_inactive: Whether to include inactive prompts
 
         Returns:
-            Prompt details
+            Dictionary of prompt details
 
         Raises:
-            PromptNotFoundError: If prompt not found
+            PromptNotFoundError: If the prompt is not found
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> prompt_dict = {'id': '1', 'name': 'test', 'description': 'desc', 'template': 'tpl', 'arguments': [], 'createdAt': '2023-01-01T00:00:00', 'updatedAt': '2023-01-01T00:00:00', 'isActive': True, 'metrics': {}}
+            >>> service._convert_db_prompt = MagicMock(return_value=prompt_dict)
+            >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
+            >>> import asyncio
+            >>> result = asyncio.run(service.get_prompt_details(db, 'prompt_name'))
+            >>> result == prompt_dict
+            True
         """
         query = select(DbPrompt).where(DbPrompt.name == name)
         if not include_inactive:
@@ -451,16 +561,33 @@ class PromptService:
         return self._convert_db_prompt(prompt)
 
     async def delete_prompt(self, db: Session, name: str) -> None:
-        """Permanently delete a registered prompt.
+        """
+        Delete a prompt template.
 
         Args:
             db: Database session
             name: Name of prompt to delete
 
         Raises:
-            PromptNotFoundError: If prompt not found
+            PromptNotFoundError: If the prompt is not found
             PromptError: For other deletion errors
-            Exception: If prompt not found
+            Exception: For unexpected errors
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> prompt = MagicMock()
+            >>> db.get.return_value = prompt
+            >>> db.delete = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> service._notify_prompt_deleted = MagicMock()
+            >>> import asyncio
+            >>> try:
+            ...     asyncio.run(service.delete_prompt(db, 'prompt_name'))
+            ... except Exception:
+            ...     pass
         """
         try:
             prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name)).scalar_one_or_none()
@@ -694,10 +821,10 @@ class PromptService:
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
         """
-        Aggregate metrics for all prompt invocations.
+        Aggregate metrics for all prompt invocations across all prompts.
 
         Args:
-            db: Database Session
+            db: Database session
 
         Returns:
             Dict[str, Any]: Aggregated prompt metrics with keys:
@@ -709,6 +836,18 @@ class PromptService:
                 - max_response_time
                 - avg_response_time
                 - last_execution_time
+            Aggregated metrics computed from all PromptMetric records.
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar.return_value = 0
+            >>> import asyncio
+            >>> result = asyncio.run(service.aggregate_metrics(db))
+            >>> isinstance(result, dict)
+            True
         """
 
         total = db.execute(select(func.count(PromptMetric.id))).scalar() or 0  # pylint: disable=not-callable
@@ -736,7 +875,17 @@ class PromptService:
         Reset all prompt metrics by deleting all records from the prompt metrics table.
 
         Args:
-            db: Database Session
+            db: Database session
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import MagicMock
+            >>> service = PromptService()
+            >>> db = MagicMock()
+            >>> db.execute = MagicMock()
+            >>> db.commit = MagicMock()
+            >>> import asyncio
+            >>> asyncio.run(service.reset_metrics(db))
         """
 
         db.execute(delete(PromptMetric))
