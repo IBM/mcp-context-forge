@@ -31,6 +31,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 try:
     # Third-Party
@@ -187,6 +188,7 @@ class GatewayService:
             GatewayConnectionError: If there was an error connecting to the gateway
             ValueError: If required values are missing
             RuntimeError: If there is an error during processing that is not covered by other exceptions
+            IntegrityError: If there is a database integrity error
             BaseException: If an unexpected error occurs
 
         Examples:
@@ -281,6 +283,11 @@ class GatewayService:
                 re: ExceptionGroup[RuntimeError]
             logger.error(f"RuntimeErrors in group: {re.exceptions}")
             raise re.exceptions[0]
+        except* IntegrityError as ie:
+            if TYPE_CHECKING:
+                ie: ExceptionGroup[IntegrityError]
+            logger.error(f"IntegrityErrors in group: {ie.exceptions}")
+            raise ie.exceptions[0]
         except* BaseException as other:  # catches every other sub-exception
             if TYPE_CHECKING:
                 other: ExceptionGroup[BaseException]
