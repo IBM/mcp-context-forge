@@ -414,11 +414,13 @@ images:
 # help: sbom                 - Produce a CycloneDX SBOM and vulnerability scan
 # help: pytype               - Flow-sensitive type checker
 # help: check-manifest       - Verify sdist/wheel completeness
+# help: unimport             - Unused import detection
+# help: vulture              - Dead code detection
 
 # List of individual lint targets; lint loops over these
 LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
            ruff pyright radon pyroma pyrefly spellcheck importchecker \
-		   pytype check-manifest markdownlint
+		   pytype check-manifest markdownlint vulture unimport
 
 .PHONY: lint $(LINTERS) black fawltydeps wily depend snakeviz pstats \
         spellcheck-sort tox pytype sbom
@@ -598,6 +600,12 @@ pytype:								## 🧠  Pytype static type analysis
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
+
+unimport:                           ## 📦  Unused import detection  
+	@echo "📦  unimport …" && $(VENV_DIR)/bin/unimport --check --diff mcpgateway
+
+vulture:                            ## 🧹  Dead code detection
+	@echo "🧹  vulture …" && $(VENV_DIR)/bin/vulture mcpgateway --min-confidence 80
 
 # -----------------------------------------------------------------------------
 # 📑 GRYPE SECURITY/VULNERABILITY SCANNING
