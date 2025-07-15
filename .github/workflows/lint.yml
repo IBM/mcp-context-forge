@@ -58,7 +58,7 @@ jobs:
             setup: pip install ruff
             cmd: |
               ruff check mcpgateway
-            
+
           - id: unimport
             setup: pip install unimport
             cmd: |
