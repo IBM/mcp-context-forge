@@ -49,12 +49,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
-from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError
-
 
 # First-Party
 from mcpgateway import __version__
@@ -123,6 +122,7 @@ from mcpgateway.transports.streamablehttp_transport import (
     streamable_http_auth,
 )
 from mcpgateway.utils.db_isready import wait_for_db_ready
+from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_auth_override
@@ -130,8 +130,6 @@ from mcpgateway.validation.jsonrpc import (
     JSONRPCError,
     validate_request,
 )
-
-from mcpgateway.utils.error_formatter import ErrorFormatter
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
@@ -251,20 +249,15 @@ app = FastAPI(
 
 # Global exceptions handlers
 
+
 @app.exception_handler(ValidationError)
 async def validation_exception_handler(request: Request, exc: ValidationError):
-    return JSONResponse(
-        status_code=422,
-        content=ErrorFormatter.format_validation_error(exc)
-    )
+    return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
 
 @app.exception_handler(IntegrityError)
 async def database_exception_handler(request: Request, exc: IntegrityError):
-    return JSONResponse(
-        status_code=409,
-        content=ErrorFormatter.format_database_error(exc)
-    )
+    return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):

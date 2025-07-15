@@ -16,25 +16,22 @@ SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 # Third-Party
 import pytest
-import asyncio
+from sqlalchemy.exc import IntegrityError
+
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.models import Message, PromptResult, Role
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import (
-    PromptError,
-    PromptNotFoundError,
-    PromptService,
-    PromptValidationError
-)
-from sqlalchemy.exc import IntegrityError
+from mcpgateway.services.prompt_service import PromptError, PromptNotFoundError, PromptService, PromptValidationError
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -151,7 +148,7 @@ class TestPromptService:
             await prompt_service.register_prompt(test_db, pc)
 
         assert "already exists" in str(exc_info.value)
-    
+
     @pytest.mark.asyncio
     async def test_register_prompt_template_validation_error(self, prompt_service, test_db):
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -174,6 +171,7 @@ class TestPromptService:
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
         assert "already exists" in str(exc_info.value)
+
     # ──────────────────────────────────────────────────────────────────
     #   get_prompt
     # ──────────────────────────────────────────────────────────────────
@@ -198,18 +196,20 @@ class TestPromptService:
 
         with pytest.raises(PromptNotFoundError):
             await prompt_service.get_prompt(test_db, "missing")
-    
+
     @pytest.mark.asyncio
     async def test_get_prompt_inactive(self, prompt_service, test_db):
         inactive = _build_db_prompt(is_active=False)
-        test_db.execute = Mock(side_effect=[
-            _make_execute_result(scalar=None),  # active
-            _make_execute_result(scalar=inactive),  # inactive
-        ])
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),  # active
+                _make_execute_result(scalar=inactive),  # inactive
+            ]
+        )
         with pytest.raises(PromptNotFoundError) as exc_info:
             await prompt_service.get_prompt(test_db, "hello")
         assert "inactive" in str(exc_info.value)
-    
+
     @pytest.mark.asyncio
     async def test_get_prompt_render_error(self, prompt_service, test_db):
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
@@ -231,7 +231,6 @@ class TestPromptService:
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=None), _make_execute_result(scalar=inactive)])
         with pytest.raises(PromptNotFoundError):
             await prompt_service.get_prompt_details(test_db, "hello")
-
 
     # ──────────────────────────────────────────────────────────────────
     #   update_prompt
@@ -276,10 +275,12 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_update_prompt_not_found(self, prompt_service, test_db):
-        test_db.execute = Mock(side_effect=[
-            _make_execute_result(scalar=None),  # active
-            _make_execute_result(scalar=None),  # inactive
-        ])
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),  # active
+                _make_execute_result(scalar=None),  # inactive
+            ]
+        )
         upd = PromptUpdate(description="desc")
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.update_prompt(test_db, "missing", upd)
@@ -288,10 +289,12 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_update_prompt_inactive(self, prompt_service, test_db):
         inactive = _build_db_prompt(is_active=False)
-        test_db.execute = Mock(side_effect=[
-            _make_execute_result(scalar=None),  # active
-            _make_execute_result(scalar=inactive),  # inactive
-        ])
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),  # active
+                _make_execute_result(scalar=inactive),  # inactive
+            ]
+        )
         upd = PromptUpdate(description="desc")
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.update_prompt(test_db, "hello", upd)
@@ -417,13 +420,13 @@ class TestPromptService:
         required = prompt_service._get_required_arguments(template)
         assert "name" in required
         assert "code" in required
-    
+
     def test_get_required_arguments(self, prompt_service):
         template = "Hello, {{ name }}! Your code is {{ code }}."
         required = prompt_service._get_required_arguments(template)
         assert "name" in required
         assert "code" in required
-    
+
     def test_render_template_fallback_and_error(self, prompt_service):
         # Patch jinja_env.from_string to raise
         prompt_service._jinja_env.from_string = Mock(side_effect=Exception("bad"))

@@ -82,19 +82,19 @@ from playwright.sync_api import Page, expect
 
 class TestFeatureName:
     """Test suite for specific feature."""
-    
+
     @pytest.mark.smoke
     def test_basic_functionality(self, page: Page, base_url: str):
         """Test description."""
         # Navigate
         page.goto(f"{base_url}/admin")
-        
+
         # Assert page loaded
         expect(page).to_have_title("MCP Gateway Admin")
-        
+
         # Interact with elements
         page.click('button:has-text("Add Server")')
-        
+
         # Verify results
         modal = page.locator('[role="dialog"]')
         expect(modal).to_be_visible()
