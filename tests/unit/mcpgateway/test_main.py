@@ -885,7 +885,7 @@ class TestRPCEndpoints:
 class TestRealtimeEndpoints:
     """Tests for real-time communication: WebSocket, SSE, message handling, etc."""
 
-    @patch("mcpgateway.main.httpx.AsyncClient")  # stub network calls
+    @patch("mcpgateway.main.ResilientHttpClient")  # stub network calls
     def test_websocket_endpoint(self, mock_client, test_client):
         # Standard
         from types import SimpleNamespace

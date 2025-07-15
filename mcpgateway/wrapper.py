@@ -46,6 +46,7 @@ import httpx
 from mcp import types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 import mcp.server.stdio
 from pydantic import AnyUrl
 
@@ -161,7 +162,7 @@ async def fetch_url(url: str) -> httpx.Response:
         httpx.HTTPStatusError: If the server returns a 4xx or 5xx response.
     """
     headers = {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
-    async with httpx.AsyncClient(timeout=TOOL_CALL_TIMEOUT) as client:
+    async with ResilientHttpClient(client_args={"timeout": TOOL_CALL_TIMEOUT}) as client:
         try:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
@@ -367,7 +368,7 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
     headers = {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
 
     try:
-        async with httpx.AsyncClient(timeout=TOOL_CALL_TIMEOUT) as client:
+        async with ResilientHttpClient(client_args={"timeout": TOOL_CALL_TIMEOUT}) as client:
             resp = await client.post(f"{BASE_URL}/rpc/", json=payload, headers=headers)
             resp.raise_for_status()
             result = resp.json()

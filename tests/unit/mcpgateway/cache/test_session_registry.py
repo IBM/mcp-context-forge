@@ -582,7 +582,7 @@ async def test_generate_response_tools_call(registry: SessionRegistry, stub_db, 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
 
-    with patch("mcpgateway.cache.session_registry.httpx.AsyncClient", MockAsyncClient):
+    with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
         msg = {"method": "tools/call", "id": 45, "params": {"name": "test_tool", "arguments": {"arg1": "value1"}}}
         await registry.generate_response(
             message=msg,
