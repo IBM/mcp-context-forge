@@ -827,6 +827,15 @@ class PromptService:
             db: Database session
 
         Returns:
+            Dict[str, Any]: Aggregated prompt metrics with keys:
+                - total_executions
+                - successful_executions
+                - failed_executions
+                - failure_rate
+                - min_response_time
+                - max_response_time
+                - avg_response_time
+                - last_execution_time
             Aggregated metrics computed from all PromptMetric records.
 
         Examples:
