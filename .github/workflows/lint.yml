@@ -59,6 +59,16 @@ jobs:
             cmd: |
               ruff check mcpgateway
 
+          - id: unimport
+            setup: pip install unimport
+            cmd: |
+              unimport mcpgateway
+
+          - id: vulture
+            setup: pip install vulture
+            cmd: |
+              vulture mcpgateway --min-confidence 80
+
           # - id: pylint
           #   setup: pip install pylint
           #   cmd: pylint mcpgateway
