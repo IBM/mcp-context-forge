@@ -49,7 +49,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -125,6 +124,7 @@ from mcpgateway.transports.streamablehttp_transport import (
 )
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_auth_override
 from mcpgateway.validation.jsonrpc import (
     JSONRPCError,
@@ -1848,7 +1848,8 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             try:
                 data = await websocket.receive_text()
-                async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
+                client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
+                async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
                         f"http://localhost:{settings.port}/rpc",
                         json=json.loads(data),
