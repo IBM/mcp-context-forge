@@ -36,6 +36,7 @@ from fastapi import HTTPException, status
 import httpx
 
 # First-Party
+from mcpgateway import __version__
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
 from mcpgateway.models import Implementation, InitializeResult, ServerCapabilities
@@ -699,7 +700,7 @@ class SessionRegistry(SessionBackend):
                 roots={"listChanged": True},
                 sampling={},
             ),
-            serverInfo=Implementation(name=settings.app_name, version="1.0.0"),
+            serverInfo=Implementation(name=settings.app_name, version=__version__),
             instructions=("MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."),
         )
 

@@ -7,3 +7,4 @@ nav:
   - review.md
   - packaging.md
   - developer-workstation.md
+  - doctest-coverage.md

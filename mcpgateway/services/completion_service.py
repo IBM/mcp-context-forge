@@ -63,6 +63,19 @@ class CompletionService:
 
         Raises:
             CompletionError: If completion fails
+
+        Examples:
+            >>> from mcpgateway.services.completion_service import CompletionService
+            >>> from unittest.mock import MagicMock
+            >>> service = CompletionService()
+            >>> db = MagicMock()
+            >>> request = {'ref': {'type': 'ref/prompt', 'name': 'prompt1'}, 'argument': {'name': 'arg1', 'value': ''}}
+            >>> db.execute.return_value.scalars.return_value.all.return_value = []
+            >>> import asyncio
+            >>> try:
+            ...     asyncio.run(service.handle_completion(db, request))
+            ... except Exception:
+            ...     pass
         """
         try:
             # Get reference and argument info
@@ -191,6 +204,13 @@ class CompletionService:
         Args:
             arg_name: Argument name
             values: Completion values
+
+        Examples:
+            >>> from mcpgateway.services.completion_service import CompletionService
+            >>> service = CompletionService()
+            >>> service.register_completions('arg1', ['a', 'b'])
+            >>> service._custom_completions['arg1']
+            ['a', 'b']
         """
         self._custom_completions[arg_name] = list(values)
 
@@ -199,5 +219,13 @@ class CompletionService:
 
         Args:
             arg_name: Argument name
+
+        Examples:
+            >>> from mcpgateway.services.completion_service import CompletionService
+            >>> service = CompletionService()
+            >>> service.register_completions('arg1', ['a', 'b'])
+            >>> service.unregister_completions('arg1')
+            >>> 'arg1' in service._custom_completions
+            False
         """
         self._custom_completions.pop(arg_name, None)

@@ -36,7 +36,14 @@ class LoggingService:
         self._loggers: Dict[str, logging.Logger] = {}
 
     async def initialize(self) -> None:
-        """Initialize logging service."""
+        """Initialize logging service.
+
+        Examples:
+            >>> from mcpgateway.services.logging_service import LoggingService
+            >>> import asyncio
+            >>> service = LoggingService()
+            >>> asyncio.run(service.initialize())
+        """
         # Configure root logger
         logging.basicConfig(
             level=logging.INFO,
@@ -46,7 +53,14 @@ class LoggingService:
         logging.info("Logging service initialized")
 
     async def shutdown(self) -> None:
-        """Shutdown logging service."""
+        """Shutdown logging service.
+
+        Examples:
+            >>> from mcpgateway.services.logging_service import LoggingService
+            >>> import asyncio
+            >>> service = LoggingService()
+            >>> asyncio.run(service.shutdown())
+        """
         # Clear subscribers
         self._subscribers.clear()
         logging.info("Logging service shutdown")
@@ -59,6 +73,14 @@ class LoggingService:
 
         Returns:
             Logger instance
+
+        Examples:
+            >>> from mcpgateway.services.logging_service import LoggingService
+            >>> service = LoggingService()
+            >>> logger = service.get_logger('test')
+            >>> import logging
+            >>> isinstance(logger, logging.Logger)
+            True
         """
         if name not in self._loggers:
             logger = logging.getLogger(name)
@@ -78,6 +100,13 @@ class LoggingService:
 
         Args:
             level: New log level
+
+        Examples:
+            >>> from mcpgateway.services.logging_service import LoggingService
+            >>> from mcpgateway.models import LogLevel
+            >>> import asyncio
+            >>> service = LoggingService()
+            >>> asyncio.run(service.set_level(LogLevel.DEBUG))
         """
         self._level = level
 
@@ -95,6 +124,13 @@ class LoggingService:
             data: Log message data
             level: Log severity level
             logger_name: Optional logger name
+
+        Examples:
+            >>> from mcpgateway.services.logging_service import LoggingService
+            >>> from mcpgateway.models import LogLevel
+            >>> import asyncio
+            >>> service = LoggingService()
+            >>> asyncio.run(service.notify('test', LogLevel.INFO))
         """
         # Skip if below current level
         if not self._should_log(level):
@@ -131,6 +167,9 @@ class LoggingService:
 
         Yields:
             Log message events
+
+        Examples:
+            This example was removed to prevent the test runner from hanging on async generator consumption.
         """
         queue: asyncio.Queue = asyncio.Queue()
         self._subscribers.append(queue)
