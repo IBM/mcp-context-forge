@@ -3,12 +3,14 @@
 Playwright test configuration - Simple version without python-dotenv.
 This assumes environment variables are loaded by the Makefile.
 """
-import os
+# Standard
 import base64
-from typing import Generator, Dict
-import pytest
-from playwright.sync_api import Playwright, APIRequestContext, Page, BrowserContext
+import os
+from typing import Generator
 
+# Third-Party
+from playwright.sync_api import APIRequestContext, Page, Playwright
+import pytest
 
 # Get configuration from environment
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:4444")
