@@ -601,7 +601,7 @@ check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
 
-unimport:                           ## 📦  Unused import detection  
+unimport:                           ## 📦  Unused import detection
 	@echo "📦  unimport …" && $(VENV_DIR)/bin/unimport --check --diff mcpgateway
 
 vulture:                            ## 🧹  Dead code detection
@@ -2364,3 +2364,148 @@ db-history:
 
 db-revision-id:
 	@$(ALEMBIC) current --verbose | awk '/Current revision/ {print $$3}'
+
+
+# =============================================================================
+# 🎭 UI TESTING (PLAYWRIGHT)
+# =============================================================================
+# help: 🎭 UI TESTING (PLAYWRIGHT)
+# help: playwright-install   - Install Playwright browsers (chromium by default)
+# help: playwright-install-all - Install all Playwright browsers (chromium, firefox, webkit)
+# help: test-ui              - Run Playwright UI tests with visible browser
+# help: test-ui-headless     - Run Playwright UI tests in headless mode
+# help: test-ui-debug        - Run Playwright UI tests with Playwright Inspector
+# help: test-ui-smoke        - Run UI smoke tests only (fast subset)
+# help: test-ui-parallel     - Run UI tests in parallel using pytest-xdist
+# help: test-ui-report       - Run UI tests and generate HTML report
+# help: test-ui-coverage     - Run UI tests with coverage for admin endpoints
+# help: test-ui-record       - Run UI tests and record videos (headless)
+# help: test-ui-update-snapshots - Update visual regression snapshots
+# help: test-ui-clean        - Clean up Playwright test artifacts
+
+.PHONY: playwright-install playwright-install-all test-ui test-ui-headless test-ui-debug test-ui-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-record test-ui-update-snapshots test-ui-clean
+
+# Playwright test variables
+PLAYWRIGHT_DIR := tests/playwright
+PLAYWRIGHT_REPORTS := $(PLAYWRIGHT_DIR)/reports
+PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
+PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
+
+## --- Playwright Setup -------------------------------------------------------
+playwright-install:
+	@echo "🎭 Installing Playwright browsers (chromium)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pip install -e '.[playwright]' 2>/dev/null || pip install playwright pytest-playwright && \
+		playwright install chromium"
+	@echo "✅ Playwright chromium browser installed!"
+
+playwright-install-all:
+	@echo "🎭 Installing all Playwright browsers..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pip install -e '.[playwright]' 2>/dev/null || pip install playwright pytest-playwright && \
+		playwright install"
+	@echo "✅ All Playwright browsers installed!"
+
+## --- UI Test Execution ------------------------------------------------------
+test-ui: playwright-install
+	@echo "🎭 Running UI tests with visible browser..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(PLAYWRIGHT_DIR)/ -v --headed --screenshot=only-on-failure \
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ UI tests completed!"
+
+test-ui-headless: playwright-install
+	@echo "🎭 Running UI tests in headless mode..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ UI tests completed!"
+
+test-ui-debug: playwright-install
+	@echo "🎭 Running UI tests with Playwright Inspector..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		PWDEBUG=1 pytest $(PLAYWRIGHT_DIR)/ -v -s --headed \
+		--browser chromium"
+
+test-ui-smoke: playwright-install
+	@echo "🎭 Running UI smoke tests..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(PLAYWRIGHT_DIR)/ -v -m smoke --headed \
+		--browser chromium || { echo '❌ UI smoke tests failed!'; exit 1; }"
+	@echo "✅ UI smoke tests passed!"
+
+test-ui-parallel: playwright-install
+	@echo "🎭 Running UI tests in parallel..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pip install -q pytest-xdist && \
+		pytest $(PLAYWRIGHT_DIR)/ -v -n auto --dist loadscope \
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ UI parallel tests completed!"
+
+## --- UI Test Reporting ------------------------------------------------------
+test-ui-report: playwright-install
+	@echo "🎭 Running UI tests with HTML report..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pip install -q pytest-html && \
+		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
+		--html=$(PLAYWRIGHT_REPORTS)/report.html --self-contained-html \
+		--browser chromium || true"
+	@echo "✅ UI test report generated: $(PLAYWRIGHT_REPORTS)/report.html"
+	@echo "   Open with: open $(PLAYWRIGHT_REPORTS)/report.html"
+
+test-ui-coverage: playwright-install
+	@echo "🎭 Running UI tests with coverage..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin \
+		--cov-report=html:$(PLAYWRIGHT_REPORTS)/coverage \
+		--cov-report=term --browser chromium || true"
+	@echo "✅ UI coverage report: $(PLAYWRIGHT_REPORTS)/coverage/index.html"
+
+test-ui-record: playwright-install
+	@echo "🎭 Running UI tests with video recording..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_VIDEOS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(PLAYWRIGHT_DIR)/ -v --video=on \
+		--browser chromium || true"
+	@echo "✅ Test videos saved in: $(PLAYWRIGHT_VIDEOS)/"
+
+## --- UI Test Utilities ------------------------------------------------------
+test-ui-update-snapshots: playwright-install
+	@echo "🎭 Updating visual regression snapshots..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(PLAYWRIGHT_DIR)/ -v --update-snapshots \
+		--browser chromium"
+	@echo "✅ Snapshots updated!"
+
+test-ui-clean:
+	@echo "🧹 Cleaning Playwright test artifacts..."
+	@rm -rf $(PLAYWRIGHT_SCREENSHOTS)/*.png
+	@rm -rf $(PLAYWRIGHT_VIDEOS)/*.webm
+	@rm -rf $(PLAYWRIGHT_REPORTS)/*
+	@rm -rf test-results/
+	@rm -f playwright-report-*.html test-results-*.xml
+	@echo "✅ Playwright artifacts cleaned!"
+
+## --- Combined Testing -------------------------------------------------------
+test-all: test test-ui-headless
+	@echo "✅ All tests completed (unit + UI)!"
+
+# Add UI tests to your existing test suite if needed
+test-full: coverage test-ui-report
+	@echo "📊 Full test suite completed with coverage and UI tests!"
