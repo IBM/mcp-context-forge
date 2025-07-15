@@ -17,6 +17,7 @@ import asyncio
 import logging
 import random
 from typing import Any, Dict, Optional
+from mcpgateway.config import settings
 
 # Third-Party
 import httpx
@@ -33,8 +34,8 @@ RETRYABLE_STATUS_CODES = {
 }
 
 NON_RETRYABLE_STATUS_CODES = {
-    401,  # Unauthorized
     400,  # Bad Request
+    401,  # Unauthorized
     403,  # Forbidden
     404,  # Not Found
     405,  # Method Not Allowed
@@ -51,21 +52,29 @@ class ResilientHttpClient:
     Attributes:
         max_retries (int): The maximum number of retries before giving up.
         base_backoff (float): The base backoff time in seconds.
+        max_delay (float): The maximum delay (in seconds) between retries.
+        jitter_max (float): The maximum jitter fraction to apply to delay.
         client_args (dict): Optional arguments to configure the HTTP client.
         client (httpx.AsyncClient): The underlying HTTP client.
     """
 
-    def __init__(self, max_retries: int = 3, base_backoff: float = 0.5, client_args: Optional[Dict[str, Any]] = None):
+    def __init__(self, max_retries: int = settings.retry_max_attempts, base_backoff: float = settings.retry_base_delay, 
+                 max_delay: float = settings.retry_max_delay, jitter_max: float = settings.retry_jitter_max, 
+                 client_args: Optional[Dict[str, Any]] = None):
         """
-        Initializes the ResilientHttpClient.
+        Initializes the ResilientHttpClient with configurable retry behavior.
 
         Args:
             max_retries (int): The maximum number of retries. Default is 3.
-            base_backoff (float): The base backoff time (in seconds) before retrying a request. Default is 0.5 seconds.
+            base_backoff (float): The base backoff time (in seconds) before retrying a request. Default is 1.0.
+            max_delay (float): The maximum backoff delay in seconds. Default is 60.0.
+            jitter_max (float): The maximum jitter fraction (0-1). Default is 0.5.
             client_args (dict, optional): Additional arguments to pass to the httpx client. Default is None.
         """
         self.max_retries = max_retries
         self.base_backoff = base_backoff
+        self.max_delay = max_delay
+        self.jitter_max = jitter_max
         self.client_args = client_args or {}
         self.client = httpx.AsyncClient(**self.client_args)
 
@@ -78,7 +87,8 @@ class ResilientHttpClient:
             jitter_range (float): The range within which the jitter will be applied.
         """
         delay = base + random.uniform(0, jitter_range)
-        # logger.info(f"Sleeping for {delay:.2f} seconds with jitter.")
+        # Ensure delay doesn't exceed the max allowed
+        delay = min(delay, self.max_delay)
         await asyncio.sleep(delay)
 
     def _should_retry(self, exc: Exception, response: Optional[httpx.Response]) -> bool:
@@ -151,7 +161,7 @@ class ResilientHttpClient:
 
             # Backoff calculation
             delay = self.base_backoff * (2**attempt)
-            jitter = delay * 0.5
+            jitter = delay * self.jitter_max
             await self._sleep_with_jitter(delay, jitter)
             attempt += 1
             logger.debug(f"Retry scheduled after delay of {delay:.2f} seconds.")
