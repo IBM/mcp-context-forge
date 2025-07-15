@@ -25,20 +25,85 @@ logger = logging.getLogger(__name__)
 
 
 class WebSocketTransport(Transport):
-    """Transport implementation using WebSocket."""
+    """Transport implementation using WebSocket.
+
+    This transport implementation uses WebSocket for full-duplex communication
+    between the MCP gateway and clients. It provides real-time bidirectional
+    messaging with automatic ping/pong keepalive support.
+
+    Examples:
+        >>> # Note: WebSocket transport requires a FastAPI WebSocket object
+        >>> # and cannot be easily tested in doctest environment
+        >>> from unittest.mock import Mock
+        >>> mock_websocket = Mock(spec=WebSocket)
+        >>> transport = WebSocketTransport(mock_websocket)
+        >>> transport
+        <mcpgateway.transports.websocket_transport.WebSocketTransport object at ...>
+
+        >>> # Check initial connection state
+        >>> transport._connected
+        False
+        >>> transport._ping_task is None
+        True
+
+        >>> # Verify it's a proper Transport subclass
+        >>> from mcpgateway.transports.base import Transport
+        >>> isinstance(transport, Transport)
+        True
+        >>> issubclass(WebSocketTransport, Transport)
+        True
+
+        >>> # Verify required methods exist
+        >>> hasattr(transport, 'connect')
+        True
+        >>> hasattr(transport, 'disconnect')
+        True
+        >>> hasattr(transport, 'send_message')
+        True
+        >>> hasattr(transport, 'receive_message')
+        True
+        >>> hasattr(transport, 'is_connected')
+        True
+    """
 
     def __init__(self, websocket: WebSocket):
         """Initialize WebSocket transport.
 
         Args:
             websocket: FastAPI WebSocket connection
+
+        Examples:
+            >>> # Test initialization with mock WebSocket
+            >>> from unittest.mock import Mock
+            >>> mock_ws = Mock(spec=WebSocket)
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> transport._websocket is mock_ws
+            True
+            >>> transport._connected
+            False
+            >>> transport._ping_task is None
+            True
         """
         self._websocket = websocket
         self._connected = False
         self._ping_task: Optional[asyncio.Task] = None
 
     async def connect(self) -> None:
-        """Set up WebSocket connection."""
+        """Set up WebSocket connection.
+
+        Examples:
+            >>> # Test connection setup with mock WebSocket
+            >>> from unittest.mock import Mock, AsyncMock
+            >>> mock_ws = Mock(spec=WebSocket)
+            >>> mock_ws.accept = AsyncMock()
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> import asyncio
+            >>> asyncio.run(transport.connect())
+            >>> # Note: connect() may call disconnect() in finally block during testing
+            >>> # So we check that accept was called instead of connection state
+            >>> mock_ws.accept.called
+            True
+        """
         await self._websocket.accept()
         self._connected = True
 
@@ -49,7 +114,28 @@ class WebSocketTransport(Transport):
         logger.info("WebSocket transport connected")
 
     async def disconnect(self) -> None:
-        """Clean up WebSocket connection."""
+        """Clean up WebSocket connection.
+
+        Examples:
+            >>> # Test disconnection with mock WebSocket
+            >>> from unittest.mock import Mock, AsyncMock
+            >>> mock_ws = Mock(spec=WebSocket)
+            >>> mock_ws.close = AsyncMock()
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> transport._connected = True
+            >>> import asyncio
+            >>> asyncio.run(transport.disconnect())
+            >>> transport._connected
+            False
+            >>> mock_ws.close.called
+            True
+
+            >>> # Test disconnection when already disconnected
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> asyncio.run(transport.disconnect())
+            >>> transport._connected
+            False
+        """
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -90,6 +176,38 @@ class WebSocketTransport(Transport):
         Raises:
             RuntimeError: If transport is not connected
             Exception: If unable to send json to websocket
+
+        Examples:
+            >>> # Test sending message when connected
+            >>> from unittest.mock import Mock, AsyncMock
+            >>> mock_ws = Mock(spec=WebSocket)
+            >>> mock_ws.send_json = AsyncMock()
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> transport._connected = True
+            >>> message = {"jsonrpc": "2.0", "method": "test", "id": 1}
+            >>> import asyncio
+            >>> asyncio.run(transport.send_message(message))
+            >>> mock_ws.send_json.called
+            True
+            >>> mock_ws.send_json.call_args[0][0]
+            {'jsonrpc': '2.0', 'method': 'test', 'id': 1}
+
+            >>> # Test sending message when not connected
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> try:
+            ...     asyncio.run(transport.send_message({"test": "message"}))
+            ... except RuntimeError as e:
+            ...     print("Expected error:", str(e))
+            Expected error: Transport not connected
+
+            >>> # Test message format validation
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> transport._connected = True
+            >>> valid_message = {"jsonrpc": "2.0", "method": "initialize", "params": {}}
+            >>> isinstance(valid_message, dict)
+            True
+            >>> "jsonrpc" in valid_message
+            True
         """
         if not self._connected:
             raise RuntimeError("Transport not connected")
@@ -108,6 +226,39 @@ class WebSocketTransport(Transport):
 
         Raises:
             RuntimeError: If transport is not connected
+
+        Examples:
+            >>> # Test receive message when connected
+            >>> from unittest.mock import Mock, AsyncMock
+            >>> mock_ws = Mock(spec=WebSocket)
+            >>> mock_ws.receive_json = AsyncMock(return_value={"test": "message"})
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> transport._connected = True
+            >>> import asyncio
+            >>> async def test_receive():
+            ...     async for msg in transport.receive_message():
+            ...         return msg
+            ...     return None
+            >>> result = asyncio.run(test_receive())
+            >>> result
+            {'test': 'message'}
+
+            >>> # Test receive message when not connected
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> try:
+            ...     async def test_receive():
+            ...         async for msg in transport.receive_message():
+            ...             pass
+            ...     asyncio.run(test_receive())
+            ... except RuntimeError as e:
+            ...     print("Expected error:", str(e))
+            Expected error: Transport not connected
+
+            >>> # Verify generator behavior
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> import inspect
+            >>> inspect.isasyncgenfunction(transport.receive_message)
+            True
         """
         if not self._connected:
             raise RuntimeError("Transport not connected")
@@ -131,11 +282,44 @@ class WebSocketTransport(Transport):
 
         Returns:
             True if connected
+
+        Examples:
+            >>> # Test initial state
+            >>> from unittest.mock import Mock
+            >>> mock_ws = Mock(spec=WebSocket)
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> import asyncio
+            >>> asyncio.run(transport.is_connected())
+            False
+
+            >>> # Test after connection
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> transport._connected = True
+            >>> asyncio.run(transport.is_connected())
+            True
+
+            >>> # Test after disconnection
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> transport._connected = True
+            >>> transport._connected = False
+            >>> asyncio.run(transport.is_connected())
+            False
         """
         return self._connected
 
     async def _ping_loop(self) -> None:
-        """Send periodic ping messages to keep connection alive."""
+        """Send periodic ping messages to keep connection alive.
+
+        Examples:
+            >>> # Test ping loop method exists
+            >>> from unittest.mock import Mock
+            >>> mock_ws = Mock(spec=WebSocket)
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> hasattr(transport, '_ping_loop')
+            True
+            >>> callable(transport._ping_loop)
+            True
+        """
         try:
             while self._connected:
                 await asyncio.sleep(settings.websocket_ping_interval)
@@ -156,6 +340,29 @@ class WebSocketTransport(Transport):
             await self.disconnect()
 
     async def send_ping(self) -> None:
-        """Send a manual ping message."""
+        """Send a manual ping message.
+
+        Examples:
+            >>> # Test manual ping when connected
+            >>> from unittest.mock import Mock, AsyncMock
+            >>> mock_ws = Mock(spec=WebSocket)
+            >>> mock_ws.send_bytes = AsyncMock()
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> transport._connected = True
+            >>> import asyncio
+            >>> asyncio.run(transport.send_ping())
+            >>> mock_ws.send_bytes.called
+            True
+            >>> mock_ws.send_bytes.call_args[0][0]
+            b'ping'
+
+            >>> # Test manual ping when not connected
+            >>> transport = WebSocketTransport(mock_ws)
+            >>> transport._connected = False
+            >>> asyncio.run(transport.send_ping())
+            >>> # Should not call send_bytes when not connected
+            >>> mock_ws.send_bytes.call_count
+            1
+        """
         if self._connected:
             await self._websocket.send_bytes(b"ping")
