@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union, Self
 
 # Third-Party
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
@@ -1520,7 +1520,7 @@ class GatewayRead(BaseModelWithConfigDict):
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
     @classmethod
-    def _populate_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def _populate_auth(cls, values: Self) -> Dict[str, Any]:
         """Populate authentication fields based on auth_type and encoded auth_value.
 
         This post-validation method decodes the stored authentication value and
@@ -1552,28 +1552,33 @@ class GatewayRead(BaseModelWithConfigDict):
 
         Examples:
             >>> # Basic auth example
-            >>> values = GatewayRead._populate_auth({
-            ...     'auth_type': 'basic',
-            ...     'auth_value': encode_auth({'username': 'admin', 'password': 'secret'})
-            ... })
+            >>> string_bytes = "admin:secret".encode("utf-8")
+            >>> encoded_auth = base64.urlsafe_b64encode(string_bytes).decode("utf-8")
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type="basic",
+            ...     auth_value=encode_auth({"Authorization": f"Basic {encoded_auth}"})
+            ... )
+            >>> values = GatewayRead._populate_auth(values)
             >>> values.auth_username
             'admin'
             >>> values.auth_password
             'secret'
 
             >>> # Bearer auth example
-            >>> values = GatewayRead._populate_auth({
-            ...     'auth_type': 'bearer',
-            ...     'auth_value': encode_auth({'Authorization': 'Bearer mytoken123'})
-            ... })
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type="bearer",
+            ...     auth_value=encode_auth({"Authorization": "Bearer mytoken123"})
+            ... )
+            >>> values = GatewayRead._populate_auth(values)
             >>> values.auth_token
             'mytoken123'
 
             >>> # Custom headers example
-            >>> values = GatewayRead._populate_auth({
-            ...     'auth_type': 'authheaders',
-            ...     'auth_value': encode_auth({'X-API-Key': 'abc123'})
-            ... })
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type='authheaders',
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ... )
+            >>> values = GatewayRead._populate_auth(values)
             >>> values.auth_header_key
             'X-API-Key'
             >>> values.auth_header_value
