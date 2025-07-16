@@ -18,7 +18,7 @@ The ErrorFormatter class handles:
 Examples:
     >>> from mcpgateway.utils.error_formatter import ErrorFormatter
     >>> from pydantic import ValidationError
-    >>> 
+    >>>
     >>> # Format validation errors
     >>> formatter = ErrorFormatter()
     >>> # formatted_error = formatter.format_validation_error(validation_error)
@@ -37,11 +37,11 @@ logger = logging.getLogger(__name__)
 
 class ErrorFormatter:
     """Transform technical errors into user-friendly messages.
-    
+
     Provides static methods to convert Pydantic validation errors and
     SQLAlchemy database exceptions into consistent, user-friendly error
     responses suitable for API consumption.
-    
+
     Examples:
         >>> formatter = ErrorFormatter()
         >>> isinstance(formatter, ErrorFormatter)
@@ -51,7 +51,7 @@ class ErrorFormatter:
     @staticmethod
     def format_validation_error(error: ValidationError) -> Dict[str, Any]:
         """Convert Pydantic errors to user-friendly format.
-        
+
         Transforms Pydantic ValidationError objects into a structured
         dictionary containing user-friendly error messages. Maps technical
         validation messages to more understandable explanations.
@@ -67,7 +67,7 @@ class ErrorFormatter:
 
         Examples:
             >>> from pydantic import BaseModel, ValidationError, field_validator
-            >>> 
+            >>>
             >>> # Create a test model with validation
             >>> class TestModel(BaseModel):
             ...     name: str
@@ -76,14 +76,14 @@ class ErrorFormatter:
             ...         if not v.startswith('A'):
             ...             raise ValueError('Tool name must start with a letter A')
             ...         return v
-            >>> 
+            >>>
             >>> # Test validation error formatting
             >>> try:
             ...     TestModel(name="B123")
             ... except ValidationError as e:
             ...     result = ErrorFormatter.format_validation_error(e)
             <class 'pydantic_core._pydantic_core.ValidationError'>
-            >>> 
+            >>>
             >>> result['message']
             'Validation failed'
             >>> result['success']
@@ -94,7 +94,7 @@ class ErrorFormatter:
             'name'
             >>> 'must start with a letter' in result['details'][0]['message']
             True
-            
+
             >>> # Test with multiple errors
             >>> class MultiFieldModel(BaseModel):
             ...     name: str
@@ -109,13 +109,13 @@ class ErrorFormatter:
             ...         if not v.startswith('http'):
             ...             raise ValueError('Tool URL must start with http')
             ...         return v
-            >>> 
+            >>>
             >>> try:
             ...     MultiFieldModel(name='A' * 300, url='ftp://invalid')
             ... except ValidationError as e:
             ...     result = ErrorFormatter.format_validation_error(e)
             <class 'pydantic_core._pydantic_core.ValidationError'>
-            >>> 
+            >>>
             >>> len(result['details'])
             2
             >>> any('too long' in detail['message'] for detail in result['details'])
@@ -142,7 +142,7 @@ class ErrorFormatter:
     @staticmethod
     def _get_user_message(field: str, technical_msg: str) -> str:
         """Map technical validation messages to user-friendly ones.
-        
+
         Converts technical validation error messages into user-friendly
         explanations based on pattern matching. Provides field-specific
         context in the returned message.
@@ -159,27 +159,27 @@ class ErrorFormatter:
             >>> msg = ErrorFormatter._get_user_message("name", "Tool name must start with a letter")
             >>> msg
             'Name must start with a letter and contain only letters, numbers, and underscores'
-            
+
             >>> # Test length validation mapping
             >>> msg = ErrorFormatter._get_user_message("description", "Tool name exceeds maximum length")
             >>> msg
             'Description is too long (maximum 255 characters)'
-            
+
             >>> # Test URL validation mapping
             >>> msg = ErrorFormatter._get_user_message("endpoint", "Tool URL must start with http")
             >>> msg
             'Endpoint must be a valid HTTP or WebSocket URL'
-            
+
             >>> # Test directory traversal validation
             >>> msg = ErrorFormatter._get_user_message("path", "cannot contain directory traversal")
             >>> msg
             'Path contains invalid characters'
-            
+
             >>> # Test HTML injection validation
             >>> msg = ErrorFormatter._get_user_message("content", "contains HTML tags")
             >>> msg
             'Content cannot contain HTML or script tags'
-            
+
             >>> # Test fallback for unknown messages
             >>> msg = ErrorFormatter._get_user_message("custom_field", "Some unknown error")
             >>> msg
@@ -203,7 +203,7 @@ class ErrorFormatter:
     @staticmethod
     def format_database_error(error: DatabaseError) -> Dict[str, Any]:
         """Convert database errors to user-friendly format.
-        
+
         Transforms SQLAlchemy database exceptions into structured error
         responses. Handles common integrity constraint violations and
         provides specific messages for known error patterns.
@@ -218,7 +218,7 @@ class ErrorFormatter:
 
         Examples:
             >>> from unittest.mock import Mock
-            >>> 
+            >>>
             >>> # Test UNIQUE constraint on gateway URL
             >>> mock_error = Mock(spec=IntegrityError)
             >>> mock_error.orig = Mock()
@@ -228,43 +228,43 @@ class ErrorFormatter:
             'A gateway with this URL already exists'
             >>> result['success']
             False
-            
+
             >>> # Test UNIQUE constraint on gateway name
             >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: gateways.name"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
             'A gateway with this name already exists'
-            
+
             >>> # Test UNIQUE constraint on tool name
             >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: tools.name"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
             'A tool with this name already exists'
-            
+
             >>> # Test UNIQUE constraint on resource URI
             >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: resources.uri"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
             'A resource with this URI already exists'
-            
+
             >>> # Test FOREIGN KEY constraint
             >>> mock_error.orig.__str__ = lambda self: "FOREIGN KEY constraint failed"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
             'Referenced item not found'
-            
+
             >>> # Test NOT NULL constraint
             >>> mock_error.orig.__str__ = lambda self: "NOT NULL constraint failed"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
             'Required field is missing'
-            
+
             >>> # Test CHECK constraint
             >>> mock_error.orig.__str__ = lambda self: "CHECK constraint failed: invalid_data"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
             'Gateway validation failed. Please check the input data.'
-            
+
             >>> # Test generic database error
             >>> generic_error = Mock(spec=DatabaseError)
             >>> generic_error.orig = None
