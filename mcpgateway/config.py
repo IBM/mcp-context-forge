@@ -143,6 +143,35 @@ class Settings(BaseSettings):
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def _parse_allowed_origins(cls, v):
+        """Parse allowed origins from environment variable or config value.
+
+        Handles multiple input formats for the allowed_origins field:
+        - JSON array string: '["http://localhost", "http://example.com"]'
+        - Comma-separated string: "http://localhost, http://example.com"
+        - Already parsed set/list
+
+        Automatically strips whitespace and removes outer quotes if present.
+
+        Args:
+            v: The input value to parse. Can be a string (JSON or CSV), set, list, or other iterable.
+
+        Returns:
+            Set[str]: A set of allowed origin strings.
+
+        Examples:
+            >>> sorted(Settings._parse_allowed_origins('["https://a.com", "https://b.com"]'))
+            ['https://a.com', 'https://b.com']
+            >>> sorted(Settings._parse_allowed_origins("https://x.com , https://y.com"))
+            ['https://x.com', 'https://y.com']
+            >>> Settings._parse_allowed_origins('""')
+            set()
+            >>> Settings._parse_allowed_origins('"https://single.com"')
+            {'https://single.com'}
+            >>> sorted(Settings._parse_allowed_origins(['http://a.com', 'http://b.com']))
+            ['http://a.com', 'http://b.com']
+            >>> Settings._parse_allowed_origins({'http://existing.com'})
+            {'http://existing.com'}
+        """
         if isinstance(v, str):
             v = v.strip()
             if v[:1] in "\"'" and v[-1:] == v[:1]:  # strip 1 outer quote pair
@@ -174,6 +203,36 @@ class Settings(BaseSettings):
     @field_validator("federation_peers", mode="before")
     @classmethod
     def _parse_federation_peers(cls, v):
+        """Parse federation peer URLs from environment variable or config value.
+
+        Handles multiple input formats for the federation_peers field:
+        - JSON array string: '["https://gw1.com", "https://gw2.com"]'
+        - Comma-separated string: "https://gw1.com, https://gw2.com"
+        - Already parsed list
+
+        Automatically strips whitespace and removes outer quotes if present.
+        Order is preserved when parsing.
+
+        Args:
+            v: The input value to parse. Can be a string (JSON or CSV), list, or other iterable.
+
+        Returns:
+            List[str]: A list of federation peer URLs.
+
+        Examples:
+            >>> Settings._parse_federation_peers('["https://gw1", "https://gw2"]')
+            ['https://gw1', 'https://gw2']
+            >>> Settings._parse_federation_peers("https://gw3, https://gw4")
+            ['https://gw3', 'https://gw4']
+            >>> Settings._parse_federation_peers('""')
+            []
+            >>> Settings._parse_federation_peers('"https://single-peer.com"')
+            ['https://single-peer.com']
+            >>> Settings._parse_federation_peers(['http://p1.com', 'http://p2.com'])
+            ['http://p1.com', 'http://p2.com']
+            >>> Settings._parse_federation_peers([])
+            []
+        """
         if isinstance(v, str):
             v = v.strip()
             if v[:1] in "\"'" and v[-1:] == v[:1]:

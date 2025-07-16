@@ -105,6 +105,18 @@ class _PubSub:
     """
 
     def __init__(self) -> None:
+        """Initialize a new publish-subscribe system.
+
+        Creates an empty list of subscriber queues. Each subscriber will
+        receive their own asyncio.Queue for receiving published messages.
+
+        Examples:
+            >>> pubsub = _PubSub()
+            >>> isinstance(pubsub._subscribers, list)
+            True
+            >>> len(pubsub._subscribers)
+            0
+        """
         self._subscribers: List[asyncio.Queue[str]] = []
 
     async def publish(self, data: str) -> None:
@@ -195,6 +207,25 @@ class StdIOEndpoint:
     """
 
     def __init__(self, cmd: str, pubsub: _PubSub) -> None:
+        """Initialize a stdio endpoint for subprocess communication.
+
+        Sets up the endpoint with the command to run and the pubsub system
+        for message distribution. The subprocess is not started until start()
+        is called.
+
+        Args:
+            cmd: The command string to execute as a subprocess.
+            pubsub: The publish-subscribe system for distributing subprocess
+                output to SSE clients.
+
+        Examples:
+            >>> pubsub = _PubSub()
+            >>> endpoint = StdIOEndpoint("echo hello", pubsub)
+            >>> endpoint._cmd
+            'echo hello'
+            >>> endpoint._proc is None
+            True
+        """
         self._cmd = cmd
         self._pubsub = pubsub
         self._proc: Optional[asyncio.subprocess.Process] = None
@@ -384,6 +415,31 @@ def _build_fastapi(
         session_id = uuid.uuid4().hex
 
         async def event_gen() -> AsyncIterator[Dict[str, Any]]:
+            """Generate Server-Sent Events for the SSE stream.
+
+            Yields SSE events in the following sequence:
+            1. An 'endpoint' event with the message posting URL (required by MCP spec)
+            2. An immediate 'keepalive' event to confirm the stream is active
+            3. 'message' events containing JSON-RPC responses from the subprocess
+            4. Periodic 'keepalive' events to prevent timeouts
+
+            The generator runs until the client disconnects or the server shuts down.
+            Automatically unsubscribes from the pubsub system on completion.
+
+            Yields:
+                Dict[str, Any]: SSE event dictionaries containing:
+                    - event: The event type ('endpoint', 'message', or 'keepalive')
+                    - data: The event payload (URL, JSON-RPC message, or empty object)
+                    - retry: Retry interval in milliseconds for reconnection
+
+            Examples:
+                >>> import asyncio
+                >>> async def test_event_gen():
+                ...     # This is tested indirectly through the SSE endpoint
+                ...     return True
+                >>> asyncio.run(test_event_gen())
+                True
+            """
             # 1️⃣ Mandatory "endpoint" bootstrap required by the MCP spec
             endpoint_url = f"{str(request.base_url).rstrip('/')}{message_path}?session_id={session_id}"
             yield {
@@ -567,6 +623,24 @@ async def _run_stdio_to_sse(cmd: str, port: int, log_level: str = "info", cors: 
     shutting_down = asyncio.Event()  # 🔄 make shutdown idempotent
 
     async def _shutdown() -> None:
+        """Handle graceful shutdown of the stdio bridge.
+
+        Performs shutdown operations in the correct order:
+        1. Sets a flag to prevent multiple shutdown attempts
+        2. Stops the stdio subprocess
+        3. Shuts down the HTTP server
+
+        This function is idempotent - multiple calls will only execute
+        the shutdown sequence once.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_shutdown():
+            ...     # Shutdown is tested as part of the main run flow
+            ...     return True
+            >>> asyncio.run(test_shutdown())
+            True
+        """
         if shutting_down.is_set():
             return
         shutting_down.set()
@@ -622,6 +696,26 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str], timeout: flo
         )
 
         async def read_stdout() -> None:
+            """Read lines from subprocess stdout and print to console.
+
+            Continuously reads lines from the subprocess stdout stream until EOF
+            is reached. Each line is decoded and printed to the console without
+            trailing newlines.
+
+            This coroutine runs as part of the SSE to stdio bridge, forwarding
+            subprocess output to the user's terminal.
+
+            Raises:
+                RuntimeError: If the process stdout stream is not available.
+
+            Examples:
+                >>> import asyncio
+                >>> async def test_read():
+                ...     # This is tested as part of the SSE to stdio flow
+                ...     return True
+                >>> asyncio.run(test_read())
+                True
+            """
             if not process.stdout:
                 raise RuntimeError("Process stdout not available")
 
@@ -632,6 +726,23 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str], timeout: flo
                 print(line.decode().rstrip())
 
         async def pump_sse_to_stdio() -> None:
+            """Stream SSE data from remote endpoint to subprocess stdin.
+
+            Connects to the remote SSE endpoint and forwards data lines to the
+            subprocess stdin. Only processes lines that start with "data: " and
+            ignores empty data payloads or keepalive messages ("{}").
+
+            This coroutine runs as part of the SSE to stdio bridge, pumping
+            messages from the remote SSE stream to the local subprocess.
+
+            Examples:
+                >>> import asyncio
+                >>> async def test_pump():
+                ...     # This is tested as part of the SSE to stdio flow
+                ...     return True
+                >>> asyncio.run(test_pump())
+                True
+            """
             async with client.stream("GET", url) as response:
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):

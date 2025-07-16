@@ -248,15 +248,69 @@ app = FastAPI(
 
 
 # Global exceptions handlers
-
-
 @app.exception_handler(ValidationError)
-async def validation_exception_handler(request: Request, exc: ValidationError):
+async def validation_exception_handler(_request: Request, exc: ValidationError):
+    """Handle Pydantic validation errors globally.
+
+    Intercepts ValidationError exceptions raised anywhere in the application
+    and returns a properly formatted JSON error response with detailed
+    validation error information.
+
+    Args:
+        _request: The FastAPI request object that triggered the validation error.
+                  (Unused but required by FastAPI's exception handler interface)
+        exc: The Pydantic ValidationError exception containing validation
+             failure details.
+
+    Returns:
+        JSONResponse: A 422 Unprocessable Entity response with formatted
+                      validation error details.
+
+    Examples:
+        >>> # This handler is automatically invoked by FastAPI when a ValidationError occurs
+        >>> # For example, when request data fails Pydantic model validation:
+        >>> # POST /tools with invalid data would trigger this handler
+        >>> # Response format:
+        >>> # {
+        >>> #   "detail": [
+        >>> #     {
+        >>> #       "loc": ["body", "name"],
+        >>> #       "msg": "field required",
+        >>> #       "type": "value_error.missing"
+        >>> #     }
+        >>> #   ]
+        >>> # }
+    """
     return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
 
 @app.exception_handler(IntegrityError)
-async def database_exception_handler(request: Request, exc: IntegrityError):
+async def database_exception_handler(_request: Request, exc: IntegrityError):
+    """Handle SQLAlchemy database integrity constraint violations globally.
+
+    Intercepts IntegrityError exceptions (e.g., unique constraint violations,
+    foreign key constraints) and returns a properly formatted JSON error response.
+    This provides consistent error handling for database constraint violations
+    across the entire application.
+
+    Args:
+        _request: The FastAPI request object that triggered the database error.
+                  (Unused but required by FastAPI's exception handler interface)
+        exc: The SQLAlchemy IntegrityError exception containing constraint
+             violation details.
+
+    Returns:
+        JSONResponse: A 409 Conflict response with formatted database error details.
+
+    Examples:
+        >>> # This handler is automatically invoked when database constraints are violated
+        >>> # For example, trying to create a duplicate tool name:
+        >>> # POST /tools with duplicate name would trigger this handler
+        >>> # Response format:
+        >>> # {
+        >>> #   "detail": "Unique constraint violation: Key (name)=(existing_tool) already exists"
+        >>> # }
+    """
     return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 
