@@ -259,7 +259,6 @@ def _payload_from_cli(args) -> Dict[str, Any]:
 
     Raises:
         ValueError: If data contains invalid key=value pairs (missing '=').
-        json.JSONDecodeError: If data is not valid JSON and not valid key=value format.
 
     Examples:
         >>> from argparse import Namespace

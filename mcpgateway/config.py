@@ -153,8 +153,7 @@ class Settings(BaseSettings):
         Automatically strips whitespace and removes outer quotes if present.
 
         Args:
-            v: The input value to parse. Can be a string (JSON or CSV),
-            set, list, or other iterable.
+            v: The input value to parse. Can be a string (JSON or CSV), set, list, or other iterable.
 
         Returns:
             Set[str]: A set of allowed origin strings.
@@ -215,8 +214,7 @@ class Settings(BaseSettings):
         Order is preserved when parsing.
 
         Args:
-            v: The input value to parse. Can be a string (JSON or CSV),
-            list, or other iterable.
+            v: The input value to parse. Can be a string (JSON or CSV), list, or other iterable.
 
         Returns:
             List[str]: A list of federation peer URLs.

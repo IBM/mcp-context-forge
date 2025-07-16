@@ -249,7 +249,7 @@ app = FastAPI(
 
 # Global exceptions handlers
 @app.exception_handler(ValidationError)
-async def validation_exception_handler(request: Request, exc: ValidationError):
+async def validation_exception_handler(_request: Request, exc: ValidationError):
     """Handle Pydantic validation errors globally.
 
     Intercepts ValidationError exceptions raised anywhere in the application
@@ -257,7 +257,8 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
     validation error information.
 
     Args:
-        request: The FastAPI request object that triggered the validation error.
+        _request: The FastAPI request object that triggered the validation error.
+                  (Unused but required by FastAPI's exception handler interface)
         exc: The Pydantic ValidationError exception containing validation
              failure details.
 
@@ -284,7 +285,7 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
 
 
 @app.exception_handler(IntegrityError)
-async def database_exception_handler(request: Request, exc: IntegrityError):
+async def database_exception_handler(_request: Request, exc: IntegrityError):
     """Handle SQLAlchemy database integrity constraint violations globally.
 
     Intercepts IntegrityError exceptions (e.g., unique constraint violations,
@@ -293,7 +294,8 @@ async def database_exception_handler(request: Request, exc: IntegrityError):
     across the entire application.
 
     Args:
-        request: The FastAPI request object that triggered the database error.
+        _request: The FastAPI request object that triggered the database error.
+                  (Unused but required by FastAPI's exception handler interface)
         exc: The SQLAlchemy IntegrityError exception containing constraint
              violation details.
 
