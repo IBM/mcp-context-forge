@@ -245,6 +245,25 @@ class SessionRegistry(SessionBackend):
             try:
 
                 def _db_add():
+                    """Store session record in the database.
+
+                    Creates a new SessionRecord entry in the database for tracking
+                    distributed session state. Uses a fresh database connection from
+                    the connection pool.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during database I/O.
+
+                    Raises:
+                        Exception: Any database error is re-raised after rollback.
+                            Common errors include duplicate session_id (unique constraint)
+                            or database connection issues.
+
+                    Examples:
+                        >>> # This function is called internally by add_session()
+                        >>> # When executed, it creates a database record:
+                        >>> # SessionRecord(session_id='abc123', created_at=now())
+                    """
                     db_session = next(get_db())
                     try:
                         session_record = SessionRecord(session_id=session_id)
@@ -298,6 +317,23 @@ class SessionRegistry(SessionBackend):
             try:
 
                 def _db_check():
+                    """Check if a session exists in the database.
+
+                    Queries the SessionRecord table to determine if a session with
+                    the given session_id exists. This is used when the session is not
+                    found in the local cache to check if it exists on another worker.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during database queries.
+
+                    Returns:
+                        bool: True if the session exists in the database, False otherwise.
+
+                    Examples:
+                        >>> # This function is called internally by get_session()
+                        >>> # Returns True if SessionRecord with session_id exists
+                        >>> # Returns False if no matching record found
+                    """
                     db_session = next(get_db())
                     try:
                         record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
@@ -351,6 +387,24 @@ class SessionRegistry(SessionBackend):
             try:
 
                 def _db_remove():
+                    """Delete session record from the database.
+
+                    Removes the SessionRecord entry with the specified session_id
+                    from the database. This is called when a session is being
+                    terminated or has expired.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during database operations.
+
+                    Raises:
+                        Exception: Any database error is re-raised after rollback.
+                            This includes connection errors or constraint violations.
+
+                    Examples:
+                        >>> # This function is called internally by remove_session()
+                        >>> # Deletes the SessionRecord where session_id matches
+                        >>> # No error if session_id doesn't exist (idempotent)
+                    """
                     db_session = next(get_db())
                     try:
                         db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).delete()
@@ -404,6 +458,29 @@ class SessionRegistry(SessionBackend):
                     msg_json = json.dumps(str(message))
 
                 def _db_add():
+                    """Store message in the database for inter-process communication.
+
+                    Creates a new SessionMessageRecord entry containing the session_id
+                    and serialized message. This enables message passing between
+                    different worker processes through the shared database.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during database writes.
+
+                    Raises:
+                        Exception: Any database error is re-raised after rollback.
+                            Common errors include database connection issues or
+                            constraints violations.
+
+                    Examples:
+                        >>> # This function is called internally by broadcast()
+                        >>> # Creates a record like:
+                        >>> # SessionMessageRecord(
+                        >>> #     session_id='abc123',
+                        >>> #     message='{"method": "ping", "id": 1}',
+                        >>> #     created_at=now()
+                        >>> # )
+                    """
                     db_session = next(get_db())
                     try:
                         message_record = SessionMessageRecord(session_id=session_id, message=msg_json)
@@ -487,6 +564,29 @@ class SessionRegistry(SessionBackend):
         elif self._backend == "database":
 
             def _db_read_session(session_id):
+                """Check if session still exists in the database.
+
+                Queries the SessionRecord table to verify that the session
+                is still active. Used in the message polling loop to determine
+                when to stop checking for messages.
+
+                This inner function is designed to be run in a thread executor
+                to avoid blocking the async event loop during database reads.
+
+                Args:
+                    session_id: The session identifier to look up.
+
+                Returns:
+                    SessionRecord: The session record if found, None otherwise.
+
+                Raises:
+                    Exception: Any database error is re-raised after rollback.
+
+                Examples:
+                    >>> # This function is called internally by message_check_loop()
+                    >>> # Returns SessionRecord object if session exists
+                    >>> # Returns None if session has been removed
+                """
                 db_session = next(get_db())
                 try:
                     # Delete sessions that haven't been accessed for TTL seconds
@@ -499,6 +599,29 @@ class SessionRegistry(SessionBackend):
                     db_session.close()
 
             def _db_read(session_id):
+                """Read pending message for a session from the database.
+
+                Retrieves the first (oldest) unprocessed message for the given
+                session_id from the SessionMessageRecord table. Messages are
+                processed in FIFO order.
+
+                This inner function is designed to be run in a thread executor
+                to avoid blocking the async event loop during database queries.
+
+                Args:
+                    session_id: The session identifier to read messages for.
+
+                Returns:
+                    SessionMessageRecord: The oldest message record if found, None otherwise.
+
+                Raises:
+                    Exception: Any database error is re-raised after rollback.
+
+                Examples:
+                    >>> # This function is called internally by message_check_loop()
+                    >>> # Returns SessionMessageRecord with message data
+                    >>> # Returns None if no pending messages
+                """
                 db_session = next(get_db())
                 try:
                     # Delete sessions that haven't been accessed for TTL seconds
@@ -511,6 +634,27 @@ class SessionRegistry(SessionBackend):
                     db_session.close()
 
             def _db_remove(session_id, message):
+                """Remove processed message from the database.
+
+                Deletes a specific message record after it has been successfully
+                processed and sent to the transport. This prevents duplicate
+                message delivery.
+
+                This inner function is designed to be run in a thread executor
+                to avoid blocking the async event loop during database deletes.
+
+                Args:
+                    session_id: The session identifier the message belongs to.
+                    message: The exact message content to remove (must match exactly).
+
+                Raises:
+                    Exception: Any database error is re-raised after rollback.
+
+                Examples:
+                    >>> # This function is called internally after message processing
+                    >>> # Deletes the specific SessionMessageRecord entry
+                    >>> # Log: "Removed message from mcp_messages table"
+                """
                 db_session = next(get_db())
                 try:
                     db_session.query(SessionMessageRecord).filter(SessionMessageRecord.session_id == session_id).filter(SessionMessageRecord.message == message).delete()
@@ -523,6 +667,26 @@ class SessionRegistry(SessionBackend):
                     db_session.close()
 
             async def message_check_loop(session_id):
+                """Poll database for messages and deliver to local transport.
+
+                Continuously checks the database for new messages directed to
+                the specified session_id. When messages are found and the
+                transport exists locally, delivers the message and removes it
+                from the database. Exits when the session no longer exists.
+
+                This coroutine runs as a background task for each active session
+                using database backend, enabling message delivery across worker
+                processes.
+
+                Args:
+                    session_id: The session identifier to monitor for messages.
+
+                Examples:
+                    >>> # This function is called as a task by respond()
+                    >>> # asyncio.create_task(message_check_loop('abc123'))
+                    >>> # Polls every 0.1 seconds until session is removed
+                    >>> # Delivers messages to transport and cleans up database
+                """
                 while True:
                     record = await asyncio.to_thread(_db_read, session_id)
 
@@ -572,6 +736,27 @@ class SessionRegistry(SessionBackend):
             try:
                 # Clean up expired sessions every 5 minutes
                 def _db_cleanup():
+                    """Remove expired sessions from the database.
+
+                    Deletes all SessionRecord entries that haven't been accessed
+                    within the session TTL period. Uses database-specific date
+                    arithmetic to calculate expiry time.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during bulk deletes.
+
+                    Returns:
+                        int: Number of expired session records deleted.
+
+                    Raises:
+                        Exception: Any database error is re-raised after rollback.
+
+                    Examples:
+                        >>> # This function is called periodically by _db_cleanup_task()
+                        >>> # Deletes sessions older than session_ttl seconds
+                        >>> # Returns count of deleted records for logging
+                        >>> # Log: "Cleaned up 5 expired database sessions"
+                    """
                     db_session = next(get_db())
                     try:
                         # Delete sessions that haven't been accessed for TTL seconds
@@ -602,6 +787,30 @@ class SessionRegistry(SessionBackend):
 
                         # Refresh session in database
                         def _refresh_session(session_id=session_id):
+                            """Update session's last accessed timestamp in the database.
+
+                            Refreshes the last_accessed field for an active session to
+                            prevent it from being cleaned up as expired. This is called
+                            periodically for all local sessions with active transports.
+
+                            This inner function is designed to be run in a thread executor
+                            to avoid blocking the async event loop during database updates.
+
+                            Args:
+                                session_id: The session identifier to refresh (default from closure).
+
+                            Returns:
+                                bool: True if the session was found and updated, False if not found.
+
+                            Raises:
+                                Exception: Any database error is re-raised after rollback.
+
+                            Examples:
+                                >>> # This function is called for each active local session
+                                >>> # Updates SessionRecord.last_accessed to current time
+                                >>> # Returns True if session exists and was refreshed
+                                >>> # Returns False if session no longer exists in database
+                            """
                             db_session = next(get_db())
                             try:
                                 session = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
