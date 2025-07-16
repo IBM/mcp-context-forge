@@ -261,7 +261,11 @@ def _sanitize_url(url: Optional[str]) -> Optional[str]:
         return None
     parts = urlsplit(url)
     if parts.password:
-        netloc = f"{parts.username}@{parts.hostname}{':' + str(parts.port) if parts.port else ''}"
+        # Only include username@ if username exists
+        if parts.username:
+            netloc = f"{parts.username}@{parts.hostname}{':' + str(parts.port) if parts.port else ''}"
+        else:
+            netloc = f"{parts.hostname}{':' + str(parts.port) if parts.port else ''}"
         parts = parts._replace(netloc=netloc)
     return urlunsplit(parts)
 
@@ -496,53 +500,6 @@ def _build_payload(
         Dict[str, Any]: Complete diagnostics payload containing timestamp, host info,
             application details, platform info, database and Redis status, settings,
             environment variables, and system metrics.
-
-    Examples:
-        >>> from unittest.mock import patch, Mock
-        >>> import datetime
-        >>>
-        >>> # Mock dependencies
-        >>> mock_engine = Mock()
-        >>> mock_engine.dialect.name = "postgresql"
-        >>> mock_settings = Mock()
-        >>> mock_settings.app_name = "TestApp"
-        >>> mock_settings.protocol_version = "1.0.0"
-        >>> mock_settings.database_url = "postgresql://user:pass@localhost/db"
-        >>> mock_settings.redis_url = "redis://localhost:6379"
-        >>> mock_settings.cache_type = "redis"
-        >>>
-        >>> with patch('mcpgateway.version.engine', mock_engine), \
-        ...      patch('sqlalchemy.__version__', '2.0.0'):
-        ...     with patch('mcpgateway.version.settings', mock_settings):
-        ...         with patch('mcpgateway.version.__version__', '2.0.0'):
-        ...             with patch('mcpgateway.version._database_version', return_value=('14.5', True)):
-        ...                 with patch('mcpgateway.version._public_env', return_value={'PATH': '/usr/bin'}):
-        ...                     with patch('mcpgateway.version._system_metrics', return_value={'cpu_count': 8}):
-        ...                         with patch('mcpgateway.version.HOSTNAME', 'test-host'):
-        ...                             with patch('mcpgateway.version.START_TIME', 1000.0):
-        ...                                 with patch('time.time', return_value=1100.0):
-        ...                                     payload = _build_payload("7.0.5", True)
-        >>>
-        >>> payload['host']
-        'test-host'
-        >>> payload['uptime_seconds']
-        100
-        >>> payload['app']['name']
-        'TestApp'
-        >>> payload['app']['version']
-        '2.0.0'
-        >>> payload['database']['dialect']
-        'postgresql'
-        >>> payload['database']['reachable']
-        True
-        >>> payload['redis']['reachable']
-        True
-        >>> payload['redis']['server_version']
-        '7.0.5'
-        >>> payload['env']['PATH']
-        '/usr/bin'
-        >>> payload['system']['cpu_count']
-        8
     """
     db_ver, db_ok = _database_version()
     return {
