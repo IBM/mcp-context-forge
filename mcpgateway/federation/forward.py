@@ -136,8 +136,9 @@ class ForwardingService:
             target_gateway_id: Optional specific gateway ID for targeted forwarding
 
         Returns:
-            For targeted requests: Single gateway response
-            For broadcast requests: List of responses from all active gateways
+            Any: Single gateway response for targeted requests (when target_gateway_id
+                is provided), or list of responses from all active gateways for
+                broadcast requests (when target_gateway_id is None).
 
         Raises:
             ForwardingError: If forwarding fails due to network issues,
