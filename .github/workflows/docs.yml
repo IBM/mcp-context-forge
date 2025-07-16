@@ -1,6 +1,8 @@
 name: 📚 Generate Documentation
 
 on:
+  pull_request:
+    branches: ["main"]
   push:
     branches: [ main ]
     paths: 
@@ -30,16 +32,16 @@ jobs:
           pip install code2flow snakefood3 pylint handsdown mkdocs mkdocs-material
 
       - name: 🧪 Run tests for reports
-        run: make test || true  # Continue even if tests fail
+        run: make test
       
       - name: 📝 Generate documentation
         run: make docs
       
-      - name: 💾 Commit documentation changes
-        run: |
-          git add docs/ || true
-          git commit -m "📚 Update documentation [skip ci]" -a || true
-          git push || true
+      # - name: 💾 Commit documentation changes
+      #   run: |
+      #     git add docs/ || true
+      #     git commit -m "📚 Update documentation [skip ci]" -a || true
+      #     git push || true
       
       - name: 🚀 Setup Pages
         uses: actions/configure-pages@v3
@@ -52,6 +54,6 @@ jobs:
         with:
           path: './site'
       
-      - name: 🌐 Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v2
+      # - name: 🌐 Deploy to GitHub Pages
+      #   id: deployment
+      #   uses: actions/deploy-pages@v2
