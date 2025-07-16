@@ -258,11 +258,11 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
 
     Args:
         request: The FastAPI request object that triggered the validation error.
-        exc: The Pydantic ValidationError exception containing validation 
+        exc: The Pydantic ValidationError exception containing validation
              failure details.
 
     Returns:
-        JSONResponse: A 422 Unprocessable Entity response with formatted 
+        JSONResponse: A 422 Unprocessable Entity response with formatted
                       validation error details.
 
     Examples:
@@ -294,7 +294,7 @@ async def database_exception_handler(request: Request, exc: IntegrityError):
 
     Args:
         request: The FastAPI request object that triggered the database error.
-        exc: The SQLAlchemy IntegrityError exception containing constraint 
+        exc: The SQLAlchemy IntegrityError exception containing constraint
              violation details.
 
     Returns:
@@ -308,7 +308,7 @@ async def database_exception_handler(request: Request, exc: IntegrityError):
         >>> # {
         >>> #   "detail": "Unique constraint violation: Key (name)=(existing_tool) already exists"
         >>> # }
-    """    
+    """
     return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 

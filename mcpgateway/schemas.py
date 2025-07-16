@@ -1525,13 +1525,13 @@ class GatewayRead(BaseModelWithConfigDict):
 
         This post-validation method decodes the stored authentication value and
         populates the appropriate authentication fields (username/password, token,
-        or custom headers) based on the authentication type. It ensures the 
+        or custom headers) based on the authentication type. It ensures the
         authentication data is properly formatted and accessible through individual
         fields for display purposes.
 
         The method handles three authentication types:
         - basic: Extracts username and password from Authorization header
-        - bearer: Extracts token from Bearer Authorization header  
+        - bearer: Extracts token from Bearer Authorization header
         - authheaders: Extracts custom header key/value pair
 
         Args:
@@ -1560,15 +1560,15 @@ class GatewayRead(BaseModelWithConfigDict):
             'admin'
             >>> values.auth_password
             'secret'
-            
-            >>> # Bearer auth example  
+
+            >>> # Bearer auth example
             >>> values = GatewayRead._populate_auth({
             ...     'auth_type': 'bearer',
             ...     'auth_value': encode_auth({'Authorization': 'Bearer mytoken123'})
             ... })
             >>> values.auth_token
             'mytoken123'
-            
+
             >>> # Custom headers example
             >>> values = GatewayRead._populate_auth({
             ...     'auth_type': 'authheaders',
@@ -1578,7 +1578,7 @@ class GatewayRead(BaseModelWithConfigDict):
             'X-API-Key'
             >>> values.auth_header_value
             'abc123'
-        """        
+        """
         auth_type = values.auth_type
         auth_value_encoded = values.auth_value
         auth_value = decode_auth(auth_value_encoded)
