@@ -1518,8 +1518,9 @@ class GatewayRead(BaseModelWithConfigDict):
     slug: str = Field(None, description="Slug for gateway endpoint URL")
 
     # This will be the main method to automatically populate fields
-    @classmethod
+    # This will be the main method to automatically populate fields
     @model_validator(mode="after")
+    @classmethod
     def _populate_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """Populate authentication fields based on auth_type and encoded auth_value.
 
@@ -1583,8 +1584,9 @@ class GatewayRead(BaseModelWithConfigDict):
         auth_value_encoded = values.auth_value
         auth_value = decode_auth(auth_value_encoded)
         if auth_type == "basic":
-            u = auth_value.get("username")
-            p = auth_value.get("password")
+            auth = auth_value.get("Authorization")
+            auth = auth.removeprefix("Basic ")
+            u, p = base64.urlsafe_b64decode(auth).decode("utf-8").split(":")
             if not u or not p:
                 raise ValueError("basic auth requires both username and password")
             values.auth_username, values.auth_password = u, p
