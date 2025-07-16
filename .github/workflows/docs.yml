@@ -1,0 +1,57 @@
+name: 📚 Generate Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'mcpgateway/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'mkdocs.yml'
+  workflow_dispatch:
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    
+    steps:
+      - name: 📦 Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz
+      
+      - name: 📚 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install code2flow snakefood3 pylint handsdown mkdocs mkdocs-material
+
+      - name: 🧪 Run tests for reports
+        run: make test || true  # Continue even if tests fail
+      
+      - name: 📝 Generate documentation
+        run: make docs
+      
+      - name: 💾 Commit documentation changes
+        run: |
+          git add docs/ || true
+          git commit -m "📚 Update documentation [skip ci]" -a || true
+          git push || true
+      
+      - name: 🚀 Setup Pages
+        uses: actions/configure-pages@v3
+      
+      - name: 📋 Build with MkDocs
+        run: mkdocs build
+      
+      - name: 📤 Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: './site'
+      
+      - name: 🌐 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
