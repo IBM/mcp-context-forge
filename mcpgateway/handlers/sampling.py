@@ -7,6 +7,38 @@ Authors: Mihai Criveti
 
 This module implements the sampling handler for MCP LLM interactions.
 It handles model selection, sampling preferences, and message generation.
+
+Examples:
+    >>> import asyncio
+    >>> from mcpgateway.models import ModelPreferences
+    >>> handler = SamplingHandler()
+    >>> asyncio.run(handler.initialize())
+    >>>
+    >>> # Test model selection
+    >>> prefs = ModelPreferences(
+    ...     cost_priority=0.2,
+    ...     speed_priority=0.3,
+    ...     intelligence_priority=0.5
+    ... )
+    >>> handler._select_model(prefs)
+    'claude-3-haiku'
+    >>>
+    >>> # Test message validation
+    >>> msg = {
+    ...     "role": "user",
+    ...     "content": {"type": "text", "text": "Hello"}
+    ... }
+    >>> handler._validate_message(msg)
+    True
+    >>>
+    >>> # Test mock sampling
+    >>> messages = [msg]
+    >>> response = handler._mock_sample(messages)
+    >>> print(response)
+    You said: Hello
+    Here is my response...
+    >>>
+    >>> asyncio.run(handler.shutdown())
 """
 
 # Standard
@@ -34,10 +66,27 @@ class SamplingHandler:
     - Message sampling requests
     - Context management
     - Content validation
+
+    Examples:
+        >>> handler = SamplingHandler()
+        >>> handler._supported_models['claude-3-haiku']
+        (0.8, 0.9, 0.7)
+        >>> len(handler._supported_models)
+        4
     """
 
     def __init__(self):
-        """Initialize sampling handler."""
+        """Initialize sampling handler.
+
+        Examples:
+            >>> handler = SamplingHandler()
+            >>> isinstance(handler._supported_models, dict)
+            True
+            >>> 'claude-3-opus' in handler._supported_models
+            True
+            >>> handler._supported_models['claude-3-sonnet']
+            (0.5, 0.7, 0.9)
+        """
         self._supported_models = {
             # Maps model names to capabilities scores (cost, speed, intelligence)
             "claude-3-haiku": (0.8, 0.9, 0.7),
@@ -47,11 +96,26 @@ class SamplingHandler:
         }
 
     async def initialize(self) -> None:
-        """Initialize sampling handler."""
+        """Initialize sampling handler.
+
+        Examples:
+            >>> import asyncio
+            >>> handler = SamplingHandler()
+            >>> asyncio.run(handler.initialize())
+            >>> # Handler is now initialized
+        """
         logger.info("Initializing sampling handler")
 
     async def shutdown(self) -> None:
-        """Shutdown sampling handler."""
+        """Shutdown sampling handler.
+
+        Examples:
+            >>> import asyncio
+            >>> handler = SamplingHandler()
+            >>> asyncio.run(handler.initialize())
+            >>> asyncio.run(handler.shutdown())
+            >>> # Handler is now shut down
+        """
         logger.info("Shutting down sampling handler")
 
     async def create_message(self, db: Session, request: Dict[str, Any]) -> CreateMessageResult:
@@ -66,6 +130,64 @@ class SamplingHandler:
 
         Raises:
             SamplingError: If sampling fails
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> handler = SamplingHandler()
+            >>> db = Mock()
+            >>>
+            >>> # Test with valid request
+            >>> request = {
+            ...     "messages": [{
+            ...         "role": "user",
+            ...         "content": {"type": "text", "text": "Hello"}
+            ...     }],
+            ...     "maxTokens": 100,
+            ...     "modelPreferences": {
+            ...         "cost_priority": 0.3,
+            ...         "speed_priority": 0.3,
+            ...         "intelligence_priority": 0.4
+            ...     }
+            ... }
+            >>> result = asyncio.run(handler.create_message(db, request))
+            >>> result.role
+            <Role.ASSISTANT: 'assistant'>
+            >>> result.content.type
+            'text'
+            >>> result.stop_reason
+            'maxTokens'
+            >>>
+            >>> # Test with no messages
+            >>> bad_request = {
+            ...     "messages": [],
+            ...     "maxTokens": 100,
+            ...     "modelPreferences": {
+            ...         "cost_priority": 0.3,
+            ...         "speed_priority": 0.3,
+            ...         "intelligence_priority": 0.4
+            ...     }
+            ... }
+            >>> try:
+            ...     asyncio.run(handler.create_message(db, bad_request))
+            ... except SamplingError as e:
+            ...     print(str(e))
+            No messages provided
+            >>>
+            >>> # Test with no max tokens
+            >>> bad_request = {
+            ...     "messages": [{"role": "user", "content": {"type": "text", "text": "Hi"}}],
+            ...     "modelPreferences": {
+            ...         "cost_priority": 0.3,
+            ...         "speed_priority": 0.3,
+            ...         "intelligence_priority": 0.4
+            ...     }
+            ... }
+            >>> try:
+            ...     asyncio.run(handler.create_message(db, bad_request))
+            ... except SamplingError as e:
+            ...     print(str(e))
+            Max tokens not specified
         """
         try:
             # Extract request parameters
@@ -121,6 +243,56 @@ class SamplingHandler:
 
         Raises:
             SamplingError: If no suitable model found
+
+        Examples:
+            >>> from mcpgateway.models import ModelPreferences, ModelHint
+            >>> handler = SamplingHandler()
+            >>>
+            >>> # Test intelligence priority
+            >>> prefs = ModelPreferences(
+            ...     cost_priority=1.0,
+            ...     speed_priority=0.0,
+            ...     intelligence_priority=1.0
+            ... )
+            >>> handler._select_model(prefs)
+            'claude-3-opus'
+            >>>
+            >>> # Test speed priority
+            >>> prefs = ModelPreferences(
+            ...     cost_priority=0.0,
+            ...     speed_priority=1.0,
+            ...     intelligence_priority=0.0
+            ... )
+            >>> handler._select_model(prefs)
+            'claude-3-haiku'
+            >>>
+            >>> # Test balanced preferences
+            >>> prefs = ModelPreferences(
+            ...     cost_priority=0.33,
+            ...     speed_priority=0.33,
+            ...     intelligence_priority=0.34
+            ... )
+            >>> model = handler._select_model(prefs)
+            >>> model in handler._supported_models
+            True
+            >>>
+            >>> # Test with model hints
+            >>> prefs = ModelPreferences(
+            ...     hints=[ModelHint(name="opus")],
+            ...     cost_priority=0.5,
+            ...     speed_priority=0.3,
+            ...     intelligence_priority=0.2
+            ... )
+            >>> handler._select_model(prefs)
+            'claude-3-opus'
+            >>>
+            >>> # Test empty supported models (should raise error)
+            >>> handler._supported_models = {}
+            >>> try:
+            ...     handler._select_model(prefs)
+            ... except SamplingError as e:
+            ...     print(str(e))
+            No suitable model found
         """
         # Check model hints first
         if preferences.hints:
@@ -159,6 +331,29 @@ class SamplingHandler:
 
         Returns:
             Messages with added context
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> handler = SamplingHandler()
+            >>> db = Mock()
+            >>>
+            >>> messages = [
+            ...     {"role": "user", "content": {"type": "text", "text": "Hello"}},
+            ...     {"role": "assistant", "content": {"type": "text", "text": "Hi there!"}}
+            ... ]
+            >>>
+            >>> # Test with 'none' context type
+            >>> result = asyncio.run(handler._add_context(db, messages, "none"))
+            >>> result == messages
+            True
+            >>>
+            >>> # Test with 'all' context type (currently returns same messages)
+            >>> result = asyncio.run(handler._add_context(db, messages, "all"))
+            >>> result == messages
+            True
+            >>> len(result)
+            2
         """
         # TODO: Implement context gathering based on type
         # For now return original messages
@@ -172,6 +367,65 @@ class SamplingHandler:
 
         Returns:
             True if valid
+
+        Examples:
+            >>> handler = SamplingHandler()
+            >>>
+            >>> # Valid text message
+            >>> msg = {"role": "user", "content": {"type": "text", "text": "Hello"}}
+            >>> handler._validate_message(msg)
+            True
+            >>>
+            >>> # Valid assistant message
+            >>> msg = {"role": "assistant", "content": {"type": "text", "text": "Hi!"}}
+            >>> handler._validate_message(msg)
+            True
+            >>>
+            >>> # Valid image message
+            >>> msg = {
+            ...     "role": "user",
+            ...     "content": {
+            ...         "type": "image",
+            ...         "data": "base64data",
+            ...         "mime_type": "image/png"
+            ...     }
+            ... }
+            >>> handler._validate_message(msg)
+            True
+            >>>
+            >>> # Missing role
+            >>> msg = {"content": {"type": "text", "text": "Hello"}}
+            >>> handler._validate_message(msg)
+            False
+            >>>
+            >>> # Invalid role
+            >>> msg = {"role": "system", "content": {"type": "text", "text": "Hello"}}
+            >>> handler._validate_message(msg)
+            False
+            >>>
+            >>> # Missing content
+            >>> msg = {"role": "user"}
+            >>> handler._validate_message(msg)
+            False
+            >>>
+            >>> # Invalid content type
+            >>> msg = {"role": "user", "content": {"type": "audio"}}
+            >>> handler._validate_message(msg)
+            False
+            >>>
+            >>> # Text content not string
+            >>> msg = {"role": "user", "content": {"type": "text", "text": 123}}
+            >>> handler._validate_message(msg)
+            False
+            >>>
+            >>> # Image missing data
+            >>> msg = {"role": "user", "content": {"type": "image", "mime_type": "image/png"}}
+            >>> handler._validate_message(msg)
+            False
+            >>>
+            >>> # Invalid structure
+            >>> handler._validate_message("not a dict")
+            False
         """
         try:
             # Must have role and content
@@ -205,6 +459,40 @@ class SamplingHandler:
 
         Returns:
             Sampled response text
+
+        Examples:
+            >>> handler = SamplingHandler()
+            >>>
+            >>> # Single user message
+            >>> messages = [{"role": "user", "content": {"type": "text", "text": "Hello world"}}]
+            >>> handler._mock_sample(messages)
+            'You said: Hello world\\nHere is my response...'
+            >>>
+            >>> # Conversation with multiple messages
+            >>> messages = [
+            ...     {"role": "user", "content": {"type": "text", "text": "Hi"}},
+            ...     {"role": "assistant", "content": {"type": "text", "text": "Hello!"}},
+            ...     {"role": "user", "content": {"type": "text", "text": "How are you?"}}
+            ... ]
+            >>> handler._mock_sample(messages)
+            'You said: How are you?\\nHere is my response...'
+            >>>
+            >>> # Image message
+            >>> messages = [{
+            ...     "role": "user",
+            ...     "content": {"type": "image", "data": "base64", "mime_type": "image/png"}
+            ... }]
+            >>> handler._mock_sample(messages)
+            'You said: I see the image you shared.\\nHere is my response...'
+            >>>
+            >>> # No user messages
+            >>> messages = [{"role": "assistant", "content": {"type": "text", "text": "Hi"}}]
+            >>> handler._mock_sample(messages)
+            "I'm not sure what to respond to."
+            >>>
+            >>> # Empty messages
+            >>> handler._mock_sample([])
+            "I'm not sure what to respond to."
         """
         # Extract last user message
         last_msg = None
