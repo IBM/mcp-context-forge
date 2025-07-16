@@ -1,4 +1,45 @@
 # -*- coding: utf-8 -*-
+"""Alembic environment configuration for database migrations.
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti, Madhav Kandukuri
+
+This module configures the Alembic migration environment for the MCP Gateway
+application. It sets up both offline and online migration modes, configures
+logging, and establishes the database connection parameters.
+
+The module performs the following key functions:
+- Configures Alembic to locate migration scripts in the mcpgateway package
+- Sets up Python logging based on the alembic.ini configuration
+- Imports the SQLAlchemy metadata from the application models
+- Configures the database URL from application settings
+- Provides functions for running migrations in both offline and online modes
+
+Offline mode generates SQL scripts without connecting to the database, while
+online mode executes migrations directly against a live database connection.
+
+Attributes:
+    config (Config): The Alembic configuration object loaded from alembic.ini.
+    target_metadata (MetaData): SQLAlchemy metadata object containing all
+        table definitions from the application models.
+
+Examples:
+    Running migrations in offline mode::
+
+        alembic upgrade head --sql
+
+    Running migrations in online mode::
+
+        alembic upgrade head
+
+    The module is typically not imported directly but is used by Alembic
+    when executing migration commands.
+
+Note:
+    This file is automatically executed by Alembic and should not be
+    imported or run directly by application code.
+"""
 # Standard
 from importlib.resources import files
 from logging.config import fileConfig

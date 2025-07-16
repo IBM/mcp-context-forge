@@ -48,6 +48,33 @@ class ServerNameConflictError(ServerError):
     """Raised when a server name conflicts with an existing one."""
 
     def __init__(self, name: str, is_active: bool = True, server_id: Optional[int] = None):
+        """Initialize a ServerNameConflictError exception.
+
+        Creates an exception that indicates a server name conflict, with additional
+        context about whether the conflicting server is active and its ID if known.
+        The error message is customized based on the server's active status.
+
+        Args:
+            name: The server name that caused the conflict.
+            is_active: Whether the conflicting server is currently active.
+                    Defaults to True.
+            server_id: The ID of the conflicting server, if known.
+                    Only included in message for inactive servers.
+
+        Examples:
+            >>> error = ServerNameConflictError("My Server")
+            >>> str(error)
+            'Server already exists with name: My Server'
+            >>> error = ServerNameConflictError("My Server", is_active=False, server_id=123)
+            >>> str(error)
+            'Server already exists with name: My Server (currently inactive, ID: 123)'
+            >>> error.name
+            'My Server'
+            >>> error.is_active
+            False
+            >>> error.server_id
+            123
+        """
         self.name = name
         self.is_active = is_active
         self.server_id = server_id
@@ -65,6 +92,26 @@ class ServerService:
     """
 
     def __init__(self) -> None:
+        """Initialize a new ServerService instance.
+
+        Sets up the service with:
+        - An empty list for event subscribers that will receive server change notifications
+        - An HTTP client configured with timeout and SSL verification settings from config
+
+        The HTTP client is used for health checks and other server-related HTTP operations.
+        Event subscribers can register to receive notifications about server additions,
+        updates, activations, deactivations, and deletions.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> service = ServerService()
+            >>> isinstance(service._event_subscribers, list)
+            True
+            >>> len(service._event_subscribers)
+            0
+            >>> hasattr(service, '_http_client')
+            True
+        """
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify)
 
