@@ -61,7 +61,11 @@ from mcpgateway.db import Base
 
 
 # Create config object - this is the standard way in Alembic
-config = Config()
+if context.config is None:
+    config = Config()
+else:
+    config = context.config
+
 config.set_main_option("script_location", str(files("mcpgateway").joinpath("alembic")))
 
 # Interpret the config file for Python logging.
@@ -121,22 +125,27 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connection = config.attributes.get("connection")
+    if connection is None:
+        connectable = engine_from_config(
+            config.get_section(config.config_ini_section, {}),
+            prefix="sqlalchemy.",
+            poolclass=pool.NullPool,
+        )
 
-    with connectable.connect() as connection:
+        with connectable.connect() as connection:
+            context.configure(connection=connection, target_metadata=target_metadata)
+
+            with context.begin_transaction():
+                context.run_migrations()
+    else:
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()
 
 
-# Only run migrations if executed as a script (not on import)
-if __name__ == "__main__":
-    if context.is_offline_mode():
-        run_migrations_offline()
-    else:
-        run_migrations_online()
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()

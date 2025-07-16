@@ -49,17 +49,21 @@ async def main() -> None:
     engine = create_engine(settings.database_url)
     ini_path = files("mcpgateway").joinpath("alembic.ini")
     cfg = Config(str(ini_path))  # path in container
-    cfg.attributes["configure_logger"] = False
+    cfg.attributes["configure_logger"] = True
 
-    command.ensure_version(cfg)
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        cfg.set_main_option("sqlalchemy.url", settings.database_url)
 
-    insp = inspect(engine)
-    if "gateways" not in insp.get_table_names():
-        logger.info("Empty DB detected - creating baseline schema")
-        Base.metadata.create_all(engine)
-        command.stamp(cfg, "head")  # record baseline
-    else:
-        command.upgrade(cfg, "head")  # apply any new revisions
+        insp = inspect(conn)
+
+        if "gateways" not in insp.get_table_names():
+            logger.info("Empty DB detected - creating baseline schema")
+            Base.metadata.create_all(bind=conn)
+            command.stamp(cfg, "head")
+        else:
+            command.upgrade(cfg, "head")
+
     logger.info("Database ready")
 
 
