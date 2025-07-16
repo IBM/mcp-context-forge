@@ -251,12 +251,30 @@ app = FastAPI(
 
 
 @app.exception_handler(ValidationError)
-async def validation_exception_handler(request: Request, exc: ValidationError):
+async def validation_exception_handler(_request: Request, exc: ValidationError):
+    """Handle Pydantic validation errors globally.
+
+    Args:
+        _request (Request): The incoming request.
+        exc (ValidationError): The Pydantic ValidationError exception.
+
+    Returns:
+        JSONResponse: A JSON response with a 422 status code and error details.
+    """
     return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
 
 @app.exception_handler(IntegrityError)
-async def database_exception_handler(request: Request, exc: IntegrityError):
+async def database_exception_handler(_request: Request, exc: IntegrityError):
+    """Handle database integrity errors.
+
+    Args:
+        _request (Request): The incoming request.
+        exc (IntegrityError): The SQLAlchemy IntegrityError exception.
+
+    Returns:
+        JSONResponse: A JSON response with a 409 status code and error details.
+    """
     return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 

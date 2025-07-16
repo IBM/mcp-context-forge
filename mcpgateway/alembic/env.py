@@ -4,14 +4,13 @@ from importlib.resources import files
 from logging.config import fileConfig
 
 # Third-Party
-from alembic import context
-
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 from alembic.config import Config
 from sqlalchemy import engine_from_config, pool
 
 # First-Party
+from alembic import context
 from mcpgateway.config import settings
 from mcpgateway.db import Base
 
