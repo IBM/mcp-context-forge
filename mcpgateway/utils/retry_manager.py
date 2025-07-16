@@ -93,7 +93,8 @@ class ResilientHttpClient:
             base (float): The base sleep time.
             jitter_range (float): The range within which the jitter will be applied.
         """
-        delay = base + random.uniform(0, jitter_range)
+        # random.uniform() is safe here as jitter is only used for retry timing, not security
+        delay = base + random.uniform(0, jitter_range)  # noqa: DUO102 # nosec B311
         # Ensure delay doesn't exceed the max allowed
         delay = min(delay, self.max_delay)
         await asyncio.sleep(delay)
