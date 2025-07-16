@@ -40,6 +40,7 @@ Note:
     This file is automatically executed by Alembic and should not be
     imported or run directly by application code.
 """
+
 # Standard
 from importlib.resources import files
 from logging.config import fileConfig
@@ -61,7 +62,12 @@ from mcpgateway.db import Base
 
 
 # Create config object - this is the standard way in Alembic
-config = Config()
+config = getattr(context, "config", None) or Config()
+
+def _inside_alembic() -> bool:
+    """Return True only when this file is running under Alembic CLI."""
+    return getattr(context, "_proxy", None) is not None
+
 config.set_main_option("script_location", str(files("mcpgateway").joinpath("alembic")))
 
 # Interpret the config file for Python logging.
@@ -121,21 +127,26 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connection = config.attributes.get("connection")
+    if connection is None:
+        connectable = engine_from_config(
+            config.get_section(config.config_ini_section, {}),
+            prefix="sqlalchemy.",
+            poolclass=pool.NullPool,
+        )
 
-    with connectable.connect() as connection:
+        with connectable.connect() as connection:
+            context.configure(connection=connection, target_metadata=target_metadata)
+
+            with context.begin_transaction():
+                context.run_migrations()
+    else:
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()
 
-
-# Only run migrations if executed as a script (not on import)
-if __name__ == "__main__":
+if _inside_alembic():
     if context.is_offline_mode():
         run_migrations_offline()
     else:

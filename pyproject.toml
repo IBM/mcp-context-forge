@@ -272,6 +272,7 @@ import_heading_localfolder = "Local"        # header for ad-hoc scripts / tests
 ###############################################################################
 known_first_party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
 known_local_folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
+known_third_party          = ["alembic"] # treat "alembic" as THIRDPARTY
 # src_paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
 
 ###############################################################################

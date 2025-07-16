@@ -2337,24 +2337,24 @@ alembic-install:
 
 db-new:
 	@echo "➜ Generating revision: $(MSG)"
-	$(ALEMBIC) revision --autogenerate -m $(MSG)
+	$(ALEMBIC) -c mcpgateway/alembic.ini revision --autogenerate -m $(MSG)
 
 db-up:
 	@echo "➜ Upgrading database to head ..."
-	$(ALEMBIC) upgrade head
+	$(ALEMBIC) -c mcpgateway/alembic.ini upgrade head
 
 db-down:
 	@echo "➜ Downgrading database → $(REV) ..."
-	$(ALEMBIC) downgrade $(REV)
+	$(ALEMBIC) -c mcpgateway/alembic.ini downgrade $(REV)
 
 db-current:
-	$(ALEMBIC) current
+	$(ALEMBIC) -c mcpgateway/alembic.ini current
 
 db-history:
-	$(ALEMBIC) history --verbose
+	$(ALEMBIC) -c mcpgateway/alembic.ini history --verbose
 
 db-revision-id:
-	@$(ALEMBIC) current --verbose | awk '/Current revision/ {print $$3}'
+	@$(ALEMBIC) -c mcpgateway/alembic.ini current --verbose | awk '/Current revision/ {print $$3}'
 
 
 # =============================================================================
