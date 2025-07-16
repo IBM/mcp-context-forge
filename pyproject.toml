@@ -139,6 +139,7 @@ dev = [
     "pytest-examples>=0.0.18",
     "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=15.1",
+    "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
     "pytype>=2024.10.11",
     "pyupgrade>=3.20.0",
