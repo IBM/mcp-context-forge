@@ -25,11 +25,11 @@ from importlib.resources import files
 import logging
 
 # Third-Party
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect
 
 # First-Party
+from alembic import command
 from mcpgateway.config import settings
 from mcpgateway.db import Base
 
