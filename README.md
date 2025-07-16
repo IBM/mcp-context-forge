@@ -933,7 +933,7 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | Setting         | Description                              | Default                | Options                |
 | --------------- | ---------------------------------------- | ---------------------- | ---------------------- |
 | `APP_NAME`      | Gateway / OpenAPI title                  | `MCP Gateway`          | string                 |
-| `HOST`          | Bind address for the app                 | `0.0.0.0`              | IPv4/IPv6              |
+| `HOST`          | Bind address for the app                 | `127.0.0.1`            | IPv4/IPv6              |
 | `PORT`          | Port the server listens on               | `4444`                 | 1-65535                |
 | `DATABASE_URL`  | SQLAlchemy connection URL                | `sqlite:///./mcp.db`   | any SQLAlchemy dialect |
 | `APP_ROOT_PATH` | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
@@ -981,8 +981,8 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
-| `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `true`  | bool    |
-| `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `true`  | bool    |
+| `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
+| `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
 
 > 🖥️ Set both to `false` to disable management UI and APIs in production.
 
