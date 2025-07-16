@@ -4340,7 +4340,7 @@ function initializeCodeMirrorEditors() {
                     {
                         mode: config.mode,
                         theme: "monokai",
-                        lineNumbers: true,
+                        lineNumbers: false,
                         autoCloseBrackets: true,
                         matchBrackets: true,
                         tabSize: 2,
