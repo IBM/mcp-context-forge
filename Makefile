@@ -610,10 +610,10 @@ vulture:                            ## 🧹  Dead code detection
 # -----------------------------------------------------------------------------
 # 📑 GRYPE SECURITY/VULNERABILITY SCANNING
 # -----------------------------------------------------------------------------
-# help: grype-install             - Install Grype
-# help: grype-scan                - Scan all files using grype
-# help: grype-sarif               - Generate SARIF report
-# help: security-scan             - Run Trivy security-scan
+# help: grype-install        - Install Grype
+# help: grype-scan           - Scan all files using grype
+# help: grype-sarif          - Generate SARIF report
+# help: security-scan        - Run Trivy security-scan
 .PHONY: grype-install grype-scan grype-sarif security-scan
 
 grype-install:
@@ -890,7 +890,7 @@ sonar-info:
 # 🛡️  SECURITY & PACKAGE SCANNING
 # =============================================================================
 # help: 🛡️ SECURITY & PACKAGE SCANNING
-# help: trivy-install 		 - Install Trivy
+# help: trivy-install        - Install Trivy
 # help: trivy                - Scan container image for CVEs (HIGH/CRIT). Needs podman socket enabled
 .PHONY: trivy-install trivy
 
