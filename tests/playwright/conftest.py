@@ -3,6 +3,7 @@
 Playwright test configuration - Simple version without python-dotenv.
 This assumes environment variables are loaded by the Makefile.
 """
+
 # Standard
 import base64
 import os
