@@ -62,10 +62,11 @@ from mcpgateway.db import Base
 
 
 # Create config object - this is the standard way in Alembic
-if context.config is None:
-    config = Config()
-else:
-    config = context.config
+config = getattr(context, "config", None) or Config()
+
+def _inside_alembic() -> bool:
+    """Return True only when this file is running under Alembic CLI."""
+    return getattr(context, "_proxy", None) is not None
 
 config.set_main_option("script_location", str(files("mcpgateway").joinpath("alembic")))
 
@@ -145,8 +146,8 @@ def run_migrations_online() -> None:
         with context.begin_transaction():
             context.run_migrations()
 
-
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+if _inside_alembic():
+    if context.is_offline_mode():
+        run_migrations_offline()
+    else:
+        run_migrations_online()
