@@ -64,9 +64,42 @@ from mcpgateway.db import Base
 # Create config object - this is the standard way in Alembic
 config = getattr(context, "config", None) or Config()
 
+
 def _inside_alembic() -> bool:
-    """Return True only when this file is running under Alembic CLI."""
+    """Detect if this module is being executed by the Alembic CLI.
+
+    This function checks whether the current execution context is within
+    an Alembic migration environment. It's used to prevent migration code
+    from running when this module is imported for other purposes (e.g.,
+    during testing or when importing models).
+
+    The detection works by checking for the presence of the '_proxy' attribute
+    on the alembic.context object. This attribute is set internally by Alembic
+    when it loads and executes the env.py file during migration operations.
+
+    Returns:
+        bool: True if running under Alembic CLI (e.g., during 'alembic upgrade',
+            'alembic downgrade', etc.), False if imported normally by Python
+            code or during testing.
+
+    Examples:
+        When running migrations::
+
+            $ alembic upgrade head
+            # _inside_alembic() returns True
+
+        When importing in tests or application code::
+
+            from mcpgateway.alembic.env import target_metadata
+            # _inside_alembic() returns False
+
+    Note:
+        This guard is crucial to prevent the migration execution code at the
+        bottom of this module from running during normal imports. Without it,
+        importing this module would attempt to run migrations every time.
+    """
     return getattr(context, "_proxy", None) is not None
+
 
 config.set_main_option("script_location", str(files("mcpgateway").joinpath("alembic")))
 
@@ -145,6 +178,7 @@ def run_migrations_online() -> None:
 
         with context.begin_transaction():
             context.run_migrations()
+
 
 if _inside_alembic():
     if context.is_offline_mode():
