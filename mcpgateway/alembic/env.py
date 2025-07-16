@@ -40,6 +40,7 @@ Note:
     This file is automatically executed by Alembic and should not be
     imported or run directly by application code.
 """
+
 # Standard
 from importlib.resources import files
 from logging.config import fileConfig
