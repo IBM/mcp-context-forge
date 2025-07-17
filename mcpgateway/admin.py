@@ -57,17 +57,12 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService, GatewayNotFoundError
-from mcpgateway.services.prompt_service import PromptService, PromptNotFoundError
-from mcpgateway.services.resource_service import ResourceService, ResourceNotFoundError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerNotFoundError, ServerService
-from mcpgateway.services.tool_service import (
-    ToolError,
-    ToolNameConflictError,
-    ToolService,
-    ToolNotFoundError
-)
+from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -2262,10 +2257,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
-        return JSONResponse(
-            content={"message": f"Missing required field: {e}", "success": False},
-            status_code=422
-        )
+        return JSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
 
     try:
         await gateway_service.register_gateway(db, gateway)
