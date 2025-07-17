@@ -92,6 +92,24 @@ function validateInputName(name, type = "input") {
 }
 
 /**
+ * Extracts content from various formats with fallback
+ */
+function extractContent(content, fallback = "") {
+    if (typeof content === "object" && content !== null) {
+        if (content.text !== undefined && content.text !== null) {
+            return content.text;
+        } else if (content.blob !== undefined && content.blob !== null) {
+            return content.blob;
+        } else if (content.content !== undefined && content.content !== null) {
+            return content.content;
+        } else {
+            return JSON.stringify(content, null, 2);
+        }
+    }
+    return String(content || fallback);
+}
+
+/**
  * SECURITY: Validate URL inputs
  */
 function validateUrl(url) {
@@ -1527,10 +1545,18 @@ async function viewResource(resourceUri) {
             const contentPre = document.createElement("pre");
             contentPre.className =
                 "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100";
-            contentPre.textContent =
-                typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : String(content); // Safe text content
+
+            // Handle content display - extract actual content from object if needed
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
+
+            if (!contentStr.trim()) {
+                contentStr = resource.description || "No content available";
+            }
+
+            contentPre.textContent = contentStr;
             contentDiv.appendChild(contentPre);
             container.appendChild(contentDiv);
 
@@ -1621,7 +1647,6 @@ async function editResource(resourceUri) {
         const data = await response.json();
         const resource = data.resource;
         const content = data.content;
-
         const isInactiveCheckedBool = isInactiveChecked("resources");
         let hiddenField = safeGetElement("edit-resource-show-inactive");
         if (!hiddenField) {
@@ -1665,19 +1690,29 @@ async function editResource(resourceUri) {
             mimeField.value = resource.mimeType || "";
         }
         if (contentField) {
-            const contentStr =
-                typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : String(content);
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
+
+            if (!contentStr.trim()) {
+                contentStr = resource.description || "No content available";
+            }
+
             contentField.value = contentStr;
         }
 
         // Update CodeMirror editor if it exists
         if (window.editResourceContentEditor) {
-            const contentStr =
-                typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : String(content);
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
+
+            if (!contentStr.trim()) {
+                contentStr = resource.description || "No content available";
+            }
+
             window.editResourceContentEditor.setValue(contentStr);
             window.editResourceContentEditor.refresh();
         }
