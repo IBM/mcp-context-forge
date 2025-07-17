@@ -32,7 +32,7 @@ jobs:
           pip install code2flow snakefood3 pylint handsdown mkdocs mkdocs-material pytest
 
       - name: 🧪 Run tests for reports
-        run: make test
+        run: make -f ./Makefile test
       
       - name: 📝 Generate documentation
         run: make docs
