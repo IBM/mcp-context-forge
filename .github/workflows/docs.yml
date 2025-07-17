@@ -37,12 +37,6 @@ jobs:
       - name: 📝 Generate documentation
         run: make docs
       
-      # - name: 💾 Commit documentation changes
-      #   run: |
-      #     git add docs/ || true
-      #     git commit -m "📚 Update documentation [skip ci]" -a || true
-      #     git push || true
-      
       - name: 🚀 Setup Pages
         uses: actions/configure-pages@v4
       
@@ -50,7 +44,7 @@ jobs:
         run: mkdocs build
       
       - name: 📤 Upload artifact
-        uses: actions/upload-pages-artifact@v2
+        uses: actions/upload-pages-artifact@v4
         with:
           path: './site'
       
