@@ -263,10 +263,10 @@ function fetchWithTimeout(url, options = {}, timeout = 30000) {
 }
 
 // Safe element getter with logging
-function safeGetElement(id) {
+function safeGetElement(id, suppressWarning = false) {
     try {
         const element = document.getElementById(id);
-        if (!element) {
+        if (!element && !suppressWarning) {
             console.warn(`Element with id "${id}" not found`);
         }
         return element;
@@ -536,6 +536,12 @@ const METRICS_RETRY_DELAY = 2000; // Increased from 1500ms
  * Enhanced metrics loading with better race condition prevention
  */
 async function loadAggregatedMetrics() {
+    const metricsPanel = safeGetElement("metrics-panel", true);
+    if (!metricsPanel || metricsPanel.closest('.tab-panel.hidden')) {
+        console.log("Metrics panel not visible, skipping load");
+        return;
+    }
+
     // Cancel any existing request
     if (metricsRequestController) {
         console.log("Cancelling existing metrics request...");
@@ -550,10 +556,12 @@ async function loadAggregatedMetrics() {
     }
 
     console.log("Starting new metrics request...");
+    showMetricsLoading();
 
     metricsRequestPromise = loadMetricsInternal().finally(() => {
         metricsRequestPromise = null;
         metricsRequestController = null;
+        hideMetricsLoading();
     });
 
     return metricsRequestPromise;
@@ -676,8 +684,11 @@ async function fetchWithTimeoutAndRetry(
  * Show loading state for metrics
  */
 function showMetricsLoading() {
-    const metricsPanel = safeGetElement("metrics-panel");
+    const metricsPanel = safeGetElement("metrics-panel", true); // suppress warning
     if (metricsPanel) {
+        const existingLoading = safeGetElement("metrics-loading", true);
+        if (existingLoading) return;
+
         const loadingDiv = document.createElement("div");
         loadingDiv.id = "metrics-loading";
         loadingDiv.className = "flex justify-center items-center p-8";
@@ -697,7 +708,7 @@ function showMetricsLoading() {
  * Hide loading state for metrics
  */
 function hideMetricsLoading() {
-    const loadingDiv = safeGetElement("metrics-loading");
+    const loadingDiv = safeGetElement("metrics-loading", true);
     if (loadingDiv && loadingDiv.parentNode) {
         loadingDiv.parentNode.removeChild(loadingDiv);
     }
@@ -4560,6 +4571,20 @@ document.addEventListener("DOMContentLoaded", () => {
         // 4. Handle initial tab/state
         initializeTabState();
 
+        // // ✅ 4.1 Set up tab button click handlers
+        // document.querySelectorAll('.tab-button').forEach(button => {
+        //     button.addEventListener('click', () => {
+        //         const tabId = button.getAttribute('data-tab');
+
+        //         document.querySelectorAll('.tab-panel').forEach(panel => {
+        //             panel.classList.add('hidden');
+        //         });
+
+        //         document.getElementById(tabId).classList.remove('hidden');
+        //     });
+        // });
+
+       
         // 5. Set up form validation
         setupFormValidation();
 
