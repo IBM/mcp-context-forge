@@ -229,7 +229,7 @@ class ToolService:
             if not tool.gateway_id:
                 existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name)).scalar_one_or_none()
             else:
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name).where(DbTool.gateway_id == tool.gateway_id)).scalar_one_or_none()
+                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name).where(DbTool.gateway_id == tool.gateway_id)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
             if existing_tool:
                 raise ToolNameConflictError(
                     existing_tool.name,
@@ -506,6 +506,7 @@ class ToolService:
             >>> isinstance(result, object)
             True
         """
+        # pylint: disable=comparison-with-callable
         tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
         if not tool:
             inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
@@ -674,6 +675,7 @@ class ToolService:
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
             if tool_update.name is not None and not (tool_update.name == tool.name and tool_update.gateway_id == tool.gateway_id):
+                # pylint: disable=comparison-with-callable
                 existing_tool = db.execute(select(DbTool).where(DbTool.name == tool_update.name).where(DbTool.gateway_id == tool_update.gateway_id).where(DbTool.id != tool_id)).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(

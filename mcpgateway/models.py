@@ -388,8 +388,8 @@ class Tool(BaseModel):
     name: str
     url: AnyHttpUrl
     description: Optional[str] = None
-    integrationType: str = "MCP"
-    requestType: str = "SSE"
+    integration_type: str = "MCP"
+    request_type: str = "SSE"
     headers: Dict[str, Any] = Field(default_factory=dict)
     input_schema: Dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
     annotations: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Tool annotations for behavior hints")
