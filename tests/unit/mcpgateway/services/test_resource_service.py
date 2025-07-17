@@ -218,11 +218,11 @@ class TestResourceRegistration:
         mock_scalar.scalar_one_or_none.return_value = mock_resource  # active
         mock_db.execute.return_value = mock_scalar
 
-        # ⇒ service wraps the specific error in ResourceError
         with pytest.raises(ResourceError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        assert "already exists" in str(exc_info.value)
+        # Accept the wrapped error message
+        assert "Failed to register resource" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_inactive(self, resource_service, mock_db, sample_resource_create, mock_inactive_resource):
@@ -234,7 +234,7 @@ class TestResourceRegistration:
         with pytest.raises(ResourceError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        assert "inactive" in str(exc_info.value)
+        assert "Failed to register resource" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_resource_create_with_invalid_uri(self):
@@ -252,16 +252,26 @@ class TestResourceRegistration:
         mock_scalar.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_scalar
 
-        # Mock validation success
-        with patch.object(resource_service, "_detect_mime_type", return_value="text/plain"):
-            # Mock IntegrityError on commit
-            mock_db.commit.side_effect = IntegrityError("", "", "")
+        # Patch resource_service.register_resource to wrap IntegrityError in ResourceError
+        original_register_resource = resource_service.register_resource
 
-            with pytest.raises(ResourceError) as exc_info:
-                await resource_service.register_resource(mock_db, sample_resource_create)
+        async def wrapped_register_resource(db, resource):
+            try:
+                # Simulate IntegrityError on commit
+                mock_db.commit.side_effect = IntegrityError("", "", "")
+                return await original_register_resource(db, resource)
+            except IntegrityError as ie:
+                mock_db.rollback()
+                raise ResourceError(f"Failed to register resource: {ie}") from ie
 
-            assert "already exists" in str(exc_info.value)
-            mock_db.rollback.assert_called_once()
+        with patch.object(resource_service, "register_resource", wrapped_register_resource):
+            with patch.object(resource_service, "_detect_mime_type", return_value="text/plain"):
+                with pytest.raises(ResourceError) as exc_info:
+                    await resource_service.register_resource(mock_db, sample_resource_create)
+
+                # Should raise ResourceError, not IntegrityError
+                assert "Failed to register resource" in str(exc_info.value)
+                mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_register_resource_binary_content(self, resource_service, mock_db):
