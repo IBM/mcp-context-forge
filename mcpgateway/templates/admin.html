@@ -158,31 +158,31 @@
                   <span class="text-gray-500 dark:text-gray-300">N/A</span>
                   {% endif %}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">
                   {{ loop.index }}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">
                   {{ server.id }}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">
                   {{ server.name }}
                 </td>
-                <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500">
+                <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">
                   {{ server.description }}
                 </td>
-                <td class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-500">
+                <td class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-300">
                   {% if server.associatedTools %} {{ server.associatedTools |
                   map('string') | join(', ') }} {% else %}
                   <span class="text-gray-500 dark:text-gray-300">N/A</span>
                   {% endif %}
                 </td>
-                <td class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-500">
+                <td class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-300">
                   {% if server.associatedResources %} {{
                   server.associatedResources | join(', ') }} {% else %}
                   <span class="text-gray-500 dark:text-gray-300">N/A</span>
                   {% endif %}
                 </td>
-                <td class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-500">
+                <td class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-300">
                   {% if server.associatedPrompts %} {{
                   server.associatedPrompts | join(', ') }} {% else %}
                   <span class="text-gray-500 dark:text-gray-300">N/A</span>
@@ -241,17 +241,17 @@
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Name</label>
               <input type="text" name="name" required
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Description</label>
               <textarea name="description"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Icon URL</label>
               <input type="url" name="icon"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <div>
               <label for="associatedTools" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -259,7 +259,7 @@
               </label>
               <select name="associatedTools" {# same name as before (minus camelCase) #} id="associatedTools" multiple
                 {# remove if you want single-select #}
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
                 {% for tool in tools %}
                 {# value can be tool.id, tool.slug, or any key you use later #}
                 <option value="{{ tool.id }}">{{ tool.name }}</option>
@@ -272,14 +272,14 @@
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Associated Resources
                 (comma-separated IDs)</label>
               <input type="text" name="associatedResources"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 placeholder="e.g., resource1, resource2" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Associated Prompts
                 (comma-separated IDs)</label>
               <input type="text" name="associatedPrompts"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 placeholder="e.g., prompt1, prompt2" />
             </div>
           </div>
@@ -375,16 +375,16 @@
                 <td class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24 dark:text-gray-100">
                   {{ tool.name }}
                 </td>
-                <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500 w-24">
+                <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-24">
                   {{ tool.url }}
                 </td>
-                <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500 w-12">
+                <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-12">
                   {{ tool.integrationType }}
                 </td>
-                <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500 w-12">
+                <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-12">
                   {{ tool.requestType }}
                 </td>
-                <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-500">
+                <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">
                   {{ tool.description }}
                 </td>
                 <td class="px-2 py-4 whitespace-nowrap">
@@ -523,22 +523,22 @@
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Name</label>
               <input type="text" name="name" required
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">URL</label>
               <input type="url" name="url" required
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Description</label>
               <textarea name="description"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Integration Type</label>
               <select id="integrationType" name="integrationType"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 onchange="updateRequestTypeOptions()">
                 <option value="MCP">MCP</option>
                 <option value="REST">REST</option>
@@ -547,14 +547,14 @@
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Request Type</label>
               <select id="requestType" name="requestType"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
                 <!-- options will be filled by JS -->
               </select>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Headers (JSON)</label>
               <textarea name="headers" id="headers-editor"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Input Schema (JSON)</label>
@@ -577,19 +577,19 @@
               </div>
               <div id="json-input-container" style="display: none">
                 <textarea name="input_schema" id="schema-editor"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
               </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Json Path Filter</label>
               <input type="text" name="jsonpath_filter"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <!-- Authentication Section -->
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Authentication Type</label>
               <select name="auth_type" id="auth-type"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
                 <option value="">None</option>
                 <option value="basic">Basic</option>
                 <option value="bearer">Bearer Token</option>
@@ -600,31 +600,31 @@
               <div>
                 <label class="block text-sm font-medium text-gray-700">Username</label>
                 <input type="text" name="auth_username"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700">Password</label>
                 <input type="password" name="auth_password"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
               </div>
             </div>
             <div id="auth-bearer-fields" style="display: none">
               <div>
                 <label class="block text-sm font-medium text-gray-700">Token</label>
                 <input type="password" name="auth_token"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
               </div>
             </div>
             <div id="auth-headers-fields" style="display: none">
               <div>
                 <label class="block text-sm font-medium text-gray-700">Header Key</label>
                 <input type="text" name="auth_header_key"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700">Header Value</label>
                 <input type="password" name="auth_header_value"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="********" />
               </div>
             </div>
@@ -769,28 +769,28 @@
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">URI</label>
               <input type="text" name="uri" required
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Name</label>
               <input type="text" name="name" required
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Description</label>
               <textarea name="description"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">MIME Type</label>
               <input type="text" name="mimeType"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 placeholder="text/plain" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Content</label>
               <textarea name="content" id="resource-content-editor"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 placeholder=""></textarea>
             </div>
 
@@ -825,27 +825,27 @@
             <thead class="bg-gray-50 dark:bg-gray-700">
               <tr>
                 <th
-                  class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                   ID
                 </th>
                 <th
-                  class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                   Name
                 </th>
                 <th
-                  class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                   Description
                 </th>
                 <th
-                  class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                   Arguments
                 </th>
                 <th
-                  class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                   Status
                 </th>
                 <th
-                  class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -859,10 +859,10 @@
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                   {{ prompt.name }}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
                   {{ prompt.description }}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
                   {% for arg in prompt.arguments %}{{ arg.name }}{% if not
                   loop.last %}, {% endif %}{% endfor %}
                 </td>
@@ -925,23 +925,23 @@
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Name</label>
               <input type="text" name="name" required
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Description</label>
               <textarea name="description"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Template</label>
               <textarea name="template" id="prompt-template-editor"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-200 dark:bg-gray-800 dark:placeholder-gray-300 dark:text-gray-300"
                 placeholder=""></textarea>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Arguments (JSON)</label>
               <textarea name="arguments" id="prompt-args-editor"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 placeholder="[{'name':'arg1','description':'Argument 1','required':true}]"></textarea>
             </div>
           </div>
@@ -974,27 +974,27 @@
             <thead class="bg-gray-50 dark:bg-gray-700">
               <tr>
                 <th
-                  class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">
                   S. No.
                 </th>
                 <th
-                  class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">
                   Name
                 </th>
                 <th
-                  class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider w-24">
+                  class="px-2 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider w-24">
                   URL
                 </th>
                 <th
-                  class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">
                   Status
                 </th>
                 <th
-                  class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">
                   Last Seen
                 </th>
                 <th
-                  class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-500 uppercase tracking-wider">
+                  class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -1008,7 +1008,7 @@
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                   {{ gateway.name }}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                   {{ gateway.url }}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
@@ -1066,7 +1066,7 @@
                     </div>
                   </div>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500">
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                   {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                   gateway.lastSeen else 'Never' }}
                 </td>
@@ -1127,22 +1127,22 @@
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Name</label>
               <input type="text" name="name" required
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">URL</label>
               <input type="url" name="url" required
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Description</label>
               <textarea name="description"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Transport Type</label>
               <select name="transport"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
                 <option value="SSE" selected>SSE</option>
                 <option value="STREAMABLEHTTP">Streamable HTTP</option>
               </select>
@@ -1150,7 +1150,7 @@
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Authentication Type</label>
               <select name="auth_type" id="auth-type-gw"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
                 <option value="">None</option>
                 <option value="basic">Basic</option>
                 <option value="bearer">Bearer Token</option>
@@ -1161,31 +1161,31 @@
               <div>
                 <label class="block text-sm font-medium text-gray-700">Username</label>
                 <input type="text" name="auth_username"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700">Password</label>
                 <input type="password" name="auth_password"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
               </div>
             </div>
             <div id="auth-bearer-fields-gw" style="display: none">
               <div>
                 <label class="block text-sm font-medium text-gray-700">Token</label>
                 <input type="password" name="auth_token"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
               </div>
             </div>
             <div id="auth-headers-fields-gw" style="display: none">
               <div>
                 <label class="block text-sm font-medium text-gray-700">Header Key</label>
                 <input type="text" name="auth_header_key"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700">Header Value</label>
                 <input type="password" name="auth_header_value"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="********" />
               </div>
             </div>
@@ -1285,15 +1285,15 @@
           onsubmit="return handleToggleSubmit(event, 'roots')">
           <div class="grid grid-cols-1 gap-6">
             <div>
-              <label class="block text-sm font-medium text-gray-700">URI</label>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">URI</label>
               <input type="text" name="uri" required
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 placeholder="file:///path/to/directory" />
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700">Name</label>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
               <input type="text" name="name"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 placeholder="My Project" />
             </div>
           </div>
@@ -1927,26 +1927,26 @@
                 <div class="grid grid-cols-1 gap-6">
                   <!-- Existing fields -->
                   <div>
-                    <label class="block text-sm font-medium text-gray-700">Name</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
                     <input type="text" name="name" required id="edit-server-name"
-                      class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                      class="mt-1 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
                   </div>
                   <div>
-                    <label class="block text-sm font-medium text-gray-700">Description</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
                     <textarea name="description" id="edit-server-description"
-                      class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
+                      class="mt-1 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"></textarea>
                   </div>
                   <div>
-                    <label class="block text-sm font-medium text-gray-700">Icon URL</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Icon URL</label>
                     <input type="url" name="icon" id="edit-server-icon"
-                      class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+                      class="mt-1 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
                   </div>
                   <div>
                     <label for="edit-server-tools" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                       Associated Tools
                     </label>
                     <select id="edit-server-tools" name="associatedTools" {# same field name #} multiple
-                      class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
+                      class="mt-1 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300">
                       {% for tool in tools %}
                       <option value="{{ tool.id }}">{{ tool.name }}</option>
                       {% endfor %}
@@ -1956,17 +1956,17 @@
                     <span id="selectedEditToolsWarning" class="block text-sm font-semibold text-red-600 mt-1"></span>
                   </div>
                   <div>
-                    <label class="block text-sm font-medium text-gray-700">Associated Resources (comma-separated
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Associated Resources (comma-separated
                       IDs)</label>
                     <input type="text" name="associatedResources" id="edit-server-resources"
-                      class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      class="mt-1 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="e.g., 3,4" />
                   </div>
                   <div>
-                    <label class="block text-sm font-medium text-gray-700">Associated Prompts (comma-separated
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Associated Prompts (comma-separated
                       IDs)</label>
                     <input type="text" name="associatedPrompts" id="edit-server-prompts"
-                      class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      class="mt-1 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="e.g., 5,6" />
                   </div>
                 </div>
