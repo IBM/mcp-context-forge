@@ -29,7 +29,7 @@ jobs:
       - name: 📚 Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install code2flow snakefood3 pylint handsdown mkdocs mkdocs-material
+          pip install code2flow snakefood3 pylint handsdown mkdocs mkdocs-material pytest
 
       - name: 🧪 Run tests for reports
         run: make test
