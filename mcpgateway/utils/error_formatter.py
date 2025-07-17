@@ -67,7 +67,6 @@ class ErrorFormatter:
 
         Examples:
             >>> from pydantic import BaseModel, ValidationError, field_validator
-            >>>
             >>> # Create a test model with validation
             >>> class TestModel(BaseModel):
             ...     name: str
@@ -76,14 +75,13 @@ class ErrorFormatter:
             ...         if not v.startswith('A'):
             ...             raise ValueError('Tool name must start with a letter A')
             ...         return v
-            >>>
             >>> # Test validation error formatting
             >>> try:
             ...     TestModel(name="B123")
             ... except ValidationError as e:
+            ...     print(type(e))
             ...     result = ErrorFormatter.format_validation_error(e)
             <class 'pydantic_core._pydantic_core.ValidationError'>
-            >>>
             >>> result['message']
             'Validation failed'
             >>> result['success']
@@ -113,9 +111,9 @@ class ErrorFormatter:
             >>> try:
             ...     MultiFieldModel(name='A' * 300, url='ftp://invalid')
             ... except ValidationError as e:
+            ...     print(type(e))
             ...     result = ErrorFormatter.format_validation_error(e)
             <class 'pydantic_core._pydantic_core.ValidationError'>
-            >>>
             >>> len(result['details'])
             2
             >>> any('too long' in detail['message'] for detail in result['details'])
@@ -135,7 +133,6 @@ class ErrorFormatter:
 
         # Log the full error for debugging
         logger.debug(f"Validation error: {error}")
-        print(type(error))
 
         return {"message": "Validation failed", "details": errors, "success": False}
 
@@ -263,7 +260,7 @@ class ErrorFormatter:
             >>> mock_error.orig.__str__ = lambda self: "CHECK constraint failed: invalid_data"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
-            'Gateway validation failed. Please check the input data.'
+            'Validation failed. Please check the input data.'
 
             >>> # Test generic database error
             >>> generic_error = Mock(spec=DatabaseError)
@@ -290,12 +287,15 @@ class ErrorFormatter:
                     return {"message": "A tool with this name already exists", "success": False}
                 elif "resources.uri" in error_str:
                     return {"message": "A resource with this URI already exists", "success": False}
+                elif "servers.name" in error_str:
+                    return {"message": "A server with this name already exists", "success": False}
+
             elif "FOREIGN KEY constraint failed" in error_str:
                 return {"message": "Referenced item not found", "success": False}
             elif "NOT NULL constraint failed" in error_str:
                 return {"message": "Required field is missing", "success": False}
             elif "CHECK constraint failed:" in error_str:
-                return {"message": "Gateway validation failed. Please check the input data.", "success": False}
+                return {"message": "Validation failed. Please check the input data.", "success": False}
 
         # Generic database error
         return {"message": "Unable to complete the operation. Please try again.", "success": False}
