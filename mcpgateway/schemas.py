@@ -421,6 +421,7 @@ class ToolCreate(BaseModel):
         return v
 
     @model_validator(mode="before")
+    @classmethod
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -566,6 +567,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         return v
 
     @model_validator(mode="before")
+    @classmethod
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -1253,6 +1255,7 @@ class GatewayCreate(BaseModel):
         return SecurityValidator.sanitize_display_text(v, "Description")
 
     @field_validator("auth_value", mode="before")
+    @classmethod
     def create_auth_value(cls, v, info):
         """
         This validator will run before the model is fully instantiated (mode="before")
@@ -1397,6 +1400,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         return SecurityValidator.sanitize_display_text(v, "Description")
 
     @field_validator("auth_value", mode="before")
+    @classmethod
     def create_auth_value(cls, v, info):
         """
         This validator will run before the model is fully instantiated (mode="before")
@@ -1773,6 +1777,7 @@ class AdminToolCreate(BaseModelWithConfigDict):
     input_schema: Optional[str] = None  # JSON string
 
     @field_validator("headers", "input_schema")
+    @classmethod
     def validate_json(cls, v: Optional[str]) -> Optional[Dict[str, Any]]:
         """
         Validate and parse JSON string inputs.
@@ -1910,6 +1915,7 @@ class ServerCreate(BaseModel):
         return SecurityValidator.validate_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    @classmethod
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1987,6 +1993,7 @@ class ServerUpdate(BaseModelWithConfigDict):
         return SecurityValidator.validate_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    @classmethod
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -2026,6 +2033,7 @@ class ServerRead(BaseModelWithConfigDict):
     metrics: ServerMetrics
 
     @model_validator(mode="before")
+    @classmethod
     def populate_associated_ids(cls, values):
         """
         Pre-validation method that converts associated objects to their 'id'.
