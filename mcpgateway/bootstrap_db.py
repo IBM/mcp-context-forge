@@ -25,13 +25,14 @@ from importlib.resources import files
 import logging
 
 # Third-Party
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Base
+from alembic import command
+from alembic.config import Config
+
 
 logger = logging.getLogger(__name__)
 
