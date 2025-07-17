@@ -537,7 +537,7 @@ const METRICS_RETRY_DELAY = 2000; // Increased from 1500ms
  */
 async function loadAggregatedMetrics() {
     const metricsPanel = safeGetElement("metrics-panel", true);
-    if (!metricsPanel || metricsPanel.closest('.tab-panel.hidden')) {
+    if (!metricsPanel || metricsPanel.closest(".tab-panel.hidden")) {
         console.log("Metrics panel not visible, skipping load");
         return;
     }
@@ -687,7 +687,9 @@ function showMetricsLoading() {
     const metricsPanel = safeGetElement("metrics-panel", true); // suppress warning
     if (metricsPanel) {
         const existingLoading = safeGetElement("metrics-loading", true);
-        if (existingLoading) return;
+        if (existingLoading) {
+            return;
+        }
 
         const loadingDiv = document.createElement("div");
         loadingDiv.id = "metrics-loading";
@@ -4584,7 +4586,6 @@ document.addEventListener("DOMContentLoaded", () => {
         //     });
         // });
 
-       
         // 5. Set up form validation
         setupFormValidation();
 
