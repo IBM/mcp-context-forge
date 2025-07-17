@@ -177,7 +177,8 @@ function isInactiveChecked(type) {
 }
 
 // Enhanced fetch with timeout and better error handling
-function fetchWithTimeout(url, options = {}, timeout = 10000) {
+function fetchWithTimeout(url, options = {}, timeout = 30000) {
+    // Increased from 10000
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
         console.warn(`Request to ${url} timed out after ${timeout}ms`);
@@ -196,32 +197,41 @@ function fetchWithTimeout(url, options = {}, timeout = 10000) {
     })
         .then((response) => {
             clearTimeout(timeoutId);
-            if (
-                response.status === 0 ||
-                (response.ok && response.status === 200)
-            ) {
+
+            // FIX: Better handling of empty responses
+            if (response.status === 0) {
+                // Status 0 often indicates a network error or CORS issue
+                throw new Error(
+                    "Network error or server is not responding. Please ensure the server is running and accessible.",
+                );
+            }
+
+            if (response.ok && response.status === 200) {
                 const contentLength = response.headers.get("content-length");
 
                 // Check Content-Length if present
-                if (contentLength !== null) {
-                    if (parseInt(contentLength, 10) === 0) {
-                        throw new Error(
-                            "Server returned an empty response (via header)",
-                        );
-                    }
-                } else {
-                    // Fallback: check actual body
-                    const cloned = response.clone();
-                    return cloned.text().then((text) => {
-                        if (!text.trim()) {
-                            throw new Error(
-                                "Server returned an empty response (via body)",
-                            );
-                        }
-                        return response;
-                    });
+                if (
+                    contentLength !== null &&
+                    parseInt(contentLength, 10) === 0
+                ) {
+                    console.warn(
+                        `Empty response from ${url} (Content-Length: 0)`,
+                    );
+                    // Don't throw error for intentionally empty responses
+                    return response;
                 }
+
+                // For responses without Content-Length, clone and check
+                const cloned = response.clone();
+                return cloned.text().then((text) => {
+                    if (!text || !text.trim()) {
+                        console.warn(`Empty response body from ${url}`);
+                        // Return the original response anyway
+                    }
+                    return response;
+                });
             }
+
             return response;
         })
         .catch((error) => {
@@ -230,15 +240,21 @@ function fetchWithTimeout(url, options = {}, timeout = 10000) {
             // Improve error messages for common issues
             if (error.name === "AbortError") {
                 throw new Error(
-                    `Request timed out after ${timeout / 1000} seconds`,
+                    `Request timed out after ${timeout / 1000} seconds. The server may be slow or unresponsive.`,
                 );
-            } else if (error.message.includes("Failed to fetch")) {
+            } else if (
+                error.message.includes("Failed to fetch") ||
+                error.message.includes("NetworkError")
+            ) {
                 throw new Error(
-                    "Unable to connect to server. Please check if the server is running.",
+                    "Unable to connect to server. Please check if the server is running on the correct port.",
                 );
-            } else if (error.message.includes("empty response")) {
+            } else if (
+                error.message.includes("empty response") ||
+                error.message.includes("ERR_EMPTY_RESPONSE")
+            ) {
                 throw new Error(
-                    "Server returned an empty response. The endpoint may not be implemented.",
+                    "Server returned an empty response. This endpoint may not be implemented yet or the server crashed.",
                 );
             }
 
@@ -510,8 +526,8 @@ function resetModalState(modalId) {
 // More robust metrics request tracking
 let metricsRequestController = null;
 let metricsRequestPromise = null;
-const MAX_METRICS_RETRIES = 2; // Reduced from 3
-const METRICS_RETRY_DELAY = 1500; // Reduced from 2000ms
+const MAX_METRICS_RETRIES = 3; // Increased from 2
+const METRICS_RETRY_DELAY = 2000; // Increased from 1500ms
 
 /**
  * Enhanced metrics loading with better race condition prevention
@@ -548,7 +564,7 @@ async function loadMetricsInternal() {
         const result = await fetchWithTimeoutAndRetry(
             `${window.ROOT_PATH}/admin/metrics`,
             {}, // options
-            20000, // 20 second timeout (reduced from 30)
+            45000, // Increased timeout specifically for metrics (was 20000)
             MAX_METRICS_RETRIES,
         );
 
@@ -558,10 +574,30 @@ async function loadMetricsInternal() {
                 showMetricsPlaceholder();
                 return;
             }
+            // FIX: Handle 500 errors specifically
+            if (result.status >= 500) {
+                throw new Error(
+                    `Server error (${result.status}). The metrics calculation may have failed.`,
+                );
+            }
             throw new Error(`HTTP ${result.status}: ${result.statusText}`);
         }
 
-        const data = await result.json();
+        // FIX: Handle empty or invalid JSON responses
+        let data;
+        try {
+            const text = await result.text();
+            if (!text || !text.trim()) {
+                console.warn("Empty metrics response, using default data");
+                data = {}; // Use empty object as fallback
+            } else {
+                data = JSON.parse(text);
+            }
+        } catch (parseError) {
+            console.error("Failed to parse metrics JSON:", parseError);
+            data = {}; // Use empty object as fallback
+        }
+
         displayMetrics(data);
         console.log("✓ Metrics loaded successfully");
     } catch (error) {
@@ -745,6 +781,25 @@ function displayMetrics(data) {
     }
 
     try {
+        // FIX: Handle completely empty data
+        if (!data || Object.keys(data).length === 0) {
+            const emptyStateDiv = document.createElement("div");
+            emptyStateDiv.className = "text-center p-8 text-gray-500";
+            emptyStateDiv.innerHTML = `
+                <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                </svg>
+                <h3 class="text-lg font-medium mb-2">No Metrics Available</h3>
+                <p class="text-sm">Metrics data will appear here once tools, resources, or prompts are executed.</p>
+                <button onclick="retryLoadMetrics()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
+                    Refresh Metrics
+                </button>
+            `;
+            metricsPanel.innerHTML = "";
+            metricsPanel.appendChild(emptyStateDiv);
+            return;
+        }
+
         // Create main container with safe structure
         const mainContainer = document.createElement("div");
         mainContainer.className = "space-y-6";
@@ -2863,8 +2918,8 @@ function handleSubmitWithConfirmation(event, type) {
 const toolTestState = {
     activeRequests: new Map(), // toolId -> AbortController
     lastRequestTime: new Map(), // toolId -> timestamp
-    debounceDelay: 500, // ms
-    requestTimeout: 10000, // Reduced from 15000ms
+    debounceDelay: 1000, // Increased from 500ms
+    requestTimeout: 30000, // Increased from 10000ms
 };
 
 /**
@@ -2878,7 +2933,7 @@ async function testTool(toolId) {
         const now = Date.now();
         const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
         const timeSinceLastRequest = now - lastRequest;
-        const enhancedDebounceDelay = 1000; // Increased from 500ms
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
 
         if (timeSinceLastRequest < enhancedDebounceDelay) {
             console.log(
@@ -2888,7 +2943,7 @@ async function testTool(toolId) {
                 (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
             );
             showErrorMessage(
-                `Please wait ${waitTime} more seconds before testing again`,
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
             );
             return;
         }
@@ -2928,7 +2983,7 @@ async function testTool(toolId) {
         toolTestState.activeRequests.set(toolId, controller);
         toolTestState.lastRequestTime.set(toolId, now);
 
-        // 6. MAKE REQUEST with increased timeout (was 10 seconds, now 15)
+        // 6. MAKE REQUEST with increased timeout
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/tools/${toolId}`,
             {
@@ -2938,7 +2993,7 @@ async function testTool(toolId) {
                     Pragma: "no-cache",
                 },
             },
-            15000, // Increased timeout
+            toolTestState.requestTimeout, // Use the increased timeout
         );
 
         if (!response.ok) {
@@ -3165,7 +3220,7 @@ async function runToolTest() {
             params,
         };
 
-        // Use shorter timeout for test execution
+        // Use longer timeout for test execution
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/rpc`,
             {
@@ -3176,8 +3231,8 @@ async function runToolTest() {
                 body: JSON.stringify(payload),
                 credentials: "include",
             },
-            8000,
-        ); // 8 second timeout
+            20000, // Increased from 8000
+        );
 
         const result = await response.json();
         const resultStr = JSON.stringify(result, null, 2);
@@ -4183,6 +4238,7 @@ function setupTooltipsWithAlpine() {
 
         Alpine.directive("tooltip", (el, { expression }, { evaluate }) => {
             let tooltipEl = null;
+            let animationFrameId = null; // Track animation frame
 
             const moveTooltip = (e) => {
                 if (!tooltipEl) {
@@ -4234,9 +4290,19 @@ function setupTooltipsWithAlpine() {
                     tooltipEl.style.top = `${rect.bottom + scrollY + 10}px`;
                 }
 
-                requestAnimationFrame(() => {
-                    tooltipEl.style.opacity = "1";
+                // FIX: Cancel any pending animation frame before setting a new one
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                }
+
+                animationFrameId = requestAnimationFrame(() => {
+                    // FIX: Check if tooltipEl still exists before accessing its style
+                    if (tooltipEl) {
+                        tooltipEl.style.opacity = "1";
+                    }
+                    animationFrameId = null;
                 });
+
                 window.addEventListener("scroll", hideTooltip, {
                     passive: true,
                 });
@@ -4250,15 +4316,28 @@ function setupTooltipsWithAlpine() {
                     return;
                 }
 
+                // FIX: Cancel any pending animation frame
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+
                 tooltipEl.style.opacity = "0";
                 el.removeEventListener("mousemove", moveTooltip);
                 window.removeEventListener("scroll", hideTooltip);
                 window.removeEventListener("resize", hideTooltip);
-                el.addEventListener("click", hideTooltip);
+                el.removeEventListener("click", hideTooltip);
+
                 const toRemove = tooltipEl;
-                tooltipEl = null;
-                setTimeout(() => toRemove.remove(), 200);
+                tooltipEl = null; // Set to null immediately
+
+                setTimeout(() => {
+                    if (toRemove && toRemove.parentNode) {
+                        toRemove.parentNode.removeChild(toRemove);
+                    }
+                }, 200);
             };
+
             el.addEventListener("mouseenter", showTooltip);
             el.addEventListener("mouseleave", hideTooltip);
             el.addEventListener("focus", showTooltip);
