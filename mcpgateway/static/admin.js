@@ -92,7 +92,7 @@ function validateInputName(name, type = "input") {
 }
 
 /**
-    * Extracts content from various formats with fallback
+ * Extracts content from various formats with fallback
  */
 function extractContent(content, fallback = "") {
     if (typeof content === "object" && content !== null) {
@@ -1545,9 +1545,12 @@ async function viewResource(resourceUri) {
             const contentPre = document.createElement("pre");
             contentPre.className =
                 "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100";
-            
+
             // Handle content display - extract actual content from object if needed
-            let contentStr = extractContent(content, resource.description || "No content available");
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
 
             if (!contentStr.trim()) {
                 contentStr = resource.description || "No content available";
@@ -1687,7 +1690,10 @@ async function editResource(resourceUri) {
             mimeField.value = resource.mimeType || "";
         }
         if (contentField) {
-            let contentStr = extractContent(content, resource.description || "No content available");
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
 
             if (!contentStr.trim()) {
                 contentStr = resource.description || "No content available";
@@ -1698,7 +1704,10 @@ async function editResource(resourceUri) {
 
         // Update CodeMirror editor if it exists
         if (window.editResourceContentEditor) {
-            let contentStr = extractContent(content, resource.description || "No content available");
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
 
             if (!contentStr.trim()) {
                 contentStr = resource.description || "No content available";
