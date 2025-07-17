@@ -122,7 +122,7 @@ class BaseModelWithConfigDict(BaseModel):
             {'foo': 1, 'bar': 'baz'}
         """
         output = {}
-        for key, value in self.dict(by_alias=use_alias).items():
+        for key, value in self.model_dump(by_alias=use_alias).items():
             output[key] = value if not isinstance(value, BaseModel) else value.to_dict(use_alias)
         return output
 

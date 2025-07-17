@@ -363,12 +363,12 @@ python_functions = ["test_*"]
 
 # Playwright browser configuration (can be overridden via CLI)
 # These are custom options that your conftest.py can read
-playwright_browser = "chromium"  # default browser
-playwright_headed = false        # run headless by default
-playwright_slow_mo = 0          # milliseconds delay between actions
-playwright_screenshot = "only-on-failure"
-playwright_video = "retain-on-failure"
-playwright_trace = "retain-on-failure"
+# playwright_browser = "chromium"  # default browser
+# playwright_headed = false        # run headless by default
+# playwright_slow_mo = 0          # milliseconds delay between actions
+# playwright_screenshot = "only-on-failure"
+# playwright_video = "retain-on-failure"
+# playwright_trace = "retain-on-failure"
 
 # ── fawltydeps ─────────────────────────────────────────────────────
 [tool.fawltydeps]
