@@ -447,7 +447,10 @@ function openModal(modalId) {
         }
 
         // Reset modal state
-        resetModalState(modalId);
+        const resetModelVariable = false;
+        if (resetModelVariable) {
+            resetModalState(modalId);
+        }
 
         modal.classList.remove("hidden");
         AppState.setModalActive(modalId);
@@ -1512,6 +1515,106 @@ async function editTool(toolId) {
             requestTypeField.value = tool.requestType || "SSE";
         }
 
+        // Set auth type field
+        const authTypeField = safeGetElement("edit-auth-type");
+        if (authTypeField) {
+            authTypeField.value = tool.auth?.authType || "";
+        }
+
+        // Auth containers
+        const authBasicSection = safeGetElement("edit-auth-basic-fields");
+        const authBearerSection = safeGetElement("edit-auth-bearer-fields");
+        const authHeadersSection = safeGetElement("edit-auth-headers-fields");
+
+        // Individual fields
+        const authUsernameField = authBasicSection?.querySelector(
+            "input[name='auth_username']",
+        );
+        const authPasswordField = authBasicSection?.querySelector(
+            "input[name='auth_password']",
+        );
+
+        const authTokenField = authBearerSection?.querySelector(
+            "input[name='auth_token']",
+        );
+
+        const authHeaderKeyField = authHeadersSection?.querySelector(
+            "input[name='auth_header_key']",
+        );
+        const authHeaderValueField = authHeadersSection?.querySelector(
+            "input[name='auth_header_value']",
+        );
+
+        // Hide all auth sections first
+        if (authBasicSection) {
+            authBasicSection.style.display = "none";
+        }
+        if (authBearerSection) {
+            authBearerSection.style.display = "none";
+        }
+        if (authHeadersSection) {
+            authHeadersSection.style.display = "none";
+        }
+
+        // Clear old values
+        if (authUsernameField) {
+            authUsernameField.value = "";
+        }
+        if (authPasswordField) {
+            authPasswordField.value = "";
+        }
+        if (authTokenField) {
+            authTokenField.value = "";
+        }
+        if (authHeaderKeyField) {
+            authHeaderKeyField.value = "";
+        }
+        if (authHeaderValueField) {
+            authHeaderValueField.value = "";
+        }
+
+        // Display appropriate auth section and populate values
+        switch (tool.auth?.authType) {
+            case "basic":
+                if (authBasicSection) {
+                    authBasicSection.style.display = "block";
+                    if (authUsernameField) {
+                        authUsernameField.value = tool.auth.username || "";
+                    }
+                    if (authPasswordField) {
+                        authPasswordField.value = "*****"; // masked
+                    }
+                }
+                break;
+
+            case "bearer":
+                if (authBearerSection) {
+                    authBearerSection.style.display = "block";
+                    if (authTokenField) {
+                        authTokenField.value = "*****"; // masked
+                    }
+                }
+                break;
+
+            case "authheaders":
+                if (authHeadersSection) {
+                    authHeadersSection.style.display = "block";
+                    if (authHeaderKeyField) {
+                        authHeaderKeyField.value =
+                            tool.auth.authHeaderKey || "";
+                    }
+                    if (authHeaderValueField) {
+                        authHeaderValueField.value = "*****"; // masked
+                    }
+                }
+                break;
+
+            case "":
+            default:
+                // No auth – keep everything hidden
+                break;
+        }
+
         openModal("tool-edit-modal");
 
         // Ensure editors are refreshed after modal display
@@ -2176,6 +2279,8 @@ async function editGateway(gatewayId) {
         const urlField = safeGetElement("edit-gateway-url");
         const descField = safeGetElement("edit-gateway-description");
 
+        const transportField = safeGetElement("edit-gateway-transport");
+
         if (nameField && nameValidation.valid) {
             nameField.value = nameValidation.value;
         }
@@ -2184,6 +2289,90 @@ async function editGateway(gatewayId) {
         }
         if (descField) {
             descField.value = gateway.description || "";
+        }
+
+        if (transportField) {
+            transportField.value = gateway.transport || "SSE"; // falls back to SSE(default)
+        }
+
+        const authTypeField = safeGetElement("auth-type-gw-edit");
+
+        if (authTypeField) {
+            authTypeField.value = gateway.authType || ""; // falls back to None
+        }
+
+        // Auth containers
+        const authBasicSection = safeGetElement("auth-basic-fields-gw-edit");
+        const authBearerSection = safeGetElement("auth-bearer-fields-gw-edit");
+        const authHeadersSection = safeGetElement(
+            "auth-headers-fields-gw-edit",
+        );
+
+        // Individual fields
+        const authUsernameField = safeGetElement(
+            "auth-basic-fields-gw-edit",
+        )?.querySelector("input[name='auth_username']");
+        const authPasswordField = safeGetElement(
+            "auth-basic-fields-gw-edit",
+        )?.querySelector("input[name='auth_password']");
+
+        const authTokenField = safeGetElement(
+            "auth-bearer-fields-gw-edit",
+        )?.querySelector("input[name='auth_token']");
+
+        const authHeaderKeyField = safeGetElement(
+            "auth-headers-fields-gw-edit",
+        )?.querySelector("input[name='auth_header_key']");
+        const authHeaderValueField = safeGetElement(
+            "auth-headers-fields-gw-edit",
+        )?.querySelector("input[name='auth_header_value']");
+
+        // Hide all auth sections first
+        if (authBasicSection) {
+            authBasicSection.style.display = "none";
+        }
+        if (authBearerSection) {
+            authBearerSection.style.display = "none";
+        }
+        if (authHeadersSection) {
+            authHeadersSection.style.display = "none";
+        }
+
+        switch (gateway.authType) {
+            case "basic":
+                if (authBasicSection) {
+                    authBasicSection.style.display = "block";
+                    if (authUsernameField) {
+                        authUsernameField.value = gateway.authUsername || "";
+                    }
+                    if (authPasswordField) {
+                        authPasswordField.value = "*****"; // mask password
+                    }
+                }
+                break;
+            case "bearer":
+                if (authBearerSection) {
+                    authBearerSection.style.display = "block";
+                    if (authTokenField) {
+                        authTokenField.value = gateway.authValue || ""; // show full token
+                    }
+                }
+                break;
+            case "authheaders":
+                if (authHeadersSection) {
+                    authHeadersSection.style.display = "block";
+                    if (authHeaderKeyField) {
+                        authHeaderKeyField.value = gateway.authHeaderKey || "";
+                    }
+                    if (authHeaderValueField) {
+                        authHeaderValueField.value = "*****"; // mask header value
+                    }
+                }
+                break;
+            case "":
+            default:
+                // No auth – keep everything hidden
+                break;
         }
 
         openModal("gateway-edit-modal");
