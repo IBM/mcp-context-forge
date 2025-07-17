@@ -610,10 +610,10 @@ vulture:                            ## 🧹  Dead code detection
 # -----------------------------------------------------------------------------
 # 📑 GRYPE SECURITY/VULNERABILITY SCANNING
 # -----------------------------------------------------------------------------
-# help: grype-install             - Install Grype
-# help: grype-scan                - Scan all files using grype
-# help: grype-sarif               - Generate SARIF report
-# help: security-scan             - Run Trivy security-scan
+# help: grype-install        - Install Grype
+# help: grype-scan           - Scan all files using grype
+# help: grype-sarif          - Generate SARIF report
+# help: security-scan        - Run Trivy security-scan
 .PHONY: grype-install grype-scan grype-sarif security-scan
 
 grype-install:
@@ -890,7 +890,7 @@ sonar-info:
 # 🛡️  SECURITY & PACKAGE SCANNING
 # =============================================================================
 # help: 🛡️ SECURITY & PACKAGE SCANNING
-# help: trivy-install 		 - Install Trivy
+# help: trivy-install        - Install Trivy
 # help: trivy                - Scan container image for CVEs (HIGH/CRIT). Needs podman socket enabled
 .PHONY: trivy-install trivy
 
@@ -2337,24 +2337,24 @@ alembic-install:
 
 db-new:
 	@echo "➜ Generating revision: $(MSG)"
-	$(ALEMBIC) revision --autogenerate -m $(MSG)
+	$(ALEMBIC) -c mcpgateway/alembic.ini revision --autogenerate -m $(MSG)
 
 db-up:
 	@echo "➜ Upgrading database to head ..."
-	$(ALEMBIC) upgrade head
+	$(ALEMBIC) -c mcpgateway/alembic.ini upgrade head
 
 db-down:
 	@echo "➜ Downgrading database → $(REV) ..."
-	$(ALEMBIC) downgrade $(REV)
+	$(ALEMBIC) -c mcpgateway/alembic.ini downgrade $(REV)
 
 db-current:
-	$(ALEMBIC) current
+	$(ALEMBIC) -c mcpgateway/alembic.ini current
 
 db-history:
-	$(ALEMBIC) history --verbose
+	$(ALEMBIC) -c mcpgateway/alembic.ini history --verbose
 
 db-revision-id:
-	@$(ALEMBIC) current --verbose | awk '/Current revision/ {print $$3}'
+	@$(ALEMBIC) -c mcpgateway/alembic.ini current --verbose | awk '/Current revision/ {print $$3}'
 
 
 # =============================================================================

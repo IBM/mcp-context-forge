@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Self, Union
 
 # Third-Party
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
@@ -1518,15 +1518,79 @@ class GatewayRead(BaseModelWithConfigDict):
     slug: str = Field(None, description="Slug for gateway endpoint URL")
 
     # This will be the main method to automatically populate fields
-    @classmethod
     @model_validator(mode="after")
-    def _populate_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    @classmethod
+    def _populate_auth(cls, values: Self) -> Dict[str, Any]:
+        """Populate authentication fields based on auth_type and encoded auth_value.
+
+        This post-validation method decodes the stored authentication value and
+        populates the appropriate authentication fields (username/password, token,
+        or custom headers) based on the authentication type. It ensures the
+        authentication data is properly formatted and accessible through individual
+        fields for display purposes.
+
+        The method handles three authentication types:
+        - basic: Extracts username and password from Authorization header
+        - bearer: Extracts token from Bearer Authorization header
+        - authheaders: Extracts custom header key/value pair
+
+        Args:
+            values: The validated model data containing auth_type and auth_value.
+                Expected to have 'auth_type' and 'auth_value' fields.
+
+        Returns:
+            Dict[str, Any]: The updated values dict with populated auth fields:
+                            - For basic: auth_username and auth_password
+                            - For bearer: auth_token
+                            - For authheaders: auth_header_key and auth_header_value
+
+        Raises:
+            ValueError: If the authentication data is malformed:
+                    - Basic auth missing username or password
+                    - Bearer auth missing or improperly formatted Authorization header
+                    - Custom headers not exactly one key/value pair
+
+        Examples:
+            >>> # Basic auth example
+            >>> string_bytes = "admin:secret".encode("utf-8")
+            >>> encoded_auth = base64.urlsafe_b64encode(string_bytes).decode("utf-8")
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type="basic",
+            ...     auth_value=encode_auth({"Authorization": f"Basic {encoded_auth}"})
+            ... )
+            >>> values = GatewayRead._populate_auth(values)
+            >>> values.auth_username
+            'admin'
+            >>> values.auth_password
+            'secret'
+
+            >>> # Bearer auth example
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type="bearer",
+            ...     auth_value=encode_auth({"Authorization": "Bearer mytoken123"})
+            ... )
+            >>> values = GatewayRead._populate_auth(values)
+            >>> values.auth_token
+            'mytoken123'
+
+            >>> # Custom headers example
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type='authheaders',
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ... )
+            >>> values = GatewayRead._populate_auth(values)
+            >>> values.auth_header_key
+            'X-API-Key'
+            >>> values.auth_header_value
+            'abc123'
+        """
         auth_type = values.auth_type
         auth_value_encoded = values.auth_value
         auth_value = decode_auth(auth_value_encoded)
         if auth_type == "basic":
-            u = auth_value.get("username")
-            p = auth_value.get("password")
+            auth = auth_value.get("Authorization")
+            auth = auth.removeprefix("Basic ")
+            u, p = base64.urlsafe_b64decode(auth).decode("utf-8").split(":")
             if not u or not p:
                 raise ValueError("basic auth requires both username and password")
             values.auth_username, values.auth_password = u, p

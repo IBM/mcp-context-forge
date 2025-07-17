@@ -15,6 +15,24 @@ Features:
 - Authentication enforcement via `require_auth`; unauthenticated browsers see login form, API clients get JSON 401
 - Redacted environment variables, sanitized DB/Redis URLs
 
+The module provides comprehensive system diagnostics including application info,
+platform details, database and Redis connectivity, system metrics, and environment
+variables (with secrets redacted).
+
+Environment variables containing the following patterns are automatically redacted:
+- Keywords: SECRET, TOKEN, PASS, KEY
+- Specific vars: BASIC_AUTH_USER, DATABASE_URL, REDIS_URL
+
+Examples:
+    >>> from mcpgateway.version import _is_secret, _sanitize_url
+    >>> _is_secret("DATABASE_PASSWORD")
+    True
+    >>> _is_secret("BASIC_AUTH_USER")
+    True
+    >>> _is_secret("HOSTNAME")
+    False
+    >>> _sanitize_url("redis://user:pass@localhost:6379/0")
+    'redis://user@localhost:6379/0'
 """
 
 # Future
@@ -67,53 +85,241 @@ router = APIRouter(tags=["meta"])
 
 
 def _is_secret(key: str) -> bool:
-    """
-    Identify if an environment variable key likely represents a secret.
+    """Identify if an environment variable key likely represents a secret.
 
-    Parameters:
-        key (str): The environment variable name.
+    Checks if the given environment variable name contains common secret-related
+    keywords or matches specific patterns to prevent accidental exposure of
+    sensitive information in diagnostics.
+
+    Args:
+        key (str): The environment variable name to check.
 
     Returns:
-        bool: True if the key contains secret-looking keywords, False otherwise.
+        bool: True if the key contains secret-looking keywords or matches
+            known secret patterns, False otherwise.
+
+    Examples:
+        >>> _is_secret("DATABASE_PASSWORD")
+        True
+        >>> _is_secret("API_KEY")
+        True
+        >>> _is_secret("SECRET_TOKEN")
+        True
+        >>> _is_secret("PASS_PHRASE")
+        True
+        >>> # Specific MCP Gateway secrets
+        >>> _is_secret("BASIC_AUTH_USER")
+        True
+        >>> _is_secret("BASIC_AUTH_PASSWORD")
+        True
+        >>> _is_secret("JWT_SECRET_KEY")
+        True
+        >>> _is_secret("AUTH_ENCRYPTION_SECRET")
+        True
+        >>> _is_secret("DATABASE_URL")
+        True
+        >>> _is_secret("REDIS_URL")
+        True
+        >>> # Non-secrets
+        >>> _is_secret("HOSTNAME")
+        False
+        >>> _is_secret("PORT")
+        False
+        >>> _is_secret("DEBUG")
+        False
+        >>> _is_secret("APP_NAME")
+        False
+        >>> # Case insensitive check
+        >>> _is_secret("database_password")
+        True
+        >>> _is_secret("MySecretKey")
+        True
+        >>> _is_secret("basic_auth_user")
+        True
+        >>> _is_secret("redis_url")
+        True
     """
-    return any(tok in key.upper() for tok in ("SECRET", "TOKEN", "PASS", "KEY"))
+    key_upper = key.upper()
+
+    # Check for common secret keywords
+    if any(tok in key_upper for tok in ("SECRET", "TOKEN", "PASS", "KEY")):
+        return True
+
+    # Check for specific secret environment variables
+    secret_vars = {"BASIC_AUTH_USER", "DATABASE_URL", "REDIS_URL"}
+
+    return key_upper in secret_vars
 
 
 def _public_env() -> Dict[str, str]:
-    """
-    Collect environment variables excluding those that look secret.
+    """Collect environment variables excluding those that look secret.
+
+    Filters out environment variables containing sensitive keywords or matching
+    known secret patterns to create a safe subset for display in diagnostics.
 
     Returns:
-        Dict[str, str]: A map of environment variable names to values.
+        Dict[str, str]: A map of environment variable names to values,
+            excluding any variables identified as secrets.
+
+    Examples:
+        >>> import os
+        >>> # Mock environment
+        >>> original_env = dict(os.environ)
+        >>> os.environ.clear()
+        >>> os.environ.update({
+        ...     "HOME": "/home/user",
+        ...     "PATH": "/usr/bin:/bin",
+        ...     "DATABASE_PASSWORD": "secret123",
+        ...     "API_KEY": "abc123",
+        ...     "DEBUG": "true",
+        ...     "BASIC_AUTH_USER": "admin",
+        ...     "BASIC_AUTH_PASSWORD": "pass123",
+        ...     "JWT_SECRET_KEY": "jwt-secret",
+        ...     "AUTH_ENCRYPTION_SECRET": "enc-secret",
+        ...     "DATABASE_URL": "postgresql://user:pass@localhost/db",
+        ...     "REDIS_URL": "redis://user:pass@localhost:6379",
+        ...     "APP_NAME": "MyApp",
+        ...     "PORT": "8080"
+        ... })
+        >>>
+        >>> result = _public_env()
+        >>> # Public vars should be included
+        >>> "HOME" in result
+        True
+        >>> "PATH" in result
+        True
+        >>> "DEBUG" in result
+        True
+        >>> "APP_NAME" in result
+        True
+        >>> "PORT" in result
+        True
+        >>> # Secrets should be excluded
+        >>> "DATABASE_PASSWORD" in result
+        False
+        >>> "API_KEY" in result
+        False
+        >>> "BASIC_AUTH_USER" in result
+        False
+        >>> "BASIC_AUTH_PASSWORD" in result
+        False
+        >>> "JWT_SECRET_KEY" in result
+        False
+        >>> "AUTH_ENCRYPTION_SECRET" in result
+        False
+        >>> "DATABASE_URL" in result
+        False
+        >>> "REDIS_URL" in result
+        False
+        >>>
+        >>> # Restore original environment
+        >>> os.environ.clear()
+        >>> os.environ.update(original_env)
     """
     return {k: v for k, v in os.environ.items() if not _is_secret(k)}
 
 
 def _sanitize_url(url: Optional[str]) -> Optional[str]:
-    """
-    Redact credentials from a URL for safe display.
+    """Redact credentials from a URL for safe display.
 
-    Parameters:
-        url (Optional[str]): The URL to sanitize.
+    Removes password component from URLs while preserving username and other
+    components. Useful for displaying connection strings in logs or diagnostics
+    without exposing sensitive credentials.
+
+    Args:
+        url (Optional[str]): The URL to sanitize, may be None.
 
     Returns:
-        Optional[str]: The sanitized URL or None.
+        Optional[str]: The sanitized URL with password removed, or None if input was None.
+
+    Examples:
+        >>> _sanitize_url(None)
+
+        >>> _sanitize_url("")
+
+        >>> # Basic URL without credentials
+        >>> _sanitize_url("http://localhost:8080/path")
+        'http://localhost:8080/path'
+
+        >>> # URL with username and password
+        >>> _sanitize_url("postgresql://user:password@localhost:5432/db")
+        'postgresql://user@localhost:5432/db'
+
+        >>> # Redis URL with auth
+        >>> _sanitize_url("redis://admin:secret123@redis.example.com:6379/0")
+        'redis://admin@redis.example.com:6379/0'
+
+        >>> # URL with only password (no username)
+        >>> _sanitize_url("redis://:password@localhost:6379")
+        'redis://localhost:6379'
+
+        >>> # Complex URL with query params
+        >>> _sanitize_url("mysql://root:pass@db.local:3306/mydb?charset=utf8")
+        'mysql://root@db.local:3306/mydb?charset=utf8'
     """
     if not url:
         return None
     parts = urlsplit(url)
     if parts.password:
-        netloc = f"{parts.username}@{parts.hostname}{':' + str(parts.port) if parts.port else ''}"
+        # Only include username@ if username exists
+        if parts.username:
+            netloc = f"{parts.username}@{parts.hostname}{':' + str(parts.port) if parts.port else ''}"
+        else:
+            netloc = f"{parts.hostname}{':' + str(parts.port) if parts.port else ''}"
         parts = parts._replace(netloc=netloc)
     return urlunsplit(parts)
 
 
 def _database_version() -> tuple[str, bool]:
-    """
-    Query the database server version.
+    """Query the database server version.
+
+    Attempts to connect to the configured database and retrieve its version string.
+    Uses dialect-specific queries for accurate version information.
 
     Returns:
-        tuple[str, bool]: (version string or error message, reachable flag).
+        tuple[str, bool]: A tuple containing:
+            - str: Version string on success, or error message on failure
+            - bool: True if database is reachable, False otherwise
+
+    Examples:
+        >>> from unittest.mock import Mock, patch, MagicMock
+        >>>
+        >>> # Test successful SQLite connection
+        >>> mock_engine = Mock()
+        >>> mock_engine.dialect.name = "sqlite"
+        >>> mock_conn = Mock()
+        >>> mock_result = Mock()
+        >>> mock_result.scalar.return_value = "3.39.2"
+        >>> mock_conn.execute.return_value = mock_result
+        >>> mock_conn.__enter__ = Mock(return_value=mock_conn)
+        >>> mock_conn.__exit__ = Mock(return_value=None)
+        >>> mock_engine.connect.return_value = mock_conn
+        >>>
+        >>> with patch('mcpgateway.version.engine', mock_engine):
+        ...     version, reachable = _database_version()
+        >>> version
+        '3.39.2'
+        >>> reachable
+        True
+
+        >>> # Test PostgreSQL
+        >>> mock_engine.dialect.name = "postgresql"
+        >>> mock_result.scalar.return_value = "14.5"
+        >>> with patch('mcpgateway.version.engine', mock_engine):
+        ...     version, reachable = _database_version()
+        >>> version
+        '14.5'
+        >>> reachable
+        True
+
+        >>> # Test connection failure
+        >>> mock_engine.connect.side_effect = Exception("Connection refused")
+        >>> with patch('mcpgateway.version.engine', mock_engine):
+        ...     version, reachable = _database_version()
+        >>> version
+        'Connection refused'
+        >>> reachable
+        False
     """
     dialect = engine.dialect.name
     stmts = {
@@ -131,33 +337,92 @@ def _database_version() -> tuple[str, bool]:
 
 
 def _system_metrics() -> Dict[str, Any]:
-    """
-    Gather system-wide and per-process metrics using psutil, falling back gracefully
-    if psutil is not installed or certain APIs are unavailable.
+    """Gather system-wide and per-process metrics using psutil.
+
+    Collects comprehensive system and process metrics with graceful fallbacks
+    when psutil is not installed or certain APIs are unavailable (e.g., on Windows).
 
     Returns:
-        Dict[str, Any]: A dictionary containing:
+        Dict[str, Any]: A dictionary containing system and process metrics including:
             - boot_time (str): ISO-formatted system boot time.
             - cpu_percent (float): Total CPU utilization percentage.
             - cpu_count (int): Number of logical CPU cores.
-            - cpu_freq_mhz (int | None): Current CPU frequency in MHz, or None if unavailable.
-            - load_avg (tuple[float | None, float | None, float | None]):
-                System load average over 1, 5, and 15 minutes, or (None, None, None)
-                on platforms without getloadavg.
-            - mem_total_mb (int): Total physical memory in megabytes.
-            - mem_used_mb (int): Used physical memory in megabytes.
-            - swap_total_mb (int): Total swap memory in megabytes.
-            - swap_used_mb (int): Used swap memory in megabytes.
-            - disk_total_gb (float): Total size of the root disk partition in gigabytes.
-            - disk_used_gb (float): Used space of the root disk partition in gigabytes.
-            - process (Dict[str, Any]): A nested dict with per-process metrics:
-                * pid (int): Current process ID.
-                * threads (int): Number of active threads.
-                * rss_mb (float): Resident Set Size memory usage in megabytes.
-                * vms_mb (float): Virtual Memory Size usage in megabytes.
-                * open_fds (int | None): Number of open file descriptors, or None if unsupported.
-                * proc_cpu_percent (float): CPU utilization percentage for this process.
-        {}: Empty dict if psutil is not installed.
+            - cpu_freq_mhz (float | None): Current CPU frequency in MHz (if available).
+            - load_avg (Tuple[float | None, float | None, float | None]): System load average over 1, 5, and 15 minutes,
+            or (None, None, None) if unsupported.
+            - mem_total_mb (float): Total physical memory in MB.
+            - mem_used_mb (float): Used physical memory in MB.
+            - swap_total_mb (float): Total swap memory in MB.
+            - swap_used_mb (float): Used swap memory in MB.
+            - disk_total_gb (float): Total size of the root partition in GB.
+            - disk_used_gb (float): Used space on the root partition in GB.
+            - process (Dict[str, Any]): Dictionary containing metrics for the current process:
+                - pid (int): Current process ID.
+                - threads (int): Number of active threads.
+                - rss_mb (float): Resident Set Size memory usage in MB.
+                - vms_mb (float): Virtual Memory Size usage in MB.
+                - open_fds (int | None): Number of open file descriptors, or None if unsupported.
+                - proc_cpu_percent (float): CPU utilization percentage for the current process.
+
+        Returns empty dict if psutil is not installed.
+
+    Examples:
+        >>> from unittest.mock import Mock, patch
+        >>>
+        >>> # Test without psutil
+        >>> with patch('mcpgateway.version.psutil', None):
+        ...     metrics = _system_metrics()
+        >>> metrics
+        {}
+
+        >>> # Test with mocked psutil
+        >>> mock_psutil = Mock()
+        >>> mock_vm = Mock(total=8589934592, used=4294967296)  # 8GB total, 4GB used
+        >>> mock_swap = Mock(total=2147483648, used=1073741824)  # 2GB total, 1GB used
+        >>> mock_freq = Mock(current=2400.0)
+        >>> mock_disk = Mock(total=107374182400, used=53687091200)  # 100GB total, 50GB used
+        >>> mock_mem_info = Mock(rss=104857600, vms=209715200)  # 100MB RSS, 200MB VMS
+        >>> mock_process = Mock()
+        >>> mock_process.memory_info.return_value = mock_mem_info
+        >>> mock_process.num_fds.return_value = 42
+        >>> mock_process.cpu_percent.return_value = 25.5
+        >>> mock_process.num_threads.return_value = 4
+        >>> mock_process.pid = 1234
+        >>>
+        >>> mock_psutil.virtual_memory.return_value = mock_vm
+        >>> mock_psutil.swap_memory.return_value = mock_swap
+        >>> mock_psutil.cpu_freq.return_value = mock_freq
+        >>> mock_psutil.cpu_percent.return_value = 45.2
+        >>> mock_psutil.cpu_count.return_value = 8
+        >>> mock_psutil.Process.return_value = mock_process
+        >>> mock_psutil.disk_usage.return_value = mock_disk
+        >>> mock_psutil.boot_time.return_value = 1640995200.0  # 2022-01-01 00:00:00 UTC
+        >>>
+        >>> with patch('mcpgateway.version.psutil', mock_psutil):
+        ...     with patch('os.getloadavg', return_value=(1.5, 2.0, 1.75)):
+        ...         with patch('os.name', 'posix'):
+        ...             metrics = _system_metrics()
+        >>>
+        >>> metrics['cpu_percent']
+        45.2
+        >>> metrics['cpu_count']
+        8
+        >>> metrics['cpu_freq_mhz']
+        2400
+        >>> metrics['load_avg']
+        (1.5, 2.0, 1.75)
+        >>> metrics['mem_total_mb']
+        8192
+        >>> metrics['mem_used_mb']
+        4096
+        >>> metrics['process']['pid']
+        1234
+        >>> metrics['process']['threads']
+        4
+        >>> metrics['process']['rss_mb']
+        100.0
+        >>> metrics['process']['open_fds']
+        42
     """
     if not psutil:
         return {}
@@ -222,15 +487,19 @@ def _build_payload(
     redis_version: Optional[str],
     redis_ok: bool,
 ) -> Dict[str, Any]:
-    """
-    Build the complete diagnostics payload.
+    """Build the complete diagnostics payload.
 
-    Parameters:
-        redis_version (Optional[str]): Version or error for Redis.
-        redis_ok (bool): Whether Redis is reachable.
+    Assembles all diagnostic information into a structured dictionary suitable
+    for JSON serialization or HTML rendering.
+
+    Args:
+        redis_version (Optional[str]): Redis version string or error message.
+        redis_ok (bool): Whether Redis is reachable and operational.
 
     Returns:
-        Dict[str, Any]: Structured diagnostics data.
+        Dict[str, Any]: Complete diagnostics payload containing timestamp, host info,
+            application details, platform info, database and Redis status, settings,
+            environment variables, and system metrics.
     """
     db_ver, db_ok = _database_version()
     return {
@@ -271,28 +540,87 @@ def _build_payload(
 
 
 def _html_table(obj: Dict[str, Any]) -> str:
-    """
-    Render a dict as an HTML table.
+    """Render a dict as an HTML table.
 
-    Parameters:
-        obj (Dict[str, Any]): The data to render.
+    Converts a dictionary into an HTML table with keys as headers and values
+    as cells. Non-string values are JSON-serialized for display.
+
+    Args:
+        obj (Dict[str, Any]): The dictionary to render as a table.
 
     Returns:
-        str: HTML table markup.
+        str: HTML table markup string.
+
+    Examples:
+        >>> # Simple string values
+        >>> html = _html_table({"name": "test", "version": "1.0"})
+        >>> '<table>' in html
+        True
+        >>> '<tr><th>name</th><td>test</td></tr>' in html
+        True
+        >>> '<tr><th>version</th><td>1.0</td></tr>' in html
+        True
+
+        >>> # Complex values get JSON serialized
+        >>> html = _html_table({"count": 42, "active": True, "items": ["a", "b"]})
+        >>> '<th>count</th><td>42</td>' in html
+        True
+        >>> '<th>active</th><td>true</td>' in html
+        True
+        >>> '<th>items</th><td>["a", "b"]</td>' in html
+        True
+
+        >>> # Empty dict
+        >>> _html_table({})
+        '<table></table>'
     """
     rows = "".join(f"<tr><th>{k}</th><td>{json.dumps(v, default=str) if not isinstance(v, str) else v}</td></tr>" for k, v in obj.items())
     return f"<table>{rows}</table>"
 
 
 def _render_html(payload: Dict[str, Any]) -> str:
-    """
-    Render the full diagnostics payload as HTML.
+    """Render the full diagnostics payload as HTML.
 
-    Parameters:
-        payload (Dict[str, Any]): The diagnostics data.
+    Creates a complete HTML page with styled tables displaying all diagnostic
+    information in a user-friendly format.
+
+    Args:
+        payload (Dict[str, Any]): The complete diagnostics data structure.
 
     Returns:
-        str: Complete HTML page.
+        str: Complete HTML page as a string.
+
+    Examples:
+        >>> payload = {
+        ...     "timestamp": "2024-01-01T00:00:00Z",
+        ...     "host": "test-server",
+        ...     "uptime_seconds": 3600,
+        ...     "app": {"name": "TestApp", "version": "1.0"},
+        ...     "platform": {"python": "3.9.0"},
+        ...     "database": {"dialect": "sqlite", "reachable": True},
+        ...     "redis": {"available": False},
+        ...     "settings": {"cache_type": "memory"},
+        ...     "system": {"cpu_count": 4},
+        ...     "env": {"PATH": "/usr/bin"}
+        ... }
+        >>>
+        >>> html = _render_html(payload)
+        >>> '<!doctype html>' in html
+        True
+        >>> '<h1>MCP Gateway diagnostics</h1>' in html
+        True
+        >>> 'test-server' in html
+        True
+        >>> '3600s' in html
+        True
+        >>> '<h2>App</h2>' in html
+        True
+        >>> '<h2>Database</h2>' in html
+        True
+        >>> '<style>' in html
+        True
+        >>> 'border-collapse:collapse' in html
+        True
     """
     style = (
         "<style>"
@@ -318,14 +646,37 @@ def _render_html(payload: Dict[str, Any]) -> str:
 
 
 def _login_html(next_url: str) -> str:
-    """
-    Render the login form HTML for unauthenticated browsers.
+    """Render the login form HTML for unauthenticated browsers.
 
-    Parameters:
-        next_url (str): The URL to return to after login.
+    Creates a simple login form that posts credentials and redirects back
+    to the requested URL after successful authentication.
+
+    Args:
+        next_url (str): The URL to redirect to after successful login.
 
     Returns:
-        str: HTML of the login page.
+        str: HTML string containing the complete login page.
+
+    Examples:
+        >>> html = _login_html("/version?format=html")
+        >>> '<!doctype html>' in html
+        True
+        >>> '<h2>Please log in</h2>' in html
+        True
+        >>> 'action="/login"' in html
+        True
+        >>> 'name="next" value="/version?format=html"' in html
+        True
+        >>> 'type="text" name="username"' in html
+        True
+        >>> 'type="password" name="password"' in html
+        True
+        >>> 'autocomplete="username"' in html
+        True
+        >>> 'autocomplete="current-password"' in html
+        True
+        >>> '<button type="submit">Login</button>' in html
+        True
     """
     return f"""<!doctype html>
 <html><head><meta charset='utf-8'><title>Login - MCP Gateway</title>
@@ -355,16 +706,85 @@ async def version_endpoint(
     partial: Optional[bool] = False,
     _user=Depends(require_auth),
 ) -> Response:
-    """
-    Serve diagnostics as JSON, full HTML, or partial HTML (if requested).
+    """Serve diagnostics as JSON, full HTML, or partial HTML.
 
-    Parameters:
-        request (Request): The incoming HTTP request.
-        fmt (Optional[str]): Query param 'html' for full HTML output.
-        partial (Optional[bool]): Query param to request partial HTML fragment.
+    Main endpoint that gathers all diagnostic information and returns it in the
+    requested format. Requires authentication via HTTP Basic Auth or session.
+
+    The endpoint supports three output formats:
+    - JSON (default): Machine-readable diagnostic data
+    - Full HTML: Complete HTML page with styled tables
+    - Partial HTML: HTML fragment for embedding (when partial=True)
+
+    Args:
+        request (Request): The incoming FastAPI request object.
+        fmt (Optional[str]): Query parameter to force format ('html' for HTML output).
+        partial (Optional[bool]): Query parameter to request partial HTML fragment.
+        _user: Injected authenticated user from require_auth dependency.
 
     Returns:
-        Response: JSONResponse or HTMLResponse with diagnostics data.
+        Response: JSONResponse with diagnostic data, or HTMLResponse with formatted page.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import Mock, AsyncMock, patch
+        >>> from fastapi import Request
+        >>> from fastapi.responses import JSONResponse, HTMLResponse
+        >>>
+        >>> # Create mock request
+        >>> mock_request = Mock(spec=Request)
+        >>> mock_request.headers = {"accept": "application/json"}
+        >>>
+        >>> # Test JSON response (default)
+        >>> async def test_json():
+        ...     with patch('mcpgateway.version.REDIS_AVAILABLE', False):
+        ...         with patch('mcpgateway.version._build_payload') as mock_build:
+        ...             mock_build.return_value = {"test": "data"}
+        ...             response = await version_endpoint(mock_request, fmt=None, partial=False, _user="testuser")
+        ...             return response
+        >>>
+        >>> response = asyncio.run(test_json())
+        >>> isinstance(response, JSONResponse)
+        True
+
+        >>> # Test HTML response with fmt parameter
+        >>> async def test_html_fmt():
+        ...     with patch('mcpgateway.version.REDIS_AVAILABLE', False):
+        ...         with patch('mcpgateway.version._build_payload') as mock_build:
+        ...             with patch('mcpgateway.version._render_html') as mock_render:
+        ...                 mock_build.return_value = {"test": "data"}
+        ...                 mock_render.return_value = "<html>test</html>"
+        ...                 response = await version_endpoint(mock_request, fmt="html", partial=False, _user="testuser")
+        ...                 return response
+        >>>
+        >>> response = asyncio.run(test_html_fmt())
+        >>> isinstance(response, HTMLResponse)
+        True
+
+        >>> # Test with Redis available
+        >>> async def test_with_redis():
+        ...     mock_redis = AsyncMock()
+        ...     mock_redis.ping = AsyncMock()
+        ...     mock_redis.info = AsyncMock(return_value={"redis_version": "7.0.5"})
+        ...
+        ...     with patch('mcpgateway.version.REDIS_AVAILABLE', True):
+        ...         with patch('mcpgateway.version.settings') as mock_settings:
+        ...             mock_settings.cache_type = "redis"
+        ...             mock_settings.redis_url = "redis://localhost:6379"
+        ...             with patch('mcpgateway.version.aioredis.Redis.from_url', return_value=mock_redis):
+        ...                 with patch('mcpgateway.version._build_payload') as mock_build:
+        ...                     mock_build.return_value = {"redis": {"version": "7.0.5"}}
+        ...                     response = await version_endpoint(mock_request, _user="testuser")
+        ...                     # Verify Redis was checked
+        ...                     mock_redis.ping.assert_called_once()
+        ...                     mock_redis.info.assert_called_once()
+        ...                     # Verify payload was built with Redis info
+        ...                     mock_build.assert_called_once_with("7.0.5", True)
+        ...                     return response
+        >>>
+        >>> response = asyncio.run(test_with_redis())
+        >>> isinstance(response, JSONResponse)
+        True
     """
     # Redis health check
     redis_ok = False

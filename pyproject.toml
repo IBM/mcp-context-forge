@@ -139,6 +139,7 @@ dev = [
     "pytest-examples>=0.0.18",
     "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=15.1",
+    "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
     "pytype>=2024.10.11",
     "pyupgrade>=3.20.0",
@@ -271,6 +272,7 @@ import_heading_localfolder = "Local"        # header for ad-hoc scripts / tests
 ###############################################################################
 known_first_party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
 known_local_folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
+known_third_party          = ["alembic"] # treat "alembic" as THIRDPARTY
 # src_paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
 
 ###############################################################################
