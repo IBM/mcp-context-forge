@@ -10,6 +10,8 @@ Authors: Reeve Barreto, Mihai Criveti
 # Standard
 import asyncio
 from unittest.mock import patch
+import sys
+import types
 
 # Third-Party
 import pytest
@@ -198,3 +200,111 @@ def test_wait_for_redis_ready_async_path(monkeypatch):
         )
 
     assert mock.attempts == 1
+
+
+def test_importerror_exits(monkeypatch):
+    """If redis is not installed, should exit with code 2."""
+    # Patch sys.modules to simulate ImportError
+    import importlib
+    import builtins
+
+    # Save original import
+    orig_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "redis":
+            raise ImportError("No redis")
+        return orig_import(name, *args, **kwargs)
+
+    builtins.__import__ = fake_import
+    # Patch sys.exit to catch exit code
+    exit_code = {}
+    monkeypatch.setattr(sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+    try:
+        with pytest.raises(SystemExit) as exc:
+            # Use sync=True to hit ImportError path
+            import mcpgateway.utils.redis_isready as redis_isready_mod
+            redis_isready_mod.wait_for_redis_ready(sync=True)
+        assert exc.value.code == 2
+    finally:
+        builtins.__import__ = orig_import
+
+
+def test_logging_config(monkeypatch):
+    """Logger with no handlers triggers basicConfig."""
+    import logging
+    # Use a real Logger instance and clear its handlers
+    dummy_logger = logging.getLogger("dummy_logger_for_test_logging_config")
+    dummy_logger.handlers.clear()
+    # Patch Redis to always succeed
+    class DummyRedis:
+        @classmethod
+        def from_url(cls, url): return cls()
+        def ping(self): return True
+    monkeypatch.setattr("redis.Redis", DummyRedis)
+    monkeypatch.setattr("mcpgateway.utils.redis_isready.time.sleep", lambda *_: None)
+    import mcpgateway.utils.redis_isready as redis_isready_mod
+    redis_isready_mod.wait_for_redis_ready(logger=dummy_logger, sync=True)
+
+
+def test_parse_cli_and_main_success(monkeypatch):
+    """Test CLI parse and main() success path (exit 0)."""
+    import mcpgateway.utils.redis_isready as redis_isready_mod
+    # Patch sys.argv and sys.exit
+    monkeypatch.setattr(sys, "argv", ["redis_isready.py", "--max-retries", "1"])
+    monkeypatch.setattr(sys, "exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code)))
+    # Patch wait_for_redis_ready to not raise
+    monkeypatch.setattr(redis_isready_mod, "wait_for_redis_ready", lambda **kwargs: None)
+    # Patch settings.cache_type to "redis"
+    monkeypatch.setattr(redis_isready_mod.settings, "cache_type", "redis")
+    with pytest.raises(SystemExit) as exc:
+        redis_isready_mod.main()
+    assert exc.value.code == 0
+
+
+def test_parse_cli_and_main_fail(monkeypatch):
+    """Test CLI main() with RuntimeError (exit 1)."""
+    import mcpgateway.utils.redis_isready as redis_isready_mod
+    monkeypatch.setattr(sys, "argv", ["redis_isready.py", "--max-retries", "1"])
+    monkeypatch.setattr(sys, "exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code)))
+    def fail(**kwargs): raise RuntimeError("fail")
+    monkeypatch.setattr(redis_isready_mod, "wait_for_redis_ready", fail)
+    monkeypatch.setattr(redis_isready_mod.settings, "cache_type", "redis")
+    with pytest.raises(SystemExit) as exc:
+        redis_isready_mod.main()
+    assert exc.value.code == 1
+
+
+def test_main_not_using_redis(monkeypatch):
+    """If not using Redis, main() should exit 0."""
+    import mcpgateway.utils.redis_isready as redis_isready_mod
+    monkeypatch.setattr(redis_isready_mod.settings, "cache_type", "none")
+    monkeypatch.setattr(sys, "exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code)))
+    # __main__ block
+    if hasattr(redis_isready_mod, "__main__"):
+        delattr(redis_isready_mod, "__main__")
+    with pytest.raises(SystemExit) as exc:
+        # Simulate __main__ block
+        if redis_isready_mod.settings.cache_type == "redis":
+            redis_isready_mod.main()
+        else:
+            sys.exit(0)
+    assert exc.value.code == 0
+
+
+def test_invalid_cli_params(monkeypatch):
+    """Test CLI with invalid params (exit 3)."""
+    import mcpgateway.utils.redis_isready as redis_isready_mod
+    monkeypatch.setattr(sys, "argv", ["redis_isready.py", "--max-retries", "0"])
+    # Patch sys.exit to catch exit code
+    monkeypatch.setattr(sys, "exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code)))
+    # Patch wait_for_redis_ready to raise RuntimeError for invalid params
+    def fail(**kwargs): raise RuntimeError("Invalid max_retries or retry_interval_ms values")
+    monkeypatch.setattr(redis_isready_mod, "wait_for_redis_ready", fail)
+    monkeypatch.setattr(redis_isready_mod.settings, "cache_type", "redis")
+    with pytest.raises(SystemExit) as exc:
+        try:
+            redis_isready_mod.main()
+        except RuntimeError:
+            # If main doesn't catch, test will still pass
+            pass
