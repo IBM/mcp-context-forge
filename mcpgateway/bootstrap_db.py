@@ -59,8 +59,8 @@ async def main() -> None:
 
         if "gateways" not in insp.get_table_names():
             logger.info("Empty DB detected - creating baseline schema")
-            Base.metadata.create_all(bind=conn)
             command.stamp(cfg, "head")
+            Base.metadata.create_all(bind=conn)
         else:
             command.upgrade(cfg, "head")
 

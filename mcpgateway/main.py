@@ -147,15 +147,6 @@ logging.basicConfig(
 # Wait for database to be ready before creating tables
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
-# Create database tables
-try:
-    loop = asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.run(bootstrap_db())
-else:
-    loop.create_task(bootstrap_db())
-
-
 # Initialize services
 tool_service = ToolService()
 resource_service = ResourceService()
@@ -209,6 +200,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     logger.info("Starting MCP Gateway services")
     try:
+        await bootstrap_db()
         await tool_service.initialize()
         await resource_service.initialize()
         await prompt_service.initialize()
