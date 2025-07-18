@@ -7,13 +7,12 @@ This assumes environment variables are loaded by the Makefile.
 # Standard
 import base64
 import os
+import re
 from typing import Generator
 
 # Third-Party
 from playwright.sync_api import APIRequestContext, Page, Playwright
 import pytest
-import re
-from playwright.sync_api import Page, Browser, BrowserContext
 
 # Get configuration from environment
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
@@ -78,6 +77,7 @@ def authenticated_page(page: Page) -> Page:
     """Alias for page fixture."""
     return page
 
+
 @pytest.fixture
 def admin_page(page: Page):
     """Provide a logged-in admin page for UI tests."""
@@ -87,10 +87,13 @@ def admin_page(page: Page):
     page.wait_for_url(re.compile(r".*admin"))
     return page
 
+
 @pytest.fixture
 def test_tool_data():
     """Provide test data for tool creation."""
+    # Standard
     import uuid
+
     unique_id = uuid.uuid4()
     return {
         "name": f"test-api-tool-{unique_id}",
@@ -99,8 +102,9 @@ def test_tool_data():
         "integrationType": "REST",
         "requestType": "GET",
         "headers": '{"Authorization": "Bearer test-token"}',
-        "input_schema": '{"type": "object", "properties": {"query": {"type": "string"}}}'
+        "input_schema": '{"type": "object", "properties": {"query": {"type": "string"}}}',
     }
+
 
 @pytest.fixture(autouse=True)
 def setup_test_environment(page: Page):

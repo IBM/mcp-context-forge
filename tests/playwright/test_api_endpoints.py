@@ -2,8 +2,8 @@
 """Test API endpoints through UI interactions."""
 
 # Third-Party
-import pytest
 from playwright.sync_api import APIRequestContext, expect, Page
+import pytest
 
 
 class TestAPIEndpoints:

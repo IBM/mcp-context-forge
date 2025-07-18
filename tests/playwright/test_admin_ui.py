@@ -2,8 +2,8 @@
 """Test cases for admin UI."""
 
 # Third-Party
-import pytest
 from playwright.sync_api import expect, Page
+import pytest
 
 # Local
 from .pages.admin_page import AdminPage

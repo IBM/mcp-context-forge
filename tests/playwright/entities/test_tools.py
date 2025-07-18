@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-import pytest
-from playwright.sync_api import Page, expect
+# Third-Party
+from playwright.sync_api import expect, Page
+
 
 class TestToolsCRUD:
     """CRUD tests for Tools entity in MCP Gateway Admin UI.
@@ -8,13 +9,14 @@ class TestToolsCRUD:
     Examples:
         pytest tests/playwright/entities/test_tools.py
     """
+
     def test_create_new_tool(self, page: Page, test_tool_data, admin_page):
         """Test creating a new tool with debug screenshots and waits."""
         # Go to the Global Tools tab (if not already there)
         page.click('[data-testid="tools-tab"]')
 
         # Wait for the tools panel to be visible
-        page.wait_for_selector('#tools-panel:not(.hidden)')
+        page.wait_for_selector("#tools-panel:not(.hidden)")
 
         # Add a small delay to ensure the UI has time to update
         page.wait_for_timeout(500)
@@ -41,7 +43,7 @@ class TestToolsCRUD:
         page.click('[data-testid="tools-tab"]')
 
         # Wait for the tools panel to be visible
-        page.wait_for_selector('#tools-panel:not(.hidden)')
+        page.wait_for_selector("#tools-panel:not(.hidden)")
 
         # Create tool first
         page.locator('#add-tool-form [name="name"]').fill(test_tool_data["name"])

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
+# Third-Party
+from playwright.sync_api import APIRequestContext, expect, Page
 import pytest
-from playwright.sync_api import Page, expect, APIRequestContext
+
 
 class TestAPIIntegration:
     """API integration tests for MCP protocol and REST endpoints.
@@ -8,13 +10,16 @@ class TestAPIIntegration:
     Examples:
         pytest tests/playwright/test_api_integration.py
     """
+
     @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
     def test_should_handle_mcp_protocol_requests(self, page: Page, admin_page):
         """Test MCP protocol API integration via UI."""
         api_calls = []
+
         def handle_request(route):
             api_calls.append(route.request.url)
             route.continue_()
+
         page.route("/api/mcp/**", handle_request)
         page.click("#tab-tools")
         page.wait_for_selector("#tools-panel")
@@ -33,17 +38,10 @@ class TestAPIIntegration:
         cookies = page.context.cookies()
         jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
         assert jwt_cookie is not None
-        response = request.post("/api/mcp/initialize",
+        response = request.post(
+            "/api/mcp/initialize",
             headers={"Cookie": f"jwt_token={jwt_cookie['value']}"},
-            data={
-                "jsonrpc": "2.0",
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {}
-                },
-                "id": 1
-            }
+            data={"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}}, "id": 1},
         )
         assert response.ok
         data = response.json()

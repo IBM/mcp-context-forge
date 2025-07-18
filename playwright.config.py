@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
+# Standard
 import os
+
+# Third-Party
 from playwright.sync_api import Playwright
+
 
 def pytest_configure(config):
     """Configure Playwright for pytest runs."""
