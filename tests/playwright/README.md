@@ -7,16 +7,24 @@ This directory contains end-to-end UI tests for the MCP Context Forge admin inte
 ```
 tests/playwright/
 ├── README.md               # This file
-├── __init__.py            # Package marker
 ├── conftest.py            # Pytest fixtures and configuration
 ├── test_admin_ui.py       # Admin panel UI tests
 ├── test_api_endpoints.py  # API integration tests via UI
-├── test_server_management.py  # Server CRUD operations
+├── test_api_integration.py # API protocol tests
+├── test_auth.py           # Authentication tests
+├── test_htmx_interactions.py # HTMX interaction tests
+├── test_realtime_features.py # Real-time feature tests
+├── entities/              # CRUD tests for admin entities
+│   ├── .gitkeep
+│   └── test_tools.py      # Tools CRUD operations
+├── api/                   # API protocol and REST endpoint tests
+│   └── .gitkeep
+├── fixtures/              # Shared fixtures, test data factories
+│   └── .gitkeep
 ├── pages/                 # Page Object Model
-│   ├── __init__.py
 │   ├── base_page.py       # Base page class
 │   └── admin_page.py      # Admin panel page objects
-├── screenshots/           # Test failure screenshots (auto-created)
+├── screenshots/           # Visual regression baseline images
 ├── reports/              # Test reports (auto-created)
 └── videos/               # Test recordings (auto-created)
 ```
@@ -248,6 +256,13 @@ Tests run automatically on GitHub Actions for:
 6. **Error Messages** - Include context in assertion messages
 7. **Cleanup** - Tests should clean up created resources
 
+## 📂 Adding Tests
+
+- Place CRUD tests in `entities/` directory
+- Place protocol/REST/error tests in `api/` directory
+- Add shared fixtures/page objects in `fixtures/` directory
+- Visual regression baselines go in `screenshots/` directory
+
 ## 🔍 Common Issues
 
 ### Server Not Running
@@ -299,3 +314,5 @@ page.click("button", timeout=10000)  # 10 seconds for this action
 4. Include docstrings explaining test purpose
 5. Run `make test-ui` locally before submitting PR
 6. Ensure all smoke tests pass
+
+See the main project README for more details.

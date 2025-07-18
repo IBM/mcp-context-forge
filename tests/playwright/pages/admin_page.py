@@ -12,13 +12,15 @@ class AdminPage(BasePage):
     """Admin panel page object."""
 
     # Selectors
-    SERVERS_TAB = '[data-tab="servers"]'
-    TOOLS_TAB = '[data-tab="tools"]'
-    GATEWAYS_TAB = '[data-tab="gateways"]'
-    ADD_SERVER_BTN = 'button:has-text("Add Server")'
-    SERVER_LIST = ".server-list"
-    SERVER_ITEM = ".server-item"
-    SEARCH_INPUT = 'input[placeholder*="Search"]'
+    SERVERS_TAB = '[data-testid="servers-tab"]'
+    TOOLS_TAB = '[data-testid="tools-tab"]'
+    GATEWAYS_TAB = '[data-testid="gateways-tab"]'
+    ADD_SERVER_BTN = '[data-testid="add-server-btn"]'
+    SERVER_LIST = '[data-testid="server-list"]'
+    SERVER_ITEM = '[data-testid="server-item"]'
+    SEARCH_INPUT = '[data-testid="search-input"]'
+    SERVER_NAME_INPUT = 'input[name="name"]'
+    SERVER_ICON_INPUT = 'input[name="icon"]'
 
     def __init__(self, page: Page, base_url: str):
         super().__init__(page)
@@ -42,14 +44,11 @@ class AdminPage(BasePage):
         """Click on gateways tab."""
         self.click_element(self.GATEWAYS_TAB)
 
-    def add_server(self, name: str, url: str) -> None:
+    def add_server(self, name: str, icon_url: str) -> None:
         """Add a new server."""
+        self.fill_input(self.SERVER_NAME_INPUT, name)
+        self.fill_input(self.SERVER_ICON_INPUT, icon_url)
         self.click_element(self.ADD_SERVER_BTN)
-        # Wait for modal
-        self.wait_for_element('input[name="name"]')
-        self.fill_input('input[name="name"]', name)
-        self.fill_input('input[name="url"]', url)
-        self.click_element('button:has-text("Save")')
 
     def search_servers(self, query: str) -> None:
         """Search for servers."""

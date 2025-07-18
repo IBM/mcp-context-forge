@@ -2715,18 +2715,32 @@ playwright-install-all:
 ## --- UI Test Execution ------------------------------------------------------
 test-ui: playwright-install
 	@echo "🎭 Running UI tests with visible browser..."
+	@echo "💡 Make sure the dev server is running: make dev"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
+	@if ! curl -s http://localhost:8000/health >/dev/null 2>&1; then \
+		echo "❌ Dev server not running on http://localhost:8000"; \
+		echo "💡 Start it with: make dev"; \
+		exit 1; \
+	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --headed --screenshot=only-on-failure \
+		export TEST_BASE_URL=http://localhost:8000 && \
+		python -m pytest tests/playwright/ -v --headed --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
 
 test-ui-headless: playwright-install
 	@echo "🎭 Running UI tests in headless mode..."
+	@echo "💡 Make sure the dev server is running: make dev"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
+	@if ! curl -s http://localhost:8000/health >/dev/null 2>&1; then \
+		echo "❌ Dev server not running on http://localhost:8000"; \
+		echo "💡 Start it with: make dev"; \
+		exit 1; \
+	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export TEST_BASE_URL=http://localhost:8000 && \
 		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
