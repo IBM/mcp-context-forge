@@ -848,6 +848,14 @@ make lint          # optional: run style checks (ruff, mypy, etc.)
 
 ### Containerised (self-signed TLS)
 
+## Container Runtime Support
+
+This project supports both Docker and Podman. The Makefile automatically detects
+which runtime is available and handles image naming differences.
+
+### Auto-detection
+```bash
+make container-build  # Uses podman if available, otherwise docker
 
 > You can use docker or podman, ex:
 
