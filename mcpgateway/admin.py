@@ -405,7 +405,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         >>> server_service.register_server = original_register_server
     """
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    # is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
         server = ServerCreate(
