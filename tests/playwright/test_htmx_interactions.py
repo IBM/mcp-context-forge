@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-import re
+# Third-Party
+from playwright.sync_api import expect, Page
 import pytest
-from playwright.sync_api import Page, expect
+
 
 class TestHTMXInteractions:
     """HTMX and UI interaction tests for MCP Gateway Admin UI.
@@ -9,6 +10,7 @@ class TestHTMXInteractions:
     Examples:
         pytest tests/playwright/test_htmx_interactions.py
     """
+
     @pytest.fixture(autouse=True)
     def setup(self, admin_page):
         """Login before each test."""
@@ -48,6 +50,8 @@ class TestHTMXInteractions:
         page.wait_for_selector("#servers-table")
         # Wait for polling (simulate with sleep or wait for content change)
         # This is a placeholder; in real test, use a more robust polling check
+        # Standard
         import time
+
         time.sleep(2)
         expect(page.locator("#servers-table")).to_be_visible()

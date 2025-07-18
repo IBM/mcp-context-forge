@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
+# Standard
 import os
 import re
-import pytest
+
+# Third-Party
 from playwright.sync_api import expect
 
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
 BASIC_AUTH_USER = os.getenv("BASIC_AUTH_USER", "admin")
 BASIC_AUTH_PASSWORD = os.getenv("BASIC_AUTH_PASSWORD", "changeme")
+
 
 class TestAuthentication:
     """Authentication tests for MCP Gateway Admin UI.
@@ -16,6 +19,7 @@ class TestAuthentication:
     Examples:
         pytest tests/playwright/test_auth.py
     """
+
     def test_should_login_with_valid_credentials(self, browser):
         """Test successful access with valid HTTP Basic Auth credentials."""
         context = browser.new_context(
@@ -27,7 +31,7 @@ class TestAuthentication:
         page = context.new_page()
         # Go directly to admin - HTTP Basic Auth handles authentication
         page.goto(f"{BASE_URL}/admin")
-        page.screenshot(path="debug_login_page.png")
+        #page.screenshot(path="debug_login_page.png")
 
         # Verify we successfully accessed the admin page
         expect(page).to_have_url(re.compile(r".*admin"))

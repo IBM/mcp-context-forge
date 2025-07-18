@@ -10,17 +10,22 @@
 # help: 🐍 MCP CONTEXT FORGE  (An enterprise-ready Model Context Protocol Gateway)
 #
 # ──────────────────────────────────────────────────────────────────────────
-# Project variables
+SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
+
 # Read values from .env.make
 -include .env.make
 
+# Project variables
 PROJECT_NAME      = mcpgateway
 DOCS_DIR          = docs
 HANDSDOWN_PARAMS  = -o $(DOCS_DIR)/ -n $(PROJECT_NAME) --name "MCP Gateway" --cleanup
 
 TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
 
+# -----------------------------------------------------------------------------
 # Project-wide clean-up targets
+# -----------------------------------------------------------------------------
 DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .pytype \
                  dist build site .eggs *.egg-info .cache htmlcov certs \
                  $(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
@@ -41,12 +46,20 @@ METRICS_MD   ?= $(DOCS_DIR)/docs/metrics/loc.md
 
 # -----------------------------------------------------------------------------
 # Container resource configuration
+# -----------------------------------------------------------------------------
 CONTAINER_MEMORY = 2048m
 CONTAINER_CPUS   = 2
 
 # Virtual-environment variables
 VENVS_DIR := $(HOME)/.venv
 VENV_DIR  := $(VENVS_DIR)/$(PROJECT_NAME)
+
+# -----------------------------------------------------------------------------
+# OS Specific
+# -----------------------------------------------------------------------------
+# The -r flag for xargs is GNU-specific and will fail on macOS
+XARGS_FLAGS := $(shell [ "$$(uname)" = "Darwin" ] && echo "" || echo "-r")
+
 
 # =============================================================================
 # 📖 DYNAMIC HELP
@@ -98,10 +111,7 @@ venv:
 
 .PHONY: activate
 activate:
-	@echo -e "💡  Enter the venv using:\n    . $(VENV_DIR)/bin/activate\n"
-	@. $(VENV_DIR)/bin/activate
-	@echo "export MYPY_CACHE_DIR=/tmp/cache/mypy/$(PROJECT_NAME)"
-	@echo "export PYTHONPYCACHEPREFIX=/tmp/cache/$(PROJECT_NAME)"
+	@echo "💡  Enter the venv using:\n. $(VENV_DIR)/bin/activate\n"
 
 .PHONY: install
 install: venv
@@ -225,7 +235,7 @@ coverage:
 			--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
 			--dist loadgroup -n 8 -rA --cov-append --capture=tee-sys -v \
 			--durations=120 --doctest-modules app/ --cov-report=term \
-			--cov=app --ignore=test.py tests/ || true"
+			--cov=mcpgateway --ignore=test.py tests/ || true"
 	@printf '\n## Coverage report\n\n' >> $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		coverage report --format=markdown -m --no-skip-covered \
@@ -1319,7 +1329,7 @@ image-clean:
 	@echo "🧹 Removing all $(IMAGE_BASE) images..."
 	@$(CONTAINER_RUNTIME) images --format "{{.Repository}}:{{.Tag}}" | \
 		grep -E "(localhost/)?$(IMAGE_BASE)" | \
-		xargs -r $(CONTAINER_RUNTIME) rmi -f 2>/dev/null || true
+		xargs $(XARGS_FLAGS) $(CONTAINER_RUNTIME) rmi -f 2>/dev/null
 	@echo "✅ Images cleaned"
 
 # Fix image naming issues
