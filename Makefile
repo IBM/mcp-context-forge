@@ -111,7 +111,7 @@ venv:
 
 .PHONY: activate
 activate:
-	@echo "💡  Enter the venv using:\n. $(VENV_DIR)/bin/activate\n"
+	@echo -e "💡  Enter the venv using:\n. $(VENV_DIR)/bin/activate\n"
 
 .PHONY: install
 install: venv
