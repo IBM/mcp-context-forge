@@ -31,7 +31,7 @@ class TestAuthentication:
         page = context.new_page()
         # Go directly to admin - HTTP Basic Auth handles authentication
         page.goto(f"{BASE_URL}/admin")
-        #page.screenshot(path="debug_login_page.png")
+        # page.screenshot(path="debug_login_page.png")
 
         # Verify we successfully accessed the admin page
         expect(page).to_have_url(re.compile(r".*admin"))

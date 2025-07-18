@@ -2958,7 +2958,7 @@ function createParameterForm(parameterCount) {
 
 const integrationRequestMap = {
     MCP: ["SSE", "STREAMABLE", "STDIO"],
-    REST: ["GET", "POST", "PUT", "DELETE"],
+    REST: ["GET", "POST", "PUT", "PATCH", "DELETE"],
 };
 
 function updateRequestTypeOptions(preselectedValue = null) {
