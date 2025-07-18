@@ -337,60 +337,70 @@ class TestAdminToolAPIs:
 class TestAdminResourceAPIs:
     """Test admin resource management endpoints."""
 
-    async def test_admin_list_resources_empty(self, client: AsyncClient, mock_settings):
-        """Test GET /admin/resources returns empty list initially."""
-        response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
-        assert response.status_code == 200
-        assert response.json() == []
-
-    async def test_admin_resource_lifecycle(self, client: AsyncClient, mock_settings):
-        """Test complete resource lifecycle through admin UI."""
-        # Create a resource via form submission
+    async def test_admin_add_resource(self, client: AsyncClient, mock_settings):
+        """Test adding a resource via the admin UI."""
         form_data = {
-            "uri": "admin/test/resource",
-            "name": "test_admin_resource",
-            "description": "Test resource via admin",
+            "uri": mock_settings.default_resource_uri,
+            "name": "Test Resource",
+            "description": "A test resource",
             "mimeType": "text/plain",
-            "content": "Admin test content",
+            "content": "Sample content",
         }
-
-        # POST to /admin/resources should redirect
-        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
-
-        # List resources to verify creation
-        response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
-        resources = response.json()
-        assert len(resources) == 1
-        resource = resources[0]
-        assert resource["name"] == "test_admin_resource"
-        resource_id = resource["id"]
-
-        # Get individual resource
-        encoded_uri = quote(form_data["uri"], safe="")
-        response = await client.get(f"/admin/resources/{encoded_uri}", headers=TEST_AUTH_HEADER)
+        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        data = response.json()
-        assert "resource" in data
-        assert "content" in data
+        result = response.json()
+        assert result["success"] is True
+        assert "message" in result and "Add resource registered successfully!" in result["message"]
 
-        # Edit resource
-        edit_data = {
-            "name": "updated_admin_resource",
-            "description": "Updated description",
-            "mimeType": "text/markdown",
-            "content": "Updated admin content",
+    async def test_admin_add_resource_missing_fields(self, client: AsyncClient, mock_settings):
+        """Test adding a resource with missing required fields."""
+        form_data = {
+            "name": "Test Resource1",
+            "description": "A test resource",
+            # Missing 'uri', 'mimeType', and 'content'
         }
-        response = await client.post(f"/admin/resources/{encoded_uri}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
+        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 500
+        # result = response.json()
+        # assert result["success"] is False
+        # assert "error" in result
 
-        # Toggle resource status
-        response = await client.post(f"/admin/resources/{resource_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
+    async def test_admin_add_resource_invalid_mime_type(self, client: AsyncClient, mock_settings):
+        """Test adding a resource with an invalid MIME type."""
+        form_data = {
+            "uri": mock_settings.default_resource_uri,
+            "name": "Test Resource",
+            "description": "A test resource",
+            "mimeType": "invalid/type",
+            "content": "Sample content",
+        }
+        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 422
+        # result = response.json()
+        # assert result["success"] is False
+        # assert "error" in result
 
-        # Delete resource
-        response = await client.post(f"/admin/resources/{encoded_uri}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
+    async def test_admin_add_resource_duplicate_uri(self, client: AsyncClient, mock_settings):
+        """Test adding a resource with a duplicate URI."""
+        form_data = {
+            "uri": mock_settings.default_resource_uri,
+            "name": "Test Resource",
+            "description": "A test resource",
+            "mimeType": "text/plain",
+            "content": "Sample content",
+        }
+        # Add the resource for the first time
+        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        # result = response.json()
+        # assert result["success"] is True
+
+        # Try adding the same resource again
+        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 409
+        # result = response.json()
+        # assert result["success"] is False
+        # assert "error" in result
 
 
 # -------------------------

@@ -2638,7 +2638,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         >>>
         >>> async def test_admin_add_resource():
         ...     response = await admin_add_resource(mock_request, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body.decode() == '{"message":"Add resource registered successfully!","success":true}'
         >>>
         >>> import asyncio; asyncio.run(test_admin_add_resource())
         True
