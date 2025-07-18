@@ -25,7 +25,7 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   gateway:
     #image: ghcr.io/ibm/mcp-context-forge:0.3.0 # Use the release MCP Context Forge image
-    image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
     build:
       context: .
       dockerfile: Containerfile     # Same one the Makefile builds

@@ -11,6 +11,9 @@
 #
 # ──────────────────────────────────────────────────────────────────────────
 # Project variables
+# Read values from .env.make
+-include .env.make
+
 PROJECT_NAME      = mcpgateway
 DOCS_DIR          = docs
 HANDSDOWN_PARAMS  = -o $(DOCS_DIR)/ -n $(PROJECT_NAME) --name "MCP Gateway" --cleanup
@@ -1043,6 +1046,378 @@ publish-testpypi: verify   ## Verify, then upload to TestPyPI
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && twine upload --repository testpypi dist/*"
 	@echo "🚀  Upload finished - check https://test.pypi.org/project/$(PROJECT_NAME)/"
 
+# Allow override via environment
+ifdef FORCE_DOCKER
+  CONTAINER_RUNTIME := docker
+endif
+
+ifdef FORCE_PODMAN
+  CONTAINER_RUNTIME := podman
+endif
+
+# Support for CI/CD environments
+ifdef CI
+  # Many CI systems have docker command that's actually podman
+  CONTAINER_RUNTIME := $(shell $(CONTAINER_RUNTIME) --version | grep -q podman && echo podman || echo docker)
+endif
+
+
+# =============================================================================
+# 🐳 CONTAINER RUNTIME CONFIGURATION
+# =============================================================================
+
+# Auto-detect container runtime if not specified - DEFAULT TO DOCKER
+CONTAINER_RUNTIME ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
+
+# Alternative: Always default to docker unless explicitly overridden
+# CONTAINER_RUNTIME ?= docker
+
+print-runtime:
+	@echo Using container runtime: $(CONTAINER_RUNTIME)
+# Base image name (without any prefix)
+IMAGE_BASE := mcpgateway/mcpgateway
+IMAGE_TAG := latest
+
+# Handle runtime-specific image naming
+ifeq ($(CONTAINER_RUNTIME),podman)
+  # Podman adds localhost/ prefix for local builds
+  IMAGE_LOCAL := localhost/$(IMAGE_BASE):$(IMAGE_TAG)
+  IMAGE_LOCAL_DEV := localhost/$(IMAGE_BASE)-dev:$(IMAGE_TAG)
+  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+else
+  # Docker doesn't add prefix
+  IMAGE_LOCAL := $(IMAGE_BASE):$(IMAGE_TAG)
+  IMAGE_LOCAL_DEV := $(IMAGE_BASE)-dev:$(IMAGE_TAG)
+  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+endif
+
+print-image:
+	@echo "🐳 Container Runtime: $(CONTAINER_RUNTIME)"
+	@echo "Using image: $(IMAGE_LOCAL)"
+	@echo "Development image: $(IMAGE_LOCAL_DEV)"
+	@echo "Push image: $(IMAGE_PUSH)"
+
+# Legacy compatibility
+IMG := $(IMAGE_LOCAL)
+IMG-DEV := $(IMAGE_LOCAL_DEV)
+
+# Function to get the actual image name as it appears in image list
+define get_image_name
+$(shell $(CONTAINER_RUNTIME) images --format "{{.Repository}}:{{.Tag}}" | grep -E "(localhost/)?$(IMAGE_BASE):$(IMAGE_TAG)" | head -1)
+endef
+
+# Function to normalize image name for operations
+define normalize_image
+$(if $(findstring localhost/,$(1)),$(1),$(if $(filter podman,$(CONTAINER_RUNTIME)),localhost/$(1),$(1)))
+endef
+
+# =============================================================================
+# 🐳 UNIFIED CONTAINER OPERATIONS
+# =============================================================================
+# help: 🐳 UNIFIED CONTAINER OPERATIONS (Auto-detects Docker/Podman)
+# help: container-build      - Build image using detected runtime
+# help: container-run        - Run container using detected runtime
+# help: container-run-ssl    - Run container with TLS using detected runtime
+# help: container-run-ssl-host - Run container with TLS and host networking
+# help: container-push       - Push image (handles localhost/ prefix)
+# help: container-stop       - Stop & remove the container
+# help: container-logs       - Stream container logs
+# help: container-shell      - Open shell in running container
+# help: container-info       - Show runtime and image configuration
+# help: container-health     - Check container health status
+# help: image-list           - List all matching container images
+# help: image-clean          - Remove all project images
+# help: image-retag          - Fix image naming consistency issues
+# help: use-docker           - Switch to Docker runtime
+# help: use-podman           - Switch to Podman runtime
+# help: show-runtime         - Show current container runtime
+
+.PHONY: container-build container-run container-run-ssl container-run-ssl-host \
+        container-push container-info container-stop container-logs container-shell \
+        container-health image-list image-clean image-retag container-check-image \
+        container-build-multi use-docker use-podman show-runtime
+
+# Containerfile to use (can be overridden)
+CONTAINER_FILE ?= Containerfile
+
+# Define COMMA for the conditional Z flag
+COMMA := ,
+
+container-info:
+	@echo "🐳 Container Runtime Configuration"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Runtime:        $(CONTAINER_RUNTIME)"
+	@echo "Base Image:     $(IMAGE_BASE)"
+	@echo "Tag:            $(IMAGE_TAG)"
+	@echo "Local Image:    $(IMAGE_LOCAL)"
+	@echo "Push Image:     $(IMAGE_PUSH)"
+	@echo "Actual Image:   $(call get_image_name)"
+	@echo "Container File: $(CONTAINER_FILE)"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+container-build:
+	@echo "🔨 Building with $(CONTAINER_RUNTIME)..."
+	$(CONTAINER_RUNTIME) build \
+		--platform=linux/amd64 \
+		-f $(CONTAINER_FILE) \
+		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+		.
+	@echo "✅ Built image: $(call get_image_name)"
+
+container-run: container-check-image
+	@echo "🚀 Running with $(CONTAINER_RUNTIME)..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--env-file=.env \
+		-p 4444:4444 \
+		--restart=always \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(call get_image_name)
+	@sleep 2
+	@echo "✅ Container started"
+	@echo "🔍 Health check status:"
+	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health check configured"
+
+container-run-ssl: certs container-check-image
+	@echo "🚀 Running with $(CONTAINER_RUNTIME) (TLS)..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--env-file=.env \
+		-e SSL=true \
+		-e CERT_FILE=certs/cert.pem \
+		-e KEY_FILE=certs/key.pem \
+		-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
+		-p 4444:4444 \
+		--restart=always \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(call get_image_name)
+	@sleep 2
+	@echo "✅ Container started with TLS"
+
+container-run-ssl-host: certs container-check-image
+	@echo "🚀 Running with $(CONTAINER_RUNTIME) (TLS, host network)..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--network=host \
+		--env-file=.env \
+		-e SSL=true \
+		-e CERT_FILE=certs/cert.pem \
+		-e KEY_FILE=certs/key.pem \
+		-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
+		--restart=always \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(call get_image_name)
+	@sleep 2
+	@echo "✅ Container started with TLS (host networking)"
+
+container-push: container-check-image
+	@echo "📤 Preparing to push image..."
+	@# For Podman, we need to remove localhost/ prefix for push
+	@if [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
+		actual_image=$$($(CONTAINER_RUNTIME) images --format "{{.Repository}}:{{.Tag}}" | grep -E "$(IMAGE_BASE):$(IMAGE_TAG)" | head -1); \
+		if echo "$$actual_image" | grep -q "^localhost/"; then \
+			echo "🏷️  Tagging for push (removing localhost/ prefix)..."; \
+			$(CONTAINER_RUNTIME) tag "$$actual_image" $(IMAGE_PUSH); \
+		fi; \
+	fi
+	$(CONTAINER_RUNTIME) push $(IMAGE_PUSH)
+	@echo "✅ Pushed: $(IMAGE_PUSH)"
+
+container-check-image:
+	@echo "🔍 Checking for image..."
+	@if [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
+		if ! $(CONTAINER_RUNTIME) image exists $(IMAGE_LOCAL) 2>/dev/null && \
+		   ! $(CONTAINER_RUNTIME) image exists $(IMAGE_BASE):$(IMAGE_TAG) 2>/dev/null; then \
+			echo "❌ Image not found: $(IMAGE_LOCAL)"; \
+			echo "💡 Run 'make container-build' first"; \
+			exit 1; \
+		fi; \
+	else \
+		if ! $(CONTAINER_RUNTIME) images -q $(IMAGE_LOCAL) 2>/dev/null | grep -q . && \
+		   ! $(CONTAINER_RUNTIME) images -q $(IMAGE_BASE):$(IMAGE_TAG) 2>/dev/null | grep -q .; then \
+			echo "❌ Image not found: $(IMAGE_LOCAL)"; \
+			echo "💡 Run 'make container-build' first"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo "✅ Image found"
+
+container-stop:
+	@echo "🛑 Stopping container..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	@echo "✅ Container stopped and removed"
+
+container-logs:
+	@echo "📜 Streaming logs (Ctrl+C to exit)..."
+	$(CONTAINER_RUNTIME) logs -f $(PROJECT_NAME)
+
+container-shell:
+	@echo "🔧 Opening shell in container..."
+	@if ! $(CONTAINER_RUNTIME) ps -q -f name=$(PROJECT_NAME) | grep -q .; then \
+		echo "❌ Container $(PROJECT_NAME) is not running"; \
+		echo "💡 Run 'make container-run' first"; \
+		exit 1; \
+	fi
+	@$(CONTAINER_RUNTIME) exec -it $(PROJECT_NAME) /bin/bash 2>/dev/null || \
+	$(CONTAINER_RUNTIME) exec -it $(PROJECT_NAME) /bin/sh
+
+container-health:
+	@echo "🏥 Checking container health..."
+	@if ! $(CONTAINER_RUNTIME) ps -q -f name=$(PROJECT_NAME) | grep -q .; then \
+		echo "❌ Container $(PROJECT_NAME) is not running"; \
+		exit 1; \
+	fi
+	@echo "Status: $$($(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{.State.Health.Status}}' 2>/dev/null || echo 'No health check')"
+	@echo "Logs:"
+	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{range .State.Health.Log}}{{.Output}}{{end}}' 2>/dev/null || true
+
+container-build-multi:
+	@echo "🔨 Building multi-architecture image..."
+	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
+		if ! docker buildx ls | grep -q "$(PROJECT_NAME)-builder"; then \
+			echo "📦 Creating buildx builder..."; \
+			docker buildx create --name $(PROJECT_NAME)-builder --use; \
+		fi; \
+		docker buildx build \
+			--platform=linux/amd64,linux/arm64 \
+			-f $(CONTAINER_FILE) \
+			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+			--push \
+			.; \
+	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
+		echo "📦 Building manifest with Podman..."; \
+		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64 \
+			-f $(CONTAINER_FILE) \
+			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
+			.; \
+		echo "💡 To push: podman manifest push $(IMAGE_BASE):$(IMAGE_TAG)"; \
+	else \
+		echo "❌ Multi-arch builds require Docker buildx or Podman"; \
+		exit 1; \
+	fi
+
+# Helper targets for debugging image issues
+image-list:
+	@echo "📋 Images matching $(IMAGE_BASE):"
+	@$(CONTAINER_RUNTIME) images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Created}}\t{{.Size}}" | \
+		grep -E "(IMAGE|$(IMAGE_BASE))" || echo "No matching images found"
+
+image-clean:
+	@echo "🧹 Removing all $(IMAGE_BASE) images..."
+	@$(CONTAINER_RUNTIME) images --format "{{.Repository}}:{{.Tag}}" | \
+		grep -E "(localhost/)?$(IMAGE_BASE)" | \
+		xargs -r $(CONTAINER_RUNTIME) rmi -f 2>/dev/null || true
+	@echo "✅ Images cleaned"
+
+# Fix image naming issues
+image-retag:
+	@echo "🏷️  Retagging images for consistency..."
+	@if [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
+		if $(CONTAINER_RUNTIME) image exists $(IMAGE_BASE):$(IMAGE_TAG) 2>/dev/null; then \
+			$(CONTAINER_RUNTIME) tag $(IMAGE_BASE):$(IMAGE_TAG) $(IMAGE_LOCAL) 2>/dev/null || true; \
+		fi; \
+	else \
+		if $(CONTAINER_RUNTIME) images -q $(IMAGE_LOCAL) 2>/dev/null | grep -q .; then \
+			$(CONTAINER_RUNTIME) tag $(IMAGE_LOCAL) $(IMAGE_BASE):$(IMAGE_TAG) 2>/dev/null || true; \
+		fi; \
+	fi
+	@echo "✅ Images retagged"  # This always shows success
+
+# Runtime switching helpers
+use-docker:
+	@echo "export CONTAINER_RUNTIME=docker"
+	@echo "💡 Run: export CONTAINER_RUNTIME=docker"
+
+use-podman:
+	@echo "export CONTAINER_RUNTIME=podman"
+	@echo "💡 Run: export CONTAINER_RUNTIME=podman"
+
+show-runtime:
+	@echo "Current runtime: $(CONTAINER_RUNTIME)"
+	@echo "Detected from: $$(command -v $(CONTAINER_RUNTIME) || echo 'not found')"  # Added
+	@echo "To switch: make use-docker or make use-podman"
+
+# =============================================================================
+# 🐳 ENHANCED CONTAINER OPERATIONS
+# =============================================================================
+# help: 🐳 ENHANCED CONTAINER OPERATIONS
+# help: container-validate     - Pre-flight validation checks
+# help: container-debug        - Run container with debug logging
+# help: container-dev          - Run with source mounted for development
+# help: container-check-ports  - Check if required ports are available
+
+# Pre-flight validation
+.PHONY: container-validate check-ports
+
+container-validate: container-validate-env check-ports
+	@echo "✅ All validations passed"
+
+container-validate-env:
+	@echo "🔍 Validating environment..."
+	@test -f .env || { echo "❌ Missing .env file"; exit 1; }
+	@grep -q "^MCP_" .env || { echo "⚠️  No MCP_ variables found in .env"; }
+	@echo "✅ Environment validated"
+
+container-check-ports:
+	@echo "🔍 Checking port availability..."
+	@failed=0; \
+	for port in 4444 8000 8080; do \
+		if lsof -Pi :$$port -sTCP:LISTEN -t >/dev/null 2>&1; then \
+			echo "❌ Port $$port is already in use"; \
+			lsof -Pi :$$port -sTCP:LISTEN; \
+			failed=1; \
+		else \
+			echo "✅ Port $$port is available"; \
+		fi; \
+	done; \
+	test $$failed -eq 0
+
+# Development container with mounted source
+container-dev: container-check-image container-validate
+	@echo "🔧 Running development container with mounted source..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME)-dev 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME)-dev 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME)-dev \
+		--env-file=.env \
+		-e DEBUG=true \
+		-e LOG_LEVEL=DEBUG \
+		-v $(PWD)/mcpgateway:/app/mcpgateway:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
+		-p 8000:8000 \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		-it --rm $(call get_image_name) \
+		uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Debug mode with verbose logging
+container-debug: container-check-image
+	@echo "🐛 Running container in debug mode..."
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME)-debug \
+		--env-file=.env \
+		-e DEBUG=true \
+		-e LOG_LEVEL=DEBUG \
+		-e PYTHONFAULTHANDLER=1 \
+		-p 4444:4444 \
+		-it --rm $(call get_image_name)
+
+# Enhanced run targets that include validation and health waiting
+container-run-safe: container-validate container-run
+	@$(MAKE) container-wait-healthy
+
+container-run-ssl-safe: container-validate container-run-ssl
+	@$(MAKE) container-wait-healthy
+
 # =============================================================================
 # 🦭 PODMAN CONTAINER BUILD & RUN
 # =============================================================================
@@ -1057,48 +1432,27 @@ publish-testpypi: verify   ## Verify, then upload to TestPyPI
 # help: podman-stop          - Stop & remove the container
 # help: podman-test          - Quick curl smoke-test against the container
 # help: podman-logs          - Follow container logs (⌃C to quit)
+# help: podman-stats         - Show container resource stats (if supported)
+# help: podman-top           - Show live top-level process info in container
 
-.PHONY: podman-dev podman podman-run podman-run-shell podman-run-ssl podman-stop podman-test
-
-IMG               ?= $(PROJECT_NAME)/$(PROJECT_NAME)
-IMG_DEV            = $(IMG)-dev
-IMG_PROD           = $(IMG)
+.PHONY: podman-dev podman podman-prod podman-build podman-run podman-run-shell \
+        podman-run-ssl podman-run-ssl-host podman-stop podman-test podman-logs \
+        podman-stats podman-top podman-shell
 
 podman-dev:
-	@echo "🦭  Building dev container..."
-	podman build --ssh default --platform=linux/amd64 --squash \
-	             -t $(IMG_DEV) .
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
 
 podman:
-	@echo "🦭  Building container using ubi9-minimal..."
-	podman build --ssh default --platform=linux/amd64 --squash \
-	             -t $(IMG_PROD) .
-	podman images $(IMG_PROD)
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
 
 podman-prod:
-	@echo "🦭  Building production container from Containerfile.lite (ubi-micro → scratch)..."
-	podman build --ssh default \
-	             --platform=linux/amd64 \
-	             --squash \
-	             -f Containerfile.lite \
-	             -t $(IMG_PROD) \
-	             .
-	podman images $(IMG_PROD)
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile.lite
 
-## --------------------  R U N   (HTTP)  ---------------------------------------
+podman-build:
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
+
 podman-run:
-	@echo "🚀  Starting podman container (HTTP)..."
-	-podman stop $(PROJECT_NAME) 2>/dev/null || true
-	-podman rm   $(PROJECT_NAME) 2>/dev/null || true
-	podman run --name $(PROJECT_NAME) \
-		--env-file=.env \
-		-p 4444:4444 \
-		--restart=always --memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(IMG_PROD)
-	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1
+	@$(MAKE) container-run CONTAINER_RUNTIME=podman
 
 podman-run-shell:
 	@echo "🚀  Starting podman container shell..."
@@ -1106,49 +1460,17 @@ podman-run-shell:
 		--env-file=.env \
 		-p 4444:4444 \
 		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		-it --rm $(IMG_PROD) \
+		-it --rm $(call get_image_name) \
 		sh -c 'env; exec sh'
 
-## --------------------  R U N   (HTTPS)  --------------------------------------
-podman-run-ssl: certs
-	@echo "🚀  Starting podman container (TLS)..."
-	-podman stop $(PROJECT_NAME) 2>/dev/null || true
-	-podman rm   $(PROJECT_NAME) 2>/dev/null || true
-	podman run --name $(PROJECT_NAME) \
-		--env-file=.env \
-		-e SSL=true \
-		-e CERT_FILE=certs/cert.pem \
-		-e KEY_FILE=certs/key.pem \
-		-v $(PWD)/certs:/app/certs:ro,Z \
-		-p 4444:4444 \
-		--restart=always --memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(IMG_PROD)
-	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1
+podman-run-ssl:
+	@$(MAKE) container-run-ssl CONTAINER_RUNTIME=podman
 
-podman-run-ssl-host: certs
-	@echo "🚀  Starting podman container (TLS) with host neworking..."
-	-podman stop $(PROJECT_NAME) 2>/dev/null || true
-	-podman rm   $(PROJECT_NAME) 2>/dev/null || true
-	podman run --name $(PROJECT_NAME) \
-		--network=host \
-		--env-file=.env \
-		-e SSL=true \
-		-e CERT_FILE=certs/cert.pem \
-		-e KEY_FILE=certs/key.pem \
-		-v $(PWD)/certs:/app/certs:ro,Z \
-		--restart=always --memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(IMG_PROD)
-	@sleep 2 && podman logs $(PROJECT_NAME) | tail -n +1
+podman-run-ssl-host:
+	@$(MAKE) container-run-ssl-host CONTAINER_RUNTIME=podman
 
 podman-stop:
-	@echo "🛑  Stopping podman container..."
-	-podman stop $(PROJECT_NAME) && podman rm $(PROJECT_NAME) || true
+	@$(MAKE) container-stop CONTAINER_RUNTIME=podman
 
 podman-test:
 	@echo "🔬  Testing podman endpoint..."
@@ -1156,11 +1478,8 @@ podman-test:
 	@echo "- HTTPS -> curl -k https://localhost:4444/system/test"
 
 podman-logs:
-	@echo "📜  Streaming podman logs (press Ctrl+C to exit)..."
-	@podman logs -f $(PROJECT_NAME)
+	@$(MAKE) container-logs CONTAINER_RUNTIME=podman
 
-# help: podman-stats         - Show container resource stats (if supported)
-.PHONY: podman-stats
 podman-stats:
 	@echo "📊  Showing Podman container stats..."
 	@if podman info --format '{{.Host.CgroupManager}}' | grep -q 'cgroupfs'; then \
@@ -1171,17 +1490,10 @@ podman-stats:
 		podman stats --no-stream; \
 	fi
 
-# help: podman-top           - Show live top-level process info in container
-.PHONY: podman-top
 podman-top:
 	@echo "🧠  Showing top-level processes in the Podman container..."
-	podman top $(PROJECT_NAME)
+	podman top
 
-# help: podman-shell         - Open an interactive shell inside the Podman container
-.PHONY: podman-shell
-podman-shell:
-	@echo "🔧  Opening shell in Podman container..."
-	@podman exec -it $(PROJECT_NAME) bash || podman exec -it $(PROJECT_NAME) /bin/sh
 
 # =============================================================================
 # 🐋 DOCKER BUILD & RUN
@@ -1197,113 +1509,55 @@ podman-shell:
 # help: docker-test          - Quick curl smoke-test against the container
 # help: docker-logs          - Follow container logs (⌃C to quit)
 
-.PHONY: docker-dev docker docker-run docker-run-ssl docker-stop docker-test
-
-IMG_DOCKER_DEV  = $(IMG)-dev:latest
-IMG_DOCKER_PROD = $(IMG):latest
+.PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-ssl \
+        docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
+        docker-top docker-shell
 
 docker-dev:
-	@echo "🐋  Building dev Docker image..."
-	docker build --platform=linux/amd64 -t $(IMG_DOCKER_DEV) .
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
 
 docker:
-	@echo "🐋  Building production Docker image..."
-	docker build --platform=linux/amd64 -t $(IMG_DOCKER_PROD) -f Containerfile .
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
 
 docker-prod:
-	@echo "🦭  Building production container from Containerfile.lite (ubi-micro → scratch)..."
-	docker build \
-	             --platform=linux/amd64 \
-	             -f Containerfile.lite \
-	             -t $(IMG_PROD) \
-	             .
-	docker images $(IMG_PROD)
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
 
-## --------------------  R U N   (HTTP)  ---------------------------------------
+docker-build:
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker
+
 docker-run:
-	@echo "🚀  Starting Docker container (HTTP)..."
-	-docker stop $(PROJECT_NAME) 2>/dev/null || true
-	-docker rm   $(PROJECT_NAME) 2>/dev/null || true
-	docker run --name $(PROJECT_NAME) \
-		--env-file=.env \
-		-p 4444:4444 \
-		--restart=always --memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(IMG_DOCKER_PROD)
-	@sleep 2 && docker logs $(PROJECT_NAME) | tail -n +1
+	@$(MAKE) container-run CONTAINER_RUNTIME=docker
 
-## --------------------  R U N   (HTTPS)  --------------------------------------
-docker-run-ssl: certs
-	@echo "🚀  Starting Docker container (TLS)..."
-	-docker stop $(PROJECT_NAME) 2>/dev/null || true
-	-docker rm   $(PROJECT_NAME) 2>/dev/null || true
-	docker run --name $(PROJECT_NAME) \
-		--env-file=.env \
-		-e SSL=true \
-		-e CERT_FILE=certs/cert.pem \
-		-e KEY_FILE=certs/key.pem \
-		-v $(PWD)/certs:/app/certs:ro \
-		-p 4444:4444 \
-		--restart=always --memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(IMG_DOCKER_PROD)
-	@sleep 2 && docker logs $(PROJECT_NAME) | tail -n +1
+docker-run-ssl:
+	@$(MAKE) container-run-ssl CONTAINER_RUNTIME=docker
 
-docker-run-ssl-host: certs
-	@echo "🚀  Starting Docker container (TLS) with host neworking..."
-	-docker stop $(PROJECT_NAME) 2>/dev/null || true
-	-docker rm   $(PROJECT_NAME) 2>/dev/null || true
-	docker run --name $(PROJECT_NAME) \
-		--env-file=.env \
-		--network=host \
-		-e SSL=true \
-		-e CERT_FILE=certs/cert.pem \
-		-e KEY_FILE=certs/key.pem \
-		-v $(PWD)/certs:/app/certs:ro \
-		-p 4444:4444 \
-		--restart=always --memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
-		--health-cmd="curl -k --fail https://localhost:4444/health || exit 1" \
-		--health-interval=1m --health-retries=3 \
-		--health-start-period=30s --health-timeout=10s \
-		-d $(IMG_DOCKER_PROD)
-	@sleep 2 && docker logs $(PROJECT_NAME) | tail -n +1
+docker-run-ssl-host:
+	@$(MAKE) container-run-ssl-host CONTAINER_RUNTIME=docker
 
 docker-stop:
-	@echo "🛑  Stopping Docker container..."
-	-docker stop $(PROJECT_NAME) && docker rm $(PROJECT_NAME) || true
+	@$(MAKE) container-stop CONTAINER_RUNTIME=docker
 
 docker-test:
 	@echo "🔬  Testing Docker endpoint..."
 	@echo "- HTTP  -> curl  http://localhost:4444/system/test"
 	@echo "- HTTPS -> curl -k https://localhost:4444/system/test"
 
-
 docker-logs:
-	@echo "📜  Streaming Docker logs (press Ctrl+C to exit)..."
-	@docker logs -f $(PROJECT_NAME)
+	@$(MAKE) container-logs CONTAINER_RUNTIME=docker
 
 # help: docker-stats         - Show container resource usage stats (non-streaming)
-.PHONY: docker-stats
 docker-stats:
 	@echo "📊  Showing Docker container stats..."
 	@docker stats --no-stream || { echo "⚠️  Failed to fetch docker stats. Falling back to 'docker top'..."; docker top $(PROJECT_NAME); }
 
 # help: docker-top           - Show top-level process info in Docker container
-.PHONY: docker-top
 docker-top:
 	@echo "🧠  Showing top-level processes in the Docker container..."
 	docker top $(PROJECT_NAME)
 
 # help: docker-shell         - Open an interactive shell inside the Docker container
-.PHONY: docker-shell
 docker-shell:
-	@echo "🔧  Opening shell in Docker container..."
-	@docker exec -it $(PROJECT_NAME) bash || docker exec -it $(PROJECT_NAME) /bin/sh
-
+	@$(MAKE) container-shell CONTAINER_RUNTIME=docker
 
 # =============================================================================
 # 🛠️  COMPOSE STACK (Docker Compose v2, podman compose or podman-compose)
@@ -1320,6 +1574,12 @@ docker-shell:
 # help: compose-down         - Stop & remove containers (keep named volumes)
 # help: compose-rm           - Remove *stopped* containers
 # help: compose-clean        - ✨ Down **and** delete named volumes (data-loss ⚠)
+# help: compose-validate      - Validate compose file syntax
+# help: compose-exec          - Execute command in service (use SERVICE=name CMD='...')
+# help: compose-logs-service  - Tail logs from specific service (use SERVICE=name)
+# help: compose-restart-service - Restart specific service (use SERVICE=name)
+# help: compose-scale         - Scale service to N instances (use SERVICE=name SCALE=N)
+# help: compose-up-safe       - Start stack with validation and health check
 
 # ─────────────────────────────────────────────────────────────────────────────
 # You may **force** a specific binary by exporting COMPOSE_CMD, e.g.:
@@ -1328,16 +1588,29 @@ docker-shell:
 #   export COMPOSE_CMD="docker compose"        # Docker CLI plugin (v2)
 #
 # If COMPOSE_CMD is empty, we autodetect in this order:
-#   1. podman-compose   2. podman compose   3. docker compose
+#   1. docker compose   2. podman compose   3. podman-compose
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Define the compose file location
+COMPOSE_FILE ?= docker-compose.yml
+
+# Fixed compose command detection
 COMPOSE_CMD ?=
 ifeq ($(strip $(COMPOSE_CMD)),)
-  COMPOSE_CMD := $(shell \
-    command -v podman-compose    >/dev/null 2>&1 && echo podman-compose   || \
-    command -v "podman compose" >/dev/null 2>&1 && echo "podman compose" || \
-    echo "docker compose" )
+  # Check for docker compose (v2) first
+  COMPOSE_CMD := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || true)
+  # If not found, check for podman compose
+  ifeq ($(strip $(COMPOSE_CMD)),)
+    COMPOSE_CMD := $(shell podman compose version >/dev/null 2>&1 && echo "podman compose" || true)
+  endif
+  # If still not found, check for podman-compose
+  ifeq ($(strip $(COMPOSE_CMD)),)
+    COMPOSE_CMD := $(shell command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose")
+  endif
 endif
-COMPOSE_FILE ?= docker-compose.yml
+
+# Alternative: Always default to docker compose unless explicitly overridden
+# COMPOSE_CMD ?= docker compose
 
 define COMPOSE
 $(COMPOSE_CMD) -f $(COMPOSE_FILE)
@@ -1345,18 +1618,29 @@ endef
 
 .PHONY: compose-up compose-restart compose-build compose-pull \
         compose-logs compose-ps compose-shell compose-stop compose-down \
-        compose-rm compose-clean
+        compose-rm compose-clean compose-validate compose-exec \
+        compose-logs-service compose-restart-service compose-scale compose-up-safe
 
-compose-up:
+# Validate compose file
+compose-validate:
+	@echo "🔍 Validating compose file..."
+	@if [ ! -f "$(COMPOSE_FILE)" ]; then \
+		echo "❌ Compose file not found: $(COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	$(COMPOSE) config --quiet
+	@echo "✅ Compose file is valid"
+
+compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
-	$(COMPOSE) up -d
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
 
 compose-restart:
 	@echo "🔄  Restarting stack (build + pull if needed)..."
-	$(COMPOSE) up -d --pull=missing --build
+	IMAGE_LOCAL=$(IMAGE_LOCAL) $(COMPOSE) up -d --pull=missing --build  # These flags might conflict
 
 compose-build:
-	$(COMPOSE) build
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) build
 
 compose-pull:
 	$(COMPOSE) pull
@@ -1383,6 +1667,35 @@ compose-rm:
 compose-clean:
 	$(COMPOSE) down -v
 
+# Execute in service container
+compose-exec:
+	@if [ -z "$(SERVICE)" ] || [ -z "$(CMD)" ]; then \
+		echo "❌ Usage: make compose-exec SERVICE=gateway CMD='command'"; \
+		exit 1; \
+	fi
+	@echo "🔧 Executing in service $(SERVICE): $(CMD)"
+	$(COMPOSE) exec $(SERVICE) $(CMD)
+
+# Service-specific operations
+compose-logs-service:
+	@test -n "$(SERVICE)" || { echo "Usage: make compose-logs-service SERVICE=gateway"; exit 1; }
+	$(COMPOSE) logs -f $(SERVICE)
+
+compose-restart-service:
+	@test -n "$(SERVICE)" || { echo "Usage: make compose-restart-service SERVICE=gateway"; exit 1; }
+	$(COMPOSE) restart $(SERVICE)
+
+compose-scale:
+	@test -n "$(SERVICE)" && test -n "$(SCALE)" || { \
+		echo "Usage: make compose-scale SERVICE=worker SCALE=3"; exit 1; }
+	$(COMPOSE) up -d --scale $(SERVICE)=$(SCALE)
+
+# Compose with validation and health check
+compose-up-safe: compose-validate compose-up
+	@echo "⏳ Waiting for services to be healthy..."
+	@sleep 5
+	@$(COMPOSE) ps
+	@echo "✅ Stack started safely"
 
 # =============================================================================
 # ☁️ IBM CLOUD CODE ENGINE

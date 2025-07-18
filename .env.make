@@ -1,0 +1,2 @@
+CONTAINER_RUNTIME=docker
+COMPOSE_CMD=docker compose
