@@ -2656,9 +2656,10 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             content=form["content"],
         )
         await resource_service.register_resource(db, resource)
-
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+        return JSONResponse(
+            content={"message": "Add resource registered successfully!", "success": True},
+            status_code=200,
+        )
     except Exception as ex:
         if isinstance(ex, ValidationError):
             logger.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
