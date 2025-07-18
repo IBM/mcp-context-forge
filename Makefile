@@ -626,12 +626,12 @@ vulture:                            ## 🧹  Dead code detection
 # help: grype-install        - Install Grype
 # help: grype-scan           - Scan all files using grype
 # help: grype-sarif          - Generate SARIF report
-# help: security-scan        - Run Trivy security-scan
+# help: security-scan        - Run Trivy and Grype security-scan
 .PHONY: grype-install grype-scan grype-sarif security-scan
 
 grype-install:
 	@echo "📥 Installing Grype CLI..."
-	@curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+	@curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
 
 grype-scan:
 	@command -v grype >/dev/null 2>&1 || { \
@@ -642,7 +642,7 @@ grype-scan:
 		exit 1; \
 	}
 	@echo "🔍 Grype vulnerability scan..."
-	@grype $(IMG):latest --scope all-layers --only-fixed
+	@grype $(IMG) --scope all-layers
 
 grype-sarif:
 	@command -v grype >/dev/null 2>&1 || { \
@@ -653,7 +653,7 @@ grype-sarif:
 		exit 1; \
 	}
 	@echo "📄 Generating Grype SARIF report..."
-	@grype $(IMG):latest --scope all-layers --output sarif --file grype-results.sarif
+	@grype $(IMG) --scope all-layers --output sarif --file grype-results.sarif
 
 security-scan: trivy grype-scan
 	@echo "✅ Multi-engine security scan complete"
@@ -926,7 +926,7 @@ trivy:
 
 # help: dockle               - Lint the built container image via tarball (no daemon/socket needed)
 .PHONY: dockle
-DOCKLE_IMAGE ?= $(IMG):latest         # mcpgateway/mcpgateway:latest from your build
+DOCKLE_IMAGE ?= $(IMG)         # mcpgateway/mcpgateway:latest
 dockle:
 	@echo "🔎  dockle scan (tar mode) on $(DOCKLE_IMAGE)..."
 	@command -v dockle >/dev/null 2>&1 || { \
@@ -944,7 +944,7 @@ dockle:
 	echo "📦  Saving image to $$TARBALL..." ; \
 	"$$CONTAINER_CLI" save $(DOCKLE_IMAGE) -o "$$TARBALL" || { rm -f "$$TARBALL"; exit 1; }; \
 	echo "🧪  Running Dockle..." ; \
-	dockle --no-color --exit-code 1 --exit-level warn --input "$$TARBALL" ; \
+	dockle -af settings.py --no-color --exit-code 1 --exit-level warn --input "$$TARBALL" ; \
 	rm -f "$$TARBALL"
 
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
@@ -1530,7 +1530,7 @@ docker:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
 
 docker-prod:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
 
 docker-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker
