@@ -2,342 +2,346 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/roadmap/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/001-adopt-fastapi-pydantic/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/002-use-async-sqlalchemy-orm/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/003-expose-multi-transport-endpoints/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/004-combine-jwt-and-basic-auth/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/005-structured-json-logging/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/005-vscode-devcontainer-support/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/006-gateway-tool-rate-limiting/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/007-pluggable-cache-backend/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/008-federation-discovery/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/009-built-in-health-checks/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/010-observability-prometheus/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/011-tool-federation/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/012-dropdown-ui-tool-selection/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/architecture/adr/013-APIs-for-server-connection-strings/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/blog/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/argocd/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/aws/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/azure/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/compose/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/container/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/fly-io/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/google-cloud-run/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/helm/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/ibm-code-engine/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/kubernetes/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/local/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/minikube/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/openshift/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/deployment/tutorials/argocd-helm-deployment-ibm-cloud-iks/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/development/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/development/building/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/development/developer-onboarding/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/development/developer-workstation/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/development/doctest-coverage/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/development/documentation/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/development/github/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/development/packaging/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/development/review/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/faq/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/manage/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/manage/backup/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/manage/logging/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/manage/tuning/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/manage/upgrade/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/media/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/media/kit/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/media/press/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/media/social/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/media/testimonials/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/overview/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/overview/features/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/overview/quick_start/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/overview/ui-concepts/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/overview/ui/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/testing/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
+    </url>
+    <url>
+         <loc>https://pages.github.com/ibm/mcp-context-forge/testing/acceptance/</loc>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/testing/basic/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/testing/performance/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/tutorials/openwebui-tutorial/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/mcpgateway-translate/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/mcpgateway-wrapper/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/agents/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/agents/autogen/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/agents/bee/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/agents/crewai/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/agents/langchain/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/agents/langgraph/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/agents/llamaindex/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/agents/openai-sdk/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/agents/semantic-kernel/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/clients/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/clients/claude-desktop/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/clients/cline/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/clients/continue/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/clients/copilot/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/clients/mcp-cli/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/clients/mcp-inspector/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/clients/openwebui/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/servers/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
     <url>
          <loc>https://pages.github.com/ibm/mcp-context-forge/using/servers/go-fast-time-server/</loc>
-         <lastmod>2025-07-17</lastmod>
+         <lastmod>2025-07-18</lastmod>
     </url>
 </urlset>
