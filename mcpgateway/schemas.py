@@ -122,7 +122,7 @@ class BaseModelWithConfigDict(BaseModel):
             {'foo': 1, 'bar': 'baz'}
         """
         output = {}
-        for key, value in self.dict(by_alias=use_alias).items():
+        for key, value in self.model_dump(by_alias=use_alias).items():
             output[key] = value if not isinstance(value, BaseModel) else value.to_dict(use_alias)
         return output
 
@@ -286,7 +286,7 @@ class ToolCreate(BaseModel):
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
-    request_type: Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
+    request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
     annotations: Optional[Dict[str, Any]] = Field(
@@ -421,6 +421,7 @@ class ToolCreate(BaseModel):
         return v
 
     @model_validator(mode="before")
+    @classmethod
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -470,7 +471,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
+    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     integration_type: Optional[Literal["MCP", "REST"]] = Field(None, description="Tool integration type")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
@@ -566,6 +567,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         return v
 
     @model_validator(mode="before")
+    @classmethod
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -1253,6 +1255,7 @@ class GatewayCreate(BaseModel):
         return SecurityValidator.sanitize_display_text(v, "Description")
 
     @field_validator("auth_value", mode="before")
+    @classmethod
     def create_auth_value(cls, v, info):
         """
         This validator will run before the model is fully instantiated (mode="before")
@@ -1397,6 +1400,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         return SecurityValidator.sanitize_display_text(v, "Description")
 
     @field_validator("auth_value", mode="before")
+    @classmethod
     def create_auth_value(cls, v, info):
         """
         This validator will run before the model is fully instantiated (mode="before")
@@ -1773,6 +1777,7 @@ class AdminToolCreate(BaseModelWithConfigDict):
     input_schema: Optional[str] = None  # JSON string
 
     @field_validator("headers", "input_schema")
+    @classmethod
     def validate_json(cls, v: Optional[str]) -> Optional[Dict[str, Any]]:
         """
         Validate and parse JSON string inputs.
@@ -1910,6 +1915,7 @@ class ServerCreate(BaseModel):
         return SecurityValidator.validate_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    @classmethod
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1987,6 +1993,7 @@ class ServerUpdate(BaseModelWithConfigDict):
         return SecurityValidator.validate_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    @classmethod
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -2026,6 +2033,7 @@ class ServerRead(BaseModelWithConfigDict):
     metrics: ServerMetrics
 
     @model_validator(mode="before")
+    @classmethod
     def populate_associated_ids(cls, values):
         """
         Pre-validation method that converts associated objects to their 'id'.

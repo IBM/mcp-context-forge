@@ -92,6 +92,24 @@ function validateInputName(name, type = "input") {
 }
 
 /**
+ * Extracts content from various formats with fallback
+ */
+function extractContent(content, fallback = "") {
+    if (typeof content === "object" && content !== null) {
+        if (content.text !== undefined && content.text !== null) {
+            return content.text;
+        } else if (content.blob !== undefined && content.blob !== null) {
+            return content.blob;
+        } else if (content.content !== undefined && content.content !== null) {
+            return content.content;
+        } else {
+            return JSON.stringify(content, null, 2);
+        }
+    }
+    return String(content || fallback);
+}
+
+/**
  * SECURITY: Validate URL inputs
  */
 function validateUrl(url) {
@@ -159,7 +177,8 @@ function isInactiveChecked(type) {
 }
 
 // Enhanced fetch with timeout and better error handling
-function fetchWithTimeout(url, options = {}, timeout = 10000) {
+function fetchWithTimeout(url, options = {}, timeout = 30000) {
+    // Increased from 10000
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
         console.warn(`Request to ${url} timed out after ${timeout}ms`);
@@ -178,32 +197,41 @@ function fetchWithTimeout(url, options = {}, timeout = 10000) {
     })
         .then((response) => {
             clearTimeout(timeoutId);
-            if (
-                response.status === 0 ||
-                (response.ok && response.status === 200)
-            ) {
+
+            // FIX: Better handling of empty responses
+            if (response.status === 0) {
+                // Status 0 often indicates a network error or CORS issue
+                throw new Error(
+                    "Network error or server is not responding. Please ensure the server is running and accessible.",
+                );
+            }
+
+            if (response.ok && response.status === 200) {
                 const contentLength = response.headers.get("content-length");
 
                 // Check Content-Length if present
-                if (contentLength !== null) {
-                    if (parseInt(contentLength, 10) === 0) {
-                        throw new Error(
-                            "Server returned an empty response (via header)",
-                        );
-                    }
-                } else {
-                    // Fallback: check actual body
-                    const cloned = response.clone();
-                    return cloned.text().then((text) => {
-                        if (!text.trim()) {
-                            throw new Error(
-                                "Server returned an empty response (via body)",
-                            );
-                        }
-                        return response;
-                    });
+                if (
+                    contentLength !== null &&
+                    parseInt(contentLength, 10) === 0
+                ) {
+                    console.warn(
+                        `Empty response from ${url} (Content-Length: 0)`,
+                    );
+                    // Don't throw error for intentionally empty responses
+                    return response;
                 }
+
+                // For responses without Content-Length, clone and check
+                const cloned = response.clone();
+                return cloned.text().then((text) => {
+                    if (!text || !text.trim()) {
+                        console.warn(`Empty response body from ${url}`);
+                        // Return the original response anyway
+                    }
+                    return response;
+                });
             }
+
             return response;
         })
         .catch((error) => {
@@ -212,15 +240,21 @@ function fetchWithTimeout(url, options = {}, timeout = 10000) {
             // Improve error messages for common issues
             if (error.name === "AbortError") {
                 throw new Error(
-                    `Request timed out after ${timeout / 1000} seconds`,
+                    `Request timed out after ${timeout / 1000} seconds. The server may be slow or unresponsive.`,
                 );
-            } else if (error.message.includes("Failed to fetch")) {
+            } else if (
+                error.message.includes("Failed to fetch") ||
+                error.message.includes("NetworkError")
+            ) {
                 throw new Error(
-                    "Unable to connect to server. Please check if the server is running.",
+                    "Unable to connect to server. Please check if the server is running on the correct port.",
                 );
-            } else if (error.message.includes("empty response")) {
+            } else if (
+                error.message.includes("empty response") ||
+                error.message.includes("ERR_EMPTY_RESPONSE")
+            ) {
                 throw new Error(
-                    "Server returned an empty response. The endpoint may not be implemented.",
+                    "Server returned an empty response. This endpoint may not be implemented yet or the server crashed.",
                 );
             }
 
@@ -229,10 +263,10 @@ function fetchWithTimeout(url, options = {}, timeout = 10000) {
 }
 
 // Safe element getter with logging
-function safeGetElement(id) {
+function safeGetElement(id, suppressWarning = false) {
     try {
         const element = document.getElementById(id);
-        if (!element) {
+        if (!element && !suppressWarning) {
             console.warn(`Element with id "${id}" not found`);
         }
         return element;
@@ -413,7 +447,10 @@ function openModal(modalId) {
         }
 
         // Reset modal state
-        resetModalState(modalId);
+        const resetModelVariable = false;
+        if (resetModelVariable) {
+            resetModalState(modalId);
+        }
 
         modal.classList.remove("hidden");
         AppState.setModalActive(modalId);
@@ -492,13 +529,19 @@ function resetModalState(modalId) {
 // More robust metrics request tracking
 let metricsRequestController = null;
 let metricsRequestPromise = null;
-const MAX_METRICS_RETRIES = 2; // Reduced from 3
-const METRICS_RETRY_DELAY = 1500; // Reduced from 2000ms
+const MAX_METRICS_RETRIES = 3; // Increased from 2
+const METRICS_RETRY_DELAY = 2000; // Increased from 1500ms
 
 /**
  * Enhanced metrics loading with better race condition prevention
  */
 async function loadAggregatedMetrics() {
+    const metricsPanel = safeGetElement("metrics-panel", true);
+    if (!metricsPanel || metricsPanel.closest(".tab-panel.hidden")) {
+        console.log("Metrics panel not visible, skipping load");
+        return;
+    }
+
     // Cancel any existing request
     if (metricsRequestController) {
         console.log("Cancelling existing metrics request...");
@@ -513,10 +556,12 @@ async function loadAggregatedMetrics() {
     }
 
     console.log("Starting new metrics request...");
+    showMetricsLoading();
 
     metricsRequestPromise = loadMetricsInternal().finally(() => {
         metricsRequestPromise = null;
         metricsRequestController = null;
+        hideMetricsLoading();
     });
 
     return metricsRequestPromise;
@@ -530,7 +575,7 @@ async function loadMetricsInternal() {
         const result = await fetchWithTimeoutAndRetry(
             `${window.ROOT_PATH}/admin/metrics`,
             {}, // options
-            20000, // 20 second timeout (reduced from 30)
+            45000, // Increased timeout specifically for metrics (was 20000)
             MAX_METRICS_RETRIES,
         );
 
@@ -540,10 +585,30 @@ async function loadMetricsInternal() {
                 showMetricsPlaceholder();
                 return;
             }
+            // FIX: Handle 500 errors specifically
+            if (result.status >= 500) {
+                throw new Error(
+                    `Server error (${result.status}). The metrics calculation may have failed.`,
+                );
+            }
             throw new Error(`HTTP ${result.status}: ${result.statusText}`);
         }
 
-        const data = await result.json();
+        // FIX: Handle empty or invalid JSON responses
+        let data;
+        try {
+            const text = await result.text();
+            if (!text || !text.trim()) {
+                console.warn("Empty metrics response, using default data");
+                data = {}; // Use empty object as fallback
+            } else {
+                data = JSON.parse(text);
+            }
+        } catch (parseError) {
+            console.error("Failed to parse metrics JSON:", parseError);
+            data = {}; // Use empty object as fallback
+        }
+
         displayMetrics(data);
         console.log("✓ Metrics loaded successfully");
     } catch (error) {
@@ -619,8 +684,13 @@ async function fetchWithTimeoutAndRetry(
  * Show loading state for metrics
  */
 function showMetricsLoading() {
-    const metricsPanel = safeGetElement("metrics-panel");
+    const metricsPanel = safeGetElement("metrics-panel", true); // suppress warning
     if (metricsPanel) {
+        const existingLoading = safeGetElement("metrics-loading", true);
+        if (existingLoading) {
+            return;
+        }
+
         const loadingDiv = document.createElement("div");
         loadingDiv.id = "metrics-loading";
         loadingDiv.className = "flex justify-center items-center p-8";
@@ -640,7 +710,7 @@ function showMetricsLoading() {
  * Hide loading state for metrics
  */
 function hideMetricsLoading() {
-    const loadingDiv = safeGetElement("metrics-loading");
+    const loadingDiv = safeGetElement("metrics-loading", true);
     if (loadingDiv && loadingDiv.parentNode) {
         loadingDiv.parentNode.removeChild(loadingDiv);
     }
@@ -727,6 +797,25 @@ function displayMetrics(data) {
     }
 
     try {
+        // FIX: Handle completely empty data
+        if (!data || Object.keys(data).length === 0) {
+            const emptyStateDiv = document.createElement("div");
+            emptyStateDiv.className = "text-center p-8 text-gray-500";
+            emptyStateDiv.innerHTML = `
+                <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                </svg>
+                <h3 class="text-lg font-medium mb-2">No Metrics Available</h3>
+                <p class="text-sm">Metrics data will appear here once tools, resources, or prompts are executed.</p>
+                <button onclick="retryLoadMetrics()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
+                    Refresh Metrics
+                </button>
+            `;
+            metricsPanel.innerHTML = "";
+            metricsPanel.appendChild(emptyStateDiv);
+            return;
+        }
+
         // Create main container with safe structure
         const mainContainer = document.createElement("div");
         mainContainer.className = "space-y-6";
@@ -1439,6 +1528,106 @@ async function editTool(toolId) {
             requestTypeField.value = tool.requestType || "SSE";
         }
 
+        // Set auth type field
+        const authTypeField = safeGetElement("edit-auth-type");
+        if (authTypeField) {
+            authTypeField.value = tool.auth?.authType || "";
+        }
+
+        // Auth containers
+        const authBasicSection = safeGetElement("edit-auth-basic-fields");
+        const authBearerSection = safeGetElement("edit-auth-bearer-fields");
+        const authHeadersSection = safeGetElement("edit-auth-headers-fields");
+
+        // Individual fields
+        const authUsernameField = authBasicSection?.querySelector(
+            "input[name='auth_username']",
+        );
+        const authPasswordField = authBasicSection?.querySelector(
+            "input[name='auth_password']",
+        );
+
+        const authTokenField = authBearerSection?.querySelector(
+            "input[name='auth_token']",
+        );
+
+        const authHeaderKeyField = authHeadersSection?.querySelector(
+            "input[name='auth_header_key']",
+        );
+        const authHeaderValueField = authHeadersSection?.querySelector(
+            "input[name='auth_header_value']",
+        );
+
+        // Hide all auth sections first
+        if (authBasicSection) {
+            authBasicSection.style.display = "none";
+        }
+        if (authBearerSection) {
+            authBearerSection.style.display = "none";
+        }
+        if (authHeadersSection) {
+            authHeadersSection.style.display = "none";
+        }
+
+        // Clear old values
+        if (authUsernameField) {
+            authUsernameField.value = "";
+        }
+        if (authPasswordField) {
+            authPasswordField.value = "";
+        }
+        if (authTokenField) {
+            authTokenField.value = "";
+        }
+        if (authHeaderKeyField) {
+            authHeaderKeyField.value = "";
+        }
+        if (authHeaderValueField) {
+            authHeaderValueField.value = "";
+        }
+
+        // Display appropriate auth section and populate values
+        switch (tool.auth?.authType) {
+            case "basic":
+                if (authBasicSection) {
+                    authBasicSection.style.display = "block";
+                    if (authUsernameField) {
+                        authUsernameField.value = tool.auth.username || "";
+                    }
+                    if (authPasswordField) {
+                        authPasswordField.value = "*****"; // masked
+                    }
+                }
+                break;
+
+            case "bearer":
+                if (authBearerSection) {
+                    authBearerSection.style.display = "block";
+                    if (authTokenField) {
+                        authTokenField.value = "*****"; // masked
+                    }
+                }
+                break;
+
+            case "authheaders":
+                if (authHeadersSection) {
+                    authHeadersSection.style.display = "block";
+                    if (authHeaderKeyField) {
+                        authHeaderKeyField.value =
+                            tool.auth.authHeaderKey || "";
+                    }
+                    if (authHeaderValueField) {
+                        authHeaderValueField.value = "*****"; // masked
+                    }
+                }
+                break;
+
+            case "":
+            default:
+                // No auth – keep everything hidden
+                break;
+        }
+
         openModal("tool-edit-modal");
 
         // Ensure editors are refreshed after modal display
@@ -1527,10 +1716,18 @@ async function viewResource(resourceUri) {
             const contentPre = document.createElement("pre");
             contentPre.className =
                 "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100";
-            contentPre.textContent =
-                typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : String(content); // Safe text content
+
+            // Handle content display - extract actual content from object if needed
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
+
+            if (!contentStr.trim()) {
+                contentStr = resource.description || "No content available";
+            }
+
+            contentPre.textContent = contentStr;
             contentDiv.appendChild(contentPre);
             container.appendChild(contentDiv);
 
@@ -1621,7 +1818,6 @@ async function editResource(resourceUri) {
         const data = await response.json();
         const resource = data.resource;
         const content = data.content;
-
         const isInactiveCheckedBool = isInactiveChecked("resources");
         let hiddenField = safeGetElement("edit-resource-show-inactive");
         if (!hiddenField) {
@@ -1665,19 +1861,29 @@ async function editResource(resourceUri) {
             mimeField.value = resource.mimeType || "";
         }
         if (contentField) {
-            const contentStr =
-                typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : String(content);
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
+
+            if (!contentStr.trim()) {
+                contentStr = resource.description || "No content available";
+            }
+
             contentField.value = contentStr;
         }
 
         // Update CodeMirror editor if it exists
         if (window.editResourceContentEditor) {
-            const contentStr =
-                typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : String(content);
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
+
+            if (!contentStr.trim()) {
+                contentStr = resource.description || "No content available";
+            }
+
             window.editResourceContentEditor.setValue(contentStr);
             window.editResourceContentEditor.refresh();
         }
@@ -2086,6 +2292,8 @@ async function editGateway(gatewayId) {
         const urlField = safeGetElement("edit-gateway-url");
         const descField = safeGetElement("edit-gateway-description");
 
+        const transportField = safeGetElement("edit-gateway-transport");
+
         if (nameField && nameValidation.valid) {
             nameField.value = nameValidation.value;
         }
@@ -2094,6 +2302,90 @@ async function editGateway(gatewayId) {
         }
         if (descField) {
             descField.value = gateway.description || "";
+        }
+
+        if (transportField) {
+            transportField.value = gateway.transport || "SSE"; // falls back to SSE(default)
+        }
+
+        const authTypeField = safeGetElement("auth-type-gw-edit");
+
+        if (authTypeField) {
+            authTypeField.value = gateway.authType || ""; // falls back to None
+        }
+
+        // Auth containers
+        const authBasicSection = safeGetElement("auth-basic-fields-gw-edit");
+        const authBearerSection = safeGetElement("auth-bearer-fields-gw-edit");
+        const authHeadersSection = safeGetElement(
+            "auth-headers-fields-gw-edit",
+        );
+
+        // Individual fields
+        const authUsernameField = safeGetElement(
+            "auth-basic-fields-gw-edit",
+        )?.querySelector("input[name='auth_username']");
+        const authPasswordField = safeGetElement(
+            "auth-basic-fields-gw-edit",
+        )?.querySelector("input[name='auth_password']");
+
+        const authTokenField = safeGetElement(
+            "auth-bearer-fields-gw-edit",
+        )?.querySelector("input[name='auth_token']");
+
+        const authHeaderKeyField = safeGetElement(
+            "auth-headers-fields-gw-edit",
+        )?.querySelector("input[name='auth_header_key']");
+        const authHeaderValueField = safeGetElement(
+            "auth-headers-fields-gw-edit",
+        )?.querySelector("input[name='auth_header_value']");
+
+        // Hide all auth sections first
+        if (authBasicSection) {
+            authBasicSection.style.display = "none";
+        }
+        if (authBearerSection) {
+            authBearerSection.style.display = "none";
+        }
+        if (authHeadersSection) {
+            authHeadersSection.style.display = "none";
+        }
+
+        switch (gateway.authType) {
+            case "basic":
+                if (authBasicSection) {
+                    authBasicSection.style.display = "block";
+                    if (authUsernameField) {
+                        authUsernameField.value = gateway.authUsername || "";
+                    }
+                    if (authPasswordField) {
+                        authPasswordField.value = "*****"; // mask password
+                    }
+                }
+                break;
+            case "bearer":
+                if (authBearerSection) {
+                    authBearerSection.style.display = "block";
+                    if (authTokenField) {
+                        authTokenField.value = gateway.authValue || ""; // show full token
+                    }
+                }
+                break;
+            case "authheaders":
+                if (authHeadersSection) {
+                    authHeadersSection.style.display = "block";
+                    if (authHeaderKeyField) {
+                        authHeaderKeyField.value = gateway.authHeaderKey || "";
+                    }
+                    if (authHeaderValueField) {
+                        authHeaderValueField.value = "*****"; // mask header value
+                    }
+                }
+                break;
+            case "":
+            default:
+                // No auth – keep everything hidden
+                break;
         }
 
         openModal("gateway-edit-modal");
@@ -2666,7 +2958,7 @@ function createParameterForm(parameterCount) {
 
 const integrationRequestMap = {
     MCP: ["SSE", "STREAMABLE", "STDIO"],
-    REST: ["GET", "POST", "PUT", "DELETE"],
+    REST: ["GET", "POST", "PUT", "PATCH", "DELETE"],
 };
 
 function updateRequestTypeOptions(preselectedValue = null) {
@@ -2828,8 +3120,8 @@ function handleSubmitWithConfirmation(event, type) {
 const toolTestState = {
     activeRequests: new Map(), // toolId -> AbortController
     lastRequestTime: new Map(), // toolId -> timestamp
-    debounceDelay: 500, // ms
-    requestTimeout: 10000, // Reduced from 15000ms
+    debounceDelay: 1000, // Increased from 500ms
+    requestTimeout: 30000, // Increased from 10000ms
 };
 
 /**
@@ -2843,7 +3135,7 @@ async function testTool(toolId) {
         const now = Date.now();
         const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
         const timeSinceLastRequest = now - lastRequest;
-        const enhancedDebounceDelay = 1000; // Increased from 500ms
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
 
         if (timeSinceLastRequest < enhancedDebounceDelay) {
             console.log(
@@ -2853,7 +3145,7 @@ async function testTool(toolId) {
                 (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
             );
             showErrorMessage(
-                `Please wait ${waitTime} more seconds before testing again`,
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
             );
             return;
         }
@@ -2893,7 +3185,7 @@ async function testTool(toolId) {
         toolTestState.activeRequests.set(toolId, controller);
         toolTestState.lastRequestTime.set(toolId, now);
 
-        // 6. MAKE REQUEST with increased timeout (was 10 seconds, now 15)
+        // 6. MAKE REQUEST with increased timeout
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/tools/${toolId}`,
             {
@@ -2903,7 +3195,7 @@ async function testTool(toolId) {
                     Pragma: "no-cache",
                 },
             },
-            15000, // Increased timeout
+            toolTestState.requestTimeout, // Use the increased timeout
         );
 
         if (!response.ok) {
@@ -3130,7 +3422,7 @@ async function runToolTest() {
             params,
         };
 
-        // Use shorter timeout for test execution
+        // Use longer timeout for test execution
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/rpc`,
             {
@@ -3141,8 +3433,8 @@ async function runToolTest() {
                 body: JSON.stringify(payload),
                 credentials: "include",
             },
-            8000,
-        ); // 8 second timeout
+            20000, // Increased from 8000
+        );
 
         const result = await response.json();
         const resultStr = JSON.stringify(result, null, 2);
@@ -4148,6 +4440,7 @@ function setupTooltipsWithAlpine() {
 
         Alpine.directive("tooltip", (el, { expression }, { evaluate }) => {
             let tooltipEl = null;
+            let animationFrameId = null; // Track animation frame
 
             const moveTooltip = (e) => {
                 if (!tooltipEl) {
@@ -4199,9 +4492,19 @@ function setupTooltipsWithAlpine() {
                     tooltipEl.style.top = `${rect.bottom + scrollY + 10}px`;
                 }
 
-                requestAnimationFrame(() => {
-                    tooltipEl.style.opacity = "1";
+                // FIX: Cancel any pending animation frame before setting a new one
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                }
+
+                animationFrameId = requestAnimationFrame(() => {
+                    // FIX: Check if tooltipEl still exists before accessing its style
+                    if (tooltipEl) {
+                        tooltipEl.style.opacity = "1";
+                    }
+                    animationFrameId = null;
                 });
+
                 window.addEventListener("scroll", hideTooltip, {
                     passive: true,
                 });
@@ -4215,15 +4518,28 @@ function setupTooltipsWithAlpine() {
                     return;
                 }
 
+                // FIX: Cancel any pending animation frame
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+
                 tooltipEl.style.opacity = "0";
                 el.removeEventListener("mousemove", moveTooltip);
                 window.removeEventListener("scroll", hideTooltip);
                 window.removeEventListener("resize", hideTooltip);
-                el.addEventListener("click", hideTooltip);
+                el.removeEventListener("click", hideTooltip);
+
                 const toRemove = tooltipEl;
-                tooltipEl = null;
-                setTimeout(() => toRemove.remove(), 200);
+                tooltipEl = null; // Set to null immediately
+
+                setTimeout(() => {
+                    if (toRemove && toRemove.parentNode) {
+                        toRemove.parentNode.removeChild(toRemove);
+                    }
+                }, 200);
             };
+
             el.addEventListener("mouseenter", showTooltip);
             el.addEventListener("mouseleave", hideTooltip);
             el.addEventListener("focus", showTooltip);
@@ -4256,6 +4572,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 4. Handle initial tab/state
         initializeTabState();
+
+        // // ✅ 4.1 Set up tab button click handlers
+        // document.querySelectorAll('.tab-button').forEach(button => {
+        //     button.addEventListener('click', () => {
+        //         const tabId = button.getAttribute('data-tab');
+
+        //         document.querySelectorAll('.tab-panel').forEach(panel => {
+        //             panel.classList.add('hidden');
+        //         });
+
+        //         document.getElementById(tabId).classList.remove('hidden');
+        //     });
+        // });
 
         // 5. Set up form validation
         setupFormValidation();

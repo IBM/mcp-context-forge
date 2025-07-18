@@ -402,7 +402,8 @@ class Tool(Base):
         self._computed_name = value
 
     @name.expression
-    def name(cls):  # pylint: disable=no-self-argument
+    @classmethod
+    def name(cls):
         """
         SQL expression used when the hybrid appears in a filter/order_by.
         Simply forwards to the ``_computed_name`` column; the Python-side
@@ -425,7 +426,8 @@ class Tool(Base):
         return self.gateway.slug if self.gateway else None
 
     @gateway_slug.expression
-    def gateway_slug(cls):  # pylint: disable=no-self-argument
+    @classmethod
+    def gateway_slug(cls):
         """For database queries - auto-joins to get current slug
 
         Returns:
@@ -445,8 +447,7 @@ class Tool(Base):
         return len(self.metrics)
 
     @execution_count.expression
-    # method is intentionally a class-level expression, so no `self`
-    # pylint: disable=no-self-argument
+    @classmethod
     def execution_count(cls):
         """
         SQL expression to compute the execution count for the tool.
