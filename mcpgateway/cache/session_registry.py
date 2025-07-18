@@ -542,10 +542,11 @@ class SessionRegistry(SessionBackend):
                 await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
         elif self._backend == "redis":
-            await self._pubsub.subscribe(session_id)
+            pubsub = self._redis.pubsub()
+            await pubsub.subscribe(session_id)
 
             try:
-                async for msg in self._pubsub.listen():
+                async for msg in pubsub.listen():
                     if msg["type"] != "message":
                         continue
                     data = json.loads(msg["data"])
@@ -558,7 +559,8 @@ class SessionRegistry(SessionBackend):
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
             finally:
-                await self._pubsub.unsubscribe(session_id)
+                await pubsub.unsubscribe(session_id)
+                await pubsub.close()
                 logger.info(f"Cleaned up pubsub for session {session_id}")
 
         elif self._backend == "database":
