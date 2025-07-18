@@ -49,11 +49,11 @@
     <div class="mb-8">
       <div class="border-b border-gray-200">
         <nav class="-mb-px flex space-x-8">
-          <a href="#catalog" id="tab-catalog"
+          <a href="#catalog" id="tab-catalog" data-testid="servers-tab"
             class="tab-link border-indigo-500 text-indigo-600 dark:text-indigo-500 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
             Virtual Servers Catalog
           </a>
-          <a href="#tools" id="tab-tools"
+          <a href="#tools" id="tab-tools" data-testid="tools-tab"
             class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
             Global Tools
           </a>
@@ -65,7 +65,7 @@
             class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
             Global Prompts
           </a>
-          <a href="#gateways" id="tab-gateways"
+          <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
             class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
             Gateways/MCP Servers
           </a>
@@ -95,14 +95,20 @@
     <!-- Catalog Panel -->
     <div id="catalog-panel" class="tab-panel">
       <div class="flex justify-between items-center mb-4">
-        <h2 class="text-2xl font-bold dark:text-gray-200">MCP Servers Catalog</h2>
-        <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Virtual Servers let you combine Tools, Resources, and
-          Prompts from the global Tools catalog into a reusable configuration.</p>
+        <div>
+          <h2 class="text-2xl font-bold dark:text-gray-200">MCP Servers Catalog</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Virtual Servers let you combine Tools, Resources, and
+            Prompts from the global Tools catalog into a reusable configuration.</p>
+        </div>
 
-        <div class="flex items-center">
-          <input type="checkbox" id="show-inactive-servers" class="mr-2" onchange="toggleInactiveItems('servers')" />
-          <label for="show-inactive-servers" class="text-sm font-medium text-gray-700 dark:text-gray-300">Show
-            Inactive</label>
+        <div class="flex items-center space-x-4">
+          <input type="text" data-testid="search-input" placeholder="Search servers..."
+            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300" />
+          <div class="flex items-center">
+            <input type="checkbox" id="show-inactive-servers" class="mr-2" onchange="toggleInactiveItems('servers')" />
+            <label for="show-inactive-servers" class="text-sm font-medium text-gray-700 dark:text-gray-300">Show
+              Inactive</label>
+          </div>
         </div>
       </div>
       <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
@@ -148,9 +154,9 @@
                 </th>
               </tr>
             </thead>
-            <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+            <tbody data-testid="server-list" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
               {% for server in servers %}
-              <tr>
+              <tr data-testid="server-item">
                 <td class="px-6 py-4 whitespace-nowrap">
                   {% if server.icon %}
                   <img src="{{ server.icon }}" alt="{{ server.name }} Icon" class="h-8 w-8" />
@@ -284,7 +290,7 @@
             </div>
           </div>
           <div class="mt-6">
-            <button type="submit"
+            <button type="submit" data-testid="add-server-btn"
               x-tooltip="'💡Creates a new Virtual Server by combining Tools, Resources & Prompts from global catalogs.'"
               class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
               Add Server

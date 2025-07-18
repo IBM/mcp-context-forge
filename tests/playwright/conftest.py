@@ -12,9 +12,11 @@ from typing import Generator
 # Third-Party
 from playwright.sync_api import APIRequestContext, Page, Playwright
 import pytest
+import re
+from playwright.sync_api import Page, Browser, BrowserContext
 
 # Get configuration from environment
-BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:4444")
+BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
 API_TOKEN = os.getenv("MCP_AUTH_TOKEN", "test-token")
 
 # Basic Auth credentials - these MUST be set in environment
@@ -58,6 +60,7 @@ def api_request_context(
 def page(browser) -> Generator[Page, None, None]:
     """Create page with Basic Auth credentials."""
     context = browser.new_context(
+        base_url=BASE_URL,
         http_credentials={
             "username": BASIC_AUTH_USER,
             "password": BASIC_AUTH_PASSWORD,
@@ -74,3 +77,34 @@ def page(browser) -> Generator[Page, None, None]:
 def authenticated_page(page: Page) -> Page:
     """Alias for page fixture."""
     return page
+
+@pytest.fixture
+def admin_page(page: Page):
+    """Provide a logged-in admin page for UI tests."""
+    # Go directly to admin - HTTP Basic Auth is handled by the page fixture
+    page.goto("/admin")
+    # Verify we're on the admin page
+    page.wait_for_url(re.compile(r".*admin"))
+    return page
+
+@pytest.fixture
+def test_tool_data():
+    """Provide test data for tool creation."""
+    import uuid
+    unique_id = uuid.uuid4()
+    return {
+        "name": f"test-api-tool-{unique_id}",
+        "description": "Test API tool for automation",
+        "url": "https://api.example.com/test",
+        "integrationType": "REST",
+        "requestType": "GET",
+        "headers": '{"Authorization": "Bearer test-token"}',
+        "input_schema": '{"type": "object", "properties": {"query": {"type": "string"}}}'
+    }
+
+@pytest.fixture(autouse=True)
+def setup_test_environment(page: Page):
+    """Set viewport and default timeout for consistent UI tests."""
+    page.set_viewport_size({"width": 1280, "height": 720})
+    page.set_default_timeout(30000)
+    # Optionally, add request logging or interception here
