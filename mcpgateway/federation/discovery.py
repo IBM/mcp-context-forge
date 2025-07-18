@@ -16,6 +16,13 @@ The discovery service automatically finds and connects to other MCP gateways
 on the network, maintains a list of active peers, and exchanges peer information
 to build a federation of gateways.
 
+# Run doctests with coverage and show missing lines
+pytest --doctest-modules --cov=mcpgateway.federation.discovery --cov-report=term-missing mcpgateway/federation/discovery.py -v
+
+# For more detailed line-by-line coverage annotation
+pytest --doctest-modules --cov=mcpgateway.federation.discovery --cov-report=annotate mcpgateway/federation/discovery.py -v
+
+
 Examples:
     Basic usage of the discovery service::
 
@@ -109,6 +116,14 @@ class DiscoveredPeer:
         ... )
         >>> print(f"{peer.name} at {peer.url}")
         Gateway 1 at http://gateway1.local:8080
+        >>> peer.protocol_version
+        '2025-03-26'
+        >>> peer.source
+        'dns-sd'
+        >>> isinstance(peer.discovered_at, datetime)
+        True
+        >>> isinstance(peer.last_seen, datetime)
+        True
     """
 
     url: str
@@ -136,6 +151,16 @@ class LocalDiscoveryService:
         >>> service._service_type
         '_mcp._tcp.local.'
         >>> isinstance(service._service_info, ServiceInfo)
+        True
+        >>> service._service_info.type
+        '_mcp._tcp.local.'
+        >>> service._service_info.port == settings.port
+        True
+        >>> b'name' in service._service_info.properties
+        True
+        >>> b'version' in service._service_info.properties
+        True
+        >>> b'protocol' in service._service_info.properties
         True
     """
 
@@ -177,6 +202,14 @@ class LocalDiscoveryService:
             >>> all(isinstance(addr, str) for addr in addrs)
             True
             >>> len(addrs) >= 1  # At least localhost
+            True
+            >>> # Check IP format
+            >>> all('.' in addr for addr in addrs)  # IPv4 format
+            True
+            >>> # Verify no empty addresses
+            >>> all(addr for addr in addrs)
+            True
+            >>> '' not in addrs
             True
         """
         addresses = []
@@ -420,6 +453,25 @@ class DiscoveryService(LocalDiscoveryService):
             True
             >>> # After adding peers
             >>> # len(peers) > 0
+            >>> # Initially empty
+            >>> len(peers)
+            0
+            >>> # Add a peer manually (sync example)
+            >>> from datetime import datetime, timezone
+            >>> service._discovered_peers["http://test.com"] = DiscoveredPeer(
+            ...     url="http://test.com",
+            ...     name="Test",
+            ...     protocol_version="2025-03-26",
+            ...     capabilities=None,
+            ...     discovered_at=datetime.now(timezone.utc),
+            ...     last_seen=datetime.now(timezone.utc),
+            ...     source="manual"
+            ... )
+            >>> peers = service.get_discovered_peers()
+            >>> len(peers)
+            1
+            >>> peers[0].url
+            'http://test.com'
         """
         return list(self._discovered_peers.values())
 
@@ -473,10 +525,34 @@ class DiscoveryService(LocalDiscoveryService):
             >>> async def test_remove():
             ...     service = DiscoveryService()
             ...     await service.add_peer("http://localhost:8080", "manual")
-            ...     service.remove_peer("http://localhost:8080")
+            ...     await service.remove_peer("http://localhost:8080")
             ...     peers = service.get_discovered_peers()
             ...     return len(peers)
             >>> # count = asyncio.run(test_remove())
+
+            >>> # Sync example
+            >>> from datetime import datetime, timezone
+            >>> service = DiscoveryService()
+            >>> # Add a peer directly
+            >>> service._discovered_peers["http://test.com"] = DiscoveredPeer(
+            ...     url="http://test.com",
+            ...     name="Test",
+            ...     protocol_version="2025-03-26",
+            ...     capabilities=None,
+            ...     discovered_at=datetime.now(timezone.utc),
+            ...     last_seen=datetime.now(timezone.utc),
+            ...     source="manual"
+            ... )
+            >>> len(service._discovered_peers)
+            1
+            >>> # Remove it (sync version for testing)
+            >>> service._discovered_peers.pop("http://test.com", None) is not None
+            True
+            >>> len(service._discovered_peers)
+            0
+            >>> # Safe to remove non-existent
+            >>> service._discovered_peers.pop("http://nonexistent.com", None) is None
+            True
         """
         self._discovered_peers.pop(url, None)
 
@@ -639,6 +715,14 @@ class DiscoveryService(LocalDiscoveryService):
             True
             >>> "X-API-Key" in headers
             True
+            >>> headers["Authorization"].startswith("Basic ")
+            True
+            >>> headers["X-API-Key"] == f"{settings.basic_auth_user}:{settings.basic_auth_password}"
+            True
+            >>> isinstance(headers, dict)
+            True
+            >>> len(headers)
+            2
         """
         api_key = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
         return {"Authorization": f"Basic {api_key}", "X-API-Key": api_key}
