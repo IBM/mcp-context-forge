@@ -120,16 +120,21 @@ class ResourceCache:
         Returns:
             Cached value or None if not found/expired
 
-        Doctest:
-        >>> from mcpgateway.cache.resource_cache import ResourceCache
-        >>> cache = ResourceCache(max_size=2, ttl=1)
-        >>> cache.set('a', 1)
-        >>> cache.get('a')
-        1
-        >>> import time
-        >>> time.sleep(1.1)
-        >>> cache.get('a') is None
-        True
+        Example:
+            >>> from mcpgateway.cache.resource_cache import ResourceCache
+            >>> cache = ResourceCache(max_size=2, ttl=1)
+            >>> cache.set('a', 1)
+            >>> cache.get('a')
+            1
+            >>> # Test expiration by using a very short TTL
+            >>> short_cache = ResourceCache(max_size=2, ttl=0.1)
+            >>> short_cache.set('b', 2)
+            >>> short_cache.get('b')
+            2
+            >>> import time
+            >>> time.sleep(1)
+            >>> short_cache.get('b') is None
+            True
         """
         if key not in self._cache:
             return None
