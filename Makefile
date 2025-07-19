@@ -709,9 +709,10 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 # =============================================================================
 # help: 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
 # help: install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js & Prettier via npm
-# help: lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js and npm audit
+# help: nodejsscan           - Run nodejsscan for JS security vulnerabilities
+# help: lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js, nodejsscan and npm audit
 # help: format-web           - Format HTML, CSS & JS files with Prettier
-.PHONY: install-web-linters lint-web format-web
+.PHONY: install-web-linters nodejsscan lint-web format-web
 
 install-web-linters:
 	@echo "🔧 Installing HTML/CSS/JS lint, security & formatting tools..."
@@ -726,7 +727,12 @@ install-web-linters:
 		retire \
 		prettier
 
-lint-web: install-web-linters
+nodejsscan:
+	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
+	$(call ensure_pip_package,nodejsscan)
+	@$(VENV_DIR)/bin/nodejsscan --directory ./mcpgateway/static || true
+
+lint-web: install-web-linters nodejsscan
 	@echo "🔍 Linting HTML files..."
 	@npx htmlhint "mcpgateway/templates/**/*.html" || true
 	@echo "🔍 Linting CSS files..."
@@ -747,7 +753,6 @@ format-web: install-web-linters
 	@npx prettier --write "mcpgateway/templates/**/*.html" \
 	                 "mcpgateway/static/**/*.css" \
 	                 "mcpgateway/static/**/*.js"
-
 
 ################################################################################
 # 🛡️  OSV-SCANNER  ▸  vulnerabilities scanner
