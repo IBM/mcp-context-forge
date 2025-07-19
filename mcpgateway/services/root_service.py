@@ -50,6 +50,14 @@ class RootService:
             >>> import asyncio
             >>> service = RootService()
             >>> asyncio.run(service.initialize())
+
+            Test with default roots configured:
+            >>> from unittest.mock import patch
+            >>> service = RootService()
+            >>> with patch('mcpgateway.config.settings.default_roots', ['file:///tmp', 'http://example.com']):
+            ...     asyncio.run(service.initialize())
+            >>> len(service._roots)
+            2
         """
         logger.info("Initializing root service")
         # Add any configured default roots
@@ -67,6 +75,16 @@ class RootService:
             >>> import asyncio
             >>> service = RootService()
             >>> asyncio.run(service.shutdown())
+
+            Test cleanup of roots and subscribers:
+            >>> service = RootService()
+            >>> _ = asyncio.run(service.add_root('file:///tmp'))
+            >>> service._subscribers.append(asyncio.Queue())
+            >>> asyncio.run(service.shutdown())
+            >>> len(service._roots)
+            0
+            >>> len(service._subscribers)
+            0
         """
         logger.info("Shutting down root service")
         # Clear all roots and subscribers
@@ -85,6 +103,16 @@ class RootService:
             >>> service = RootService()
             >>> asyncio.run(service.list_roots())
             []
+
+            Test with multiple roots:
+            >>> service = RootService()
+            >>> _ = asyncio.run(service.add_root('file:///tmp'))
+            >>> _ = asyncio.run(service.add_root('file:///home'))
+            >>> roots = asyncio.run(service.list_roots())
+            >>> len(roots)
+            2
+            >>> sorted([str(r.uri) for r in roots])
+            ['file:///home', 'file:///tmp']
         """
         return list(self._roots.values())
 
@@ -108,6 +136,31 @@ class RootService:
             >>> root = asyncio.run(service.add_root('file:///tmp'))
             >>> root.uri == 'file:///tmp'
             True
+
+            Test with custom name:
+            >>> service = RootService()
+            >>> root = asyncio.run(service.add_root('file:///home/user', 'MyHome'))
+            >>> root.name
+            'MyHome'
+
+            Test duplicate root error:
+            >>> service = RootService()
+            >>> _ = asyncio.run(service.add_root('file:///tmp'))
+            >>> try:
+            ...     asyncio.run(service.add_root('file:///tmp'))
+            ... except RootServiceError as e:
+            ...     str(e)
+            'Root already exists: file:///tmp'
+
+            Test invalid URI error:
+            >>> from unittest.mock import patch
+            >>> service = RootService()
+            >>> with patch.object(service, '_make_root_uri', side_effect=ValueError('Bad URI')):
+            ...     try:
+            ...         asyncio.run(service.add_root('bad_uri'))
+            ...     except RootServiceError as e:
+            ...         str(e)
+            'Invalid root URI: Bad URI'
         """
         try:
             root_uri = self._make_root_uri(uri)
@@ -143,6 +196,14 @@ class RootService:
             >>> service = RootService()
             >>> _ = asyncio.run(service.add_root('file:///tmp'))
             >>> asyncio.run(service.remove_root('file:///tmp'))
+
+            Test root not found error:
+            >>> service = RootService()
+            >>> try:
+            ...     asyncio.run(service.remove_root('file:///nonexistent'))
+            ... except RootServiceError as e:
+            ...     str(e)
+            'Root not found: file:///nonexistent'
         """
         if root_uri not in self._roots:
             raise RootServiceError(f"Root not found: {root_uri}")
@@ -157,7 +218,30 @@ class RootService:
             Root change events
 
         Examples:
-            This example was removed to prevent the test runner from hanging on async generator consumption.
+            This example demonstrates subscription mechanics:
+            >>> import asyncio
+            >>> from mcpgateway.services.root_service import RootService
+            >>> async def test_subscribe():
+            ...     service = RootService()
+            ...     events = []
+            ...     async def collect_events():
+            ...         async for event in service.subscribe_changes():
+            ...             events.append(event)
+            ...             if event['type'] == 'root_removed':
+            ...                 break
+            ...     task = asyncio.create_task(collect_events())
+            ...     await asyncio.sleep(0)  # Let subscription start
+            ...     await service.add_root('file:///tmp')
+            ...     await service.remove_root('file:///tmp')
+            ...     await task
+            ...     return events
+            >>> events = asyncio.run(test_subscribe())
+            >>> len(events)
+            2
+            >>> events[0]['type']
+            'root_added'
+            >>> events[1]['type']
+            'root_removed'
         """
         queue: asyncio.Queue = asyncio.Queue()
         self._subscribers.append(queue)
@@ -178,6 +262,17 @@ class RootService:
 
         Returns:
             A valid URI string
+
+        Examples:
+            >>> service = RootService()
+            >>> service._make_root_uri('/tmp')
+            'file:///tmp'
+            >>> service._make_root_uri('file:///home')
+            'file:///home'
+            >>> service._make_root_uri('http://example.com')
+            'http://example.com'
+            >>> service._make_root_uri('ftp://server/path')
+            'ftp://server/path'
         """
         parsed = urlparse(uri)
         if not parsed.scheme:
@@ -191,6 +286,25 @@ class RootService:
 
         Args:
             root: Added root
+
+        Note:
+            The root.uri field returns a FileUrl object which is serialized
+            as-is in the event data.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.services.root_service import RootService
+            >>> from mcpgateway.models import Root
+            >>> service = RootService()
+            >>> queue = asyncio.Queue()
+            >>> service._subscribers.append(queue)
+            >>> root = Root(uri='file:///tmp', name='temp')
+            >>> asyncio.run(service._notify_root_added(root))
+            >>> event = asyncio.run(queue.get())
+            >>> event['type']
+            'root_added'
+            >>> event['data']['uri']
+            FileUrl('file:///tmp')
         """
         event = {"type": "root_added", "data": {"uri": root.uri, "name": root.name}}
         await self._notify_subscribers(event)
@@ -200,6 +314,21 @@ class RootService:
 
         Args:
             root: Removed root
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.services.root_service import RootService
+            >>> from mcpgateway.models import Root
+            >>> service = RootService()
+            >>> queue = asyncio.Queue()
+            >>> service._subscribers.append(queue)
+            >>> root = Root(uri='file:///tmp', name='temp')
+            >>> asyncio.run(service._notify_root_removed(root))
+            >>> event = asyncio.run(queue.get())
+            >>> event['type']
+            'root_removed'
+            >>> event['data']['uri']
+            FileUrl('file:///tmp')
         """
         event = {"type": "root_removed", "data": {"uri": root.uri}}
         await self._notify_subscribers(event)
@@ -209,6 +338,28 @@ class RootService:
 
         Args:
             event: Event to send
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.services.root_service import RootService
+            >>> service = RootService()
+            >>> queue1 = asyncio.Queue()
+            >>> queue2 = asyncio.Queue()
+            >>> service._subscribers.extend([queue1, queue2])
+            >>> event = {"type": "test", "data": {}}
+            >>> asyncio.run(service._notify_subscribers(event))
+            >>> asyncio.run(queue1.get()) == event
+            True
+            >>> asyncio.run(queue2.get()) == event
+            True
+
+            Test error handling with closed queue:
+            >>> from unittest.mock import AsyncMock
+            >>> service = RootService()
+            >>> bad_queue = AsyncMock()
+            >>> bad_queue.put.side_effect = Exception("Queue error")
+            >>> service._subscribers.append(bad_queue)
+            >>> asyncio.run(service._notify_subscribers({"type": "test"}))
         """
         for queue in self._subscribers:
             try:

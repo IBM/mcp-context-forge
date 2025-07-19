@@ -109,6 +109,10 @@ def _extract_base_url(url: str) -> str:
         Traceback (most recent call last):
             ...
         ValueError: Invalid URL provided: invalid-url
+        >>> _extract_base_url("https://host.com/")
+        'https://host.com/'
+        >>> _extract_base_url("https://host.com")
+        'https://host.com'
 
     Note:
         If the target server was started with `APP_ROOT_PATH=/gateway`, the
