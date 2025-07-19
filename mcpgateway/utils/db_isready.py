@@ -320,6 +320,44 @@ def _parse_cli() -> argparse.Namespace:
 
     Returns:
         Parsed :class:`argparse.Namespace` holding all CLI options.
+
+    Examples:
+        >>> import sys
+        >>> # Save original argv
+        >>> original_argv = sys.argv
+        >>>
+        >>> # Test default values
+        >>> sys.argv = ['db_isready.py']
+        >>> args = _parse_cli()
+        >>> args.database_url == DEFAULT_DB_URL
+        True
+        >>> args.max_tries == DEFAULT_MAX_TRIES
+        True
+        >>> args.interval == DEFAULT_INTERVAL
+        True
+        >>> args.timeout == DEFAULT_TIMEOUT
+        True
+        >>> args.log_level == DEFAULT_LOG_LEVEL
+        True
+
+        >>> # Test custom values
+        >>> sys.argv = ['db_isready.py', '--database-url', 'postgresql://localhost/test',
+        ...             '--max-tries', '5', '--interval', '1.5', '--timeout', '10',
+        ...             '--log-level', 'DEBUG']
+        >>> args = _parse_cli()
+        >>> args.database_url
+        'postgresql://localhost/test'
+        >>> args.max_tries
+        5
+        >>> args.interval
+        1.5
+        >>> args.timeout
+        10
+        >>> args.log_level
+        'DEBUG'
+
+        >>> # Restore original argv
+        >>> sys.argv = original_argv
     """
 
     parser = argparse.ArgumentParser(
