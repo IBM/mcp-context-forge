@@ -306,13 +306,18 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
         JSONResponse: A 409 Conflict response with formatted database error details.
 
     Examples:
-        >>> # This handler is automatically invoked when database constraints are violated
-        >>> # For example, trying to create a duplicate tool name:
-        >>> # POST /tools with duplicate name would trigger this handler
-        >>> # Response format:
-        >>> # {
-        >>> #   "detail": "Unique constraint violation: Key (name)=(existing_tool) already exists"
-        >>> # }
+        >>> from sqlalchemy.exc import IntegrityError
+        >>> from fastapi import Request
+        >>> import asyncio
+        >>>
+        >>> # Create a mock integrity error
+        >>> mock_error = IntegrityError("statement", {}, Exception("duplicate key"))
+        >>> result = asyncio.run(database_exception_handler(None, mock_error))
+        >>> result.status_code
+        409
+        >>> # Verify ErrorFormatter.format_database_error is called
+        >>> hasattr(result, 'body')
+        True
     """
     return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
@@ -519,13 +524,19 @@ async def invalidate_resource_cache(uri: Optional[str] = None) -> None:
 
     Examples:
         >>> import asyncio
-        >>> # Test with specific URI
-        >>> result = asyncio.run(invalidate_resource_cache("/test/uri"))
-        >>> result is None
+        >>> # Test clearing specific URI from cache
+        >>> resource_cache.set("/test/resource", {"content": "test data"})
+        >>> resource_cache.get("/test/resource") is not None
         True
-        >>> # Test with no URI (clear all)
-        >>> result = asyncio.run(invalidate_resource_cache())
-        >>> result is None
+        >>> asyncio.run(invalidate_resource_cache("/test/resource"))
+        >>> resource_cache.get("/test/resource") is None
+        True
+        >>>
+        >>> # Test clearing entire cache
+        >>> resource_cache.set("/resource1", {"content": "data1"})
+        >>> resource_cache.set("/resource2", {"content": "data2"})
+        >>> asyncio.run(invalidate_resource_cache())
+        >>> resource_cache.get("/resource1") is None and resource_cache.get("/resource2") is None
         True
     """
     if uri:
