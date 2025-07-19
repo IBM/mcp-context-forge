@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test cases for admin UI."""
+"""Test cases for admin UI.
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti, Manav Gupta
+
+"""
 
 # Standard
 import re

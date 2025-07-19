@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+"""Authentication tests for MCP Gateway Admin UI.
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti, Manav Gupta
+
+"""
 # Standard
 import os
 import re
