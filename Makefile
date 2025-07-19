@@ -194,7 +194,7 @@ clean:
 	@# Delete Python bytecode
 	@find . -name '*.py[cod]' -delete
 	@# Delete coverage annotated files
-	@find . -name '*.py,cover' -delete	
+	@find . -name '*.py,cover' -delete
 	@echo "✅  Clean complete."
 
 
@@ -204,7 +204,7 @@ clean:
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
 # help: test                 - Run unit tests with pytest
-# help: coverage             - Run tests with coverage, emit md/HTML/XML + badge
+# help: coverage             - Run tests with coverage, emit md/HTML/XML + badge, generate annotated files
 # help: htmlcov              - (re)build just the HTML coverage report into docs
 # help: test-curl            - Smoke-test API endpoints with curl script
 # help: pytest-examples      - Run README / examples through pytest-examples
@@ -245,7 +245,9 @@ coverage:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=app/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
-	@echo "✅  Coverage artefacts: md, HTML in $(COVERAGE_DIR), XML & badge ✔"
+	@echo "🔍  Generating annotated coverage files..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage annotate -d ."
+	@echo "✅  Coverage artefacts: md, HTML in $(COVERAGE_DIR), XML, badge & annotated files (.py,cover) ✔"
 
 htmlcov:
 	@echo "📊  Generating HTML coverage report..."
