@@ -32,6 +32,7 @@ import itertools
 import json
 import logging
 import os
+import random
 import shlex
 import signal
 import socket
@@ -40,9 +41,8 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Callable, List, Tuple, Dict, Any, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import uuid
-import random
 
 # First-Party
 from mcpgateway.config import settings
@@ -984,6 +984,7 @@ def step_15_virtual_server_management():
         logging.info("📋 Test: Virtual server SSE endpoint")
         try:
             # Just test that the endpoint exists and responds
+            # Third-Party
             import requests
             token = generate_jwt()
             url = f"https://localhost:{PORT_GATEWAY}/servers/{server_id}/sse"
