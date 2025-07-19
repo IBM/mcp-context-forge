@@ -137,6 +137,20 @@ class _PubSub:
             ...     return True
             >>> asyncio.run(test_publish())
             True
+
+            >>> # Test queue full handling
+            >>> async def test_full_queue():
+            ...     pubsub = _PubSub()
+            ...     # Create a queue with size 1
+            ...     q = asyncio.Queue(maxsize=1)
+            ...     pubsub._subscribers = [q]
+            ...     # Fill the queue
+            ...     await q.put("first")
+            ...     # This should remove the full queue
+            ...     await pubsub.publish("second")
+            ...     return len(pubsub._subscribers)
+            >>> asyncio.run(test_full_queue())
+            0
         """
         dead: List[asyncio.Queue[str]] = []
         for q in self._subscribers:
@@ -404,6 +418,12 @@ def _build_fastapi(
         >>> "/events" in [r.path for r in app2.routes]
         True
         >>> "/send" in [r.path for r in app2.routes]
+        True
+
+        >>> # Test CORS middleware is added
+        >>> app3 = _build_fastapi(pubsub, stdio, cors_origins=["http://example.com"])
+        >>> # Check that middleware stack includes CORSMiddleware
+        >>> any("CORSMiddleware" in str(m) for m in app3.user_middleware)
         True
     """
     app = FastAPI()
