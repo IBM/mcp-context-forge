@@ -132,7 +132,7 @@ class ResourceCache:
             >>> short_cache.get('b')
             2
             >>> import time
-            >>> time.sleep(1)
+            >>> time.sleep(1.2)
             >>> short_cache.get('b') is None
             True
         """

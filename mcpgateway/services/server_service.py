@@ -178,6 +178,28 @@ class ServerService:
 
         Returns:
             A dictionary with keys "tools", "resources", and "prompts".
+
+        Examples:
+            >>> service = ServerService()
+            >>> # Test with all None values
+            >>> result = service._assemble_associated_items(None, None, None)
+            >>> result
+            {'tools': [], 'resources': [], 'prompts': []}
+
+            >>> # Test with empty lists
+            >>> result = service._assemble_associated_items([], [], [])
+            >>> result
+            {'tools': [], 'resources': [], 'prompts': []}
+
+            >>> # Test with actual values
+            >>> result = service._assemble_associated_items(['tool1', 'tool2'], ['res1'], ['prompt1'])
+            >>> result
+            {'tools': ['tool1', 'tool2'], 'resources': ['res1'], 'prompts': ['prompt1']}
+
+            >>> # Test with mixed None and values
+            >>> result = service._assemble_associated_items(['tool1'], None, ['prompt1'])
+            >>> result
+            {'tools': ['tool1'], 'resources': [], 'prompts': ['prompt1']}
         """
         return {
             "tools": tools or [],
