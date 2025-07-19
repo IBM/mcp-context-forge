@@ -4,6 +4,7 @@ import os
 import re
 
 # Third-Party
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import expect
 
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
@@ -56,10 +57,15 @@ class TestAuthentication:
         page = context.new_page()
 
         # Try to access admin with invalid credentials
-        response = page.goto(f"{BASE_URL}/admin")
+        try:
+            response = page.goto(f"{BASE_URL}/admin")
+            # If we get here, check the response status
+            if response:
+                assert response.status == 401
+        except PlaywrightError as e:
+            # Check for authentication error in the exception message
+            assert "ERR_INVALID_AUTH_CREDENTIALS" in str(e) or "401" in str(e)
 
-        # Should get 401 Unauthorized
-        assert response.status == 401
         context.close()
 
     def test_should_require_authentication(self, browser):
@@ -68,10 +74,15 @@ class TestAuthentication:
         page = context.new_page()
 
         # Try to access admin without credentials
-        response = page.goto(f"{BASE_URL}/admin")
+        try:
+            response = page.goto(f"{BASE_URL}/admin")
+            # If we somehow get a response, it should be 401
+            if response:
+                assert response.status == 401
+        except PlaywrightError as e:
+            # Expected: Browser throws an error for missing auth credentials
+            assert "ERR_INVALID_AUTH_CREDENTIALS" in str(e) or "401" in str(e)
 
-        # Should get 401 Unauthorized
-        assert response.status == 401
         context.close()
 
     def test_should_access_admin_with_valid_auth(self, browser):
