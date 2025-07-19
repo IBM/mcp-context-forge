@@ -267,19 +267,22 @@ async def validation_exception_handler(_request: Request, exc: ValidationError):
                       validation error details.
 
     Examples:
-        >>> # This handler is automatically invoked by FastAPI when a ValidationError occurs
-        >>> # For example, when request data fails Pydantic model validation:
-        >>> # POST /tools with invalid data would trigger this handler
-        >>> # Response format:
-        >>> # {
-        >>> #   "detail": [
-        >>> #     {
-        >>> #       "loc": ["body", "name"],
-        >>> #       "msg": "field required",
-        >>> #       "type": "value_error.missing"
-        >>> #     }
-        >>> #   ]
-        >>> # }
+        >>> from pydantic import ValidationError, BaseModel
+        >>> from fastapi import Request
+        >>> import asyncio
+        >>>
+        >>> class TestModel(BaseModel):
+        ...     name: str
+        ...     age: int
+        >>>
+        >>> # Create a validation error
+        >>> try:
+        ...     TestModel(name="", age="invalid")
+        ... except ValidationError as e:
+        ...     # Test our handler
+        ...     result = asyncio.run(validation_exception_handler(None, e))
+        ...     result.status_code
+        422
     """
     return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
@@ -445,6 +448,22 @@ def get_db():
 
     Ensures:
         The database session is closed after the request completes, even in the case of an exception.
+
+    Examples:
+        >>> # Test that get_db returns a generator
+        >>> db_gen = get_db()
+        >>> hasattr(db_gen, '__next__')
+        True
+        >>> # Test cleanup happens
+        >>> try:
+        ...     db = next(db_gen)
+        ...     type(db).__name__
+        ... finally:
+        ...     try:
+        ...         next(db_gen)
+        ...     except StopIteration:
+        ...         pass  # Expected - generator cleanup
+        'Session'
     """
     db = SessionLocal()
     try:
@@ -454,8 +473,7 @@ def get_db():
 
 
 def require_api_key(api_key: str) -> None:
-    """
-    Validates the provided API key.
+    """Validates the provided API key.
 
     This function checks if the provided API key matches the expected one
     based on the settings. If the validation fails, it raises an HTTPException
@@ -466,6 +484,22 @@ def require_api_key(api_key: str) -> None:
 
     Raises:
         HTTPException: If the API key is invalid, a 401 Unauthorized error is raised.
+
+    Examples:
+        >>> from mcpgateway.config import settings
+        >>> settings.auth_required = True
+        >>> settings.basic_auth_user = "admin"
+        >>> settings.basic_auth_password = "secret"
+        >>>
+        >>> # Valid API key
+        >>> require_api_key("admin:secret")  # Should not raise
+        >>>
+        >>> # Invalid API key
+        >>> try:
+        ...     require_api_key("wrong:key")
+        ... except HTTPException as e:
+        ...     e.status_code
+        401
     """
     if settings.auth_required:
         expected = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
@@ -482,6 +516,17 @@ async def invalidate_resource_cache(uri: Optional[str] = None) -> None:
 
     Args:
         uri (Optional[str]): The URI of the resource to invalidate from the cache. If None, the entire cache is cleared.
+
+    Examples:
+        >>> import asyncio
+        >>> # Test with specific URI
+        >>> result = asyncio.run(invalidate_resource_cache("/test/uri"))
+        >>> result is None
+        True
+        >>> # Test with no URI (clear all)
+        >>> result = asyncio.run(invalidate_resource_cache())
+        >>> result is None
+        True
     """
     if uri:
         resource_cache.delete(uri)

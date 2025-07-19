@@ -12,6 +12,16 @@ It handles:
 - Resource subscriptions and updates
 - Content type management
 - Active/inactive resource management
+
+Examples:
+    >>> from mcpgateway.services.resource_service import ResourceService, ResourceError
+    >>> service = ResourceService()
+    >>> hasattr(service, '_event_subscribers')
+    True
+    >>> hasattr(service, '_template_cache')
+    True
+    >>> isinstance(service._event_subscribers, dict)
+    True
 """
 
 # Standard
@@ -176,7 +186,6 @@ class ResourceService:
             'resource_read'
         """
         try:
-
             # Detect mime type if not provided
             mime_type = resource.mime_type
             if not mime_type:
