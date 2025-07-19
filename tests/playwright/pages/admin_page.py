@@ -11,13 +11,13 @@ from .base_page import BasePage
 class AdminPage(BasePage):
     """Admin panel page object."""
 
-    # Selectors
-    SERVERS_TAB = '[data-testid="servers-tab"]'
+    # Selectors - Updated to match actual HTML
+    SERVERS_TAB = '[data-testid="servers-tab"]'  # This is the Virtual Servers Catalog tab
     TOOLS_TAB = '[data-testid="tools-tab"]'
     GATEWAYS_TAB = '[data-testid="gateways-tab"]'
     ADD_SERVER_BTN = '[data-testid="add-server-btn"]'
-    SERVER_LIST = '[data-testid="server-list"]'
-    SERVER_ITEM = '[data-testid="server-item"]'
+    SERVER_LIST = '[data-testid="server-list"]'  # This is the tbody element
+    SERVER_ITEM = '[data-testid="server-item"]'  # These are the tr elements
     SEARCH_INPUT = '[data-testid="search-input"]'
     SERVER_NAME_INPUT = 'input[name="name"]'
     SERVER_ICON_INPUT = 'input[name="icon"]'
@@ -56,8 +56,18 @@ class AdminPage(BasePage):
 
     def get_server_count(self) -> int:
         """Get number of servers displayed."""
+        # Make sure the server list is loaded
+        self.page.wait_for_selector(self.SERVER_LIST, state="visible")
         return len(self.page.query_selector_all(self.SERVER_ITEM))
 
     def server_exists(self, name: str) -> bool:
         """Check if server with name exists."""
-        return self.element_exists(f'{self.SERVER_ITEM}:has-text("{name}")')
+        # Wait for the server list to be visible
+        self.page.wait_for_selector(self.SERVER_LIST, state="visible")
+
+        # Check each server item for the name
+        server_items = self.page.query_selector_all(self.SERVER_ITEM)
+        for item in server_items:
+            if name in item.text_content():
+                return True
+        return False
