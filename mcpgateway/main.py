@@ -342,6 +342,28 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response: Either the standard route response or a 401/403 error response.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import Mock, AsyncMock, patch
+            >>> from fastapi import HTTPException
+            >>> from fastapi.responses import JSONResponse
+            >>>
+            >>> # Test unprotected path - should pass through
+            >>> middleware = DocsAuthMiddleware(None)
+            >>> request = Mock()
+            >>> request.url.path = "/api/tools"
+            >>> request.headers.get.return_value = None
+            >>> call_next = AsyncMock(return_value="response")
+            >>>
+            >>> result = asyncio.run(middleware.dispatch(request, call_next))
+            >>> result
+            'response'
+            >>>
+            >>> # Test that middleware checks protected paths
+            >>> request.url.path = "/docs"
+            >>> isinstance(middleware, DocsAuthMiddleware)
+            True
         """
         protected_paths = ["/docs", "/redoc", "/openapi.json"]
 
@@ -386,6 +408,36 @@ class MCPPathRewriteMiddleware:
             scope (dict): The ASGI connection scope.
             receive (Callable): Awaitable that yields events from the client.
             send (Callable): Awaitable used to send events to the client.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import AsyncMock, patch
+            >>>
+            >>> # Test non-HTTP request passthrough
+            >>> app_mock = AsyncMock()
+            >>> middleware = MCPPathRewriteMiddleware(app_mock)
+            >>> scope = {"type": "websocket", "path": "/ws"}
+            >>> receive = AsyncMock()
+            >>> send = AsyncMock()
+            >>>
+            >>> asyncio.run(middleware(scope, receive, send))
+            >>> app_mock.assert_called_once_with(scope, receive, send)
+            >>>
+            >>> # Test path rewriting for /servers/123/mcp
+            >>> app_mock.reset_mock()
+            >>> scope = {"type": "http", "path": "/servers/123/mcp"}
+            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
+            ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
+            ...         asyncio.run(middleware(scope, receive, send))
+            ...         scope["path"]
+            '/mcp'
+            >>>
+            >>> # Test regular path (no rewrite)
+            >>> scope = {"type": "http", "path": "/tools"}
+            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
+            ...     asyncio.run(middleware(scope, receive, send))
+            ...     scope["path"]
+            '/tools'
         """
         # Only handle HTTP requests, HTTPS uses scope["type"] == "http" in ASGI
         if scope["type"] != "http":

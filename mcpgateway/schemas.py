@@ -60,6 +60,12 @@ def to_camel_case(s: str) -> str:
         'alreadyCamel'
         >>> to_camel_case("")
         ''
+        >>> to_camel_case("single")
+        'single'
+        >>> to_camel_case("_leading_underscore")
+        'LeadingUnderscore'
+        >>> to_camel_case("trailing_underscore_")
+        'trailingUnderscore'
     """
     return "".join(word.capitalize() if i else word for i, word in enumerate(s.split("_")))
 
@@ -120,6 +126,22 @@ class BaseModelWithConfigDict(BaseModel):
             >>> m = ExampleModel(foo=1, bar='baz')
             >>> m.to_dict()
             {'foo': 1, 'bar': 'baz'}
+
+            >>> # Test with alias
+            >>> m.to_dict(use_alias=True)
+            {'foo': 1, 'bar': 'baz'}
+
+            >>> # Test with nested model
+            >>> class NestedModel(BaseModelWithConfigDict):
+            ...     nested_field: int
+            >>> class ParentModel(BaseModelWithConfigDict):
+            ...     parent_field: str
+            ...     child: NestedModel
+            >>> nested = NestedModel(nested_field=42)
+            >>> parent = ParentModel(parent_field="test", child=nested)
+            >>> result = parent.to_dict()
+            >>> result['child']
+            {'nested_field': 42}
         """
         output = {}
         for key, value in self.model_dump(by_alias=use_alias).items():
@@ -407,6 +429,35 @@ class ToolCreate(BaseModel):
 
         Raises:
             ValueError: When value is unsafe
+
+        Examples:
+            >>> # Test MCP integration types
+            >>> from pydantic import ValidationInfo
+            >>> info = type('obj', (object,), {'data': {'integration_type': 'MCP'}})
+            >>> ToolCreate.validate_request_type('SSE', info)
+            'SSE'
+
+            >>> # Test REST integration types
+            >>> info = type('obj', (object,), {'data': {'integration_type': 'REST'}})
+            >>> ToolCreate.validate_request_type('GET', info)
+            'GET'
+            >>> ToolCreate.validate_request_type('POST', info)
+            'POST'
+
+            >>> # Test invalid REST type
+            >>> try:
+            ...     ToolCreate.validate_request_type('SSE', info)
+            ... except ValueError as e:
+            ...     "not allowed for REST" in str(e)
+            True
+
+            >>> # Test invalid MCP type
+            >>> info = type('obj', (object,), {'data': {'integration_type': 'MCP'}})
+            >>> try:
+            ...     ToolCreate.validate_request_type('GET', info)
+            ... except ValueError as e:
+            ...     "not allowed for MCP" in str(e)
+            True
         """
         data = info.data
         integration_type = data.get("integration_type")
@@ -434,6 +485,33 @@ class ToolCreate(BaseModel):
 
         Returns:
             Dict: Reformatedd values dict
+
+        Examples:
+            >>> # Test basic auth
+            >>> values = {'auth_type': 'basic', 'auth_username': 'user', 'auth_password': 'pass'}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> 'auth' in result
+            True
+            >>> result['auth']['auth_type']
+            'basic'
+
+            >>> # Test bearer auth
+            >>> values = {'auth_type': 'bearer', 'auth_token': 'mytoken'}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> result['auth']['auth_type']
+            'bearer'
+
+            >>> # Test authheaders
+            >>> values = {'auth_type': 'authheaders', 'auth_header_key': 'X-API-Key', 'auth_header_value': 'secret'}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> result['auth']['auth_type']
+            'authheaders'
+
+            >>> # Test no auth type
+            >>> values = {'name': 'test'}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> 'auth' in result
+            False
         """
         logger.debug(
             "Assembling auth in ToolCreate with raw values",
@@ -519,6 +597,17 @@ class ToolUpdate(BaseModelWithConfigDict):
 
         Raises:
             ValueError: When value is unsafe
+
+        Examples:
+            >>> from mcpgateway.schemas import ResourceCreate
+            >>> ResourceCreate.validate_description('A safe description')
+            'A safe description'
+            >>> ResourceCreate.validate_description(None)  # Test None case
+
+            >>> ResourceCreate.validate_description('x' * 5000)
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         if v is None:
             return v

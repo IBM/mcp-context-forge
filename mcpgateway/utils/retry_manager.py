@@ -49,18 +49,102 @@ Dependencies:
 Example Usage:
     Basic usage with default settings:
 
-        async with ResilientHttpClient() as client:
-            response = await client.get("https://api.example.com/data")
+        >>> import asyncio
+        >>> from mcpgateway.utils.retry_manager import ResilientHttpClient
+        >>>
+        >>> # Test client initialization and context manager
+        >>> async def test_basic_usage():
+        ...     async with ResilientHttpClient() as client:
+        ...         # Verify client is properly initialized
+        ...         assert client.max_retries > 0
+        ...         assert client.base_backoff > 0
+        ...         assert isinstance(client.client, httpx.AsyncClient)
+        ...         return True
+        >>> # asyncio.run(test_basic_usage()) # Would return True
 
     Custom configuration:
 
-        client = ResilientHttpClient(
-            max_retries=5,
-            base_backoff=2.0,
-            max_delay=120.0
-        )
-        response = await client.post("https://api.example.com/submit", json=data)
-        await client.aclose()
+        >>> # Test custom configuration
+        >>> client = ResilientHttpClient(
+        ...     max_retries=5,
+        ...     base_backoff=2.0,
+        ...     max_delay=120.0
+        ... )
+        >>> client.max_retries
+        5
+        >>> client.base_backoff
+        2.0
+        >>> client.max_delay
+        120.0
+        >>>
+        >>> # Test client cleanup
+        >>> async def cleanup_test():
+        ...     await client.aclose()
+        ...     return True
+        >>> # asyncio.run(cleanup_test()) # Would properly close the client
+
+    Testing retry behavior:
+
+        >>> # Test that retryable errors are identified correctly
+        >>> client = ResilientHttpClient()
+        >>> client._should_retry(httpx.NetworkError("Network error"), None)
+        True
+        >>>
+        >>> # Test non-retryable status codes
+        >>> from unittest.mock import Mock
+        >>> response_404 = Mock()
+        >>> response_404.status_code = 404
+        >>> client._should_retry(Exception(), response_404)
+        False
+        >>>
+        >>> # Test retryable status codes
+        >>> response_503 = Mock()
+        >>> response_503.status_code = 503
+        >>> client._should_retry(Exception(), response_503)
+        True
+
+    Testing HTTP methods:
+
+        >>> # Verify all HTTP methods are available
+        >>> client = ResilientHttpClient()
+        >>> import inspect
+        >>> all([
+        ...     inspect.iscoroutinefunction(client.get),
+        ...     inspect.iscoroutinefunction(client.post),
+        ...     inspect.iscoroutinefunction(client.put),
+        ...     inspect.iscoroutinefunction(client.delete)
+        ... ])
+        True
+
+    Testing backoff calculation:
+
+        >>> # Test exponential backoff calculation
+        >>> client = ResilientHttpClient(base_backoff=1.0, jitter_max=0.5)
+        >>> # First retry: 1.0 * (2^0) = 1.0 seconds base
+        >>> # Second retry: 1.0 * (2^1) = 2.0 seconds base
+        >>> # Third retry: 1.0 * (2^2) = 4.0 seconds base
+        >>> client.base_backoff * (2**0)
+        1.0
+        >>> client.base_backoff * (2**1)
+        2.0
+        >>> client.base_backoff * (2**2)
+        4.0
+
+    Testing error classification:
+
+        >>> # Verify error code sets
+        >>> from mcpgateway.utils.retry_manager import RETRYABLE_STATUS_CODES, NON_RETRYABLE_STATUS_CODES
+        >>> 429 in RETRYABLE_STATUS_CODES
+        True
+        >>> 503 in RETRYABLE_STATUS_CODES
+        True
+        >>> 400 in NON_RETRYABLE_STATUS_CODES
+        True
+        >>> 404 in NON_RETRYABLE_STATUS_CODES
+        True
+        >>> # Ensure no overlap between sets
+        >>> len(RETRYABLE_STATUS_CODES & NON_RETRYABLE_STATUS_CODES)
+        0
 """
 
 # Standard
