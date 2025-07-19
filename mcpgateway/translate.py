@@ -116,6 +116,8 @@ class _PubSub:
             True
             >>> len(pubsub._subscribers)
             0
+            >>> hasattr(pubsub, '_subscribers')
+            True
         """
         self._subscribers: List[asyncio.Queue[str]] = []
 
@@ -162,6 +164,10 @@ class _PubSub:
             True
             >>> q.maxsize
             1024
+            >>> len(pubsub._subscribers)
+            1
+            >>> pubsub._subscribers[0] is q
+            True
         """
         q: asyncio.Queue[str] = asyncio.Queue(maxsize=1024)
         self._subscribers.append(q)
@@ -224,6 +230,12 @@ class StdIOEndpoint:
             >>> endpoint._cmd
             'echo hello'
             >>> endpoint._proc is None
+            True
+            >>> endpoint._stdin is None
+            True
+            >>> endpoint._pump_task is None
+            True
+            >>> endpoint._pubsub is pubsub
             True
         """
         self._cmd = cmd
@@ -383,6 +395,15 @@ def _build_fastapi(
         >>> "/sse" in [r.path for r in app.routes]
         True
         >>> "/message" in [r.path for r in app.routes]
+        True
+        >>> "/healthz" in [r.path for r in app.routes]
+        True
+
+        >>> # Test with custom paths
+        >>> app2 = _build_fastapi(pubsub, stdio, sse_path="/events", message_path="/send")
+        >>> "/events" in [r.path for r in app2.routes]
+        True
+        >>> "/send" in [r.path for r in app2.routes]
         True
     """
     app = FastAPI()
@@ -548,9 +569,50 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         'info'
         >>> args.host
         '127.0.0.1'
-        >>> args = _parse_args(["--stdio", "cat"]) # Test default parameters
+        >>> args.cors is None
+        True
+        >>> args.oauth2Bearer is None
+        True
+
+        >>> # Test default parameters
+        >>> args = _parse_args(["--stdio", "cat"])
+        >>> args.port
+        8000
         >>> args.host
         '127.0.0.1'
+        >>> args.logLevel
+        'info'
+
+        >>> # Test SSE mode
+        >>> args = _parse_args(["--sse", "http://example.com/sse"])
+        >>> args.sse
+        'http://example.com/sse'
+        >>> args.stdio is None
+        True
+
+        >>> # Test CORS configuration
+        >>> args = _parse_args(["--stdio", "cat", "--cors", "https://app.com", "https://web.com"])
+        >>> args.cors
+        ['https://app.com', 'https://web.com']
+
+        >>> # Test OAuth2 Bearer token
+        >>> args = _parse_args(["--sse", "http://example.com", "--oauth2Bearer", "token123"])
+        >>> args.oauth2Bearer
+        'token123'
+
+        >>> # Test custom host and log level
+        >>> args = _parse_args(["--stdio", "cat", "--host", "0.0.0.0", "--logLevel", "debug"])
+        >>> args.host
+        '0.0.0.0'
+        >>> args.logLevel
+        'debug'
+
+        >>> # Test streamableHttp raises NotImplementedError
+        >>> try:
+        ...     _parse_args(["--streamableHttp", "test"])
+        ... except NotImplementedError as e:
+        ...     "Only --stdio" in str(e)
+        True
     """
     p = argparse.ArgumentParser(
         prog="mcpgateway.translate",

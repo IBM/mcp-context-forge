@@ -54,6 +54,21 @@ class PromptNameConflictError(PromptError):
             name: The conflicting prompt name
             is_active: Whether the existing prompt is active
             prompt_id: ID of the existing prompt if available
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptNameConflictError
+            >>> error = PromptNameConflictError("test_prompt")
+            >>> error.name
+            'test_prompt'
+            >>> error.is_active
+            True
+            >>> error.prompt_id is None
+            True
+            >>> error = PromptNameConflictError("inactive_prompt", False, 123)
+            >>> error.is_active
+            False
+            >>> error.prompt_id
+            123
         """
         self.name = name
         self.is_active = is_active
@@ -87,6 +102,14 @@ class PromptService:
         Although these templates are rendered as JSON for the API, if the output is ever
         embedded into an HTML page, unescaped content could be exploited for cross-site scripting (XSS) attacks.
         Enabling autoescaping for 'html' and 'xml' templates via select_autoescape helps mitigate this risk.
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> service = PromptService()
+            >>> service._event_subscribers
+            []
+            >>> service._jinja_env is not None
+            True
         """
         self._event_subscribers: List[asyncio.Queue] = []
         self._jinja_env = Environment(autoescape=select_autoescape(["html", "xml"]), trim_blocks=True, lstrip_blocks=True)
@@ -96,7 +119,17 @@ class PromptService:
         logger.info("Initializing prompt service")
 
     async def shutdown(self) -> None:
-        """Shutdown the service."""
+        """Shutdown the service.
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> import asyncio
+            >>> service = PromptService()
+            >>> service._event_subscribers.append("test_subscriber")
+            >>> asyncio.run(service.shutdown())
+            >>> service._event_subscribers
+            []
+        """
         self._event_subscribers.clear()
         logger.info("Prompt service shutdown complete")
 
@@ -627,6 +660,16 @@ class PromptService:
 
         Raises:
             PromptValidationError: If template is invalid
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> service = PromptService()
+            >>> service._validate_template("Hello {{ name }}")  # Valid template
+            >>> try:
+            ...     service._validate_template("Hello {{ invalid")  # Invalid template
+            ... except Exception as e:
+            ...     "Invalid template syntax" in str(e)
+            True
         """
         try:
             self._jinja_env.parse(template)
@@ -641,6 +684,15 @@ class PromptService:
 
         Returns:
             Set of required argument names
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> service = PromptService()
+            >>> args = service._get_required_arguments("Hello {{ name }} from {{ place }}")
+            >>> sorted(args)
+            ['name', 'place']
+            >>> service._get_required_arguments("No variables") == set()
+            True
         """
         ast = self._jinja_env.parse(template)
         variables = meta.find_undeclared_variables(ast)
@@ -660,6 +712,15 @@ class PromptService:
 
         Raises:
             PromptError: If rendering fails
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> service = PromptService()
+            >>> result = service._render_template("Hello {{ name }}", {"name": "World"})
+            >>> result
+            'Hello World'
+            >>> service._render_template("No variables", {})
+            'No variables'
         """
         try:
             jinja_template = self._jinja_env.from_string(template)
@@ -678,6 +739,18 @@ class PromptService:
 
         Returns:
             List of parsed messages
+
+        Examples:
+            >>> from mcpgateway.services.prompt_service import PromptService
+            >>> service = PromptService()
+            >>> messages = service._parse_messages("Simple text")
+            >>> len(messages)
+            1
+            >>> messages[0].role.value
+            'user'
+            >>> messages = service._parse_messages("# User:\\nHello\\n# Assistant:\\nHi there")
+            >>> len(messages)
+            2
         """
         messages = []
         current_role = Role.USER

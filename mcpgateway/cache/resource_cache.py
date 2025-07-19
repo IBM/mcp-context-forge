@@ -19,7 +19,7 @@ Doctest examples
 >>> cache.get('a')
 1
 >>> import time
->>> time.sleep(1.1)
+>>> time.sleep(1.2)
 >>> cache.get('a') is None
 True
 >>> cache.set('a', 1)
@@ -71,7 +71,7 @@ class ResourceCache:
     >>> cache.get('a')
     1
     >>> import time
-    >>> time.sleep(1.1)
+    >>> time.sleep(1.2)
     >>> cache.get('a') is None
     True
     >>> cache.set('a', 1)
