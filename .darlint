@@ -1,2 +1,3 @@
 [darglint]
+docstring_style=google
 ignore=DAR402
