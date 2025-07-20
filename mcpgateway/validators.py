@@ -40,7 +40,6 @@ Example usage:
 import html
 import logging
 import re
-from typing import Any, Optional
 from urllib.parse import urlparse
 
 # First-Party
@@ -53,7 +52,9 @@ class SecurityValidator:
     """Configurable validation with MCP-compliant limits"""
 
     # Configurable patterns (from settings)
-    DANGEROUS_HTML_PATTERN = settings.validation_dangerous_html_pattern  # Default: <(script|iframe|object|embed|link|meta|base|form)\b|</*(script|iframe|object|embed|link|meta|base|form)>
+    DANGEROUS_HTML_PATTERN = (
+        settings.validation_dangerous_html_pattern
+    )  # Default: '<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>'
     DANGEROUS_JS_PATTERN = settings.validation_dangerous_js_pattern  # Default: javascript:|vbscript:|on\w+\s*=|data:.*script
     ALLOWED_URL_SCHEMES = settings.validation_allowed_url_schemes  # Default: ["http://", "https://", "ws://", "wss://"]
 
@@ -95,6 +96,21 @@ class SecurityValidator:
 
         if re.search(cls.DANGEROUS_JS_PATTERN, value, re.IGNORECASE):
             raise ValueError(f"{field_name} contains script patterns that may cause display issues")
+
+        # Check for polyglot patterns - combinations of quotes, semicolons, and parentheses
+        # that could work in multiple contexts
+        polyglot_patterns = [
+            r"['\"];.*alert\s*\(",  # Quotes followed by alert
+            r"-->\s*<[^>]+>",  # HTML comment closers followed by tags
+            r"['\"].*//['\"]",  # Quote, content, comment, quote
+            r"<<[A-Z]+>",  # Double angle brackets (like <<SCRIPT>)
+            r"String\.fromCharCode",  # Character code manipulation
+            r"javascript:.*\(",  # javascript: protocol with function call
+        ]
+
+        for pattern in polyglot_patterns:
+            if re.search(pattern, value, re.IGNORECASE):
+                raise ValueError(f"{field_name} contains potentially dangerous character sequences")
 
         # Escape HTML entities to ensure proper display
         return html.escape(value, quote=True)
@@ -254,7 +270,7 @@ class SecurityValidator:
 
     @classmethod
     def validate_template(cls, value: str) -> str:
-        """Special validation for templates - allow Jinja2 but ensure safe display
+        """Special validation for templates - allow safe Jinja2 but prevent SSTI
 
         Args:
             value (str): Value to validate
@@ -279,6 +295,23 @@ class SecurityValidator:
         # Check for event handlers that could cause issues
         if re.search(r"on\w+\s*=", value, re.IGNORECASE):
             raise ValueError("Template contains event handlers that may cause display issues")
+
+        # SSTI Prevention - block dangerous template expressions
+        ssti_patterns = [
+            r"\{\{.*(__|\.|config|self|request|application|globals|builtins|import).*\}\}",  # Jinja2 dangerous patterns
+            r"\{%.*(__|\.|config|self|request|application|globals|builtins|import).*%\}",  # Jinja2 tags
+            r"\$\{.*\}",  # ${} expressions
+            r"#\{.*\}",  # #{} expressions
+            r"%\{.*\}",  # %{} expressions
+            r"\{\{.*\*.*\}\}",  # Math operations in templates (like {{7*7}})
+            r"\{\{.*\/.*\}\}",  # Division operations
+            r"\{\{.*\+.*\}\}",  # Addition operations
+            r"\{\{.*\-.*\}\}",  # Subtraction operations
+        ]
+
+        for pattern in ssti_patterns:
+            if re.search(pattern, value, re.IGNORECASE):
+                raise ValueError("Template contains potentially dangerous expressions")
 
         return value
 
@@ -322,47 +355,143 @@ class SecurityValidator:
             if re.search(pattern, value, re.IGNORECASE):
                 raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
 
+        # Block IPv6 URLs (URLs with square brackets)
+        if "[" in value or "]" in value:
+            raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+
+        # Block protocol-relative URLs
+        if value.startswith("//"):
+            raise ValueError(f"{field_name} contains protocol-relative URL which is not supported")
+
+        # Check for CRLF injection
+        if "\r" in value or "\n" in value:
+            raise ValueError(f"{field_name} contains line breaks which are not allowed")
+
+        # Check for spaces in domain
+        if " " in value.split("?")[0]:  # Check only in the URL part, not query string
+            raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
+
         # Basic URL structure validation
         try:
             result = urlparse(value)
             if not all([result.scheme, result.netloc]):
                 raise ValueError(f"{field_name} is not a valid URL")
+
+            # Additional validation: ensure netloc doesn't contain brackets (double-check)
+            if "[" in result.netloc or "]" in result.netloc:
+                raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+
+            # Block dangerous IP addresses
+            hostname = result.hostname
+            if hostname:
+                # Block 0.0.0.0 (all interfaces)
+                if hostname == "0.0.0.0":
+                    raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
+
+                # Block AWS metadata service
+                if hostname == "169.254.169.254":
+                    raise ValueError(f"{field_name} contains restricted IP address")
+
+                # Optional: Block localhost/loopback (uncomment if needed)
+                # if hostname in ["127.0.0.1", "localhost"]:
+                #     raise ValueError(f"{field_name} contains localhost address")
+
+            # Validate port number
+            if result.port is not None:
+                if result.port < 1 or result.port > 65535:
+                    raise ValueError(f"{field_name} contains invalid port number")
+
+            # Check for credentials in URL
+            if result.username or result.password:
+                raise ValueError(f"{field_name} contains credentials which are not allowed")
+
+            # Check for XSS patterns in the entire URL (including query parameters)
+            if re.search(cls.DANGEROUS_HTML_PATTERN, value, re.IGNORECASE):
+                raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
+
+            if re.search(cls.DANGEROUS_JS_PATTERN, value, re.IGNORECASE):
+                raise ValueError(f"{field_name} contains script patterns that may cause security issues")
+
+        except ValueError:
+            # Re-raise ValueError as-is
+            raise
         except Exception:
             raise ValueError(f"{field_name} is not a valid URL")
 
         return value
 
     @classmethod
-    def validate_json_depth(cls, obj: Any, max_depth: Optional[int] = None, current_depth: int = 0) -> None:
-        """Validate the maximum depth of a JSON object
+    def validate_json_depth(
+        cls,
+        obj: object,
+        max_depth: int | None = None,
+        current_depth: int = 0,
+    ) -> None:
+        """Validate that a JSON‑like structure does not exceed a depth limit.
+
+        A *depth* is counted **only** when we enter a container (`dict` or
+        `list`). Primitive values (`str`, `int`, `bool`, `None`, etc.) do not
+        increase the depth, but an *empty* container still counts as one level.
 
         Args:
-            obj (Any): The JSON object to check
-            max_depth (int): Maximum allowed depth. Defaults to class setting.
-            current_depth (int): Current depth for recursion. Used internally. Do not set manually.
+            obj: Any Python object to inspect recursively.
+            max_depth: Maximum allowed depth (defaults to
+                :pyattr:`SecurityValidator.MAX_JSON_DEPTH`).
+            current_depth: Internal recursion counter. **Do not** set this
+                from user code.
 
         Raises:
-            ValueError: If the object exceeds the maximum allowed depth
+            ValueError: If the nesting level exceeds *max_depth*.
 
         Examples:
-            >>> SecurityValidator.validate_json_depth({'a': {'b': {'c': 1}}}, max_depth=3)
-            >>> SecurityValidator.validate_json_depth({'a': {'b': {'c': {'d': 1}}}}, max_depth=3)
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
+            Simple flat dictionary – depth 1: ::
+
+                >>> SecurityValidator.validate_json_depth({'name': 'Alice'})
+
+            Nested dict – depth 2: ::
+
+                >>> SecurityValidator.validate_json_depth(
+                ...     {'user': {'name': 'Alice'}}
+                ... )
+
+            Mixed dict/list – depth 3: ::
+
+                >>> SecurityValidator.validate_json_depth(
+                ...     {'users': [{'name': 'Alice', 'meta': {'age': 30}}]}
+                ... )
+
+            Exactly at the default limit (10) – allowed: ::
+
+                >>> deep_10 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': 'end'}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_10)
+
+            One level deeper – rejected: ::
+
+                >>> deep_11 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': 'end'}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_11)
+                Traceback (most recent call last):
+                    ...
+                ValueError: JSON structure exceeds maximum depth of 10
         """
         if max_depth is None:
             max_depth = cls.MAX_JSON_DEPTH
 
-        if current_depth > max_depth:
+        # Only containers count toward depth; primitives are ignored
+        if not isinstance(obj, (dict, list)):
+            return
+
+        next_depth = current_depth + 1
+        if next_depth > max_depth:
             raise ValueError(f"JSON structure exceeds maximum depth of {max_depth}")
 
         if isinstance(obj, dict):
             for value in obj.values():
-                cls.validate_json_depth(value, max_depth, current_depth + 1)
-        elif isinstance(obj, list):
+                cls.validate_json_depth(value, max_depth, next_depth)
+        else:  # obj is a list
             for item in obj:
-                cls.validate_json_depth(item, max_depth, current_depth + 1)
+                cls.validate_json_depth(item, max_depth, next_depth)
 
     @classmethod
     def validate_mime_type(cls, value: str) -> str:
