@@ -321,7 +321,7 @@ result = crew.kickoff()
 |---------|-----|----------|-----------------|--------|-------|
 | Version Info (JSON) | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/version \| jq` | Get diagnostics | Detailed system info including uptime, platform, database status | ☐ | **Key diagnostic endpoint** |
 | Version Info (HTML) | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" "$GW_URL/version?fmt=html"` | Human-readable | HTML diagnostics page | ☐ | Browser-friendly |
-| OpenAPI Schema | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/openapi.json \| jq '.info.title'` | Get API schema | `"MCP Gateway"` | ☐ | API documentation |
+| OpenAPI Schema | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/openapi.json \| jq '.info.title'` | Get API schema | `"MCP_Gateway"` | ☐ | API documentation |
 | Swagger UI | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/docs \| grep -q "MCP Gateway" && echo "✓ Swagger UI loads"` | Interactive docs | ✓ Swagger UI loads | ☐ | API explorer |
 | ReDoc | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/redoc \| grep -q "ReDoc" && echo "✓ ReDoc loads"` | Alternative docs | ✓ ReDoc loads | ☐ | Clean API docs |
 
