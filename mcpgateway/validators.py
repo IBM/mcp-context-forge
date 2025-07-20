@@ -322,11 +322,66 @@ class SecurityValidator:
             if re.search(pattern, value, re.IGNORECASE):
                 raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
 
+        # Block IPv6 URLs (URLs with square brackets)
+        if "[" in value or "]" in value:
+            raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+
+        # Block protocol-relative URLs
+        if value.startswith("//"):
+            raise ValueError(f"{field_name} contains protocol-relative URL which is not supported")
+
+        # Check for CRLF injection
+        if "\r" in value or "\n" in value:
+            raise ValueError(f"{field_name} contains line breaks which are not allowed")
+
+        # Check for spaces in domain
+        if " " in value.split("?")[0]:  # Check only in the URL part, not query string
+            raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
+
         # Basic URL structure validation
         try:
             result = urlparse(value)
             if not all([result.scheme, result.netloc]):
                 raise ValueError(f"{field_name} is not a valid URL")
+
+            # Additional validation: ensure netloc doesn't contain brackets (double-check)
+            if "[" in result.netloc or "]" in result.netloc:
+                raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+
+            # Block dangerous IP addresses
+            hostname = result.hostname
+            if hostname:
+                # Block 0.0.0.0 (all interfaces)
+                if hostname == "0.0.0.0":
+                    raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
+
+                # Block AWS metadata service
+                if hostname == "169.254.169.254":
+                    raise ValueError(f"{field_name} contains restricted IP address")
+
+                # Optional: Block localhost/loopback (uncomment if needed)
+                # if hostname in ["127.0.0.1", "localhost"]:
+                #     raise ValueError(f"{field_name} contains localhost address")
+
+            # Validate port number
+            if result.port is not None:
+                if result.port < 1 or result.port > 65535:
+                    raise ValueError(f"{field_name} contains invalid port number")
+
+            # Check for credentials in URL
+            if result.username or result.password:
+                raise ValueError(f"{field_name} contains credentials which are not allowed")
+
+            # Check for XSS patterns in the entire URL (including query parameters)
+            if re.search(cls.DANGEROUS_HTML_PATTERN, value, re.IGNORECASE):
+                raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
+
+            if re.search(cls.DANGEROUS_JS_PATTERN, value, re.IGNORECASE):
+                raise ValueError(f"{field_name} contains script patterns that may cause security issues")
+
+        except ValueError:
+            # Re-raise ValueError as-is
+            raise
         except Exception:
             raise ValueError(f"{field_name} is not a valid URL")
 
