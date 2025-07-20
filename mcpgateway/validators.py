@@ -40,7 +40,6 @@ Example usage:
 import html
 import logging
 import re
-from typing import Any, Optional
 from urllib.parse import urlparse
 
 # First-Party
@@ -422,36 +421,77 @@ class SecurityValidator:
         return value
 
     @classmethod
-    def validate_json_depth(cls, obj: Any, max_depth: Optional[int] = None, current_depth: int = 0) -> None:
-        """Validate the maximum depth of a JSON object
+    def validate_json_depth(
+        cls,
+        obj: object,
+        max_depth: int | None = None,
+        current_depth: int = 0,
+    ) -> None:
+        """Validate that a JSON‑like structure does not exceed a depth limit.
+
+        A *depth* is counted **only** when we enter a container (`dict` or
+        `list`). Primitive values (`str`, `int`, `bool`, `None`, etc.) do not
+        increase the depth, but an *empty* container still counts as one level.
 
         Args:
-            obj (Any): The JSON object to check
-            max_depth (int): Maximum allowed depth. Defaults to class setting.
-            current_depth (int): Current depth for recursion. Used internally. Do not set manually.
+            obj: Any Python object to inspect recursively.
+            max_depth: Maximum allowed depth (defaults to
+                :pyattr:`SecurityValidator.MAX_JSON_DEPTH`).
+            current_depth: Internal recursion counter. **Do not** set this
+                from user code.
 
         Raises:
-            ValueError: If the object exceeds the maximum allowed depth
+            ValueError: If the nesting level exceeds *max_depth*.
 
         Examples:
-            >>> SecurityValidator.validate_json_depth({'a': {'b': {'c': 1}}}, max_depth=3)
-            >>> SecurityValidator.validate_json_depth({'a': {'b': {'c': {'d': 1}}}}, max_depth=3)
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
+            Simple flat dictionary – depth 1: ::
+
+                >>> SecurityValidator.validate_json_depth({'name': 'Alice'})
+
+            Nested dict – depth 2: ::
+
+                >>> SecurityValidator.validate_json_depth(
+                ...     {'user': {'name': 'Alice'}}
+                ... )
+
+            Mixed dict/list – depth 3: ::
+
+                >>> SecurityValidator.validate_json_depth(
+                ...     {'users': [{'name': 'Alice', 'meta': {'age': 30}}]}
+                ... )
+
+            Exactly at the default limit (10) – allowed: ::
+
+                >>> deep_10 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': 'end'}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_10)
+
+            One level deeper – rejected: ::
+
+                >>> deep_11 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': 'end'}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_11)
+                Traceback (most recent call last):
+                    ...
+                ValueError: JSON structure exceeds maximum depth of 10
         """
         if max_depth is None:
             max_depth = cls.MAX_JSON_DEPTH
 
-        if current_depth > max_depth:
+        # Only containers count toward depth; primitives are ignored
+        if not isinstance(obj, (dict, list)):
+            return
+
+        next_depth = current_depth + 1
+        if next_depth > max_depth:
             raise ValueError(f"JSON structure exceeds maximum depth of {max_depth}")
 
         if isinstance(obj, dict):
             for value in obj.values():
-                cls.validate_json_depth(value, max_depth, current_depth + 1)
-        elif isinstance(obj, list):
+                cls.validate_json_depth(value, max_depth, next_depth)
+        else:  # obj is a list
             for item in obj:
-                cls.validate_json_depth(item, max_depth, current_depth + 1)
+                cls.validate_json_depth(item, max_depth, next_depth)
 
     @classmethod
     def validate_mime_type(cls, value: str) -> str:

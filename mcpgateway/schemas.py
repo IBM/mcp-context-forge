@@ -28,7 +28,7 @@ import re
 from typing import Any, Dict, List, Literal, Optional, Self, Union
 
 # Third-Party
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo, ValidationError
 
 # First-Party
 from mcpgateway.config import settings
