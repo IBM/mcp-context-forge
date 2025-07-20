@@ -271,7 +271,7 @@ class SecurityValidator:
 
     @classmethod
     def validate_template(cls, value: str) -> str:
-        """Special validation for templates - allow Jinja2 but ensure safe display
+        """Special validation for templates - allow safe Jinja2 but prevent SSTI
 
         Args:
             value (str): Value to validate
@@ -296,6 +296,23 @@ class SecurityValidator:
         # Check for event handlers that could cause issues
         if re.search(r"on\w+\s*=", value, re.IGNORECASE):
             raise ValueError("Template contains event handlers that may cause display issues")
+
+        # SSTI Prevention - block dangerous template expressions
+        ssti_patterns = [
+            r"\{\{.*(__|\.|config|self|request|application|globals|builtins|import).*\}\}",  # Jinja2 dangerous patterns
+            r"\{%.*(__|\.|config|self|request|application|globals|builtins|import).*%\}",  # Jinja2 tags
+            r"\$\{.*\}",  # ${} expressions
+            r"#\{.*\}",  # #{} expressions
+            r"%\{.*\}",  # %{} expressions
+            r"\{\{.*\*.*\}\}",  # Math operations in templates (like {{7*7}})
+            r"\{\{.*\/.*\}\}",  # Division operations
+            r"\{\{.*\+.*\}\}",  # Addition operations
+            r"\{\{.*\-.*\}\}",  # Subtraction operations
+        ]
+
+        for pattern in ssti_patterns:
+            if re.search(pattern, value, re.IGNORECASE):
+                raise ValueError("Template contains potentially dangerous expressions")
 
         return value
 
