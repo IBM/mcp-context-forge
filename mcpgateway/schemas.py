@@ -1140,7 +1140,7 @@ class ResourceSubscription(BaseModelWithConfigDict):
     - Unique subscriber identifier (validated for proper format)
 
     Validation Rules:
-    - URIs cannot contain HTML special characters (<, >, ", ', \)
+    - URIs cannot contain HTML special characters (<, >, ", ', backslash)
     - URIs cannot contain directory traversal sequences (..)
     - URIs must contain only safe characters (alphanumeric, _, -, :, /, ?, =, &, %)
     - Subscriber IDs must contain only alphanumeric characters, underscores, hyphens, and dots
