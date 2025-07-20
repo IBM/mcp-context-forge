@@ -98,6 +98,21 @@ class SecurityValidator:
         if re.search(cls.DANGEROUS_JS_PATTERN, value, re.IGNORECASE):
             raise ValueError(f"{field_name} contains script patterns that may cause display issues")
 
+        # Check for polyglot patterns - combinations of quotes, semicolons, and parentheses
+        # that could work in multiple contexts
+        polyglot_patterns = [
+            r"['\"];.*alert\s*\(",  # Quotes followed by alert
+            r"-->\s*<[^>]+>",  # HTML comment closers followed by tags
+            r"['\"].*//['\"]",  # Quote, content, comment, quote
+            r"<<[A-Z]+>",  # Double angle brackets (like <<SCRIPT>)
+            r"String\.fromCharCode",  # Character code manipulation
+            r"javascript:.*\(",  # javascript: protocol with function call
+        ]
+
+        for pattern in polyglot_patterns:
+            if re.search(pattern, value, re.IGNORECASE):
+                raise ValueError(f"{field_name} contains potentially dangerous character sequences")
+
         # Escape HTML entities to ensure proper display
         return html.escape(value, quote=True)
 
