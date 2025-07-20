@@ -142,7 +142,7 @@ async def test_init():
     await service._http_client.aclose()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio  # Use asyncio-only for this specific test
 async def test_start_stop(fwd_service):
     """Test start and stop methods."""
     # Start already happened in fixture
