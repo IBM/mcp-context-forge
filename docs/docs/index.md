@@ -10,6 +10,8 @@ A flexible FastAPI-based gateway and router for **Model Context Protocol (MCP)**
 
 ![MCP Gateway](images/mcpgateway.gif)
 
+**⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component with **NO OFFICIAL SUPPORT** from IBM or its affiliates that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle. See [SECURITY.md](https://github.com/IBM/mcp-context-forge/blob/main/SECURITY.md) for more details, and the [roadmap](architecture/roadmap.md) for upcoming features.
+
 ---
 
 ## What it Does
