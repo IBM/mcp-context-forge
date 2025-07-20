@@ -152,16 +152,24 @@ class TestHTMXInteractions:
 
         # Wait for the edit modal to open
         page.wait_for_selector("#tool-edit-modal", state="visible")
+        page.wait_for_timeout(500)  # Give modal time to fully render
 
         # Modify the tool name
         new_name = f"{test_tool_data['name']} Updated"
         page.fill("#edit-tool-name", new_name)
 
-        # Submit the edit form
-        page.click('#tool-edit-modal button:has-text("Save Changes")')
+        # Submit the edit form - use a more specific selector
+        # The button is inside the form with id="edit-tool-form"
+        save_button = page.locator('#edit-tool-form button[type="submit"]:has-text("Save Changes")')
+
+        # Debug: Check if button exists
+        assert save_button.count() > 0, "Save Changes button not found"
+
+        # Click the button
+        save_button.click()
 
         # Wait for modal to close
-        page.wait_for_selector("#tool-edit-modal", state="hidden")
+        page.wait_for_selector("#tool-edit-modal", state="hidden", timeout=10000)
 
         # The form submission might redirect, so wait for it and navigate back if needed
         page.wait_for_load_state("networkidle")
@@ -174,7 +182,7 @@ class TestHTMXInteractions:
         # Verify the tool name was updated
         page.wait_for_timeout(1000)
 
-        # Check if the updated name appears anywhere in the tools table
+        # Check if the updated name appears anywhere in the tools panel
         tools_table_text = page.locator("#tools-panel").text_content()
         assert new_name in tools_table_text, f"Updated tool name '{new_name}' not found in tools panel"
 
