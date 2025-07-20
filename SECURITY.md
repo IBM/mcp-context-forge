@@ -2,7 +2,9 @@
 
 **⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
 
-## ⚠️ Beta Software Notice
+**⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle.
+
+## ⚠️ Early Beta Software Notice
 
 **Current Version: 0.3.1 (Beta)**
 
@@ -17,9 +19,43 @@ MCP Gateway is currently in early beta and should be treated as such until the 1
 - **Single-user administration** without access controls
 
 For production deployments:
+- **Disable features not used by your application**: use feature flags to disable unused features (ex: roots, resources, prompts) as per [537](https://github.com/IBM/mcp-context-forge/issues/537)
 - **Disable the Admin UI and APIs completely** (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=true` in `.env`)
 - **Use only the REST API** with proper authentication
 - **Build your own production-grade UI** with appropriate security controls
+
+### 🚀 Deployment Recommendations
+
+
+* **Disable unused features** using environment variables and feature flags (`MCPGATEWAY_ENABLE_PROMPTS=false`, etc.) as per [537](https://github.com/IBM/mcp-context-forge/issues/537)
+* **Use the REST API only**, with strict input validation and authentication
+* **Disable Admin UI and Admin API** in production (`MCPGATEWAY_UI_ENABLED=false`, `MCPGATEWAY_ADMIN_API_ENABLED=false`)
+* **Run containers as non-root users**, with read-only filesystems and minimal base images
+* **Harden network access** with firewalls, ingress policies, and internal-only endpoints
+* **Set resource limits** (CPU, memory) to protect against denial-of-service risks
+* **Always deploy the latest version** – there are **no backported security patches or long-term support branches**
+* **Perform a security audit of the codebase yourself**, especially if deploying in regulated, multi-tenant, or production environments
+* **Integrate as part of a comprehensive solution**:
+  MCP Gateway is **not a standalone product**. It is designed to be one layer in a larger, secure system architecture. You should integrate it with complementary components such as:
+
+  * API gateways or reverse proxies (for auth, rate-limiting, and routing)
+  * Secrets and configuration management systems (e.g., Vault, SOPS)
+  * Identity and access management (IAM) platforms
+  * Logging, monitoring, and alerting tools
+  * Runtime security, anomaly detection, and SIEM platforms
+  * Additional UI or orchestration layers that provide tenant or team-level access controls
+
+  Always consider your full deployment context and threat model when using MCP Gateway as part of a broader system.
+
+#### 🔐 Environment Variable Security
+
+* **Avoid storing secrets in environment variables** unless managed via a secure secrets manager
+* **Never log environment variables or sensitive configs**
+* **Restrict container permissions** so only the application process can read environment variables
+* **Use `.env` files cautiously**, and avoid committing them to version control
+* **Limit runtime shell access** to containers to prevent environment leaks
+
+---
 
 ### Multi-Tenancy Considerations
 
@@ -208,8 +244,9 @@ Applications consuming data from MCP Gateway should:
 
 When deploying MCP Gateway in production:
 
+- [ ] Disable features you are not using in production (`FEATURES_ROOTS_ENABLED=false`, `FEATURES_PROMPTS_ENABLED=false`, `FEATURES_RESOURCES_ENABLED=false`)
 - [ ] Disable Admin UI and API in production (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=false`)
-- [ ] Enable authentication for all endpoints
+- [ ] Enable authentication for all endpoints using strong passwords / keys and a custom username.
 - [ ] Configure TLS/HTTPS with valid certificates (never run HTTP in production)
 - [ ] Validate and vet all connected MCP servers
 - [ ] Implement network-level access controls and firewall rules
@@ -433,10 +470,11 @@ flowchart TD
 * The Admin UI and Admin API are intended solely as development conveniences and **must be disabled in production**
 * Bug fixes and security patches are provided on a **best-effort basis**, without SLAs
 * Security hardening efforts prioritize the **REST API**; the Admin UI remains **unsupported**
+* Currently, roots, resources and prompts are considered alpha, and require additional security hardening and resource limits. They should be disabled through feature flags as per [537](https://github.com/IBM/mcp-context-forge/issues/537)
 
 ### Security Update Process
 
-All Container Images and Python dependencies are updated with every release (major or minor) or on CRITICAL/HIGH security vulnerabilities (triggering a minor release), subject to maintainer availability.
+All Container Images and Python dependencies are updated with every release (major or minor) or on CRITICAL/HIGH security vulnerabilities (triggering a minor release), subject to maintainer availability. However, since MCP Gateway is provided as-is, you are strongly encouraged to perform your own vulnerability scanning and apply security patches to your deployments, especially if you are customizing or extending base images or dependencies. Relying solely on upstream updates may not be sufficient for your production security posture.
 
 ### Community Support
 
@@ -447,42 +485,27 @@ All Container Images and Python dependencies are updated with every release (maj
 
 ### 🚨 Security Patching Policy
 
-Our security patching strategy prioritizes rapid response to vulnerabilities while maintaining system stability:
+> **⚠️ Disclaimer**: All patching and response timelines below are provided on a **best-effort basis** with **no service-level agreements (SLAs), guarantees, or commercial support**. MCP Gateway is an open-source project maintained by the community without official backing from IBM or its affiliates.
 
-**Critical and High-Severity Vulnerabilities**: Patches are released within 24 hours of discovery or vendor disclosure. These patches trigger immediate minor version releases and are deployed to all supported environments.
+Our security patching strategy prioritizes meaningful updates while maintaining overall system stability:
 
-**Medium-Severity Vulnerabilities**: Patches are released within 5-7 days unless the vulnerability affects core security functions, in which case expedited patching procedures are triggered within 48 hours.
+* **Critical and High-Severity Vulnerabilities**: Best-effort patches are typically released within **1 week** of discovery or disclosure. These updates usually result in a **minor version bump** (e.g., `0.3.1`).
 
-**Low-Severity Vulnerabilities**: Patches are included in regular maintenance releases and dependency updates, typically within 2 weeks.
+* **Medium-Severity Vulnerabilities**: Addressed in the **next scheduled release**, usually within **2 weeks** of identification.
 
-**Zero-Day Vulnerabilities**: Emergency patching procedures are activated immediately upon discovery, with hotfixes deployed within 12 hours where possible.
+* **Low-Severity Vulnerabilities**: Included in **regular maintenance updates**, typically resolved across **1–2 upcoming releases** (~**2–4 weeks**), depending on impact and availability.
 
-### 🤖 Automated Patch Management
-
-Our automated systems continuously monitor for:
-- Security advisories from Python Package Index (PyPI)
-- Container base image security updates
-- GitHub Security Advisories
-- CVE database updates
-- Dependency vulnerability disclosures
-
-When vulnerabilities are detected, our CI/CD pipeline automatically:
-1. Assesses the impact and severity
-2. Generates updated dependency lockfiles
-3. Triggers security testing and validation
-4. Initiates the release process for critical/high-severity issues
-5. Notifies maintainers and security team
+There are **no formal zero-day patch guarantees**; users are expected to evaluate risks and apply any necessary mitigations on their own infrastructure.
 
 ### ✅ Patch Verification Process
 
-All security patches undergo rigorous verification within compressed timelines:
+All security patches undergo best-effort verification:
 - Automated security scanning to verify vulnerability remediation
 - Regression testing to ensure no functionality is broken
 - Container security scanning for image-based updates
 - Integration testing with dependent services
-- Performance impact assessment
 
-This process ensures that security patches not only address vulnerabilities but maintain the reliability and performance characteristics of the MCP Gateway service, even under accelerated release schedules.
+This process ensures that security patches not only address vulnerabilities but maintain the reliability and performance characteristics of the MCP Gateway service.
 
 ---
 
