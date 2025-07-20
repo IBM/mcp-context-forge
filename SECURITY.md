@@ -120,6 +120,7 @@ We believe that security should enhance rather than hinder the development proce
 - `make osv-scan` - Open Source Vulnerability database scanning
 - `make sbom` - Software Bill of Materials generation and vulnerability assessment
 - `make lint-web` - Frontend security validation (HTML, CSS, JS vulnerability scanning)
+- `make nodejsscan` - Run nodejsscan for JS security vulnerabilities
 
 **Local-First Security**: Developers are encouraged to run `make pre-commit` and `make test` before every commit, ensuring that security issues are caught and resolved locally before code reaches the repository. This "shift-left" approach means security problems are identified early in the development process, reducing the time and cost of remediation.
 
@@ -421,15 +422,17 @@ flowchart TD
 
 ## 📦 Supported Versions and Security Updates
 
-**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
+**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project contributors.
 
 ### Version Support Policy
 
-- We support **only the latest version** of this project
-- Support is provided **only through the REST API** (not the Admin UI)
-- Admin UI/APIs are provided for developer convenience and **must be disabled in production**
-- **No backports**: Older versions are not maintained or patched
-- **No SLAs**: Security updates are provided on a best-effort basis by the community
+* The **Admin UI** is intended for **localhost-only use** with trusted upstream MCP servers and is **disabled by default** (`MCPGATEWAY_UI_ENABLED=false`)
+* Deployments should use **only the REST APIs**, with proper authentication, **strict input validation and sanitization**, and **downstream output sanitization** as appropriate
+* The REST API is designed to be **accessed by internal services in a trusted environment**, not directly exposed to untrusted end-users
+* Fixes and security improvements are applied **only to the latest `main` branch** - **no backports** are provided
+* The Admin UI and Admin API are intended solely as development conveniences and **must be disabled in production**
+* Bug fixes and security patches are provided on a **best-effort basis**, without SLAs
+* Security hardening efforts prioritize the **REST API**; the Admin UI remains **unsupported**
 
 ### Security Update Process
 
