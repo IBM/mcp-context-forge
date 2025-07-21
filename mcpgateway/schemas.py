@@ -302,7 +302,7 @@ class ToolCreate(BaseModel):
         gateway_id (Optional[str]): ID of the gateway for the tool.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
@@ -310,7 +310,7 @@ class ToolCreate(BaseModel):
     integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
-    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
+    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters")
     annotations: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
         description="Tool annotations for behavior hints (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint)",
