@@ -302,7 +302,7 @@ class ToolCreate(BaseModel):
         gateway_id (Optional[str]): ID of the gateway for the tool.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
