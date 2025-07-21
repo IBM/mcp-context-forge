@@ -192,6 +192,19 @@ class SSETransport(Transport):
             True
             >>> "jsonrpc" in valid_message
             True
+
+            >>> # Test exception handling in queue put
+            >>> transport = SSETransport()
+            >>> asyncio.run(transport.connect())
+            >>> # Create a full queue to trigger exception
+            >>> transport._message_queue = asyncio.Queue(maxsize=1)
+            >>> asyncio.run(transport._message_queue.put({"dummy": "message"}))
+            >>> # Now queue is full, next put should fail
+            >>> try:
+            ...     asyncio.run(asyncio.wait_for(transport.send_message({"test": "message"}), timeout=0.1))
+            ... except asyncio.TimeoutError:
+            ...     print("Queue full as expected")
+            Queue full as expected
         """
         if not self._connected:
             raise RuntimeError("Transport not connected")

@@ -204,6 +204,22 @@ class InMemoryEventStore(EventStore):
             2
             >>> len(store.event_index)
             2
+
+            >>> # Test deque overflow
+            >>> store2 = InMemoryEventStore(max_events_per_stream=2)
+            >>> msg1 = JSONRPCMessage(jsonrpc="2.0", method="m1", id=1)
+            >>> msg2 = JSONRPCMessage(jsonrpc="2.0", method="m2", id=2)
+            >>> msg3 = JSONRPCMessage(jsonrpc="2.0", method="m3", id=3)
+            >>> id1 = asyncio.run(store2.store_event("stream-2", msg1))
+            >>> id2 = asyncio.run(store2.store_event("stream-2", msg2))
+            >>> # Now deque is full, adding third will remove first
+            >>> id3 = asyncio.run(store2.store_event("stream-2", msg3))
+            >>> len(store2.streams["stream-2"])
+            2
+            >>> id1 in store2.event_index  # First event removed
+            False
+            >>> id2 in store2.event_index and id3 in store2.event_index
+            True
         """
         event_id = str(uuid4())
         event_entry = EventEntry(event_id=event_id, stream_id=stream_id, message=message)

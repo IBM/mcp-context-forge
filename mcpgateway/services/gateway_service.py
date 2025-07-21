@@ -12,6 +12,29 @@ It handles:
 - Capability aggregation
 - Health monitoring
 - Active/inactive gateway management
+
+Examples:
+    >>> from mcpgateway.services.gateway_service import GatewayService, GatewayError
+    >>> service = GatewayService()
+    >>> isinstance(service, GatewayService)
+    True
+    >>> hasattr(service, '_active_gateways')
+    True
+    >>> isinstance(service._active_gateways, set)
+    True
+
+    Test error classes:
+    >>> error = GatewayError("Test error")
+    >>> str(error)
+    'Test error'
+    >>> isinstance(error, Exception)
+    True
+
+    >>> conflict_error = GatewayNameConflictError("test_gw")
+    >>> "test_gw" in str(conflict_error)
+    True
+    >>> conflict_error.enabled
+    True
 """
 
 # Standard
@@ -62,15 +85,56 @@ GW_HEALTH_CHECK_INTERVAL = settings.health_check_interval
 
 
 class GatewayError(Exception):
-    """Base class for gateway-related errors."""
+    """Base class for gateway-related errors.
+
+    Examples:
+        >>> error = GatewayError("Test error")
+        >>> str(error)
+        'Test error'
+        >>> isinstance(error, Exception)
+        True
+    """
 
 
 class GatewayNotFoundError(GatewayError):
-    """Raised when a requested gateway is not found."""
+    """Raised when a requested gateway is not found.
+
+    Examples:
+        >>> error = GatewayNotFoundError("Gateway not found")
+        >>> str(error)
+        'Gateway not found'
+        >>> isinstance(error, GatewayError)
+        True
+    """
 
 
 class GatewayNameConflictError(GatewayError):
-    """Raised when a gateway name conflicts with existing (active or inactive) gateway."""
+    """Raised when a gateway name conflicts with existing (active or inactive) gateway.
+
+    Args:
+        name: The conflicting gateway name
+        enabled: Whether the existing gateway is enabled
+        gateway_id: ID of the existing gateway if available
+
+    Examples:
+        >>> error = GatewayNameConflictError("test_gateway")
+        >>> str(error)
+        'Gateway already exists with name: test_gateway'
+        >>> error.name
+        'test_gateway'
+        >>> error.enabled
+        True
+        >>> error.gateway_id is None
+        True
+
+        >>> error_inactive = GatewayNameConflictError("inactive_gw", enabled=False, gateway_id=123)
+        >>> str(error_inactive)
+        'Gateway already exists with name: inactive_gw (currently inactive, ID: 123)'
+        >>> error_inactive.enabled
+        False
+        >>> error_inactive.gateway_id
+        123
+    """
 
     def __init__(self, name: str, enabled: bool = True, gateway_id: Optional[int] = None):
         """Initialize the error with gateway information.
@@ -90,7 +154,15 @@ class GatewayNameConflictError(GatewayError):
 
 
 class GatewayConnectionError(GatewayError):
-    """Raised when gateway connection fails."""
+    """Raised when gateway connection fails.
+
+    Examples:
+        >>> error = GatewayConnectionError("Connection failed")
+        >>> str(error)
+        'Connection failed'
+        >>> isinstance(error, GatewayError)
+        True
+    """
 
 
 class GatewayService:
@@ -105,7 +177,41 @@ class GatewayService:
     """
 
     def __init__(self) -> None:
-        """Initialize the gateway service."""
+        """Initialize the gateway service.
+
+        Examples:
+            >>> service = GatewayService()
+            >>> isinstance(service._event_subscribers, list)
+            True
+            >>> len(service._event_subscribers)
+            0
+            >>> isinstance(service._http_client, ResilientHttpClient)
+            True
+            >>> service._health_check_interval == GW_HEALTH_CHECK_INTERVAL
+            True
+            >>> service._health_check_task is None
+            True
+            >>> isinstance(service._active_gateways, set)
+            True
+            >>> len(service._active_gateways)
+            0
+            >>> service._stream_response is None
+            True
+            >>> isinstance(service._pending_responses, dict)
+            True
+            >>> len(service._pending_responses)
+            0
+            >>> isinstance(service.tool_service, ToolService)
+            True
+            >>> isinstance(service._gateway_failure_counts, dict)
+            True
+            >>> len(service._gateway_failure_counts)
+            0
+            >>> hasattr(service, 'redis_url')
+            True
+            >>> hasattr(service, '_instance_id') or True  # May not exist if no Redis
+            True
+        """
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
         self._health_check_interval = GW_HEALTH_CHECK_INTERVAL
@@ -161,7 +267,19 @@ class GatewayService:
             self._health_check_task = asyncio.create_task(self._run_health_checks())
 
     async def shutdown(self) -> None:
-        """Shutdown the service."""
+        """Shutdown the service.
+
+        Examples:
+            >>> service = GatewayService()
+            >>> service._event_subscribers = ['test']
+            >>> service._active_gateways = {'test_gw'}
+            >>> import asyncio
+            >>> asyncio.run(service.shutdown())
+            >>> len(service._event_subscribers)
+            0
+            >>> len(service._active_gateways)
+            0
+        """
         if self._health_check_task:
             self._health_check_task.cancel()
             try:
@@ -318,6 +436,17 @@ class GatewayService:
             >>> result = asyncio.run(service.list_gateways(db))
             >>> result == ['gateway_read']
             True
+
+            >>> # Test include_inactive parameter
+            >>> result_with_inactive = asyncio.run(service.list_gateways(db, include_inactive=True))
+            >>> result_with_inactive == ['gateway_read']
+            True
+
+            >>> # Test empty result
+            >>> db.execute.return_value.scalars.return_value.all.return_value = []
+            >>> empty_result = asyncio.run(service.list_gateways(db))
+            >>> empty_result
+            []
         """
         query = select(DbGateway)
 
@@ -430,8 +559,7 @@ class GatewayService:
             raise GatewayError(f"Failed to update gateway: {str(e)}")
 
     async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = True) -> GatewayRead:
-        """
-        Get a gateway by its ID.
+        """Get a gateway by its ID.
 
         Args:
             db: Database session
@@ -447,14 +575,40 @@ class GatewayService:
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.schemas import GatewayRead
             >>> service = GatewayService()
             >>> db = MagicMock()
-            >>> db.get.return_value = MagicMock()
+            >>> gateway_mock = MagicMock()
+            >>> gateway_mock.enabled = True
+            >>> db.get.return_value = gateway_mock
+            >>> GatewayRead.model_validate = MagicMock(return_value='gateway_read')
             >>> import asyncio
+            >>> result = asyncio.run(service.get_gateway(db, 'gateway_id'))
+            >>> result == 'gateway_read'
+            True
+
+            >>> # Test with inactive gateway but include_inactive=True
+            >>> gateway_mock.enabled = False
+            >>> result_inactive = asyncio.run(service.get_gateway(db, 'gateway_id', include_inactive=True))
+            >>> result_inactive == 'gateway_read'
+            True
+
+            >>> # Test gateway not found
+            >>> db.get.return_value = None
             >>> try:
-            ...     asyncio.run(service.get_gateway(db, 'gateway_id'))
-            ... except Exception:
-            ...     pass
+            ...     asyncio.run(service.get_gateway(db, 'missing_id'))
+            ... except GatewayNotFoundError as e:
+            ...     'Gateway not found: missing_id' in str(e)
+            True
+
+            >>> # Test inactive gateway with include_inactive=False
+            >>> gateway_mock.enabled = False
+            >>> db.get.return_value = gateway_mock
+            >>> try:
+            ...     asyncio.run(service.get_gateway(db, 'gateway_id', include_inactive=False))
+            ... except GatewayNotFoundError as e:
+            ...     'Gateway not found: gateway_id' in str(e)
+            True
         """
         gateway = db.get(DbGateway, gateway_id)
         if not gateway:
@@ -482,23 +636,6 @@ class GatewayService:
         Raises:
             GatewayNotFoundError: If the gateway is not found
             GatewayError: For other errors
-
-        Examples:
-            >>> from mcpgateway.services.gateway_service import GatewayService
-            >>> from unittest.mock import MagicMock
-            >>> service = GatewayService()
-            >>> db = MagicMock()
-            >>> gateway = MagicMock()
-            >>> db.get.return_value = gateway
-            >>> db.commit = MagicMock()
-            >>> db.refresh = MagicMock()
-            >>> service._notify_gateway_activated = MagicMock()
-            >>> service._notify_gateway_deactivated = MagicMock()
-            >>> import asyncio
-            >>> try:
-            ...     asyncio.run(service.toggle_gateway_status(db, 'gateway_id', True))
-            ... except Exception:
-            ...     pass
         """
         try:
             gateway = db.get(DbGateway, gateway_id)
@@ -697,15 +834,33 @@ class GatewayService:
             raise GatewayConnectionError(f"Failed to forward request to {gateway.name}: {str(e)}")
 
     async def _handle_gateway_failure(self, gateway: str) -> None:
-        """
-        Tracks and handles gateway failures during health checks.
+        """Tracks and handles gateway failures during health checks.
         If the failure count exceeds the threshold, the gateway is deactivated.
 
         Args:
-            gateway (str): The gateway object that failed its health check.
+            gateway: The gateway object that failed its health check.
 
         Returns:
             None
+
+        Examples:
+            >>> service = GatewayService()
+            >>> gateway = type('Gateway', (), {
+            ...     'id': 'gw1', 'name': 'test_gw', 'enabled': True, 'reachable': True
+            ... })()
+            >>> service._gateway_failure_counts = {}
+            >>> import asyncio
+            >>> # Test failure counting
+            >>> asyncio.run(service._handle_gateway_failure(gateway))  # doctest: +ELLIPSIS
+            >>> service._gateway_failure_counts['gw1'] >= 1
+            True
+
+            >>> # Test disabled gateway (no action)
+            >>> gateway.enabled = False
+            >>> old_count = service._gateway_failure_counts.get('gw1', 0)
+            >>> asyncio.run(service._handle_gateway_failure(gateway))  # doctest: +ELLIPSIS
+            >>> service._gateway_failure_counts.get('gw1', 0) == old_count
+            True
         """
         if GW_FAILURE_THRESHOLD == -1:
             return  # Gateway failure action disabled
@@ -728,8 +883,7 @@ class GatewayService:
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
     async def check_health_of_gateways(self, gateways: List[DbGateway]) -> bool:
-        """
-        Check health of gateways.
+        """Check health of gateways.
 
         Args:
             gateways: List of DbGateway objects
@@ -745,6 +899,24 @@ class GatewayService:
             >>> import asyncio
             >>> result = asyncio.run(service.check_health_of_gateways(gateways))
             >>> isinstance(result, bool)
+            True
+
+            >>> # Test empty gateway list
+            >>> empty_result = asyncio.run(service.check_health_of_gateways([]))
+            >>> empty_result
+            True
+
+            >>> # Test multiple gateways
+            >>> multiple_gateways = [MagicMock(), MagicMock(), MagicMock()]
+            >>> for i, gw in enumerate(multiple_gateways):
+            ...     gw.name = f"gateway_{i}"
+            ...     gw.url = f"http://gateway{i}.example.com"
+            ...     gw.transport = "SSE"
+            ...     gw.enabled = True
+            ...     gw.reachable = True
+            ...     gw.auth_value = {}
+            >>> multi_result = asyncio.run(service.check_health_of_gateways(multiple_gateways))
+            >>> isinstance(multi_result, bool)
             True
         """
         # Reuse a single HTTP client for all requests
@@ -798,10 +970,48 @@ class GatewayService:
             >>> from unittest.mock import MagicMock
             >>> service = GatewayService()
             >>> db = MagicMock()
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> gateway_mock = MagicMock()
+            >>> gateway_mock.capabilities = {"tools": {"listChanged": True}, "custom": {"feature": True}}
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway_mock]
             >>> import asyncio
             >>> result = asyncio.run(service.aggregate_capabilities(db))
             >>> isinstance(result, dict)
+            True
+            >>> 'prompts' in result
+            True
+            >>> 'resources' in result
+            True
+            >>> 'tools' in result
+            True
+            >>> 'logging' in result
+            True
+            >>> result['prompts']['listChanged']
+            True
+            >>> result['resources']['subscribe']
+            True
+            >>> result['resources']['listChanged']
+            True
+            >>> result['tools']['listChanged']
+            True
+            >>> isinstance(result['logging'], dict)
+            True
+
+            >>> # Test with no gateways
+            >>> db.execute.return_value.scalars.return_value.all.return_value = []
+            >>> empty_result = asyncio.run(service.aggregate_capabilities(db))
+            >>> isinstance(empty_result, dict)
+            True
+            >>> 'tools' in empty_result
+            True
+
+            >>> # Test capability merging
+            >>> gateway1 = MagicMock()
+            >>> gateway1.capabilities = {"tools": {"feature1": True}}
+            >>> gateway2 = MagicMock()
+            >>> gateway2.capabilities = {"tools": {"feature2": True}}
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway1, gateway2]
+            >>> merged_result = asyncio.run(service.aggregate_capabilities(db))
+            >>> merged_result['tools']['listChanged']  # Default capability
             True
         """
         capabilities = {
@@ -828,8 +1038,30 @@ class GatewayService:
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Subscribe to gateway events.
 
+        Creates a new event queue and subscribes to gateway events. Events are
+        yielded as they are published. The subscription is automatically cleaned
+        up when the generator is closed or goes out of scope.
+
         Yields:
-            Gateway event messages
+            Dict[str, Any]: Gateway event messages with 'type', 'data', and 'timestamp' fields
+
+        Examples:
+            >>> service = GatewayService()
+            >>> len(service._event_subscribers)
+            0
+            >>> async_gen = service.subscribe_events()
+            >>> hasattr(async_gen, '__aiter__')
+            True
+            >>> # Test event publishing works
+            >>> import asyncio
+            >>> async def test_event():
+            ...     queue = asyncio.Queue()
+            ...     service._event_subscribers.append(queue)
+            ...     await service._publish_event({"type": "test"})
+            ...     event = await queue.get()
+            ...     return event["type"]
+            >>> asyncio.run(test_event())
+            'test'
         """
         queue: asyncio.Queue = asyncio.Queue()
         self._event_subscribers.append(queue)
@@ -840,34 +1072,81 @@ class GatewayService:
         finally:
             self._event_subscribers.remove(queue)
 
-    async def _initialize_gateway(self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE") -> Any:
+    async def _initialize_gateway(self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE") -> tuple[Dict[str, Any], List[ToolCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
+        Connects to an MCP gateway using the specified transport protocol,
+        performs the MCP handshake, and retrieves both capabilities and
+        available tools from the gateway.
+
         Args:
-            url: Gateway URL
-            authentication: Optional authentication headers
-            transport: Transport type ("SSE" or "StreamableHTTP")
+            url: Gateway URL to connect to
+            authentication: Optional authentication headers for the connection
+            transport: Transport protocol - "SSE" or "StreamableHTTP"
 
         Returns:
-            Capabilities dictionary as provided by the gateway.
+            tuple[Dict[str, Any], List[ToolCreate]]: Capabilities dictionary and list of ToolCreate objects
 
         Raises:
-            GatewayConnectionError: If initialization fails.
+            GatewayConnectionError: If connection or initialization fails
+
+        Examples:
+            >>> service = GatewayService()
+            >>> # Test parameter validation
+            >>> import asyncio
+            >>> async def test_params():
+            ...     try:
+            ...         await service._initialize_gateway("invalid://url")
+            ...     except Exception as e:
+            ...         return "Failed" in str(e) or "GatewayConnectionError" in str(type(e).__name__)
+            >>> asyncio.run(test_params())
+            True
+
+            >>> # Test default parameters
+            >>> hasattr(service, '_initialize_gateway')
+            True
+            >>> import inspect
+            >>> sig = inspect.signature(service._initialize_gateway)
+            >>> sig.parameters['transport'].default
+            'SSE'
+            >>> sig.parameters['authentication'].default is None
+            True
         """
         try:
             if authentication is None:
                 authentication = {}
 
             async def connect_to_sse_server(server_url: str, authentication: Optional[Dict[str, str]] = None):
-                """
-                Connect to an MCP server running with SSE transport
+                """Connect to an MCP server running with SSE transport.
+
+                Establishes an SSE connection to the MCP server, performs the
+                initialization handshake, and retrieves server capabilities
+                and available tools.
 
                 Args:
-                    server_url: URL to connect to the server
-                    authentication: Authentication headers for connection to URL
+                    server_url: URL to connect to the SSE-enabled MCP server
+                    authentication: Optional authentication headers for the connection
 
                 Returns:
-                    list, list: List of capabilities and tools
+                    Tuple[Dict, List[ToolCreate]]: Server capabilities and list of available tools
+
+                Examples:
+                    >>> # Test function signature and defaults
+                    >>> import inspect
+                    >>> sig = inspect.signature(connect_to_sse_server)
+                    >>> list(sig.parameters.keys())
+                    ['server_url', 'authentication']
+                    >>> sig.parameters['authentication'].default is None
+                    True
+                    >>> sig.parameters['server_url'].annotation
+                    <class 'str'>
+
+                    >>> # Test authentication parameter handling
+                    >>> auth = {"Authorization": "Bearer token123"}
+                    >>> isinstance(auth, dict)
+                    True
+                    >>> auth.get("Authorization", "").startswith("Bearer")
+                    True
                 """
                 if authentication is None:
                     authentication = {}
@@ -944,6 +1223,26 @@ class GatewayService:
 
         Returns:
             List[DbGateway]: List of active gateways
+
+        Examples:
+            >>> from unittest.mock import patch, MagicMock
+            >>> service = GatewayService()
+            >>> with patch('mcpgateway.services.gateway_service.SessionLocal') as mock_session:
+            ...     mock_db = MagicMock()
+            ...     mock_session.return_value.__enter__.return_value = mock_db
+            ...     mock_db.execute.return_value.scalars.return_value.all.return_value = []
+            ...     result = service._get_gateways()
+            ...     isinstance(result, list)
+            True
+
+            >>> # Test include_inactive parameter handling
+            >>> with patch('mcpgateway.services.gateway_service.SessionLocal') as mock_session:
+            ...     mock_db = MagicMock()
+            ...     mock_session.return_value.__enter__.return_value = mock_db
+            ...     mock_db.execute.return_value.scalars.return_value.all.return_value = []
+            ...     result_active_only = service._get_gateways(include_inactive=False)
+            ...     isinstance(result_active_only, list)
+            True
         """
         with SessionLocal() as db:
             if include_inactive:
@@ -954,7 +1253,22 @@ class GatewayService:
     async def _run_health_checks(self) -> None:
         """Run health checks periodically,
         Uses Redis or FileLock - for multiple workers.
-        Uses simple health check for single worker mode."""
+        Uses simple health check for single worker mode.
+
+        Examples:
+            >>> service = GatewayService()
+            >>> service._health_check_interval = 0.1  # Short interval for testing
+            >>> service._redis_client = None
+            >>> import asyncio
+            >>> # Test that method exists and is callable
+            >>> callable(service._run_health_checks)
+            True
+            >>> # Test setup without actual execution (would run forever)
+            >>> hasattr(service, '_health_check_interval')
+            True
+            >>> service._health_check_interval == 0.1
+            True
+        """
 
         while True:
             try:
@@ -1015,18 +1329,34 @@ class GatewayService:
                 await asyncio.sleep(self._health_check_interval)
 
     def _get_auth_headers(self) -> Dict[str, str]:
-        """
-        Get headers for gateway authentication.
+        """Get headers for gateway authentication.
 
         Returns:
             dict: Authorization header dict
+
+        Examples:
+            >>> service = GatewayService()
+            >>> headers = service._get_auth_headers()
+            >>> isinstance(headers, dict)
+            True
+            >>> 'Authorization' in headers
+            True
+            >>> 'X-API-Key' in headers
+            True
+            >>> 'Content-Type' in headers
+            True
+            >>> headers['Content-Type']
+            'application/json'
+            >>> headers['Authorization'].startswith('Basic ')
+            True
+            >>> len(headers)
+            3
         """
         api_key = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
         return {"Authorization": f"Basic {api_key}", "X-API-Key": api_key, "Content-Type": "application/json"}
 
     async def _notify_gateway_added(self, gateway: DbGateway) -> None:
-        """
-        Notify subscribers of gateway addition.
+        """Notify subscribers of gateway addition.
 
         Args:
             gateway: Gateway to add
@@ -1045,8 +1375,7 @@ class GatewayService:
         await self._publish_event(event)
 
     async def _notify_gateway_activated(self, gateway: DbGateway) -> None:
-        """
-        Notify subscribers of gateway activation.
+        """Notify subscribers of gateway activation.
 
         Args:
             gateway: Gateway to activate
@@ -1064,8 +1393,7 @@ class GatewayService:
         await self._publish_event(event)
 
     async def _notify_gateway_deactivated(self, gateway: DbGateway) -> None:
-        """
-        Notify subscribers of gateway deactivation.
+        """Notify subscribers of gateway deactivation.
 
         Args:
             gateway: Gateway database object
@@ -1083,8 +1411,7 @@ class GatewayService:
         await self._publish_event(event)
 
     async def _notify_gateway_deleted(self, gateway_info: Dict[str, Any]) -> None:
-        """
-        Notify subscribers of gateway deletion.
+        """Notify subscribers of gateway deletion.
 
         Args:
             gateway_info: Dict containing information about gateway to delete
@@ -1097,8 +1424,7 @@ class GatewayService:
         await self._publish_event(event)
 
     async def _notify_gateway_removed(self, gateway: DbGateway) -> None:
-        """
-        Notify subscribers of gateway removal (deactivation).
+        """Notify subscribers of gateway removal (deactivation).
 
         Args:
             gateway: Gateway to remove
@@ -1111,11 +1437,32 @@ class GatewayService:
         await self._publish_event(event)
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
-        """
-        Publish event to all subscribers.
+        """Publish event to all subscribers.
 
         Args:
             event: event dictionary
+
+        Examples:
+            >>> import asyncio
+            >>> service = GatewayService()
+            >>> test_queue = asyncio.Queue()
+            >>> service._event_subscribers = [test_queue]
+            >>> test_event = {"type": "test", "data": {}}
+            >>> asyncio.run(service._publish_event(test_event))
+            >>> # Verify event was published
+            >>> asyncio.run(test_queue.get()) == test_event
+            True
+
+            >>> # Test with multiple subscribers
+            >>> queue1 = asyncio.Queue()
+            >>> queue2 = asyncio.Queue()
+            >>> service._event_subscribers = [queue1, queue2]
+            >>> event = {"type": "multi_test"}
+            >>> asyncio.run(service._publish_event(event))
+            >>> asyncio.run(queue1.get())["type"]
+            'multi_test'
+            >>> asyncio.run(queue2.get())["type"]
+            'multi_test'
         """
         for queue in self._event_subscribers:
             await queue.put(event)

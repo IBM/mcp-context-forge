@@ -7,6 +7,14 @@ Authors: Mihai Criveti
 
 This module implements argument completion according to the MCP specification.
 It handles completion suggestions for prompt arguments and resource URIs.
+
+Examples:
+    >>> from mcpgateway.services.completion_service import CompletionService, CompletionError
+    >>> service = CompletionService()
+    >>> isinstance(service, CompletionService)
+    True
+    >>> service._custom_completions
+    {}
 """
 
 # Standard
@@ -26,7 +34,16 @@ logger = logging.getLogger(__name__)
 
 
 class CompletionError(Exception):
-    """Base class for completion errors."""
+    """Base class for completion errors.
+
+    Examples:
+        >>> from mcpgateway.services.completion_service import CompletionError
+        >>> err = CompletionError("Invalid reference")
+        >>> str(err)
+        'Invalid reference'
+        >>> isinstance(err, Exception)
+        True
+    """
 
 
 class CompletionService:
@@ -39,7 +56,16 @@ class CompletionService:
     """
 
     def __init__(self):
-        """Initialize completion service."""
+        """Initialize completion service.
+
+        Examples:
+            >>> from mcpgateway.services.completion_service import CompletionService
+            >>> service = CompletionService()
+            >>> hasattr(service, '_custom_completions')
+            True
+            >>> service._custom_completions
+            {}
+        """
         self._custom_completions: Dict[str, List[str]] = {}
 
     async def initialize(self) -> None:
@@ -115,7 +141,33 @@ class CompletionService:
             Completion suggestions
 
         Raises:
-            CompletionError: If URI template is missing
+            CompletionError: If prompt is missing or not found
+
+        Examples:
+            >>> from mcpgateway.services.completion_service import CompletionService, CompletionError
+            >>> from unittest.mock import MagicMock
+            >>> import asyncio
+            >>> service = CompletionService()
+            >>> db = MagicMock()
+
+            >>> # Test missing prompt name
+            >>> ref = {}
+            >>> try:
+            ...     asyncio.run(service._complete_prompt_argument(db, ref, 'arg1', 'val'))
+            ... except CompletionError as e:
+            ...     str(e)
+            'Missing prompt name'
+
+            >>> # Test custom completions
+            >>> service.register_completions('color', ['red', 'green', 'blue'])
+            >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock(
+            ...     argument_schema={'properties': {'color': {'name': 'color'}}}
+            ... )
+            >>> result = asyncio.run(service._complete_prompt_argument(
+            ...     db, {'name': 'test'}, 'color', 'r'
+            ... ))
+            >>> result.completion['values']
+            ['red', 'green']
         """
         # Get prompt
         prompt_name = ref.get("name")
@@ -175,6 +227,35 @@ class CompletionService:
 
         Raises:
             CompletionError: If URI template is missing
+
+        Examples:
+            >>> from mcpgateway.services.completion_service import CompletionService, CompletionError
+            >>> from unittest.mock import MagicMock
+            >>> import asyncio
+            >>> service = CompletionService()
+            >>> db = MagicMock()
+
+            >>> # Test missing URI template
+            >>> ref = {}
+            >>> try:
+            ...     asyncio.run(service._complete_resource_uri(db, ref, 'test'))
+            ... except CompletionError as e:
+            ...     str(e)
+            'Missing URI template'
+
+            >>> # Test resource filtering
+            >>> ref = {'uri': 'template://'}
+            >>> mock_resources = [
+            ...     MagicMock(uri='file://doc1.txt'),
+            ...     MagicMock(uri='file://doc2.txt'),
+            ...     MagicMock(uri='http://example.com')
+            ... ]
+            >>> db.execute.return_value.scalars.return_value.all.return_value = mock_resources
+            >>> result = asyncio.run(service._complete_resource_uri(db, ref, 'doc'))
+            >>> len(result.completion['values'])
+            2
+            >>> 'file://doc1.txt' in result.completion['values']
+            True
         """
         # Get base URI template
         uri_template = ref.get("uri")
@@ -211,6 +292,12 @@ class CompletionService:
             >>> service.register_completions('arg1', ['a', 'b'])
             >>> service._custom_completions['arg1']
             ['a', 'b']
+            >>> service.register_completions('arg2', ['x', 'y', 'z'])
+            >>> len(service._custom_completions)
+            2
+            >>> service.register_completions('arg1', ['c'])  # Overwrite
+            >>> service._custom_completions['arg1']
+            ['c']
         """
         self._custom_completions[arg_name] = list(values)
 
