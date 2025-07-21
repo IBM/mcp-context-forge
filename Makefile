@@ -1152,7 +1152,7 @@ endef
 # help: use-podman           - Switch to Podman runtime
 # help: show-runtime         - Show current container runtime
 
-.PHONY: container-build container-run container-run-ssl container-run-ssl-host \
+.PHONY: container-build container-run container-run-host container-run-ssl container-run-ssl-host \
         container-push container-info container-stop container-logs container-shell \
         container-health image-list image-clean image-retag container-check-image \
         container-build-multi use-docker use-podman show-runtime
@@ -1469,6 +1469,7 @@ container-run-ssl-safe: container-validate container-run-ssl
 # help: podman               - Build container image
 # help: podman-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
 # help: podman-run           - Run the container on HTTP  (port 4444)
+# help: podman-run-host      - Run the container on HTTP  (port 4444) with --network-host
 # help: podman-run-shell     - Run the container on HTTP  (port 4444) and start a shell
 # help: podman-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
 # help: podman-run-ssl-host  - Run the container on HTTPS with --network-host (port 4444, self-signed)
@@ -1479,8 +1480,8 @@ container-run-ssl-safe: container-validate container-run-ssl
 # help: podman-top           - Show live top-level process info in container
 
 .PHONY: podman-dev podman podman-prod podman-build podman-run podman-run-shell \
-        podman-run-ssl podman-run-ssl-host podman-stop podman-test podman-logs \
-        podman-stats podman-top podman-shell
+        podman-run-host podman-run-ssl podman-run-ssl-host podman-stop podman-test \
+        podman-logs podman-stats podman-top podman-shell
 
 podman-dev:
 	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
@@ -1496,6 +1497,9 @@ podman-build:
 
 podman-run:
 	@$(MAKE) container-run CONTAINER_RUNTIME=podman
+
+podman-run-host:
+	@$(MAKE) container-run-host CONTAINER_RUNTIME=podman
 
 podman-run-shell:
 	@echo "🚀  Starting podman container shell..."
@@ -1546,13 +1550,14 @@ podman-top:
 # help: docker               - Build production Docker image
 # help: docker-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
 # help: docker-run           - Run the container on HTTP  (port 4444)
+# help: docker-run-host      - Run the container on HTTP  (port 4444) with --network-host
 # help: docker-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
 # help: docker-run-ssl-host  - Run the container on HTTPS with --network-host (port 4444, self-signed)
 # help: docker-stop          - Stop & remove the container
 # help: docker-test          - Quick curl smoke-test against the container
 # help: docker-logs          - Follow container logs (⌃C to quit)
 
-.PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-ssl \
+.PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-host docker-run-ssl \
         docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
         docker-top docker-shell
 
@@ -1571,6 +1576,9 @@ docker-build:
 docker-run:
 	@$(MAKE) container-run CONTAINER_RUNTIME=docker
 
+docker-run-host:
+	@$(MAKE) container-run-host CONTAINER_RUNTIME=docker
+	
 docker-run-ssl:
 	@$(MAKE) container-run-ssl CONTAINER_RUNTIME=docker
 
