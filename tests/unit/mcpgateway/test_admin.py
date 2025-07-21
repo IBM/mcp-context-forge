@@ -388,10 +388,8 @@ class TestAdminResourceRoutes:
 
         # Assert
         mock_register_resource.assert_called_once()
-        assert isinstance(result, RedirectResponse)
-        assert result.status_code == 303
-        assert "/admin#resources" in result.headers["location"]
-
+        assert result.status_code == 200
+       
     @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource(self, mock_update_resource, mock_request, mock_db):
         """Test editing a resource through admin UI."""

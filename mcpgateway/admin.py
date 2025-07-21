@@ -2668,6 +2668,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             error_message = ErrorFormatter.format_database_error(ex)
             logger.error(f"IntegrityError in admin_add_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
+       
         logger.error(f"Error in admin_add_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
