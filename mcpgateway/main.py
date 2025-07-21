@@ -54,6 +54,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
 from mcpgateway import __version__
@@ -475,6 +476,9 @@ app.add_middleware(DocsAuthMiddleware)
 
 # Add streamable HTTP middleware for /mcp routes
 app.add_middleware(MCPPathRewriteMiddleware)
+
+# Trust all proxies (or lock down with a list of host patterns)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 
 # Set up Jinja2 templates and store in app state for later use
