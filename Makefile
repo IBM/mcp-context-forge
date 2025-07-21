@@ -1136,6 +1136,7 @@ endef
 # help: 🐳 UNIFIED CONTAINER OPERATIONS (Auto-detects Docker/Podman)
 # help: container-build      - Build image using detected runtime
 # help: container-run        - Run container using detected runtime
+# help: container-run-host   - Run container using detected runtime with and host networking
 # help: container-run-ssl    - Run container with TLS using detected runtime
 # help: container-run-ssl-host - Run container with TLS and host networking
 # help: container-push       - Push image (handles localhost/ prefix)
