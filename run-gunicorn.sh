@@ -82,5 +82,6 @@ exec gunicorn -c gunicorn.config.py \
     --max-requests-jitter "${GUNICORN_MAX_REQUESTS_JITTER}" \
     --access-logfile - \
     --error-logfile - \
+    --forwarded-allow-ips="*" \
     ${SSL_ARGS} \
     "mcpgateway.main:app"
