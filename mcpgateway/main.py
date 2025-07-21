@@ -608,8 +608,9 @@ def get_protocol_from_request(request: Request) -> str:
      1) X-Forwarded-Proto (if set by a proxy)
      2) request.url.scheme  (e.g. when Gunicorn/Uvicorn is terminating TLS)
 
-     Args:
+    Args:
         request (Request): The FastAPI request object.
+
     Returns:
         str: The protocol used for the request, either "http" or "https".
     """
@@ -626,11 +627,12 @@ def update_url_protocol(request: Request) -> str:
 
     Args:
         request (Request): The FastAPI request object.
+
     Returns:
         str: The base URL with the correct protocol.
     """
     parsed = urlparse(str(request.base_url))
-    proto   = get_protocol_from_request(request)
+    proto = get_protocol_from_request(request)
     new_parsed = parsed._replace(scheme=proto)
     # urlunparse keeps netloc and path intact
     return urlunparse(new_parsed).rstrip("/")
@@ -2282,7 +2284,6 @@ async def readiness_check(db: Session = Depends(get_db)):
     try:
         # Run the blocking DB check in a thread to avoid blocking the event loop
         await asyncio.to_thread(db.execute, text("SELECT 1"))
-        return JSONResponse(content={"status": "ready"}, status_code=200)
     except Exception as e:
         error_message = f"Readiness check failed: {str(e)}"
         logger.error(error_message)
