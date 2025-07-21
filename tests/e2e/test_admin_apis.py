@@ -40,6 +40,7 @@ from typing import AsyncGenerator
 from unittest.mock import patch
 from urllib.parse import quote
 import uuid
+import logging
 
 # Third-Party
 from httpx import AsyncClient
@@ -52,6 +53,13 @@ from sqlalchemy.pool import StaticPool
 # First-Party
 from mcpgateway.db import Base
 from mcpgateway.main import app, get_db
+
+# Configure logging for debugging
+def setup_logging():
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+setup_logging()
+
 
 # pytest.skip("Temporarily disabling this suite", allow_module_level=True)
 
@@ -85,6 +93,9 @@ async def temp_db():
         poolclass=StaticPool,
     )
 
+    # Log the database path for debugging
+    logging.debug(f"Using temporary database at: {db_path}")
+
     # Create all tables
     Base.metadata.create_all(bind=engine)
 
@@ -114,6 +125,7 @@ async def temp_db():
     yield engine
 
     # Cleanup
+    logging.debug("Cleaning up temporary database and overrides.")
     app.dependency_overrides.clear()
     os.close(db_fd)
     os.unlink(db_path)
@@ -337,70 +349,47 @@ class TestAdminToolAPIs:
 class TestAdminResourceAPIs:
     """Test admin resource management endpoints."""
 
-    async def test_admin_add_resource(self, client: AsyncClient, mock_settings):
-        """Test adding a resource via the admin UI."""
-        form_data = {
-            "uri": mock_settings.default_resource_uri,
+    async def test_admin_add_resource(self, client: AsyncClient, mock_settings, temp_db):
+        """Test adding a resource via the admin UI with new logic."""
+        # Define valid form data
+        valid_form_data = {
+            "uri": "test://resource1",
             "name": "Test Resource",
             "description": "A test resource",
             "mimeType": "text/plain",
             "content": "Sample content",
         }
-        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+
+        # Test successful resource creation
+        response = await client.post("/admin/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         assert result["success"] is True
         assert "message" in result and "Add resource registered successfully!" in result["message"]
 
-    async def test_admin_add_resource_missing_fields(self, client: AsyncClient, mock_settings):
-        """Test adding a resource with missing required fields."""
-        form_data = {
-            "name": "Test Resource1",
+        # Test missing required fields
+        invalid_form_data = {
+            "name": "Test Resource",
             "description": "A test resource",
             # Missing 'uri', 'mimeType', and 'content'
         }
-        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/admin/resources", data=invalid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 500
-        # result = response.json()
-        # assert result["success"] is False
-        # assert "error" in result
 
-    async def test_admin_add_resource_invalid_mime_type(self, client: AsyncClient, mock_settings):
-        """Test adding a resource with an invalid MIME type."""
-        form_data = {
-            "uri": mock_settings.default_resource_uri,
-            "name": "Test Resource",
-            "description": "A test resource",
-            "mimeType": "invalid/type",
-            "content": "Sample content",
+        # Test ValidationError (422)
+        invalid_validation_data = {
+            "uri": "",
+            "name": "",
+            "description": "",
+            "mimeType": "",
+            "content": "",
         }
-        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/admin/resources", data=invalid_validation_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
-        # result = response.json()
-        # assert result["success"] is False
-        # assert "error" in result
-
-    async def test_admin_add_resource_duplicate_uri(self, client: AsyncClient, mock_settings):
-        """Test adding a resource with a duplicate URI."""
-        form_data = {
-            "uri": mock_settings.default_resource_uri,
-            "name": "Test Resource",
-            "description": "A test resource",
-            "mimeType": "text/plain",
-            "content": "Sample content",
-        }
-        # Add the resource for the first time
-        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
-        assert response.status_code == 200
-        # result = response.json()
-        # assert result["success"] is True
-
-        # Try adding the same resource again
-        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+  
+        # Test duplicate URI
+        response = await client.post("/admin/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
-        # result = response.json()
-        # assert result["success"] is False
-        # assert "error" in result
 
 
 # -------------------------
