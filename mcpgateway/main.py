@@ -31,6 +31,7 @@ from contextlib import asynccontextmanager
 import json
 import logging
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from urllib.parse import urlparse, urlunparse
 
 # Third-Party
 from fastapi import (
@@ -601,6 +602,40 @@ async def invalidate_resource_cache(uri: Optional[str] = None) -> None:
         resource_cache.clear()
 
 
+def get_protocol_from_request(request: Request) -> str:
+    """
+    Return "https" or "http" based on:
+     1) X-Forwarded-Proto (if set by a proxy)
+     2) request.url.scheme  (e.g. when Gunicorn/Uvicorn is terminating TLS)
+
+     Args:
+        request (Request): The FastAPI request object.
+    Returns:
+        str: The protocol used for the request, either "http" or "https".
+    """
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        # may be a comma-separated list; take the first
+        return forwarded.split(",")[0].strip()
+    return request.url.scheme
+
+
+def update_url_protocol(request: Request) -> str:
+    """
+    Update the base URL protocol based on the request's scheme or forwarded headers.
+
+    Args:
+        request (Request): The FastAPI request object.
+    Returns:
+        str: The base URL with the correct protocol.
+    """
+    parsed = urlparse(str(request.base_url))
+    proto   = get_protocol_from_request(request)
+    new_parsed = parsed._replace(scheme=proto)
+    # urlunparse keeps netloc and path intact
+    return urlunparse(new_parsed).rstrip("/")
+
+
 # Protocol APIs #
 @protocol_router.post("/initialize")
 async def initialize(request: Request, user: str = Depends(require_auth)) -> InitializeResult:
@@ -925,6 +960,8 @@ async def sse_endpoint(request: Request, server_id: str, user: str = Depends(req
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
         base_url = str(request.base_url).rstrip("/")
         server_sse_url = f"{base_url}/servers/{server_id}"
+        server_sse_url = update_url_protocol(server_sse_url)
+
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
@@ -2060,6 +2097,8 @@ async def utility_sse_endpoint(request: Request, user: str = Depends(require_aut
     try:
         logger.debug("User %s requested SSE connection", user)
         base_url = str(request.base_url).rstrip("/")
+        base_url = update_url_protocol(base_url)
+
         transport = SSETransport(base_url=base_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
