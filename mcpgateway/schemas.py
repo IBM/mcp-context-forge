@@ -310,7 +310,7 @@ class ToolCreate(BaseModel):
     integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
-    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters")
+    input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
     annotations: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
         description="Tool annotations for behavior hints (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint)",

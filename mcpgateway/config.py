@@ -120,8 +120,8 @@ class Settings(BaseSettings):
     auth_encryption_secret: str = "my-test-salt"
 
     # UI/Admin Feature Flags
-    mcpgateway_ui_enabled: bool = False
-    mcpgateway_admin_api_enabled: bool = False
+    mcpgateway_ui_enabled: bool = True
+    mcpgateway_admin_api_enabled: bool = True
 
     # Security
     skip_ssl_verify: bool = False
