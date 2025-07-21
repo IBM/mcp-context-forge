@@ -54,9 +54,11 @@ from sqlalchemy.pool import StaticPool
 from mcpgateway.db import Base
 from mcpgateway.main import app, get_db
 
+
 # Configure logging for debugging
 def setup_logging():
-    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+
 
 setup_logging()
 
@@ -386,7 +388,7 @@ class TestAdminResourceAPIs:
         }
         response = await client.post("/admin/resources", data=invalid_validation_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
-  
+
         # Test duplicate URI
         response = await client.post("/admin/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
