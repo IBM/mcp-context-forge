@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import httpx
 from pydantic import ValidationError
+from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -61,7 +62,7 @@ from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayN
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerNotFoundError, ServerService
+from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
 from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
@@ -405,10 +406,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         >>> server_service.register_server = original_register_server
     """
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    # root_path = request.scope.get("root_path", "")
+    # is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
-
         server = ServerCreate(
             name=form.get("name"),
             description=form.get("description"),
@@ -417,24 +418,46 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             associated_resources=form.get("associatedResources"),
             associated_prompts=form.get("associatedPrompts"),
         )
-        await server_service.register_server(db, server)
+    except KeyError as e:
+        # Convert KeyError to ValidationError-like response
+        return JSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
 
-        root_path = request.scope.get("root_path", "")
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+    try:
+        await server_service.register_server(db, server)
+        return JSONResponse(
+            content={"message": "Server created successfully!", "success": True},
+            status_code=200,
+        )
+
+    except CoreValidationError as ex:
+        return JSONResponse(content={"message": str(ex)}, status_code=422)
+
+    except IntegrityError as ex:
+        logger.error(f"Database error: {ex}")
+        return JSONResponse(content={"success": False, "message": "Server name already exists."}, status_code=409)
     except Exception as ex:
+        if isinstance(ex, ServerError):
+            # Custom server logic error — 500 Internal Server Error makes sense
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
+        if isinstance(ex, ValueError):
+            # Invalid input — 400 Bad Request is appropriate
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+
+        if isinstance(ex, RuntimeError):
+            # Unexpected error during runtime — 500 is suitable
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
         if isinstance(ex, ValidationError):
-            logger.info(f"ValidationError adding server: type{ex}")
+            # Pydantic or input validation failure — 422 Unprocessable Entity is correct
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+
         if isinstance(ex, IntegrityError):
-            logger.info(f"IntegrityError adding server: type{ex}")
+            # DB constraint violation — 409 Conflict is appropriate
             return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
-        logger.info(f"Other Error adding server:{ex}")
-        root_path = request.scope.get("root_path", "")
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+
+        # For any other unhandled error, default to 500
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/edit")
