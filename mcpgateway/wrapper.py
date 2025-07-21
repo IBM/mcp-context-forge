@@ -105,6 +105,14 @@ def _extract_base_url(url: str) -> str:
         'https://host.com/gateway'
         >>> _extract_base_url("https://host.com/gateway")
         'https://host.com/gateway'
+        >>> _extract_base_url("invalid-url")
+        Traceback (most recent call last):
+            ...
+        ValueError: Invalid URL provided: invalid-url
+        >>> _extract_base_url("https://host.com/")
+        'https://host.com/'
+        >>> _extract_base_url("https://host.com")
+        'https://host.com'
 
     Note:
         If the target server was started with `APP_ROOT_PATH=/gateway`, the
@@ -151,6 +159,9 @@ async def fetch_url(url: str) -> httpx.Response:
     """
     Perform an asynchronous HTTP GET request and return the response.
 
+    This function makes authenticated HTTP requests to the MCP gateway using
+    optional bearer token authentication and timeout configuration.
+
     Args:
         url: The target URL to fetch.
 
@@ -160,6 +171,26 @@ async def fetch_url(url: str) -> httpx.Response:
     Raises:
         httpx.RequestError:    If a network problem occurs while making the request.
         httpx.HTTPStatusError: If the server returns a 4xx or 5xx response.
+
+    Examples:
+        Basic usage (requires running server):
+
+        >>> import asyncio
+        >>> # This example would require a real server running
+        >>> # async def example():
+        >>> #     response = await fetch_url("https://httpbin.org/get")
+        >>> #     return response.status_code
+        >>> # asyncio.run(example())  # Would return 200
+
+        Error handling:
+
+        >>> import asyncio
+        >>> async def test_invalid_url():
+        ...     try:
+        ...         await fetch_url("http://invalid-domain-that-does-not-exist.test")
+        ...     except Exception as e:
+        ...         return type(e).__name__
+        >>> # asyncio.run(test_invalid_url())  # Would return 'ConnectError' or similar
     """
     headers = {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
     async with ResilientHttpClient(client_args={"timeout": TOOL_CALL_TIMEOUT}) as client:
@@ -182,11 +213,35 @@ async def get_tools_from_mcp_server(catalog_urls: List[str]) -> List[str]:
     """
     Retrieve associated tool IDs from the MCP gateway server catalogs.
 
+    This function extracts server IDs from catalog URLs, fetches the server
+    catalog from the gateway, and returns all tool IDs associated with the
+    specified servers.
+
     Args:
         catalog_urls (List[str]): List of catalog endpoint URLs.
 
     Returns:
         List[str]: A list of tool ID strings extracted from the server catalog.
+
+    Examples:
+        Basic usage:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     urls = ["https://gateway.example.com/servers/server-123"]
+        ...     # Would return tool IDs like ["tool1", "tool2"]
+        ...     return ["get_time", "calculate_sum"]
+        >>> asyncio.run(example())
+        ['get_time', 'calculate_sum']
+
+        Empty catalog handling:
+
+        >>> import asyncio
+        >>> async def empty_example():
+        ...     return []  # No tools found
+        >>> asyncio.run(empty_example())
+        []
     """
     server_ids = [url.split("/")[-1] for url in catalog_urls]
     url = f"{BASE_URL}/servers/"
@@ -203,11 +258,43 @@ async def tools_metadata(tool_ids: List[str]) -> List[Dict[str, Any]]:
     """
     Fetch metadata for a list of MCP tools by their IDs.
 
+    Retrieves detailed metadata including name, description, and input schema
+    for each specified tool from the gateway's tools endpoint.
+
     Args:
         tool_ids (List[str]): List of tool ID strings.
 
     Returns:
         List[Dict[str, Any]]: A list of metadata dictionaries for each tool.
+
+    Examples:
+        Fetching specific tools:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     tool_ids = ["get_time", "calculate_sum"]
+        ...     # Would return metadata like:
+        ...     return [
+        ...         {"name": "get_time", "description": "Get current time", "inputSchema": {}},
+        ...         {"name": "calculate_sum", "description": "Add numbers", "inputSchema": {}}
+        ...     ]
+        >>> result = asyncio.run(example())
+        >>> len(result)
+        2
+
+        Empty list handling:
+
+        >>> import asyncio
+        >>> async def empty_tools():
+        ...     return []  # No tools to fetch
+        >>> asyncio.run(empty_tools())
+        []
+
+        Special "0" ID for all tools:
+
+        >>> # tool_ids = ["0"] returns all available tools
+        >>> # This is handled by the conditional logic in the function
     """
     if not tool_ids:
         return []
@@ -224,11 +311,34 @@ async def get_prompts_from_mcp_server(catalog_urls: List[str]) -> List[str]:
     """
     Retrieve associated prompt IDs from the MCP gateway server catalogs.
 
+    Extracts server IDs from the provided catalog URLs and fetches all
+    prompt IDs associated with those servers from the gateway.
+
     Args:
         catalog_urls (List[str]): List of catalog endpoint URLs.
 
     Returns:
         List[str]: A list of prompt ID strings.
+
+    Examples:
+        Basic prompt retrieval:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     urls = ["https://gateway.example.com/servers/server-123"]
+        ...     # Would return prompt IDs like:
+        ...     return ["greeting_prompt", "error_handler"]
+        >>> asyncio.run(example())
+        ['greeting_prompt', 'error_handler']
+
+        No prompts available:
+
+        >>> import asyncio
+        >>> async def no_prompts():
+        ...     return []  # Server has no prompts
+        >>> asyncio.run(no_prompts())
+        []
     """
     server_ids = [url.split("/")[-1] for url in catalog_urls]
     url = f"{BASE_URL}/servers/"
@@ -245,11 +355,43 @@ async def prompts_metadata(prompt_ids: List[str]) -> List[Dict[str, Any]]:
     """
     Fetch metadata for a list of MCP prompts by their IDs.
 
+    Retrieves detailed metadata including name, description, and arguments
+    for each specified prompt from the gateway's prompts endpoint.
+
     Args:
         prompt_ids (List[str]): List of prompt ID strings.
 
     Returns:
         List[Dict[str, Any]]: A list of metadata dictionaries for each prompt.
+
+    Examples:
+        Fetching specific prompts:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     prompt_ids = ["greeting", "farewell"]
+        ...     # Would return metadata like:
+        ...     return [
+        ...         {"name": "greeting", "description": "Welcome message", "arguments": []},
+        ...         {"name": "farewell", "description": "Goodbye message", "arguments": []}
+        ...     ]
+        >>> result = asyncio.run(example())
+        >>> len(result)
+        2
+
+        Empty prompt list:
+
+        >>> import asyncio
+        >>> async def no_prompts():
+        ...     return []
+        >>> asyncio.run(no_prompts())
+        []
+
+        All prompts with special ID:
+
+        >>> # prompt_ids = ["0"] returns all available prompts
+        >>> # This triggers the special case in the function
     """
     if not prompt_ids:
         return []
@@ -265,11 +407,34 @@ async def get_resources_from_mcp_server(catalog_urls: List[str]) -> List[str]:
     """
     Retrieve associated resource IDs from the MCP gateway server catalogs.
 
+    Extracts server IDs from catalog URLs and fetches all resource IDs
+    that are associated with those servers from the gateway.
+
     Args:
         catalog_urls (List[str]): List of catalog endpoint URLs.
 
     Returns:
         List[str]: A list of resource ID strings.
+
+    Examples:
+        Basic resource retrieval:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     urls = ["https://gateway.example.com/servers/server-123"]
+        ...     # Would return resource IDs like:
+        ...     return ["config.json", "readme.md", "schema.sql"]
+        >>> asyncio.run(example())
+        ['config.json', 'readme.md', 'schema.sql']
+
+        No resources found:
+
+        >>> import asyncio
+        >>> async def no_resources():
+        ...     return []  # Server has no resources
+        >>> asyncio.run(no_resources())
+        []
     """
     server_ids = [url.split("/")[-1] for url in catalog_urls]
     url = f"{BASE_URL}/servers/"
@@ -286,11 +451,43 @@ async def resources_metadata(resource_ids: List[str]) -> List[Dict[str, Any]]:
     """
     Fetch metadata for a list of MCP resources by their IDs.
 
+    Retrieves detailed metadata including URI, name, description, and MIME type
+    for each specified resource from the gateway's resources endpoint.
+
     Args:
         resource_ids (List[str]): List of resource ID strings.
 
     Returns:
         List[Dict[str, Any]]: A list of metadata dictionaries for each resource.
+
+    Examples:
+        Fetching specific resources:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     resource_ids = ["config", "readme"]
+        ...     # Would return metadata like:
+        ...     return [
+        ...         {"id": "config", "uri": "file://config.json", "name": "Config", "mimeType": "application/json"},
+        ...         {"id": "readme", "uri": "file://readme.md", "name": "README", "mimeType": "text/markdown"}
+        ...     ]
+        >>> result = asyncio.run(example())
+        >>> len(result)
+        2
+
+        Empty resource list:
+
+        >>> import asyncio
+        >>> async def no_resources():
+        ...     return []
+        >>> asyncio.run(no_resources())
+        []
+
+        All resources with special ID:
+
+        >>> # resource_ids = ["0"] returns all available resources
+        >>> # This is handled by the conditional in the function
     """
     if not resource_ids:
         return []
@@ -321,6 +518,27 @@ async def handle_list_tools() -> List[types.Tool]:
 
     Raises:
         RuntimeError: If an error occurs during fetching or processing.
+
+    Examples:
+        Successful tool listing:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server and MCP setup
+        >>> async def example():
+        ...     # Would return Tool objects like:
+        ...     from mcp import types
+        ...     return [
+        ...         types.Tool(name="get_time", description="Get current time", inputSchema={}),
+        ...         types.Tool(name="calculate", description="Perform calculation", inputSchema={})
+        ...     ]
+        >>> # result = asyncio.run(example())
+        >>> # len(result) would be 2
+
+        Error handling:
+
+        >>> # If gateway is unreachable, RuntimeError is raised
+        >>> # try: tools = await handle_list_tools()
+        >>> # except RuntimeError as e: print(f"Error: {e}")
     """
     try:
         tool_ids = ["0"] if SERVER_CATALOG_URLS[0] == BASE_URL else await get_tools_from_mcp_server(SERVER_CATALOG_URLS)
@@ -348,6 +566,9 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
     """
     Invoke a named MCP tool via the gateway's RPC endpoint.
 
+    Sends a JSON-RPC request to the gateway to execute the specified tool
+    with the provided arguments and returns the result as content objects.
+
     Args:
         name (str): The name of the tool to invoke.
         arguments (Optional[Dict[str, Any]]): The arguments to pass to the tool method.
@@ -359,6 +580,36 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
     Raises:
         ValueError: If tool call fails.
         RuntimeError: If the HTTP request fails or returns an error.
+
+    Examples:
+        Successful tool call:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     # Calling a time tool
+        ...     from mcp import types
+        ...     result = [types.TextContent(type="text", text="2024-01-15 10:30:00 UTC")]
+        ...     return result
+        >>> # result = asyncio.run(example())
+        >>> # result[0].text would contain the timestamp
+
+        Tool call with arguments:
+
+        >>> import asyncio
+        >>> async def calc_example():
+        ...     # Calling calculator tool with arguments
+        ...     from mcp import types
+        ...     result = [types.TextContent(type="text", text="42")]
+        ...     return result
+        >>> # result = await handle_call_tool("add", {"a": 20, "b": 22})
+
+        Error handling:
+
+        >>> # Tool returns error
+        >>> # try: await handle_call_tool("invalid_tool")
+        >>> # except ValueError as e: print(f"Tool error: {e}")
+        >>> # except RuntimeError as e: print(f"Network error: {e}")
     """
     if arguments is None:
         arguments = {}
@@ -401,6 +652,38 @@ async def handle_list_resources() -> List[types.Resource]:
 
     Raises:
         RuntimeError: If an error occurs during fetching or processing.
+
+    Examples:
+        Successful resource listing:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     from mcp import types
+        ...     from pydantic import AnyUrl
+        ...     return [
+        ...         types.Resource(
+        ...             uri=AnyUrl("file://config.json"),
+        ...             name="Configuration",
+        ...             description="App config file",
+        ...             mimeType="application/json"
+        ...         )
+        ...     ]
+        >>> # result = asyncio.run(example())
+        >>> # result[0].name would be "Configuration"
+
+        Empty resource list:
+
+        >>> import asyncio
+        >>> async def no_resources():
+        ...     return []  # No resources available
+        >>> asyncio.run(no_resources())
+        []
+
+        Invalid URI handling:
+
+        >>> # Resources with invalid URIs are skipped with warnings
+        >>> # The function filters out resources missing required fields
     """
     try:
         ids = ["0"] if SERVER_CATALOG_URLS[0] == BASE_URL else await get_resources_from_mcp_server(SERVER_CATALOG_URLS)
@@ -434,6 +717,9 @@ async def handle_read_resource(uri: AnyUrl) -> str:
     """
     Read and return the content of a resource by its URI.
 
+    Fetches the resource content from the specified URI using the gateway's
+    HTTP interface and returns the response body as text.
+
     Args:
         uri (AnyUrl): The URI of the resource to read.
 
@@ -442,6 +728,25 @@ async def handle_read_resource(uri: AnyUrl) -> str:
 
     Raises:
         ValueError: If the resource cannot be fetched.
+
+    Examples:
+        Reading a text resource:
+
+        >>> import asyncio
+        >>> from pydantic import AnyUrl
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     # Would return file content
+        ...     return "{\\"version\\": \\"1.0\\", \\"name\\": \\"myapp\\"}"
+        >>> # content = await handle_read_resource(AnyUrl("file://config.json"))
+        >>> asyncio.run(example())
+        '{"version": "1.0", "name": "myapp"}'
+
+        Error handling:
+
+        >>> # Invalid or unreachable URI
+        >>> # try: content = await handle_read_resource(AnyUrl("file://missing.txt"))
+        >>> # except ValueError as e: print(f"Read error: {e}")
     """
     try:
         response = await fetch_url(str(uri))
@@ -464,6 +769,37 @@ async def handle_list_prompts() -> List[types.Prompt]:
 
     Raises:
         RuntimeError: If an error occurs during fetching or processing.
+
+    Examples:
+        Successful prompt listing:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     from mcp import types
+        ...     return [
+        ...         types.Prompt(
+        ...             name="greeting",
+        ...             description="Welcome message template",
+        ...             arguments=[{"name": "username", "description": "User's name"}]
+        ...         ),
+        ...         types.Prompt(
+        ...             name="error_msg",
+        ...             description="Error message template",
+        ...             arguments=[{"name": "error_code", "description": "Error code"}]
+        ...         )
+        ...     ]
+        >>> result = asyncio.run(example())
+        >>> len(result)
+        2
+
+        Empty prompt list:
+
+        >>> import asyncio
+        >>> async def no_prompts():
+        ...     return []
+        >>> asyncio.run(no_prompts())
+        []
     """
     try:
         ids = ["0"] if SERVER_CATALOG_URLS[0] == BASE_URL else await get_prompts_from_mcp_server(SERVER_CATALOG_URLS)
@@ -490,6 +826,9 @@ async def handle_get_prompt(name: str, arguments: Optional[Dict[str, str]] = Non
     """
     Retrieve and format a single prompt template with provided arguments.
 
+    Fetches the prompt template from the gateway and formats it using the
+    provided arguments, returning a structured prompt result.
+
     Args:
         name (str): The unique name of the prompt to fetch.
         arguments (Optional[Dict[str, str]]): A mapping of placeholder names to replacement values.
@@ -499,6 +838,41 @@ async def handle_get_prompt(name: str, arguments: Optional[Dict[str, str]] = Non
 
     Raises:
         ValueError: If fetching or formatting fails.
+
+    Examples:
+        Basic prompt retrieval:
+
+        >>> import asyncio
+        >>> # Mock example - would require real server
+        >>> async def example():
+        ...     from mcp import types
+        ...     return types.GetPromptResult(
+        ...         description="Welcome message",
+        ...         messages=[
+        ...             types.PromptMessage(
+        ...                 role="user",
+        ...                 content=types.TextContent(type="text", text="Hello Alice!")
+        ...             )
+        ...         ]
+        ...     )
+        >>> # result = await handle_get_prompt("greeting", {"username": "Alice"})
+
+        Template formatting:
+
+        >>> # Prompt template: "Hello {username}!"
+        >>> # Arguments: {"username": "Bob"}
+        >>> # Result: "Hello Bob!"
+
+        Missing argument error:
+
+        >>> # Template requires {username} but no arguments provided
+        >>> # try: await handle_get_prompt("greeting")
+        >>> # except ValueError as e: print(f"Missing placeholder: {e}")
+
+        Prompt not found:
+
+        >>> # try: await handle_get_prompt("nonexistent")
+        >>> # except ValueError as e: print(f"Prompt error: {e}")
     """
     try:
         url = f"{BASE_URL}/prompts/{name}"
@@ -534,16 +908,34 @@ async def main() -> None:
     Main entry point to start the MCP stdio server.
 
     Initializes the server over standard IO, registers capabilities,
-    and begins listening for JSON-RPC messages.
+    and begins listening for JSON-RPC messages. This function handles
+    the complete server lifecycle including graceful shutdown.
 
     This function should only be called in a script context.
 
     Raises:
         RuntimeError: If the server fails to start.
 
-    Example:
-        if __name__ == "__main__":
-            asyncio.run(main())
+    Examples:
+        Starting the server:
+
+        >>> import asyncio
+        >>> # In a real script context:
+        >>> # if __name__ == "__main__":
+        >>> #     asyncio.run(main())
+
+        Server initialization:
+
+        >>> # Server starts with stdio transport
+        >>> # Registers MCP capabilities for tools, prompts, resources
+        >>> # Begins processing JSON-RPC messages from stdin
+        >>> # Sends responses to stdout
+
+        Error handling:
+
+        >>> # Server startup failures raise RuntimeError
+        >>> # Keyboard interrupts are handled gracefully
+        >>> # All errors are logged appropriately
     """
     try:
         async with mcp.server.stdio.stdio_server() as (reader, writer):

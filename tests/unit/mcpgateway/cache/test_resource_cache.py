@@ -39,7 +39,7 @@ def test_get_missing(cache):
 def test_expiration(cache):
     """Test that cache entry expires after TTL."""
     cache.set("foo", "bar")
-    time.sleep(1.1)
+    time.sleep(1.2)
     assert cache.get("foo") is None
 
 

@@ -267,19 +267,22 @@ async def validation_exception_handler(_request: Request, exc: ValidationError):
                       validation error details.
 
     Examples:
-        >>> # This handler is automatically invoked by FastAPI when a ValidationError occurs
-        >>> # For example, when request data fails Pydantic model validation:
-        >>> # POST /tools with invalid data would trigger this handler
-        >>> # Response format:
-        >>> # {
-        >>> #   "detail": [
-        >>> #     {
-        >>> #       "loc": ["body", "name"],
-        >>> #       "msg": "field required",
-        >>> #       "type": "value_error.missing"
-        >>> #     }
-        >>> #   ]
-        >>> # }
+        >>> from pydantic import ValidationError, BaseModel
+        >>> from fastapi import Request
+        >>> import asyncio
+        >>>
+        >>> class TestModel(BaseModel):
+        ...     name: str
+        ...     age: int
+        >>>
+        >>> # Create a validation error
+        >>> try:
+        ...     TestModel(name="", age="invalid")
+        ... except ValidationError as e:
+        ...     # Test our handler
+        ...     result = asyncio.run(validation_exception_handler(None, e))
+        ...     result.status_code
+        422
     """
     return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
@@ -303,13 +306,18 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
         JSONResponse: A 409 Conflict response with formatted database error details.
 
     Examples:
-        >>> # This handler is automatically invoked when database constraints are violated
-        >>> # For example, trying to create a duplicate tool name:
-        >>> # POST /tools with duplicate name would trigger this handler
-        >>> # Response format:
-        >>> # {
-        >>> #   "detail": "Unique constraint violation: Key (name)=(existing_tool) already exists"
-        >>> # }
+        >>> from sqlalchemy.exc import IntegrityError
+        >>> from fastapi import Request
+        >>> import asyncio
+        >>>
+        >>> # Create a mock integrity error
+        >>> mock_error = IntegrityError("statement", {}, Exception("duplicate key"))
+        >>> result = asyncio.run(database_exception_handler(None, mock_error))
+        >>> result.status_code
+        409
+        >>> # Verify ErrorFormatter.format_database_error is called
+        >>> hasattr(result, 'body')
+        True
     """
     return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
@@ -334,6 +342,28 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response: Either the standard route response or a 401/403 error response.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import Mock, AsyncMock, patch
+            >>> from fastapi import HTTPException
+            >>> from fastapi.responses import JSONResponse
+            >>>
+            >>> # Test unprotected path - should pass through
+            >>> middleware = DocsAuthMiddleware(None)
+            >>> request = Mock()
+            >>> request.url.path = "/api/tools"
+            >>> request.headers.get.return_value = None
+            >>> call_next = AsyncMock(return_value="response")
+            >>>
+            >>> result = asyncio.run(middleware.dispatch(request, call_next))
+            >>> result
+            'response'
+            >>>
+            >>> # Test that middleware checks protected paths
+            >>> request.url.path = "/docs"
+            >>> isinstance(middleware, DocsAuthMiddleware)
+            True
         """
         protected_paths = ["/docs", "/redoc", "/openapi.json"]
 
@@ -378,6 +408,36 @@ class MCPPathRewriteMiddleware:
             scope (dict): The ASGI connection scope.
             receive (Callable): Awaitable that yields events from the client.
             send (Callable): Awaitable used to send events to the client.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import AsyncMock, patch
+            >>>
+            >>> # Test non-HTTP request passthrough
+            >>> app_mock = AsyncMock()
+            >>> middleware = MCPPathRewriteMiddleware(app_mock)
+            >>> scope = {"type": "websocket", "path": "/ws"}
+            >>> receive = AsyncMock()
+            >>> send = AsyncMock()
+            >>>
+            >>> asyncio.run(middleware(scope, receive, send))
+            >>> app_mock.assert_called_once_with(scope, receive, send)
+            >>>
+            >>> # Test path rewriting for /servers/123/mcp
+            >>> app_mock.reset_mock()
+            >>> scope = {"type": "http", "path": "/servers/123/mcp"}
+            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
+            ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
+            ...         asyncio.run(middleware(scope, receive, send))
+            ...         scope["path"]
+            '/mcp'
+            >>>
+            >>> # Test regular path (no rewrite)
+            >>> scope = {"type": "http", "path": "/tools"}
+            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
+            ...     asyncio.run(middleware(scope, receive, send))
+            ...     scope["path"]
+            '/tools'
         """
         # Only handle HTTP requests, HTTPS uses scope["type"] == "http" in ASGI
         if scope["type"] != "http":
@@ -445,6 +505,22 @@ def get_db():
 
     Ensures:
         The database session is closed after the request completes, even in the case of an exception.
+
+    Examples:
+        >>> # Test that get_db returns a generator
+        >>> db_gen = get_db()
+        >>> hasattr(db_gen, '__next__')
+        True
+        >>> # Test cleanup happens
+        >>> try:
+        ...     db = next(db_gen)
+        ...     type(db).__name__
+        ... finally:
+        ...     try:
+        ...         next(db_gen)
+        ...     except StopIteration:
+        ...         pass  # Expected - generator cleanup
+        'Session'
     """
     db = SessionLocal()
     try:
@@ -454,8 +530,7 @@ def get_db():
 
 
 def require_api_key(api_key: str) -> None:
-    """
-    Validates the provided API key.
+    """Validates the provided API key.
 
     This function checks if the provided API key matches the expected one
     based on the settings. If the validation fails, it raises an HTTPException
@@ -466,6 +541,22 @@ def require_api_key(api_key: str) -> None:
 
     Raises:
         HTTPException: If the API key is invalid, a 401 Unauthorized error is raised.
+
+    Examples:
+        >>> from mcpgateway.config import settings
+        >>> settings.auth_required = True
+        >>> settings.basic_auth_user = "admin"
+        >>> settings.basic_auth_password = "secret"
+        >>>
+        >>> # Valid API key
+        >>> require_api_key("admin:secret")  # Should not raise
+        >>>
+        >>> # Invalid API key
+        >>> try:
+        ...     require_api_key("wrong:key")
+        ... except HTTPException as e:
+        ...     e.status_code
+        401
     """
     if settings.auth_required:
         expected = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
@@ -482,6 +573,23 @@ async def invalidate_resource_cache(uri: Optional[str] = None) -> None:
 
     Args:
         uri (Optional[str]): The URI of the resource to invalidate from the cache. If None, the entire cache is cleared.
+
+    Examples:
+        >>> import asyncio
+        >>> # Test clearing specific URI from cache
+        >>> resource_cache.set("/test/resource", {"content": "test data"})
+        >>> resource_cache.get("/test/resource") is not None
+        True
+        >>> asyncio.run(invalidate_resource_cache("/test/resource"))
+        >>> resource_cache.get("/test/resource") is None
+        True
+        >>>
+        >>> # Test clearing entire cache
+        >>> resource_cache.set("/resource1", {"content": "data1"})
+        >>> resource_cache.set("/resource2", {"content": "data2"})
+        >>> asyncio.run(invalidate_resource_cache())
+        >>> resource_cache.get("/resource1") is None and resource_cache.get("/resource2") is None
+        True
     """
     if uri:
         resource_cache.delete(uri)

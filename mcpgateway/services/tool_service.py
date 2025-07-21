@@ -55,11 +55,27 @@ logger = logging.getLogger(__name__)
 
 
 class ToolError(Exception):
-    """Base class for tool-related errors."""
+    """Base class for tool-related errors.
+
+    Examples:
+        >>> from mcpgateway.services.tool_service import ToolError
+        >>> err = ToolError("Something went wrong")
+        >>> str(err)
+        'Something went wrong'
+    """
 
 
 class ToolNotFoundError(ToolError):
-    """Raised when a requested tool is not found."""
+    """Raised when a requested tool is not found.
+
+    Examples:
+        >>> from mcpgateway.services.tool_service import ToolNotFoundError
+        >>> err = ToolNotFoundError("Tool xyz not found")
+        >>> str(err)
+        'Tool xyz not found'
+        >>> isinstance(err, ToolError)
+        True
+    """
 
 
 class ToolNameConflictError(ToolError):
@@ -72,6 +88,18 @@ class ToolNameConflictError(ToolError):
             name: The conflicting tool name.
             enabled: Whether the existing tool is enabled or not.
             tool_id: ID of the existing tool if available.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolNameConflictError
+            >>> err = ToolNameConflictError('test_tool', enabled=False, tool_id=123)
+            >>> str(err)
+            'Tool already exists with name: test_tool (currently inactive, ID: 123)'
+            >>> err.name
+            'test_tool'
+            >>> err.enabled
+            False
+            >>> err.tool_id
+            123
         """
         self.name = name
         self.enabled = enabled
@@ -83,11 +111,29 @@ class ToolNameConflictError(ToolError):
 
 
 class ToolValidationError(ToolError):
-    """Raised when tool validation fails."""
+    """Raised when tool validation fails.
+
+    Examples:
+        >>> from mcpgateway.services.tool_service import ToolValidationError
+        >>> err = ToolValidationError("Invalid tool configuration")
+        >>> str(err)
+        'Invalid tool configuration'
+        >>> isinstance(err, ToolError)
+        True
+    """
 
 
 class ToolInvocationError(ToolError):
-    """Raised when tool invocation fails."""
+    """Raised when tool invocation fails.
+
+    Examples:
+        >>> from mcpgateway.services.tool_service import ToolInvocationError
+        >>> err = ToolInvocationError("Failed to invoke tool")
+        >>> str(err)
+        'Failed to invoke tool'
+        >>> isinstance(err, ToolError)
+        True
+    """
 
 
 class ToolService:
@@ -102,22 +148,46 @@ class ToolService:
     """
 
     def __init__(self):
-        """Initialize the tool service."""
+        """Initialize the tool service.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> service = ToolService()
+            >>> isinstance(service._event_subscribers, list)
+            True
+            >>> len(service._event_subscribers)
+            0
+            >>> hasattr(service, '_http_client')
+            True
+        """
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
 
     async def initialize(self) -> None:
-        """Initialize the service."""
+        """Initialize the service.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> service = ToolService()
+            >>> import asyncio
+            >>> asyncio.run(service.initialize())  # Should log "Initializing tool service"
+        """
         logger.info("Initializing tool service")
 
     async def shutdown(self) -> None:
-        """Shutdown the service."""
+        """Shutdown the service.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> service = ToolService()
+            >>> import asyncio
+            >>> asyncio.run(service.shutdown())  # Should log "Tool service shutdown complete"
+        """
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
 
     def _convert_tool_to_read(self, tool: DbTool) -> ToolRead:
-        """
-        Converts a DbTool instance into a ToolRead model, including aggregated metrics and
+        """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
 
         Args:

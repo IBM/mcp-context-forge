@@ -11,28 +11,27 @@ resource content in the MCP Gateway. Features:
 - Maximum size limit with LRU eviction
 - Thread-safe operations
 
-Doctest examples
-----------------
->>> from mcpgateway.cache.resource_cache import ResourceCache
->>> cache = ResourceCache(max_size=2, ttl=1)
->>> cache.set('a', 1)
->>> cache.get('a')
-1
->>> import time
->>> time.sleep(1.1)
->>> cache.get('a') is None
-True
->>> cache.set('a', 1)
->>> cache.set('b', 2)
->>> cache.set('c', 3)  # LRU eviction
->>> sorted(cache._cache.keys())
-['b', 'c']
->>> cache.delete('b')
->>> cache.get('b') is None
-True
->>> cache.clear()
->>> cache.get('a') is None
-True
+Examples:
+    >>> from mcpgateway.cache.resource_cache import ResourceCache
+    >>> cache = ResourceCache(max_size=2, ttl=1)
+    >>> cache.set('a', 1)
+    >>> cache.get('a')
+    1
+    >>> import time
+    >>> time.sleep(1.2)
+    >>> cache.get('a') is None
+    True
+    >>> cache.set('a', 1)
+    >>> cache.set('b', 2)
+    >>> cache.set('c', 3)  # LRU eviction
+    >>> sorted(cache._cache.keys())
+    ['b', 'c']
+    >>> cache.delete('b')
+    >>> cache.get('b') is None
+    True
+    >>> cache.clear()
+    >>> cache.get('a') is None
+    True
 """
 
 # Standard
@@ -64,27 +63,27 @@ class ResourceCache:
         _cache: Cache storage
         _lock: Async lock for thread safety
 
-    Doctest:
-    >>> from mcpgateway.cache.resource_cache import ResourceCache
-    >>> cache = ResourceCache(max_size=2, ttl=1)
-    >>> cache.set('a', 1)
-    >>> cache.get('a')
-    1
-    >>> import time
-    >>> time.sleep(1.1)
-    >>> cache.get('a') is None
-    True
-    >>> cache.set('a', 1)
-    >>> cache.set('b', 2)
-    >>> cache.set('c', 3)  # LRU eviction
-    >>> sorted(cache._cache.keys())
-    ['b', 'c']
-    >>> cache.delete('b')
-    >>> cache.get('b') is None
-    True
-    >>> cache.clear()
-    >>> cache.get('a') is None
-    True
+    Examples:
+        >>> from mcpgateway.cache.resource_cache import ResourceCache
+        >>> cache = ResourceCache(max_size=2, ttl=1)
+        >>> cache.set('a', 1)
+        >>> cache.get('a')
+        1
+        >>> import time
+        >>> time.sleep(1.2)
+        >>> cache.get('a') is None
+        True
+        >>> cache.set('a', 1)
+        >>> cache.set('b', 2)
+        >>> cache.set('c', 3)  # LRU eviction
+        >>> sorted(cache._cache.keys())
+        ['b', 'c']
+        >>> cache.delete('b')
+        >>> cache.get('b') is None
+        True
+        >>> cache.clear()
+        >>> cache.get('a') is None
+        True
     """
 
     def __init__(self, max_size: int = 1000, ttl: int = 3600):
@@ -120,16 +119,21 @@ class ResourceCache:
         Returns:
             Cached value or None if not found/expired
 
-        Doctest:
-        >>> from mcpgateway.cache.resource_cache import ResourceCache
-        >>> cache = ResourceCache(max_size=2, ttl=1)
-        >>> cache.set('a', 1)
-        >>> cache.get('a')
-        1
-        >>> import time
-        >>> time.sleep(1.1)
-        >>> cache.get('a') is None
-        True
+        Examples:
+            >>> from mcpgateway.cache.resource_cache import ResourceCache
+            >>> cache = ResourceCache(max_size=2, ttl=1)
+            >>> cache.set('a', 1)
+            >>> cache.get('a')
+            1
+            >>> # Test expiration by using a very short TTL
+            >>> short_cache = ResourceCache(max_size=2, ttl=0.1)
+            >>> short_cache.set('b', 2)
+            >>> short_cache.get('b')
+            2
+            >>> import time
+            >>> time.sleep(1.2)
+            >>> short_cache.get('b') is None
+            True
         """
         if key not in self._cache:
             return None
@@ -154,12 +158,12 @@ class ResourceCache:
             key: Cache key
             value: Value to cache
 
-        Doctest:
-        >>> from mcpgateway.cache.resource_cache import ResourceCache
-        >>> cache = ResourceCache(max_size=2, ttl=1)
-        >>> cache.set('a', 1)
-        >>> cache.get('a')
-        1
+        Examples:
+            >>> from mcpgateway.cache.resource_cache import ResourceCache
+            >>> cache = ResourceCache(max_size=2, ttl=1)
+            >>> cache.set('a', 1)
+            >>> cache.get('a')
+            1
         """
         now = time.time()
 
@@ -179,13 +183,13 @@ class ResourceCache:
         Args:
             key: Cache key to delete
 
-        Doctest:
-        >>> from mcpgateway.cache.resource_cache import ResourceCache
-        >>> cache = ResourceCache()
-        >>> cache.set('a', 1)
-        >>> cache.delete('a')
-        >>> cache.get('a') is None
-        True
+        Examples:
+            >>> from mcpgateway.cache.resource_cache import ResourceCache
+            >>> cache = ResourceCache()
+            >>> cache.set('a', 1)
+            >>> cache.delete('a')
+            >>> cache.get('a') is None
+            True
         """
         self._cache.pop(key, None)
 
@@ -193,13 +197,13 @@ class ResourceCache:
         """
         Clear all cached entries.
 
-        Doctest:
-        >>> from mcpgateway.cache.resource_cache import ResourceCache
-        >>> cache = ResourceCache()
-        >>> cache.set('a', 1)
-        >>> cache.clear()
-        >>> cache.get('a') is None
-        True
+        Examples:
+            >>> from mcpgateway.cache.resource_cache import ResourceCache
+            >>> cache = ResourceCache()
+            >>> cache.set('a', 1)
+            >>> cache.clear()
+            >>> cache.get('a') is None
+            True
         """
         self._cache.clear()
 

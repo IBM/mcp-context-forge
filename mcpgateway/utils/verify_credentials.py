@@ -1,38 +1,41 @@
 # -*- coding: utf-8 -*-
-"""
+"""Authentication verification utilities for MCP Gateway.
+
+This module provides JWT and Basic authentication verification functions
+for securing API endpoints. It supports authentication via Authorization
+headers and cookies.
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Doctest examples
-----------------
->>> from mcpgateway.utils import verify_credentials as vc
->>> class DummySettings:
-...     jwt_secret_key = 'secret'
-...     jwt_algorithm = 'HS256'
-...     basic_auth_user = 'user'
-...     basic_auth_password = 'pass'
-...     auth_required = True
->>> vc.settings = DummySettings()
->>> import jwt
->>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
->>> import asyncio
->>> asyncio.run(vc.verify_jwt_token(token))['sub'] == 'alice'
-True
->>> payload = asyncio.run(vc.verify_credentials(token))
->>> payload['token'] == token
-True
->>> from fastapi.security import HTTPBasicCredentials
->>> creds = HTTPBasicCredentials(username='user', password='pass')
->>> asyncio.run(vc.verify_basic_credentials(creds)) == 'user'
-True
->>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')
->>> try:
-...     asyncio.run(vc.verify_basic_credentials(creds_bad))
-... except Exception as e:
-...     print('error')
-error
+Examples:
+    >>> from mcpgateway.utils import verify_credentials as vc
+    >>> class DummySettings:
+    ...     jwt_secret_key = 'secret'
+    ...     jwt_algorithm = 'HS256'
+    ...     basic_auth_user = 'user'
+    ...     basic_auth_password = 'pass'
+    ...     auth_required = True
+    >>> vc.settings = DummySettings()
+    >>> import jwt
+    >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
+    >>> import asyncio
+    >>> asyncio.run(vc.verify_jwt_token(token))['sub'] == 'alice'
+    True
+    >>> payload = asyncio.run(vc.verify_credentials(token))
+    >>> payload['token'] == token
+    True
+    >>> from fastapi.security import HTTPBasicCredentials
+    >>> creds = HTTPBasicCredentials(username='user', password='pass')
+    >>> asyncio.run(vc.verify_basic_credentials(creds)) == 'user'
+    True
+    >>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')
+    >>> try:
+    ...     asyncio.run(vc.verify_basic_credentials(creds_bad))
+    ... except Exception as e:
+    ...     print('error')
+    error
 """
 
 # Standard
@@ -58,32 +61,52 @@ security = HTTPBearer(auto_error=False)
 
 
 async def verify_jwt_token(token: str) -> dict:
-    """
-    Verify and decode a JWT token.
+    """Verify and decode a JWT token.
+
+    Decodes and validates a JWT token using the configured secret key
+    and algorithm from settings. Checks for token expiration and validity.
 
     Args:
-        token: The JWT token to verify.
+        token: The JWT token string to verify.
 
     Returns:
-        dict: The decoded token payload containing claims.
+        dict: The decoded token payload containing claims (e.g., user info).
 
     Raises:
-        HTTPException: If the token has expired or is invalid.
+        HTTPException: 401 status if the token has expired or is invalid.
 
-    Doctest:
-    >>> from mcpgateway.utils import verify_credentials as vc
-    >>> class DummySettings:
-    ...     jwt_secret_key = 'secret'
-    ...     jwt_algorithm = 'HS256'
-    ...     basic_auth_user = 'user'
-    ...     basic_auth_password = 'pass'
-    ...     auth_required = True
-    >>> vc.settings = DummySettings()
-    >>> import jwt
-    >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
-    >>> import asyncio
-    >>> asyncio.run(vc.verify_jwt_token(token))['sub'] == 'alice'
-    True
+    Examples:
+        >>> from mcpgateway.utils import verify_credentials as vc
+        >>> class DummySettings:
+        ...     jwt_secret_key = 'secret'
+        ...     jwt_algorithm = 'HS256'
+        ...     basic_auth_user = 'user'
+        ...     basic_auth_password = 'pass'
+        ...     auth_required = True
+        >>> vc.settings = DummySettings()
+        >>> import jwt
+        >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
+        >>> import asyncio
+        >>> asyncio.run(vc.verify_jwt_token(token))['sub'] == 'alice'
+        True
+
+        Test expired token:
+        >>> import datetime
+        >>> expired_payload = {'sub': 'bob', 'exp': datetime.datetime.utcnow() - datetime.timedelta(hours=1)}
+        >>> expired_token = jwt.encode(expired_payload, 'secret', algorithm='HS256')
+        >>> try:
+        ...     asyncio.run(vc.verify_jwt_token(expired_token))
+        ... except vc.HTTPException as e:
+        ...     print(e.status_code, e.detail)
+        401 Token has expired
+
+        Test invalid token:
+        >>> invalid_token = 'invalid.token.here'
+        >>> try:
+        ...     asyncio.run(vc.verify_jwt_token(invalid_token))
+        ... except vc.HTTPException as e:
+        ...     print(e.status_code, e.detail)
+        401 Invalid token
     """
     try:
         # Decode and validate token
@@ -109,32 +132,35 @@ async def verify_jwt_token(token: str) -> dict:
 
 
 async def verify_credentials(token: str) -> dict:
-    """
-    Verify credentials using a JWT token.
+    """Verify credentials using a JWT token.
+
+    A wrapper around verify_jwt_token that adds the original token
+    to the decoded payload for reference.
 
     This function uses verify_jwt_token internally which may raise exceptions.
 
     Args:
-        token: The JWT token to verify.
+        token: The JWT token string to verify.
 
     Returns:
-        dict: The validated token payload with the original token added.
+        dict: The validated token payload with the original token added
+            under the 'token' key.
 
-    Doctest:
-    >>> from mcpgateway.utils import verify_credentials as vc
-    >>> class DummySettings:
-    ...     jwt_secret_key = 'secret'
-    ...     jwt_algorithm = 'HS256'
-    ...     basic_auth_user = 'user'
-    ...     basic_auth_password = 'pass'
-    ...     auth_required = True
-    >>> vc.settings = DummySettings()
-    >>> import jwt
-    >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
-    >>> import asyncio
-    >>> payload = asyncio.run(vc.verify_credentials(token))
-    >>> payload['token'] == token
-    True
+    Examples:
+        >>> from mcpgateway.utils import verify_credentials as vc
+        >>> class DummySettings:
+        ...     jwt_secret_key = 'secret'
+        ...     jwt_algorithm = 'HS256'
+        ...     basic_auth_user = 'user'
+        ...     basic_auth_password = 'pass'
+        ...     auth_required = True
+        >>> vc.settings = DummySettings()
+        >>> import jwt
+        >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
+        >>> import asyncio
+        >>> payload = asyncio.run(vc.verify_credentials(token))
+        >>> payload['token'] == token
+        True
     """
     payload = await verify_jwt_token(token)
     payload["token"] = token
@@ -144,17 +170,60 @@ async def verify_credentials(token: str) -> dict:
 async def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(None)) -> str | dict:
     """Require authentication via JWT token.
 
-    Checks for a JWT token either in the Authorization header or as a cookie.
+    FastAPI dependency that checks for a JWT token either in the Authorization
+    header (Bearer scheme) or as a cookie. If authentication is required but
+    no token is provided, raises an HTTP 401 error.
 
     Args:
         credentials: HTTP Authorization credentials from the request header.
         jwt_token: JWT token from cookies.
 
     Returns:
-        str or dict: The verified credentials payload or "anonymous" if authentication is not required.
+        str | dict: The verified credentials payload if authenticated,
+            or "anonymous" if authentication is not required.
 
     Raises:
-        HTTPException: If authentication is required but no valid token is provided.
+        HTTPException: 401 status if authentication is required but no valid
+            token is provided.
+
+    Examples:
+        >>> from mcpgateway.utils import verify_credentials as vc
+        >>> class DummySettings:
+        ...     jwt_secret_key = 'secret'
+        ...     jwt_algorithm = 'HS256'
+        ...     basic_auth_user = 'user'
+        ...     basic_auth_password = 'pass'
+        ...     auth_required = True
+        >>> vc.settings = DummySettings()
+        >>> import jwt
+        >>> from fastapi.security import HTTPAuthorizationCredentials
+        >>> import asyncio
+
+        Test with valid credentials in header:
+        >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
+        >>> creds = HTTPAuthorizationCredentials(scheme='Bearer', credentials=token)
+        >>> result = asyncio.run(vc.require_auth(credentials=creds, jwt_token=None))
+        >>> result['sub'] == 'alice'
+        True
+
+        Test with valid token in cookie:
+        >>> result = asyncio.run(vc.require_auth(credentials=None, jwt_token=token))
+        >>> result['sub'] == 'alice'
+        True
+
+        Test with auth required but no token:
+        >>> try:
+        ...     asyncio.run(vc.require_auth(credentials=None, jwt_token=None))
+        ... except vc.HTTPException as e:
+        ...     print(e.status_code, e.detail)
+        401 Not authenticated
+
+        Test with auth not required:
+        >>> vc.settings.auth_required = False
+        >>> result = asyncio.run(vc.require_auth(credentials=None, jwt_token=None))
+        >>> result
+        'anonymous'
+        >>> vc.settings.auth_required = True
     """
     token = credentials.credentials if credentials else jwt_token
 
@@ -168,38 +237,40 @@ async def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Dep
 
 
 async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
-    """
-    Verify provided credentials.
+    """Verify HTTP Basic authentication credentials.
+
+    Validates the provided username and password against the configured
+    basic auth credentials in settings.
 
     Args:
-        credentials: HTTP Basic credentials.
+        credentials: HTTP Basic credentials containing username and password.
 
     Returns:
-        The username if credentials are valid.
+        str: The authenticated username if credentials are valid.
 
     Raises:
-        HTTPException: If credentials are invalid.
+        HTTPException: 401 status if credentials are invalid.
 
-    Doctest:
-    >>> from mcpgateway.utils import verify_credentials as vc
-    >>> class DummySettings:
-    ...     jwt_secret_key = 'secret'
-    ...     jwt_algorithm = 'HS256'
-    ...     basic_auth_user = 'user'
-    ...     basic_auth_password = 'pass'
-    ...     auth_required = True
-    >>> vc.settings = DummySettings()
-    >>> from fastapi.security import HTTPBasicCredentials
-    >>> creds = HTTPBasicCredentials(username='user', password='pass')
-    >>> import asyncio
-    >>> asyncio.run(vc.verify_basic_credentials(creds)) == 'user'
-    True
-    >>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')
-    >>> try:
-    ...     asyncio.run(vc.verify_basic_credentials(creds_bad))
-    ... except Exception as e:
-    ...     print('error')
-    error
+    Examples:
+        >>> from mcpgateway.utils import verify_credentials as vc
+        >>> class DummySettings:
+        ...     jwt_secret_key = 'secret'
+        ...     jwt_algorithm = 'HS256'
+        ...     basic_auth_user = 'user'
+        ...     basic_auth_password = 'pass'
+        ...     auth_required = True
+        >>> vc.settings = DummySettings()
+        >>> from fastapi.security import HTTPBasicCredentials
+        >>> creds = HTTPBasicCredentials(username='user', password='pass')
+        >>> import asyncio
+        >>> asyncio.run(vc.verify_basic_credentials(creds)) == 'user'
+        True
+        >>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')
+        >>> try:
+        ...     asyncio.run(vc.verify_basic_credentials(creds_bad))
+        ... except Exception as e:
+        ...     print('error')
+        error
     """
     is_valid_user = credentials.username == settings.basic_auth_user
     is_valid_pass = credentials.password == settings.basic_auth_password
@@ -214,7 +285,10 @@ async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
 
 
 async def require_basic_auth(credentials: HTTPBasicCredentials = Depends(basic_security)) -> str:
-    """Require valid authentication.
+    """Require valid HTTP Basic authentication.
+
+    FastAPI dependency that enforces Basic authentication when enabled.
+    Returns the authenticated username or "anonymous" if auth is not required.
 
     Args:
         credentials: HTTP Basic credentials provided by the client.
@@ -223,7 +297,38 @@ async def require_basic_auth(credentials: HTTPBasicCredentials = Depends(basic_s
         str: The authenticated username or "anonymous" if auth is not required.
 
     Raises:
-        HTTPException: If authentication is required but no valid credentials are provided.
+        HTTPException: 401 status if authentication is required but no valid
+            credentials are provided.
+
+    Examples:
+        >>> from mcpgateway.utils import verify_credentials as vc
+        >>> class DummySettings:
+        ...     jwt_secret_key = 'secret'
+        ...     jwt_algorithm = 'HS256'
+        ...     basic_auth_user = 'user'
+        ...     basic_auth_password = 'pass'
+        ...     auth_required = True
+        >>> vc.settings = DummySettings()
+        >>> from fastapi.security import HTTPBasicCredentials
+        >>> import asyncio
+
+        Test with valid credentials:
+        >>> creds = HTTPBasicCredentials(username='user', password='pass')
+        >>> asyncio.run(vc.require_basic_auth(creds))
+        'user'
+
+        Test with auth required but no credentials:
+        >>> try:
+        ...     asyncio.run(vc.require_basic_auth(None))
+        ... except vc.HTTPException as e:
+        ...     print(e.status_code, e.detail)
+        401 Not authenticated
+
+        Test with auth not required:
+        >>> vc.settings.auth_required = False
+        >>> asyncio.run(vc.require_basic_auth(None))
+        'anonymous'
+        >>> vc.settings.auth_required = True
     """
     if settings.auth_required:
         if not credentials:
@@ -240,24 +345,62 @@ async def require_auth_override(
     auth_header: str | None = None,
     jwt_token: str | None = None,
 ) -> str | dict:
-    """
-    Call :func:`require_auth` manually from middleware, without FastAPI
-    dependency injection.
+    """Call require_auth manually from middleware without FastAPI dependency injection.
+
+    This wrapper allows manual authentication verification in contexts where
+    FastAPI's dependency injection is not available (e.g., middleware).
+    It parses the Authorization header and creates the appropriate credentials
+    object before calling require_auth.
 
     Args:
-        auth_header: Raw ``Authorization`` header value
-                     (e.g. ``"Bearer eyJhbGciOi..."``).
-        jwt_token:   JWT taken from a cookie. If both header and cookie are
-                     supplied, the header wins.
+        auth_header: Raw Authorization header value (e.g. "Bearer eyJhbGciOi...").
+        jwt_token: JWT taken from a cookie. If both header and cookie are
+            supplied, the header takes precedence.
 
     Returns:
-        str or dict: Whatever :func:`require_auth` returns
-        (decoded JWT payload or the string ``"anonymous"``).
+        str | dict: The decoded JWT payload or the string "anonymous",
+            same as require_auth.
 
     Note:
-        This wrapper may propagate :class:`fastapi.HTTPException` raised by
-        :func:`require_auth`, but it does not raise anything on its own, so
-        we omit a formal *Raises* section to satisfy pydocstyle.
+        This wrapper may propagate HTTPException raised by require_auth,
+        but it does not raise anything on its own.
+
+    Examples:
+        >>> from mcpgateway.utils import verify_credentials as vc
+        >>> class DummySettings:
+        ...     jwt_secret_key = 'secret'
+        ...     jwt_algorithm = 'HS256'
+        ...     basic_auth_user = 'user'
+        ...     basic_auth_password = 'pass'
+        ...     auth_required = True
+        >>> vc.settings = DummySettings()
+        >>> import jwt
+        >>> import asyncio
+
+        Test with Bearer token in auth header:
+        >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
+        >>> auth_header = f'Bearer {token}'
+        >>> result = asyncio.run(vc.require_auth_override(auth_header=auth_header))
+        >>> result['sub'] == 'alice'
+        True
+
+        Test with invalid auth scheme:
+        >>> auth_header = 'Basic dXNlcjpwYXNz'  # Base64 encoded user:pass
+        >>> vc.settings.auth_required = False
+        >>> result = asyncio.run(vc.require_auth_override(auth_header=auth_header))
+        >>> result
+        'anonymous'
+
+        Test with only cookie token:
+        >>> result = asyncio.run(vc.require_auth_override(jwt_token=token))
+        >>> result['sub'] == 'alice'
+        True
+
+        Test with no auth:
+        >>> result = asyncio.run(vc.require_auth_override())
+        >>> result
+        'anonymous'
+        >>> vc.settings.auth_required = True
     """
     credentials = None
     if auth_header:

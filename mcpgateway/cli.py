@@ -72,6 +72,14 @@ def _needs_app(arg_list: List[str]) -> bool:
 
     Returns:
         bool: Returns *True* when the CLI invocation has *no* positional APP path
+
+    Examples:
+        >>> _needs_app([])
+        True
+        >>> _needs_app(["--reload"])
+        True
+        >>> _needs_app(["myapp.main:app"])
+        False
     """
 
     return len(arg_list) == 0 or arg_list[0].startswith("-")
@@ -85,6 +93,14 @@ def _insert_defaults(raw_args: List[str]) -> List[str]:
 
     Returns:
         List[str]: List of arguments
+
+    Examples:
+        >>> result = _insert_defaults([])
+        >>> result[0]
+        'mcpgateway.main:app'
+        >>> result = _insert_defaults(["myapp.main:app", "--reload"])
+        >>> result[0]
+        'myapp.main:app'
     """
 
     args = list(raw_args)  # shallow copy - we'll mutate this
@@ -109,7 +125,15 @@ def _insert_defaults(raw_args: List[str]) -> List[str]:
 
 
 def main() -> None:  # noqa: D401 - imperative mood is fine here
-    """Entry point for the *mcpgateway* console script (delegates to Uvicorn)."""
+    """Entry point for the *mcpgateway* console script (delegates to Uvicorn).
+
+    Processes command line arguments, handles version requests, and forwards
+    all other arguments to Uvicorn with sensible defaults injected.
+
+    Environment Variables:
+        MCG_HOST: Default host (default: "127.0.0.1")
+        MCG_PORT: Default port (default: "4444")
+    """
 
     # Check for version flag
     if "--version" in sys.argv or "-V" in sys.argv:

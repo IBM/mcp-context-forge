@@ -118,9 +118,11 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 ## 🚀 Overview & Goals
 
-**ContextForge MCP Gateway** is a production-grade gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API-exposing a unified endpoint for all your AI clients.
+**ContextForge MCP Gateway** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API-exposing a unified endpoint for all your AI clients.
 
-It supports:
+**⚠️ Caution**: The current release (0.3.1) is considered alpha / early beta. It is not production-ready and should only be used for local development, testing, or experimentation. Features, APIs, and behaviors are subject to change without notice. **Do not** deploy in production environments without thorough security review, validation and additional security mechanisms.  Many of the features required for secure, large-scale, or multi-tenant production deployments are still on the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) - which is itself evolving.
+
+It currently supports:
 
 * Federation across multiple MCP and REST services
 * Virtualization of legacy APIs as MCP-compliant tools and servers
@@ -132,6 +134,8 @@ It supports:
 ![MCP Gateway Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
 
 For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/)
+
+**⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component with **NO OFFICIAL SUPPORT** from IBM or its affiliates that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle. See [SECURITY.md](./SECURITY.md) for more details.
 
 ---
 
@@ -848,6 +852,14 @@ make lint          # optional: run style checks (ruff, mypy, etc.)
 
 ### Containerised (self-signed TLS)
 
+## Container Runtime Support
+
+This project supports both Docker and Podman. The Makefile automatically detects
+which runtime is available and handles image naming differences.
+
+### Auto-detection
+```bash
+make container-build  # Uses podman if available, otherwise docker
 
 > You can use docker or podman, ex:
 
