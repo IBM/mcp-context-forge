@@ -1265,7 +1265,7 @@ container-run-ssl-host: certs container-check-image
 	@echo "✅ Container started with TLS (host networking)"
 
 
-	
+
 
 container-push: container-check-image
 	@echo "📤 Preparing to push image..."
@@ -1580,7 +1580,7 @@ docker-run:
 
 docker-run-host:
 	@$(MAKE) container-run-host CONTAINER_RUNTIME=docker
-	
+
 docker-run-ssl:
 	@$(MAKE) container-run-ssl CONTAINER_RUNTIME=docker
 
