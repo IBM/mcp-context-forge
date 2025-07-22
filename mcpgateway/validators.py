@@ -421,6 +421,24 @@ class SecurityValidator:
         return value
 
     @classmethod
+    def validate_no_xss(cls, value: str, field_name: str) -> None:
+        """
+        Validate that a string does not contain XSS patterns.
+
+        Args:
+            value (str): Value to validate.
+            field_name (str): Name of the field being validated.
+
+        Raises:
+            ValueError: If the value contains XSS patterns.
+        """
+        if not value:
+            return  # Empty values are considered safe
+        # Check for dangerous HTML tags
+        if re.search(cls.DANGEROUS_HTML_PATTERN, value, re.IGNORECASE):
+            raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
+
+    @classmethod
     def validate_json_depth(
         cls,
         obj: object,
