@@ -4218,12 +4218,12 @@ async function handleResourceFormSubmit(e) {
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
         const response = await fetchWithTimeout(
-                `${window.ROOT_PATH}/admin/resources`,
-                {
-                    method: "POST",
-                    body: formData,
-                },
-            );
+            `${window.ROOT_PATH}/admin/resources`,
+            {
+                method: "POST",
+                body: formData,
+            },
+        );
 
         const result = await response.json();
         if (!result.success) {
@@ -4233,20 +4233,20 @@ async function handleResourceFormSubmit(e) {
                 ? `${window.ROOT_PATH}/admin?include_inactive=true#resources`
                 : `${window.ROOT_PATH}/admin#resources`;
             window.location.href = redirectUrl;
-            }
-        } catch (error) {
-            console.error("Error:", error);
-            if (status) {
-                status.textContent = error.message || "An error occurred!";
-                status.classList.add("error-status");
-            }
-            showErrorMessage(error.message);
-        } finally {
-            // location.reload();
-            if (loading) {
-                loading.style.display = "none";
-            }
         }
+    } catch (error) {
+        console.error("Error:", error);
+        if (status) {
+            status.textContent = error.message || "An error occurred!";
+            status.classList.add("error-status");
+        }
+        showErrorMessage(error.message);
+    } finally {
+        // location.reload();
+        if (loading) {
+            loading.style.display = "none";
+        }
+    }
 }
 
 async function handleServerFormSubmit(e) {

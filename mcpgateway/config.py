@@ -470,7 +470,8 @@ class Settings(BaseSettings):
             ...     print('error')
             error
         """
-        valid_types = {"http", "ws", "sse", "all"}
+        # valid_types = {"http", "ws", "sse", "all"}
+        valid_types = {"sse", "streamablehttp", "all", "http"}
         if self.transport_type not in valid_types:
             raise ValueError(f"Invalid transport type. Must be one of: {valid_types}")
 
@@ -489,9 +490,7 @@ class Settings(BaseSettings):
                 db_dir.mkdir(parents=True)
 
     # Validation patterns for safe display (configurable)
-    validation_dangerous_html_pattern: str = (
-        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
-    )
+    validation_dangerous_html_pattern: str = r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
 
     validation_dangerous_js_pattern: str = r"javascript:|vbscript:|on\w+\s*=|data:.*script"
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
