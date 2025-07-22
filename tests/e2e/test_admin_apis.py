@@ -35,24 +35,18 @@ os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
 os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
 
 # Standard
-import tempfile
-from typing import AsyncGenerator
+import logging
 from unittest.mock import patch
 from urllib.parse import quote
 import uuid
-import logging
 
 # Third-Party
 from httpx import AsyncClient
 import pytest
 import pytest_asyncio
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-# First-Party
-from mcpgateway.db import Base
-from mcpgateway.main import app, get_db
+# from mcpgateway.db import Base
+# from mcpgateway.main import app, get_db
 
 
 # Configure logging for debugging
@@ -77,71 +71,22 @@ TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_USER}:{TEST_PASSWORD}"}
 # Fixtures
 # -------------------------
 @pytest_asyncio.fixture
-async def temp_db():
-    """
-    Create a temporary SQLite database for testing.
-
-    This fixture creates a fresh database for each test, ensuring complete
-    isolation between tests. The database is automatically cleaned up after
-    the test completes.
-    """
-    # Create temporary file for SQLite database
-    db_fd, db_path = tempfile.mkstemp(suffix=".db")
-
-    # Create engine with SQLite
-    engine = create_engine(
-        f"sqlite:///{db_path}",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    # Log the database path for debugging
-    logging.debug(f"Using temporary database at: {db_path}")
-
-    # Create all tables
-    Base.metadata.create_all(bind=engine)
-
-    # Create session factory
-    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-    # Override the get_db dependency
-    def override_get_db():
-        db = TestSessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    app.dependency_overrides[get_db] = override_get_db
-
-    # Override authentication for all tests
+async def client(app_with_temp_db):
     # First-Party
     from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
-    def override_auth():
-        return TEST_USER
+    app_with_temp_db.dependency_overrides[require_auth] = lambda: TEST_USER
+    app_with_temp_db.dependency_overrides[require_basic_auth] = lambda: TEST_USER
 
-    app.dependency_overrides[require_auth] = override_auth
-    app.dependency_overrides[require_basic_auth] = override_auth
-
-    yield engine
-
-    # Cleanup
-    logging.debug("Cleaning up temporary database and overrides.")
-    app.dependency_overrides.clear()
-    os.close(db_fd)
-    os.unlink(db_path)
-
-
-@pytest_asyncio.fixture
-async def client(temp_db) -> AsyncGenerator[AsyncClient, None]:
-    """Create an async test client with the test database."""
     # Third-Party
     from httpx import ASGITransport, AsyncClient
 
-    transport = ASGITransport(app=app)
+    transport = ASGITransport(app=app_with_temp_db)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+    app_with_temp_db.dependency_overrides.pop(require_auth, None)
+    app_with_temp_db.dependency_overrides.pop(require_basic_auth, None)
 
 
 @pytest_asyncio.fixture
@@ -351,7 +296,7 @@ class TestAdminToolAPIs:
 class TestAdminResourceAPIs:
     """Test admin resource management endpoints."""
 
-    async def test_admin_add_resource(self, client: AsyncClient, mock_settings, temp_db):
+    async def test_admin_add_resource(self, client: AsyncClient, mock_settings):
         """Test adding a resource via the admin UI with new logic."""
         # Define valid form data
         valid_form_data = {
