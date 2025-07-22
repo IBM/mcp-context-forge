@@ -1,3 +1,12 @@
+agent_runtimes/
+charts/
+deployment/
+docs/
+k8s/
+mcp-servers/
+k8s/
+tests/
+
 mcp-servers/go/fast-time-server/Dockerfile
 Dockerfile
 Dockerfile.*

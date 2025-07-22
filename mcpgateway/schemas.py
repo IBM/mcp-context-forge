@@ -28,7 +28,7 @@ import re
 from typing import Any, Dict, List, Literal, Optional, Self, Union
 
 # Third-Party
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo, ValidationError
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 # First-Party
 from mcpgateway.config import settings
@@ -302,7 +302,7 @@ class ToolCreate(BaseModel):
         gateway_id (Optional[str]): ID of the gateway for the tool.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
@@ -757,6 +757,7 @@ class ToolInvocation(BaseModelWithConfigDict):
                                    tool's input schema and not exceed depth limits.
 
     Examples:
+        >>> from pydantic import ValidationError
         >>> # Valid tool invocation
         >>> tool_inv = ToolInvocation(name="get_weather", arguments={"city": "London"})
         >>> tool_inv.name
@@ -1152,6 +1153,7 @@ class ResourceSubscription(BaseModelWithConfigDict):
                             identifier naming conventions.
 
     Examples:
+        >>> from pydantic import ValidationError
         >>> # Valid subscription
         >>> sub = ResourceSubscription(uri="/api/v1/users/123", subscriber_id="client_001")
         >>> sub.uri

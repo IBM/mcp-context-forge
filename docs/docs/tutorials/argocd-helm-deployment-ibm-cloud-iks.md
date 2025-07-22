@@ -1073,7 +1073,17 @@ wait
 
 ---
 
-## 15. FAQ
+## 15. Configuring the Kubernetes MCP Server
+
+
+Run the Kubernetes MCP Server and add it to the gateway:
+
+```
+python3 -m mcpgateway.translate --stdio "npx -y kubernetes-mcp-server@latest" --port 8103
+```
+
+
+## 16. FAQ
 
 **Q**: *How do I rotate the JWT secret without downtime?*
 **A**: Update the secret and restart the MCP Gateway pods:

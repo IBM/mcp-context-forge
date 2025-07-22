@@ -6,7 +6,8 @@ This section explains how to deploy MCP Gateway in various environments - from l
 
 ## 🔐 Security First
 
-**Before deploying to production**, review our [Security Guide](securing.md) for:
+**Before deploying to production**, review our [Security Guide](../manage/securing.md) for:
+
 - Critical security configurations
 - Production hardening checklist
 - Authentication and authorization setup
@@ -30,7 +31,7 @@ MCP Gateway supports multiple deployment strategies:
 | [IBM Code Engine](ibm-code-engine.md) | Serverless container build & run on IBM Cloud                                             |
 | [AWS](aws.md)                         | Deploy on ECS Fargate, EKS, or EC2-hosted containers                                      |
 | [Azure](azure.md)                     | Run on Azure Container Apps, App Service, or AKS                                          |
-| [**Security Guide**](securing.md)     | **Essential security configurations and best practices for production deployments**        |
+| [**Security Guide**](../manage/securing.md)     | **Essential security configurations and best practices for production deployments**        |
 
 ---
 
@@ -42,7 +43,7 @@ MCP Gateway loads configuration from:
 - Environment variables (overrides `.env`)
 - CLI flags (e.g., via `run.sh`)
 
-⚠️ **Security Note**: Never store sensitive credentials directly in environment variables. Use a secrets management system in production. See the [Security Guide](securing.md#secrets-management) for details.
+⚠️ **Security Note**: Never store sensitive credentials directly in environment variables. Use a secrets management system in production. See the [Security Guide](../manage/securing.md#secrets-management) for details.
 
 ---
 
@@ -69,4 +70,4 @@ The default container image:
 
 > For Kubernetes, you can mount a ConfigMap or Secret as `.env`.
 
-**Important**: For production deployments, ensure you follow the container hardening guidelines in our [Security Guide](securing.md#container-security).
+**Important**: For production deployments, ensure you follow the container hardening guidelines in our [Security Guide](../manage/securing.md#container-security).
