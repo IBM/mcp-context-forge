@@ -6,7 +6,159 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
-## [0.3.1] - 2025-01-11 - Security and Data Validation (Pydantic, UI)
+## [0.4.0] - 2025-07-22 - Security, Bugfixes, Resilience & Code Quality
+
+### Security Notice
+
+> **This is a security-focused release. Upgrading is highly recommended.**
+> 
+> This release continues our security-first approach with the Admin UI and Admin API **disabled by default**. To enable these features for local development, update your `.env` file:
+> ```bash
+> # Enable the visual Admin UI (true/false)
+> MCPGATEWAY_UI_ENABLED=true
+> 
+> # Enable the Admin API endpoints (true/false)
+> MCPGATEWAY_ADMIN_API_ENABLED=true
+> ```
+
+### Overview
+
+This release represents a major milestone in code quality, security, and reliability. With [52 issues resolved](https://github.com/IBM/mcp-context-forge/issues?q=is%3Aissue%20state%3Aclosed%20milestone%3A%22Release%200.4.0%22), we've achieved:
+- **100% security scanner compliance** (Bandit, Grype, nodejsscan)
+- **60% docstring coverage** with enhanced documentation
+- **82% pytest coverage** including end-to-end testing and security tests
+- **10/10 Pylint score** across the entire codebase (along existing 100% pass for ruff, pre-commit)
+- **Comprehensive input validation** security test suite, checking for security issues and input validation
+- **Smart retry mechanisms** with exponential backoff for resilient connections
+
+### Added
+
+* **Resilience & Reliability**:
+  * **HTTPX Client with Smart Retry** (#456) - Automatic retry with exponential backoff and jitter for failed requests
+  * **Docker HEALTHCHECK** (#362) - Container health monitoring for production deployments
+  * **Enhanced Error Handling** - Replaced assert statements with proper exceptions throughout codebase
+
+* **Developer Experience**:
+  * **Test MCP Server Connectivity Tool** (#181) - Debug and validate gateway connections directly from Admin UI
+  * **Persistent Admin UI Filter State** (#177) - Filters and preferences persist across page refreshes
+  * **Contextual Hover-Help Tooltips** (#233) - Inline help throughout the UI for better user guidance
+  * **mcp-cli Documentation** (#46) - Comprehensive guide for using MCP Gateway with the official CLI
+  * **JSON-RPC Developer Guide** (#19) - Complete curl command examples for API integration
+
+* **Security Enhancements**:
+  * **Comprehensive Input Validation Test Suite** (#552) - Extensive security tests for all input scenarios
+  * **Additional Security Scanners** (#415) - Added nodejsscan (#499) for JavaScript security analysis
+  * **Enhanced Validation Rules** (#339, #340) - Stricter input validation across all API endpoints
+  * **Output Escaping in UI** (#336) - Proper HTML escaping for all user-controlled content
+
+* **Code Quality Tools**:
+  * **Dead Code Detection** (#305) - Vulture and unimport integration for cleaner codebase
+  * **Security Vulnerability Scanning** (#279) - Grype integration in CI/CD pipeline
+  * **60% Doctest Coverage** (#249) - Executable documentation examples with automated testing
+
+### Fixed
+
+* **Critical Bugs**:
+  * **STREAMABLEHTTP Transport** (#213) - Fixed critical issues preventing use of Streamable HTTP
+  * **Authentication Handling** (#232) - Resolved "Auth to None" failures
+  * **Gateway Authentication** (#471, #472) - Fixed auth_username and auth_password not being set correctly
+  * **XSS Prevention** (#361) - Prompt and RPC endpoints now properly validate content
+  * **Transport Validation** (#359) - Gateway validation now correctly rejects invalid transport types
+
+* **UI/UX Improvements**:
+  * **Dark Theme Visibility** (#366) - Fixed contrast and readability issues in dark mode
+  * **Test Server Connectivity** (#367) - Repaired broken connectivity testing feature
+  * **Duplicate Server Names** (#476) - UI now properly shows errors for duplicate names
+  * **Edit Screen Population** (#354) - Fixed fields not populating when editing entities
+  * **Annotations Editor** (#356) - Annotations are now properly editable
+  * **Resource Data Handling** (#352) - Fixed incorrect data mapping in resources
+  * **UI Element Spacing** (#355) - Removed large empty spaces in text editors
+  * **Metrics Loading Warning** (#374) - Eliminated console warnings for missing elements
+
+* **API & Backend**:
+  * **Federation HTTPS Detection** (#424) - Gateway now respects X-Forwarded-Proto headers
+  * **Version Endpoint** (#369, #382) - API now returns proper semantic version
+  * **Test Server URL** (#396) - Fixed incorrect URL construction for test connections
+  * **Gateway Tool Separator** (#387) - Now respects GATEWAY_TOOL_NAME_SEPARATOR configuration
+  * **UI-Disabled Mode** (#378) - Unit tests now properly handle disabled UI scenarios
+
+* **Infrastructure & CI/CD**:
+  * **Makefile Improvements** (#371, #433) - Fixed Docker/Podman detection and venv handling
+  * **GHCR Push Logic** (#384) - Container images no longer incorrectly pushed on PRs
+  * **OpenAPI Documentation** (#522) - Fixed title formatting in API specification
+  * **Test Isolation** (#495) - Fixed test_admin_tool_name_conflict affecting actual database
+  * **Unused Config Removal** (#419) - Removed deprecated lock_file_path from configuration
+
+### Changed
+
+* **Code Quality Achievements**:
+  * **60% Docstring Coverage** (#467) - Every function and class now fully documented, complementing 82% pytest coverage
+  * **Zero Bandit Issues** (#421) - All security linting issues resolved
+  * **10/10 Pylint Score** (#210) - Perfect code quality score maintained
+  * **Zero Web Stack Lint Issues** (#338) - Clean JavaScript and HTML throughout
+
+* **Security Improvements**:
+  * **Enhanced Input Validation** - Stricter backend validation rules with configurable limits, with additional UI validation rules
+  * **Removed Git Commands** (#416) - Version detection no longer uses subprocess calls
+  * **Secure Error Handling** (#412) - Better exception handling without information leakage
+
+* **Developer Workflow**:
+  * **E2E Acceptance Test Documentation** (#399) - Comprehensive testing guide
+  * **Security Policy Documentation** (#376) - Clear security guidelines on GitHub Pages
+  * **Pre-commit Configuration** (#375) - yamllint now correctly ignores node_modules
+  * **PATCH Method Support** (#508) - REST API integration now properly supports PATCH
+
+### Security
+
+* All security scanners now pass with zero issues: Bandit, Grype, nodejsscan
+* Comprehensive input validation prevents XSS, SQL injection, and other attacks
+* Secure defaults with UI and Admin API disabled unless explicitly enabled
+* Enhanced error handling prevents information disclosure
+* Regular security scanning integrated into CI/CD pipeline
+
+### Infrastructure
+
+* Docker health checks for production readiness
+* Improved Makefile with OS detection and better error handling
+* Enhanced CI/CD with security scanning and code quality gates
+* Better test isolation and coverage reporting
+
+---
+
+### 🌟 Release Contributors
+
+**This release represents our commitment to enterprise-grade security and code quality. Thanks to our amazing contributors who made this security-focused release possible!**
+
+#### 🏆 Top Contributors in 0.4.0
+- **Mihai Criveti** (@crivetimihai) - Release coordinator, security improvements, and extensive testing infrastructure
+- **Madhav Kandukuri** (@madhav165) - Major input validation framework, security fixes, and test coverage improvements  
+- **Keval Mahajan** (@kevalmahajan) - HTTPX retry mechanism implementation and UI improvements
+- **Manav Gupta** (@manavgup) - Comprehensive doctest coverage and Playwright test suite
+
+#### 🎉 New Contributors
+Welcome to our first-time contributors who joined us in 0.4.0:
+
+- **Satya** (@TS0713) - Fixed duplicate server name handling and invalid transport type validation
+- **Guoqiang Ding** (@dgq8211) - Improved tool description display with proper line wrapping
+- **Rakhi Dutta** (@rakdutta) - Enhanced error messages for better user experience
+- **Nayana R Gowda** - Fixed CodeMirror layout spacing issues
+- **Mohan Lakshmaiah** - Contributed UI/UX improvements and test case updates
+- **Shoumi Mukherjee** - Fixed resource data handling in the UI
+- **Reeve Barreto** (@reevebarreto) - Implemented the Test MCP Server Connectivity feature
+- **ChrisPC-39/Sebastian** - Achieved 10/10 Pylint score and added security scanners
+- **Jason Frey** (@fryguy9) - Improved GitHub Actions with official IBM Cloud CLI action
+
+#### 💪 Returning Contributors
+Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+
+- **Thong Bui** - REST API enhancements including PATCH support and path parameters
+- **Abdul Samad** - Dark mode improvements and UI polish
+
+This release represents a true community effort with contributions from developers around the world. Your dedication to security, code quality, and user experience has made MCP Gateway more robust and enterprise-ready than ever!
+
+---
+
+## [0.3.1] - 2025-07-11 - Security and Data Validation (Pydantic, UI)
 
 ### Security Improvements
 
