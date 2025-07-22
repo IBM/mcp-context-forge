@@ -16,6 +16,7 @@ Usage:
 import json
 import os
 import sys
+import pytest
 
 try:
     # Third-Party
@@ -24,7 +25,7 @@ except ImportError:
     print("Please install requests: pip install requests")
     sys.exit(1)
 
-
+@pytest.mark.skip(reason="Disabled temporarily as this requires a live MCP Gateway instance")
 def test_rpc_vulnerability():
     """Test the RPC endpoint with malicious method names."""
 
