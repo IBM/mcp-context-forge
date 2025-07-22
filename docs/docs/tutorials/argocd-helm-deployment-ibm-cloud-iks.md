@@ -106,7 +106,7 @@ podman build -t mcp-context-forge:dev -f Containerfile .
 !!! note "Production deployments"
     Production deployments can pull the signed image directly:
     ```
-    ghcr.io/ibm/mcp-context-forge:0.3.0
+    ghcr.io/ibm/mcp-context-forge:0.4.0
     ```
 
 ---
@@ -169,8 +169,8 @@ ibmcloud is subnet-create mcp-subnet-eu-de-3 \
 ibmcloud cr login
 
 # Tag and push the image
-podman tag mcp-context-forge:dev eu.icr.io/mcp-gw/mcpgateway:0.3.0
-podman push eu.icr.io/mcp-gw/mcpgateway:0.3.0
+podman tag mcp-context-forge:dev eu.icr.io/mcp-gw/mcpgateway:0.4.0
+podman push eu.icr.io/mcp-gw/mcpgateway:0.4.0
 
 # Verify the image
 ibmcloud cr images --restrict mcp-gw
@@ -359,7 +359,7 @@ mcpContextForge:
 
   image:
     repository: eu.icr.io/mcp-gw/mcpgateway
-    tag: "0.3.0"
+    tag: "0.4.0"
     pullPolicy: IfNotPresent
 
   # Service configuration
