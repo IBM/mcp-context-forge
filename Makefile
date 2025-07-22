@@ -38,7 +38,8 @@ FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
                   $(DOCS_DIR)/docs/test/sbom.md \
                   $(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
 				  $(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
-                  *.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover
+                  *.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
+				  .depsorter_cache.json .depupdate.*
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
@@ -1002,9 +1003,10 @@ hadolint:
 .PHONY: deps-update containerfile-update
 
 deps-update:
-	@echo "⬆️  Updating project dependencies via update-deps.py..."
-	@test -f update-deps.py || { echo "❌ update-deps.py not found in root directory."; exit 1; }
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 update-deps.py"
+	@echo "⬆️  Updating project dependencies via update_dependencies.py..."
+	@test -f ./.github/tools/update_dependencies.py || { echo "❌ update_dependencies.py not found in ./.github/tools."; exit 1; }
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --ignore-dependency starlette --file pyproject.toml"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --file docs/requirements.txt"
 	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
 
 containerfile-update:
@@ -1136,6 +1138,7 @@ endef
 # help: 🐳 UNIFIED CONTAINER OPERATIONS (Auto-detects Docker/Podman)
 # help: container-build      - Build image using detected runtime
 # help: container-run        - Run container using detected runtime
+# help: container-run-host   - Run container using detected runtime with host networking
 # help: container-run-ssl    - Run container with TLS using detected runtime
 # help: container-run-ssl-host - Run container with TLS and host networking
 # help: container-push       - Push image (handles localhost/ prefix)
@@ -1151,7 +1154,7 @@ endef
 # help: use-podman           - Switch to Podman runtime
 # help: show-runtime         - Show current container runtime
 
-.PHONY: container-build container-run container-run-ssl container-run-ssl-host \
+.PHONY: container-build container-run container-run-host container-run-ssl container-run-ssl-host \
         container-push container-info container-stop container-logs container-shell \
         container-health image-list image-clean image-retag container-check-image \
         container-build-multi use-docker use-podman show-runtime
@@ -1201,6 +1204,26 @@ container-run: container-check-image
 	@echo "🔍 Health check status:"
 	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health check configured"
 
+container-run-host: container-check-image
+	@echo "🚀 Running with $(CONTAINER_RUNTIME)..."
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--env-file=.env \
+		--network=host \
+		-p 4444:4444 \
+		--restart=always \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		--health-cmd="curl --fail http://localhost:4444/health || exit 1" \
+		--health-interval=1m --health-retries=3 \
+		--health-start-period=30s --health-timeout=10s \
+		-d $(call get_image_name)
+	@sleep 2
+	@echo "✅ Container started"
+	@echo "🔍 Health check status:"
+	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health check configured"
+
+
 container-run-ssl: certs container-check-image
 	@echo "🚀 Running with $(CONTAINER_RUNTIME) (TLS)..."
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
@@ -1240,6 +1263,9 @@ container-run-ssl-host: certs container-check-image
 		-d $(call get_image_name)
 	@sleep 2
 	@echo "✅ Container started with TLS (host networking)"
+
+
+
 
 container-push: container-check-image
 	@echo "📤 Preparing to push image..."
@@ -1445,6 +1471,7 @@ container-run-ssl-safe: container-validate container-run-ssl
 # help: podman               - Build container image
 # help: podman-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
 # help: podman-run           - Run the container on HTTP  (port 4444)
+# help: podman-run-host      - Run the container on HTTP  (port 4444) with --network-host
 # help: podman-run-shell     - Run the container on HTTP  (port 4444) and start a shell
 # help: podman-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
 # help: podman-run-ssl-host  - Run the container on HTTPS with --network-host (port 4444, self-signed)
@@ -1455,8 +1482,8 @@ container-run-ssl-safe: container-validate container-run-ssl
 # help: podman-top           - Show live top-level process info in container
 
 .PHONY: podman-dev podman podman-prod podman-build podman-run podman-run-shell \
-        podman-run-ssl podman-run-ssl-host podman-stop podman-test podman-logs \
-        podman-stats podman-top podman-shell
+        podman-run-host podman-run-ssl podman-run-ssl-host podman-stop podman-test \
+        podman-logs podman-stats podman-top podman-shell
 
 podman-dev:
 	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
@@ -1472,6 +1499,9 @@ podman-build:
 
 podman-run:
 	@$(MAKE) container-run CONTAINER_RUNTIME=podman
+
+podman-run-host:
+	@$(MAKE) container-run-host CONTAINER_RUNTIME=podman
 
 podman-run-shell:
 	@echo "🚀  Starting podman container shell..."
@@ -1522,13 +1552,14 @@ podman-top:
 # help: docker               - Build production Docker image
 # help: docker-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
 # help: docker-run           - Run the container on HTTP  (port 4444)
+# help: docker-run-host      - Run the container on HTTP  (port 4444) with --network-host
 # help: docker-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
 # help: docker-run-ssl-host  - Run the container on HTTPS with --network-host (port 4444, self-signed)
 # help: docker-stop          - Stop & remove the container
 # help: docker-test          - Quick curl smoke-test against the container
 # help: docker-logs          - Follow container logs (⌃C to quit)
 
-.PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-ssl \
+.PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-host docker-run-ssl \
         docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
         docker-top docker-shell
 
@@ -1546,6 +1577,9 @@ docker-build:
 
 docker-run:
 	@$(MAKE) container-run CONTAINER_RUNTIME=docker
+
+docker-run-host:
+	@$(MAKE) container-run-host CONTAINER_RUNTIME=docker
 
 docker-run-ssl:
 	@$(MAKE) container-run-ssl CONTAINER_RUNTIME=docker

@@ -18,7 +18,7 @@
 # report issues (linters). Modified files will need to be staged again.
 # -----------------------------------------------------------------------------
 
-exclude: '(^|/)(\.pre-commit-config\.yaml|normalize_special_characters\.py)$'  # ignore these files
+exclude: '(^|/)(\.pre-commit-config\.yaml|normalize_special_characters\.py|test_input_validation\.py)$'  # ignore these files
 
 repos:
   # -----------------------------------------------------------------------------
