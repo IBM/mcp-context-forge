@@ -38,7 +38,8 @@ FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
                   $(DOCS_DIR)/docs/test/sbom.md \
                   $(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
 				  $(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
-                  *.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover
+                  *.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
+				  .depsorter_cache.json .depupdate.*
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
