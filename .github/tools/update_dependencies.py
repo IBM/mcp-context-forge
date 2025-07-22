@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Asynchronous Python dependency updater with persistent caching,
 comment preservation, and multiple configuration options.
