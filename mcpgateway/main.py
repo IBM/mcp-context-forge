@@ -2284,6 +2284,7 @@ async def readiness_check(db: Session = Depends(get_db)):
     try:
         # Run the blocking DB check in a thread to avoid blocking the event loop
         await asyncio.to_thread(db.execute, text("SELECT 1"))
+        return JSONResponse(content={"status": "ready"}, status_code=200)
     except Exception as e:
         error_message = f"Readiness check failed: {str(e)}"
         logger.error(error_message)
