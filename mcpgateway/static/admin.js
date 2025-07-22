@@ -3234,8 +3234,11 @@ async function testTool(toolId) {
             titleElement.textContent = "Test Tool: " + (tool.name || "Unknown");
         }
         if (descElement) {
-            descElement.textContent =
-                tool.description || "No description available.";
+            if (tool.description) {
+                descElement.innerHTML = tool.description.replace(/\n/g, '<br/>');
+            } else {
+                descElement.textContent = "No description available.";
+            }
         }
 
         const container = safeGetElement("tool-test-form-fields");

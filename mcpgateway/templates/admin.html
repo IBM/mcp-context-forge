@@ -393,7 +393,7 @@
                   {{ tool.requestType }}
                 </td>
                 <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">
-                  {{ tool.description }}
+                  {{ tool.description | replace('\n', '<br/>') | safe }}
                 </td>
                 <td class="px-2 py-4 whitespace-nowrap">
                   {% if tool.annotations %}
