@@ -31,6 +31,7 @@ from contextlib import asynccontextmanager
 import json
 import logging
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from urllib.parse import urlparse, urlunparse
 
 # Third-Party
 from fastapi import (
@@ -54,6 +55,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
 from mcpgateway import __version__
@@ -476,6 +478,9 @@ app.add_middleware(DocsAuthMiddleware)
 # Add streamable HTTP middleware for /mcp routes
 app.add_middleware(MCPPathRewriteMiddleware)
 
+# Trust all proxies (or lock down with a list of host patterns)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -595,6 +600,42 @@ async def invalidate_resource_cache(uri: Optional[str] = None) -> None:
         resource_cache.delete(uri)
     else:
         resource_cache.clear()
+
+
+def get_protocol_from_request(request: Request) -> str:
+    """
+    Return "https" or "http" based on:
+     1) X-Forwarded-Proto (if set by a proxy)
+     2) request.url.scheme  (e.g. when Gunicorn/Uvicorn is terminating TLS)
+
+    Args:
+        request (Request): The FastAPI request object.
+
+    Returns:
+        str: The protocol used for the request, either "http" or "https".
+    """
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        # may be a comma-separated list; take the first
+        return forwarded.split(",")[0].strip()
+    return request.url.scheme
+
+
+def update_url_protocol(request: Request) -> str:
+    """
+    Update the base URL protocol based on the request's scheme or forwarded headers.
+
+    Args:
+        request (Request): The FastAPI request object.
+
+    Returns:
+        str: The base URL with the correct protocol.
+    """
+    parsed = urlparse(str(request.base_url))
+    proto = get_protocol_from_request(request)
+    new_parsed = parsed._replace(scheme=proto)
+    # urlunparse keeps netloc and path intact
+    return urlunparse(new_parsed).rstrip("/")
 
 
 # Protocol APIs #
@@ -919,8 +960,9 @@ async def sse_endpoint(request: Request, server_id: str, user: str = Depends(req
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
-        base_url = str(request.base_url).rstrip("/")
+        base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
+
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
@@ -2055,7 +2097,8 @@ async def utility_sse_endpoint(request: Request, user: str = Depends(require_aut
     """
     try:
         logger.debug("User %s requested SSE connection", user)
-        base_url = str(request.base_url).rstrip("/")
+        base_url = update_url_protocol(request)
+
         transport = SSETransport(base_url=base_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
