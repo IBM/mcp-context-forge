@@ -4213,7 +4213,7 @@ async function handleResourceFormSubmit(e) {
             status.textContent = "";
             status.classList.remove("error-status");
         }
-        
+
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
@@ -4246,7 +4246,7 @@ async function handleResourceFormSubmit(e) {
             if (loading) {
                 loading.style.display = "none";
             }
-        }		
+        }
 }
 
 async function handleServerFormSubmit(e) {
