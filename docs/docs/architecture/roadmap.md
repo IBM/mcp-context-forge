@@ -171,6 +171,10 @@
 
 ---
 
+WE ARE HERE
+
+---
+
 ## Release 0.5.0 - Enterprise Operability, Auth, Configuration & Observability
 
 !!! danger "Release 0.5.0 - Open (0%)"
