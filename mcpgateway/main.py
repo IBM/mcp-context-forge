@@ -79,6 +79,7 @@ from mcpgateway.schemas import (
     GatewayUpdate,
     JsonPathModifier,
     PromptCreate,
+    PromptExecuteArgs,
     PromptRead,
     PromptUpdate,
     ResourceCreate,
@@ -1632,7 +1633,13 @@ async def get_prompt(
         Rendered prompt or metadata.
     """
     logger.debug(f"User: {user} requested prompt: {name} with args={args}")
-    return await prompt_service.get_prompt(db, name, args)
+    try:
+        PromptExecuteArgs(args=args)
+        return await prompt_service.get_prompt(db, name, args)
+    except Exception as ex:
+        logger.error(f"Error retrieving prompt {name}: {ex}")
+        if isinstance(ex, ValueError):
+            return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
 
 
 @prompt_router.get("/{name}")

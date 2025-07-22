@@ -1433,6 +1433,34 @@ class PromptCreate(BaseModel):
         return v
 
 
+class PromptExecuteArgs(BaseModel):
+    """
+    Schema for args executing a prompt
+
+    Attributes:
+        args (Dict[str, str]): Arguments for prompt execution.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    args: Dict[str, str] = Field(default_factory=dict, description="Arguments for prompt execution")
+
+    @field_validator("args")
+    @classmethod
+    def validate_args(cls, v: dict) -> dict:
+        """Ensure prompt arguments pass XSS validation
+
+        Args:
+            v (dict): Value to validate
+
+        Returns:
+            dict: Value if validated as safe
+        """
+        for val in v.values():
+            SecurityValidator.validate_no_xss(val, "Prompt execution arguments")
+        return v
+
+
 class PromptUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing prompt.
 
