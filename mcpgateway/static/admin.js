@@ -4249,6 +4249,69 @@ async function handleResourceFormSubmit(e) {
         }		
 }
 
+async function handleServerFormSubmit(e) {
+    e.preventDefault();
+
+    const form = e.target;
+    const formData = new FormData(form);
+    const status = safeGetElement("serverFormError");
+    const loading = safeGetElement("add-server-loading"); // Add a loading spinner if needed
+
+    try {
+        const name = formData.get("name");
+
+        // Basic validation
+        const nameValidation = validateInputName(name, "server");
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        if (loading) {
+            loading.style.display = "block";
+        }
+
+        if (status) {
+            status.textContent = "";
+            status.classList.remove("error-status");
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("servers");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/servers`,
+            {
+                method: "POST",
+                body: formData,
+                redirect: "manual",
+            },
+        );
+
+        const result = await response.json();
+        if (!result.success) {
+            console.log(result.message);
+            throw new Error(result.message || "Failed to add server.");
+        } else {
+            // Success redirect
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#catalog`
+                : `${window.ROOT_PATH}/admin#catalog`;
+            window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Add Server Error:", error);
+        if (status) {
+            status.textContent = error.message || "An error occurred.";
+            status.classList.add("error-status");
+        }
+        showErrorMessage(error.message); // Optional if you use global popup/snackbar
+    } finally {
+        if (loading) {
+            loading.style.display = "none";
+        }
+    }
+}
+
 async function handleToolFormSubmit(event) {
     event.preventDefault();
 
@@ -4841,6 +4904,11 @@ function setupFormHandlers() {
     const paramButton = safeGetElement("add-parameter-btn");
     if (paramButton) {
         paramButton.addEventListener("click", handleAddParameter);
+    }
+
+    const serverForm = safeGetElement("add-server-form");
+    if (serverForm) {
+        serverForm.addEventListener("submit", handleServerFormSubmit);
     }
 
     const editResourceForm = safeGetElement("edit-resource-form");

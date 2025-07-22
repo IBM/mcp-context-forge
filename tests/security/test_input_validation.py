@@ -480,16 +480,16 @@ class TestSecurityValidation:
             try:
                 tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, input_schema=schema)
                 assert tool.input_schema is not None
-                print(f"✅ Valid schema #{i+1} accepted")
+                print(f"✅ Valid schema #{i + 1} accepted")
             except ValidationError as err:
-                print(f"❌ Valid schema #{i+1} rejected: {str(schema)[:50]}... -> {err}")
+                print(f"❌ Valid schema #{i + 1} rejected: {str(schema)[:50]}... -> {err}")
                 raise
 
         # Invalid schemas - too deep
         for i, payload in enumerate(self.DEEP_NESTING_PAYLOADS):
             if isinstance(payload, dict):
                 logger.debug(f"Testing deep nested schema")
-                must_fail(payload, f"Deep nested schema #{i+1}")
+                must_fail(payload, f"Deep nested schema #{i + 1}")
 
     def test_tool_create_request_type_validation(self):
         """Test request type validation based on integration type."""
@@ -638,7 +638,7 @@ class TestSecurityValidation:
         # Invalid content - HTML tags
         for i, payload in enumerate(self.XSS_PAYLOADS[:5]):
             logger.debug(f"Testing XSS payload in content: {payload[:50]}...")
-            must_fail(payload, f"XSS content #{i+1}")
+            must_fail(payload, f"XSS content #{i + 1}")
 
     def test_resource_create_mime_type_validation(self):
         """Test MIME type validation."""
@@ -911,7 +911,7 @@ class TestSecurityValidation:
 
         for i, payload in enumerate(polyglot_payloads):
             logger.debug(f"Testing polyglot payload: {payload[:50]}...")
-            must_fail(payload, f"Polyglot #{i+1}")
+            must_fail(payload, f"Polyglot #{i + 1}")
 
     def test_timing_attack_prevention(self):
         """Test that validation doesn't reveal timing information."""
@@ -1117,7 +1117,7 @@ class TestSecurityValidation:
 
         for i, payload in enumerate(ssti_payloads):
             logger.debug(f"Testing SSTI payload: {payload[:50]}...")
-            must_fail(payload, f"SSTI #{i+1} ({payload[:20]}...)")
+            must_fail(payload, f"SSTI #{i + 1} ({payload[:20]}...)")
 
     def test_regex_dos_prevention(self):
         """Test prevention of ReDoS attacks."""
@@ -1180,7 +1180,7 @@ class TestSecurityValidation:
         ]
 
         for i, payload in enumerate(pollution_payloads):
-            logger.debug(f"Testing prototype pollution payload {i+1}")
+            logger.debug(f"Testing prototype pollution payload {i + 1}")
             # Should handle these safely
             try:
                 tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, headers=payload)

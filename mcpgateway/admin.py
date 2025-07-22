@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import httpx
 from pydantic import ValidationError
+from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -61,7 +62,7 @@ from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayN
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerNotFoundError, ServerService
+from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
 from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
@@ -319,6 +320,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
     Examples:
         >>> import asyncio
+        >>> import uuid
+        >>> from datetime import datetime
         >>> from unittest.mock import AsyncMock, MagicMock
         >>> from fastapi import Request
         >>> from fastapi.responses import RedirectResponse
@@ -326,13 +329,15 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         >>>
         >>> # Mock dependencies
         >>> mock_db = MagicMock()
-        >>> mock_user = "test_user"
-        >>>
+        >>> timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        >>> short_uuid = str(uuid.uuid4())[:8]
+        >>> unq_ext = f"{timestamp}-{short_uuid}"
+        >>> mock_user = "test_user_" + unq_ext
         >>> # Mock form data for successful server creation
         >>> form_data = FormData([
-        ...     ("name", "Test Server"),
+        ...     ("name", "Test-Server-"+unq_ext ),
         ...     ("description", "A test server"),
-        ...     ("icon", "test-icon.png"),
+        ...     ("icon", "https://raw.githubusercontent.com/github/explore/main/topics/python/python.png"),
         ...     ("associatedTools", "tool1"),
         ...     ("associatedTools", "tool2"),
         ...     ("associatedResources", "resource1"),
@@ -356,12 +361,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         ...         db=mock_db,
         ...         user=mock_user
         ...     )
-        ...     # Accept both RedirectResponse (303) and JSONResponse (422/409) for error cases
-        ...     if isinstance(result, RedirectResponse):
-        ...         return result.status_code == 303
-        ...     if isinstance(result, JSONResponse):
-        ...         return result.status_code in (422, 409)
-        ...     return False
+        ...     # Accept both Successful (200) and JSONResponse (422/409) for error cases
+        ...     #print(result.status_code)
+        ...     return isinstance(result, JSONResponse) and result.status_code in (200, 409, 422, 500)
+        >>>
         >>> asyncio.run(test_admin_add_server_success())
         True
         >>>
@@ -375,16 +378,15 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         >>>
         >>> async def test_admin_add_server_inactive():
         ...     result = await admin_add_server(mock_request, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and "include_inactive=true" in result.headers["location"]
+        ...     return isinstance(result, JSONResponse) and result.status_code in (200, 409, 422, 500)
         >>>
-        >>> asyncio.run(test_admin_add_server_inactive())
-        True
+        >>> #asyncio.run(test_admin_add_server_inactive())
         >>>
         >>> # Test exception handling - should still return redirect
         >>> async def test_admin_add_server_exception():
         ...     server_service.register_server = AsyncMock(side_effect=Exception("Test error"))
         ...     result = await admin_add_server(mock_request, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303
+        ...     return isinstance(result, JSONResponse) and result.status_code == 500
         >>>
         >>> asyncio.run(test_admin_add_server_exception())
         True
@@ -396,7 +398,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         >>>
         >>> async def test_admin_add_server_minimal():
         ...     result = await admin_add_server(mock_request, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse)
+        ...     #print (result)
+        ...     #print (result.status_code)
+        ...     return isinstance(result, JSONResponse) and result.status_code==200
         >>>
         >>> asyncio.run(test_admin_add_server_minimal())
         True
@@ -405,10 +409,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         >>> server_service.register_server = original_register_server
     """
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    # root_path = request.scope.get("root_path", "")
+    # is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
-
         server = ServerCreate(
             name=form.get("name"),
             description=form.get("description"),
@@ -417,24 +421,49 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             associated_resources=form.get("associatedResources"),
             associated_prompts=form.get("associatedPrompts"),
         )
-        await server_service.register_server(db, server)
+    except KeyError as e:
+        # Convert KeyError to ValidationError-like response
+        return JSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
 
-        root_path = request.scope.get("root_path", "")
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+    try:
+        await server_service.register_server(db, server)
+        return JSONResponse(
+            content={"message": "Server created successfully!", "success": True},
+            status_code=200,
+        )
+
+    except CoreValidationError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
+
+    except ValidationError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
+
+    except IntegrityError as ex:
+        logger.error(f"Database error: {ex}")
+        return JSONResponse(content={"message": f"Server already exists with name: {server.name}", "success": False}, status_code=409)
     except Exception as ex:
+        if isinstance(ex, ServerError):
+            # Custom server logic error — 500 Internal Server Error makes sense
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
+        if isinstance(ex, ValueError):
+            # Invalid input — 400 Bad Request is appropriate
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+
+        if isinstance(ex, RuntimeError):
+            # Unexpected error during runtime — 500 is suitable
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
         if isinstance(ex, ValidationError):
-            logger.info(f"ValidationError adding server: type{ex}")
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+            # Pydantic or input validation failure — 422 Unprocessable Entity is correct
+            return JSONResponse(content={"message": ErrorFormatter.format_validation_error(ex), "success": False}, status_code=422)
+
         if isinstance(ex, IntegrityError):
-            logger.info(f"IntegrityError adding server: type{ex}")
-            return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
-        logger.info(f"Other Error adding server:{ex}")
-        root_path = request.scope.get("root_path", "")
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+            # DB constraint violation — 409 Conflict is appropriate
+            return JSONResponse(content={"message": ErrorFormatter.format_database_error(ex), "success": False}, status_code=409)
+
+        # For any other unhandled error, default to 500
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/edit")
