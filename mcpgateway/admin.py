@@ -2638,7 +2638,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         >>>
         >>> async def test_admin_add_resource():
         ...     response = await admin_add_resource(mock_request, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body.decode() == '{"message":"Add resource registered successfully!","success":true}'
         >>>
         >>> import asyncio; asyncio.run(test_admin_add_resource())
         True
@@ -2656,9 +2656,10 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             content=form["content"],
         )
         await resource_service.register_resource(db, resource)
-
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+        return JSONResponse(
+            content={"message": "Add resource registered successfully!", "success": True},
+            status_code=200,
+        )
     except Exception as ex:
         if isinstance(ex, ValidationError):
             logger.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
@@ -2667,6 +2668,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             error_message = ErrorFormatter.format_database_error(ex)
             logger.error(f"IntegrityError in admin_add_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
+
         logger.error(f"Error in admin_add_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 

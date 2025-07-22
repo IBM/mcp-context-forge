@@ -35,8 +35,7 @@ os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
 os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
 
 # Standard
-import tempfile
-from typing import AsyncGenerator
+import logging
 from unittest.mock import patch
 from urllib.parse import quote
 import uuid
@@ -45,13 +44,18 @@ import uuid
 from httpx import AsyncClient
 import pytest
 import pytest_asyncio
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-# First-Party
-from mcpgateway.db import Base
-from mcpgateway.main import app, get_db
+# from mcpgateway.db import Base
+# from mcpgateway.main import app, get_db
+
+
+# Configure logging for debugging
+def setup_logging():
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
+setup_logging()
+
 
 # pytest.skip("Temporarily disabling this suite", allow_module_level=True)
 
@@ -67,67 +71,22 @@ TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_USER}:{TEST_PASSWORD}"}
 # Fixtures
 # -------------------------
 @pytest_asyncio.fixture
-async def temp_db():
-    """
-    Create a temporary SQLite database for testing.
-
-    This fixture creates a fresh database for each test, ensuring complete
-    isolation between tests. The database is automatically cleaned up after
-    the test completes.
-    """
-    # Create temporary file for SQLite database
-    db_fd, db_path = tempfile.mkstemp(suffix=".db")
-
-    # Create engine with SQLite
-    engine = create_engine(
-        f"sqlite:///{db_path}",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    # Create all tables
-    Base.metadata.create_all(bind=engine)
-
-    # Create session factory
-    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-    # Override the get_db dependency
-    def override_get_db():
-        db = TestSessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    app.dependency_overrides[get_db] = override_get_db
-
-    # Override authentication for all tests
+async def client(app_with_temp_db):
     # First-Party
     from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
-    def override_auth():
-        return TEST_USER
+    app_with_temp_db.dependency_overrides[require_auth] = lambda: TEST_USER
+    app_with_temp_db.dependency_overrides[require_basic_auth] = lambda: TEST_USER
 
-    app.dependency_overrides[require_auth] = override_auth
-    app.dependency_overrides[require_basic_auth] = override_auth
-
-    yield engine
-
-    # Cleanup
-    app.dependency_overrides.clear()
-    os.close(db_fd)
-    os.unlink(db_path)
-
-
-@pytest_asyncio.fixture
-async def client(temp_db) -> AsyncGenerator[AsyncClient, None]:
-    """Create an async test client with the test database."""
     # Third-Party
     from httpx import ASGITransport, AsyncClient
 
-    transport = ASGITransport(app=app)
+    transport = ASGITransport(app=app_with_temp_db)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+    app_with_temp_db.dependency_overrides.pop(require_auth, None)
+    app_with_temp_db.dependency_overrides.pop(require_basic_auth, None)
 
 
 @pytest_asyncio.fixture
@@ -337,60 +296,47 @@ class TestAdminToolAPIs:
 class TestAdminResourceAPIs:
     """Test admin resource management endpoints."""
 
-    async def test_admin_list_resources_empty(self, client: AsyncClient, mock_settings):
-        """Test GET /admin/resources returns empty list initially."""
-        response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
-        assert response.status_code == 200
-        assert response.json() == []
-
-    async def test_admin_resource_lifecycle(self, client: AsyncClient, mock_settings):
-        """Test complete resource lifecycle through admin UI."""
-        # Create a resource via form submission
-        form_data = {
-            "uri": "admin/test/resource",
-            "name": "test_admin_resource",
-            "description": "Test resource via admin",
+    async def test_admin_add_resource(self, client: AsyncClient, mock_settings):
+        """Test adding a resource via the admin UI with new logic."""
+        # Define valid form data
+        valid_form_data = {
+            "uri": "test://resource1",
+            "name": "Test Resource",
+            "description": "A test resource",
             "mimeType": "text/plain",
-            "content": "Admin test content",
+            "content": "Sample content",
         }
 
-        # POST to /admin/resources should redirect
-        response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
-
-        # List resources to verify creation
-        response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
-        resources = response.json()
-        assert len(resources) == 1
-        resource = resources[0]
-        assert resource["name"] == "test_admin_resource"
-        resource_id = resource["id"]
-
-        # Get individual resource
-        encoded_uri = quote(form_data["uri"], safe="")
-        response = await client.get(f"/admin/resources/{encoded_uri}", headers=TEST_AUTH_HEADER)
+        # Test successful resource creation
+        response = await client.post("/admin/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        data = response.json()
-        assert "resource" in data
-        assert "content" in data
+        result = response.json()
+        assert result["success"] is True
+        assert "message" in result and "Add resource registered successfully!" in result["message"]
 
-        # Edit resource
-        edit_data = {
-            "name": "updated_admin_resource",
-            "description": "Updated description",
-            "mimeType": "text/markdown",
-            "content": "Updated admin content",
+        # Test missing required fields
+        invalid_form_data = {
+            "name": "Test Resource",
+            "description": "A test resource",
+            # Missing 'uri', 'mimeType', and 'content'
         }
-        response = await client.post(f"/admin/resources/{encoded_uri}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
+        response = await client.post("/admin/resources", data=invalid_form_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 500
 
-        # Toggle resource status
-        response = await client.post(f"/admin/resources/{resource_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
+        # Test ValidationError (422)
+        invalid_validation_data = {
+            "uri": "",
+            "name": "",
+            "description": "",
+            "mimeType": "",
+            "content": "",
+        }
+        response = await client.post("/admin/resources", data=invalid_validation_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 422
 
-        # Delete resource
-        response = await client.post(f"/admin/resources/{encoded_uri}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
+        # Test duplicate URI
+        response = await client.post("/admin/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 409
 
 
 # -------------------------

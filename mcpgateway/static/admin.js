@@ -4183,48 +4183,70 @@ async function handleGatewayFormSubmit(e) {
     }
 }
 
-function handleResourceFormSubmit(e) {
+async function handleResourceFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
+    const status = safeGetElement("status-resources");
+    const loading = safeGetElement("add-gateway-loading");
+    try {
+        // Validate inputs
+        const name = formData.get("name");
+        const uri = formData.get("uri");
+        const nameValidation = validateInputName(name, "resource");
+        const uriValidation = validateInputName(uri, "resource URI");
 
-    // Validate inputs
-    const name = formData.get("name");
-    const uri = formData.get("uri");
+        if (!nameValidation.valid) {
+            showErrorMessage(nameValidation.error);
+            return;
+        }
 
-    const nameValidation = validateInputName(name, "resource");
-    const uriValidation = validateInputName(uri, "resource URI");
+        if (!uriValidation.valid) {
+            showErrorMessage(uriValidation.error);
+            return;
+        }
 
-    if (!nameValidation.valid) {
-        showErrorMessage(nameValidation.error);
-        return;
-    }
+        if (loading) {
+            loading.style.display = "block";
+        }
+        if (status) {
+            status.textContent = "";
+            status.classList.remove("error-status");
+        }
+        
+        const isInactiveCheckedBool = isInactiveChecked("resources");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-    if (!uriValidation.valid) {
-        showErrorMessage(uriValidation.error);
-        return;
-    }
+        const response = await fetchWithTimeout(
+                `${window.ROOT_PATH}/admin/resources`,
+                {
+                    method: "POST",
+                    body: formData,
+                },
+            );
 
-    fetchWithTimeout(`${window.ROOT_PATH}/admin/resources`, {
-        method: "POST",
-        body: formData,
-    })
-        .then((response) => {
-            if (!response.ok) {
-                const status = safeGetElement("status-resources");
-                if (status) {
-                    status.textContent = "Connection failed!";
-                    status.classList.add("error-status");
-                }
-                throw new Error("Network response was not ok");
-            } else {
-                location.reload();
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        } else {
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#resources`
+                : `${window.ROOT_PATH}/admin#resources`;
+            window.location.href = redirectUrl;
             }
-        })
-        .catch((error) => {
+        } catch (error) {
             console.error("Error:", error);
-            showErrorMessage("Failed to create resource");
-        });
+            if (status) {
+                status.textContent = error.message || "An error occurred!";
+                status.classList.add("error-status");
+            }
+            showErrorMessage(error.message);
+        } finally {
+            // location.reload();
+            if (loading) {
+                loading.style.display = "none";
+            }
+        }		
 }
 
 async function handleToolFormSubmit(event) {
