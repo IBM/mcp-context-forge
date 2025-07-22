@@ -423,10 +423,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
-        return JSONResponse(
-            content={"message": f"Missing required field: {e}", "success": False}, 
-            status_code=422
-            )
+        return JSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
 
     try:
         await server_service.register_server(db, server)
@@ -436,64 +433,37 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         )
 
     except CoreValidationError as ex:
-        return JSONResponse(
-            content={"message": str(ex), "success": False}, 
-            status_code=422
-            )
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
 
     except ValidationError as ex:
-        return JSONResponse(
-            content={"message": str(ex), "success": False},
-            status_code=422
-            )
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
 
     except IntegrityError as ex:
         logger.error(f"Database error: {ex}")
-        return JSONResponse(
-            content={"message": f"Server already exists with name: {server.name}","success": False}, 
-            status_code=409
-            )
+        return JSONResponse(content={"message": f"Server already exists with name: {server.name}", "success": False}, status_code=409)
     except Exception as ex:
         if isinstance(ex, ServerError):
             # Custom server logic error — 500 Internal Server Error makes sense
-            return JSONResponse(
-                content={"message": str(ex), "success": False}, 
-                status_code=500
-                )
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
         if isinstance(ex, ValueError):
             # Invalid input — 400 Bad Request is appropriate
-            return JSONResponse(
-                content={"message": str(ex), "success": False}, 
-                status_code=400
-                )
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
 
         if isinstance(ex, RuntimeError):
             # Unexpected error during runtime — 500 is suitable
-            return JSONResponse(
-                content={"message": str(ex), "success": False}, 
-                status_code=500
-                )
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
         if isinstance(ex, ValidationError):
             # Pydantic or input validation failure — 422 Unprocessable Entity is correct
-            return JSONResponse(
-                content={"message": ErrorFormatter.format_validation_error(ex), "success": False}, 
-                status_code=422
-                )
+            return JSONResponse(content={"message": ErrorFormatter.format_validation_error(ex), "success": False}, status_code=422)
 
         if isinstance(ex, IntegrityError):
             # DB constraint violation — 409 Conflict is appropriate
-            return JSONResponse(
-                content={"message": ErrorFormatter.format_database_error(ex), "success": False},
-                status_code=409
-                )
+            return JSONResponse(content={"message": ErrorFormatter.format_database_error(ex), "success": False}, status_code=409)
 
         # For any other unhandled error, default to 500
-        return JSONResponse(
-            content={"message": str(ex), "success": False}, 
-            status_code=500
-            )
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/edit")
