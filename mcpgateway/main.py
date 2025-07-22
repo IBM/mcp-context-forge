@@ -960,9 +960,8 @@ async def sse_endpoint(request: Request, server_id: str, user: str = Depends(req
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
-        base_url = str(request.base_url).rstrip("/")
+        base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
-        server_sse_url = update_url_protocol(server_sse_url)
 
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
@@ -2098,8 +2097,7 @@ async def utility_sse_endpoint(request: Request, user: str = Depends(require_aut
     """
     try:
         logger.debug("User %s requested SSE connection", user)
-        base_url = str(request.base_url).rstrip("/")
-        base_url = update_url_protocol(base_url)
+        base_url = update_url_protocol(request)
 
         transport = SSETransport(base_url=base_url)
         await transport.connect()
