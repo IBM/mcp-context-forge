@@ -1002,9 +1002,10 @@ hadolint:
 .PHONY: deps-update containerfile-update
 
 deps-update:
-	@echo "⬆️  Updating project dependencies via update-deps.py..."
-	@test -f update-deps.py || { echo "❌ update-deps.py not found in root directory."; exit 1; }
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 update-deps.py"
+	@echo "⬆️  Updating project dependencies via update_dependencies.py..."
+	@test -f ./.github/tools/update_dependencies.py || { echo "❌ update_dependencies.py not found in ./.github/tools."; exit 1; }
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --ignore-dependency starlette --file pyproject.toml"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --file docs/requirements.txt"
 	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
 
 containerfile-update:
