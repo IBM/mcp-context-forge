@@ -6,7 +6,7 @@
 
 ## ⚠️ Early Beta Software Notice
 
-**Current Version: 0.3.1 (Beta)**
+**Current Version: 0.4.0 (Beta)**
 
 MCP Gateway is currently in early beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 
@@ -189,16 +189,19 @@ These validation rules help prevent XSS injection when data from untrusted MCP s
 Starting with v0.3.1, MCP Gateway follows the principle of "secure by default":
 
 - **Admin UI and API are disabled by default** - must be explicitly enabled via environment variables
-- **Authentication is required** for all endpoints when enabled
-- **Admin UI binds to localhost only** preventing external access
-- **Minimal container images** with non-root execution
-- **Read-only filesystems** in container deployments
+
 
 To enable admin features for development:
 ```bash
 MCPGATEWAY_UI_ENABLED=true        # Default: false
 MCPGATEWAY_ADMIN_API_ENABLED=true # Default: false
 ```
+
+Starting with 0.1.0:
+- **Authentication is required** for all endpoints when enabled
+- **Admin UI binds to localhost only** preventing external access
+- **Minimal container images** with non-root execution
+- **Read-only filesystems** in container deployments
 
 **Important**: The Admin UI is provided for developer convenience only and should **never be enabled in production deployments**.
 
