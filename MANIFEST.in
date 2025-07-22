@@ -48,11 +48,11 @@ recursive-include mcpgateway *.ico
 recursive-include alembic *.mako
 recursive-include alembic *.md
 recursive-include alembic *.py
-recursive-include deployment *
-recursive-include mcp-servers *
+# recursive-include deployment *
+# recursive-include mcp-servers *
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
-graft docs
+# graft docs
 
 # 6️⃣  Never publish caches, compiled or build outputs
 global-exclude __pycache__ *.py[cod] *.so *.dylib
