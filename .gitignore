@@ -4,7 +4,6 @@ mcp.prof
 mcp.pstats
 .depsorter_cache.json
 .depupdate.*
-update_dependencies.py
 token.txt
 *.db
 *.bak
