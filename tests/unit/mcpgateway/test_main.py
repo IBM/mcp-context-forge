@@ -909,6 +909,7 @@ class TestRealtimeEndpoints:
             response = json.loads(data)
             assert response == {"jsonrpc": "2.0", "id": 1, "result": {}}
 
+    @patch("mcpgateway.main.update_url_protocol", new=lambda url: url)
     @patch("mcpgateway.main.session_registry.add_session")
     @patch("mcpgateway.main.session_registry.respond")
     @patch("mcpgateway.main.SSETransport")
