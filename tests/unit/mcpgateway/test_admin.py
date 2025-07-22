@@ -1284,7 +1284,7 @@ class TestEdgeCasesAndErrorHandling:
         with patch.object(ResourceService, "register_resource", new_callable=AsyncMock) as mock_register:
             result = await admin_add_resource(mock_request, mock_db, "test-user")
 
-            assert isinstance(result, RedirectResponse)
+            assert isinstance(result, JSONResponse)
 
             # Verify data was preserved
             call_args = mock_register.call_args[0]
