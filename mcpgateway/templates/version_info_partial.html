@@ -1,65 +1,103 @@
 <!-- htmlhint doctype-first:false -->
 <div class="space-y-6">
-<!-- Application Overview Card (Similar to System Summary) -->
-<div class="bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white">
-  <h2 class="text-2xl font-bold mb-4 flex items-center">
-    <svg class="h-8 w-8 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none"
-         viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
-    </svg>
-    Application Information
-  </h2>
+  <!-- Application Overview Card (Similar to System Summary) -->
+  <div
+    class="bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white"
+  >
+    <h2 class="text-2xl font-bold mb-4 flex items-center">
+      <svg
+        class="h-8 w-8 mr-3"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        aria-hidden="true"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+        />
+      </svg>
+      Application Information
+    </h2>
 
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-    <div class="text-center">
-      <div class="text-2xl font-bold">{{ payload.app.name }}</div>
-      <div class="text-blue-100 text-sm">Application</div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="text-center">
+        <div class="text-2xl font-bold">{{ payload.app.name }}</div>
+        <div class="text-blue-100 text-sm">Application</div>
+      </div>
+      <div class="text-center">
+        <div class="text-2xl font-bold">{{ payload.host }}</div>
+        <div class="text-blue-100 text-sm">Host</div>
+      </div>
+      <div class="text-center">
+        <div class="text-2xl font-bold">
+          {{ payload.app.mcp_protocol_version }}
+        </div>
+        <div class="text-blue-100 text-sm">MCP Protocol</div>
+      </div>
+      <div class="text-center">
+        <div class="text-2xl font-bold">{{ payload.uptime_seconds }}s</div>
+        <div class="text-blue-100 text-sm">Uptime</div>
+      </div>
     </div>
-    <div class="text-center">
-      <div class="text-2xl font-bold">{{ payload.host }}</div>
-      <div class="text-blue-100 text-sm">Host</div>
-    </div>
-    <div class="text-center">
-      <div class="text-2xl font-bold">{{ payload.app.mcp_protocol_version }}</div>
-      <div class="text-blue-100 text-sm">MCP Protocol</div>
-    </div>
-    <div class="text-center">
-      <div class="text-2xl font-bold">{{ payload.uptime_seconds }}s</div>
-      <div class="text-blue-100 text-sm">Uptime</div>
-    </div>
-  </div>
 
-  {% if payload.app.version %}
-  <div class="mt-4 pt-4 border-t border-blue-300">
-    <div class="text-center">
-      <div class="text-lg font-medium">Version</div>
-      <div class="text-blue-100 font-mono text-sm">{{ payload.app.version }}</div>
+    {% if payload.app.version %}
+    <div class="mt-4 pt-4 border-t border-blue-300">
+      <div class="text-center">
+        <div class="text-lg font-medium">Version</div>
+        <div class="text-blue-100 font-mono text-sm">
+          {{ payload.app.version }}
+        </div>
+      </div>
     </div>
+    {% endif %}
   </div>
-  {% endif %}
-</div>
 
   <!-- Platform & Runtime Card -->
   <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
     <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">
-      <svg class="h-6 w-6 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+      <svg
+        class="h-6 w-6 mr-2 text-indigo-600"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+        ></path>
       </svg>
       Platform &amp; Runtime
     </h3>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
-        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Python Version</div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ payload.platform.python }}</div>
+        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+          Python Version
+        </div>
+        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {{ payload.platform.python }}
+        </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
-        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">FastAPI Version</div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ payload.platform.fastapi }}</div>
+        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+          FastAPI Version
+        </div>
+        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {{ payload.platform.fastapi }}
+        </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
-        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Operating System</div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ payload.platform.os }}</div>
+        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+          Operating System
+        </div>
+        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {{ payload.platform.os }}
+        </div>
       </div>
     </div>
   </div>
@@ -67,60 +105,136 @@
   <!-- Services Status Card -->
   <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
     <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">
-      <svg class="h-6 w-6 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path>
+      <svg
+        class="h-6 w-6 mr-2 text-indigo-600"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
+        ></path>
       </svg>
       Services Status
     </h3>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <!-- Database Status -->
-      <div class="border rounded-lg p-4 {% if payload.database.reachable %}border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20{% else %}border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20{% endif %}">
+      <div
+        class="border rounded-lg p-4 {% if payload.database.reachable %}border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20{% else %}border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20{% endif %}"
+      >
         <div class="flex items-center justify-between">
           <div>
-            <h4 class="font-medium {% if payload.database.reachable %}text-green-800 dark:text-green-300{% else %}text-red-800 dark:text-red-300{% endif %}">Database</h4>
-            <p class="text-sm {% if payload.database.reachable %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %}">{{ payload.database.dialect }}</p>
+            <h4
+              class="font-medium {% if payload.database.reachable %}text-green-800 dark:text-green-300{% else %}text-red-800 dark:text-red-300{% endif %}"
+            >
+              Database
+            </h4>
+            <p
+              class="text-sm {% if payload.database.reachable %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %}"
+            >
+              {{ payload.database.dialect }}
+            </p>
           </div>
           <div class="flex items-center">
             {% if payload.database.reachable %}
-              <svg class="h-8 w-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
+            <svg
+              class="h-8 w-8 text-green-500"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+              ></path>
+            </svg>
             {% else %}
-              <svg class="h-8 w-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
+            <svg
+              class="h-8 w-8 text-red-500"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+              ></path>
+            </svg>
             {% endif %}
           </div>
         </div>
         <div class="mt-2">
-          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if payload.database.reachable %}bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200{% else %}bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200{% endif %}">
-            {% if payload.database.reachable %}✅ Reachable{% else %}❌ Unreachable{% endif %}
+          <span
+            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if payload.database.reachable %}bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200{% else %}bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200{% endif %}"
+          >
+            {% if payload.database.reachable %}✅ Reachable{% else %}❌
+            Unreachable{% endif %}
           </span>
         </div>
       </div>
 
       <!-- Redis Status -->
-      <div class="border rounded-lg p-4 {% if payload.redis.available %}border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20{% else %}border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20{% endif %}">
+      <div
+        class="border rounded-lg p-4 {% if payload.redis.available %}border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20{% else %}border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20{% endif %}"
+      >
         <div class="flex items-center justify-between">
           <div>
-            <h4 class="font-medium {% if payload.redis.available %}text-green-800 dark:text-green-300{% else %}text-red-800 dark:text-red-300{% endif %}">Redis</h4>
-            <p class="text-sm {% if payload.redis.available %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %}">Cache Service</p>
+            <h4
+              class="font-medium {% if payload.redis.available %}text-green-800 dark:text-green-300{% else %}text-red-800 dark:text-red-300{% endif %}"
+            >
+              Redis
+            </h4>
+            <p
+              class="text-sm {% if payload.redis.available %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %}"
+            >
+              Cache Service
+            </p>
           </div>
           <div class="flex items-center">
             {% if payload.redis.available %}
-              <svg class="h-8 w-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
+            <svg
+              class="h-8 w-8 text-green-500"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+              ></path>
+            </svg>
             {% else %}
-              <svg class="h-8 w-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
+            <svg
+              class="h-8 w-8 text-red-500"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+              ></path>
+            </svg>
             {% endif %}
           </div>
         </div>
         <div class="mt-2">
-          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if payload.redis.available %}bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200{% else %}bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200{% endif %}">
-            {% if payload.redis.available %}✅ Available{% else %}❌ Not Available{% endif %}
+          <span
+            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if payload.redis.available %}bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200{% else %}bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200{% endif %}"
+          >
+            {% if payload.redis.available %}✅ Available{% else %}❌ Not
+            Available{% endif %}
           </span>
         </div>
       </div>
@@ -130,34 +244,63 @@
   <!-- System Resources Card -->
   <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
     <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">
-      <svg class="h-6 w-6 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+      <svg
+        class="h-6 w-6 mr-2 text-indigo-600"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+        ></path>
       </svg>
       System Resources
     </h3>
     <div class="space-y-4">
       <!-- CPU Info -->
-      <div class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700">
+      <div
+        class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700"
+      >
         <span class="text-gray-600 dark:text-gray-400">CPU:</span>
-        <span class="font-medium dark:text-gray-200">{{ payload.system.cpu_count }} × {{ payload.system.cpu_freq_mhz }} MHz</span>
+        <span class="font-medium dark:text-gray-200"
+          >{{ payload.system.cpu_count }} × {{ payload.system.cpu_freq_mhz }}
+          MHz</span
+        >
       </div>
 
       <!-- Memory Info -->
-      <div class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700">
+      <div
+        class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700"
+      >
         <span class="text-gray-600 dark:text-gray-400">Memory:</span>
-        <span class="font-medium dark:text-gray-200">{{ "{:.1f}".format(payload.system.mem_used_mb) }} / {{ payload.system.mem_total_mb }} MB</span>
+        <span class="font-medium dark:text-gray-200"
+          >{{ "{:.1f}".format(payload.system.mem_used_mb) }} / {{
+          payload.system.mem_total_mb }} MB</span
+        >
       </div>
 
       <!-- Disk Info -->
-      <div class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700">
+      <div
+        class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700"
+      >
         <span class="text-gray-600 dark:text-gray-400">Disk:</span>
-        <span class="font-medium dark:text-gray-200">{{ "{:.1f}".format(payload.system.disk_used_gb) }} / {{ "{:.1f}".format(payload.system.disk_total_gb) }} GB</span>
+        <span class="font-medium dark:text-gray-200"
+          >{{ "{:.1f}".format(payload.system.disk_used_gb) }} / {{
+          "{:.1f}".format(payload.system.disk_total_gb) }} GB</span
+        >
       </div>
 
       <!-- Boot Time -->
-      <div class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700">
+      <div
+        class="flex justify-between items-center p-3 bg-gray-50 rounded dark:bg-gray-700"
+      >
         <span class="text-gray-600 dark:text-gray-400">Boot Time:</span>
-        <span class="font-medium dark:text-gray-200">{{ payload.system.boot_time }}</span>
+        <span class="font-medium dark:text-gray-200"
+          >{{ payload.system.boot_time }}</span
+        >
       </div>
     </div>
   </div>
@@ -190,56 +333,60 @@
 </div>
 
 <script>
-/**
- * Copy the innerText of the element with id sourceId to the clipboard.
- * Uses the existing global function if available, otherwise defines a local one.
- */
-function copyJsonToClipboard(sourceId = 'json-data') {
-  // Try to use the global function if it exists
-  if (window.copyJsonToClipboard && sourceId !== 'json-data') {
-    return window.copyJsonToClipboard(sourceId);
-  }
+  /**
+   * Copy the innerText of the element with id sourceId to the clipboard.
+   * Uses the existing global function if available, otherwise defines a local one.
+   */
+  function copyJsonToClipboard(sourceId = "json-data") {
+    // Try to use the global function if it exists
+    if (window.copyJsonToClipboard && sourceId !== "json-data") {
+      return window.copyJsonToClipboard(sourceId);
+    }
 
-  const el = document.getElementById(sourceId);
-  if (!el) {
-    console.warn('[copyJsonToClipboard] sourceId "%s" not found', sourceId);
-    return;
-  }
+    const el = document.getElementById(sourceId);
+    if (!el) {
+      console.warn('[copyJsonToClipboard] sourceId "%s" not found', sourceId);
+      return;
+    }
 
-  navigator.clipboard.writeText(el.innerText)
-    .then(() => {
-      // Show success message using the existing function if available
-      if (window.showSuccessMessage) {
-        window.showSuccessMessage('JSON copied to clipboard!');
-      } else {
-        console.log('JSON copied to clipboard!');
-        // Fallback visual feedback
-        const button = document.querySelector('[onclick*="copyJsonToClipboard"]');
-        if (button) {
-          const originalText = button.innerHTML;
-          button.innerHTML = '<svg class="h-4 w-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Copied!';
-          button.classList.add('bg-green-600');
-          button.classList.remove('bg-indigo-600');
-          setTimeout(() => {
-            button.innerHTML = originalText;
-            button.classList.remove('bg-green-600');
-            button.classList.add('bg-indigo-600');
-          }, 2000);
+    navigator.clipboard
+      .writeText(el.innerText)
+      .then(() => {
+        // Show success message using the existing function if available
+        if (window.showSuccessMessage) {
+          window.showSuccessMessage("JSON copied to clipboard!");
+        } else {
+          console.log("JSON copied to clipboard!");
+          // Fallback visual feedback
+          const button = document.querySelector(
+            '[onclick*="copyJsonToClipboard"]',
+          );
+          if (button) {
+            const originalText = button.innerHTML;
+            button.innerHTML =
+              '<svg class="h-4 w-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Copied!';
+            button.classList.add("bg-green-600");
+            button.classList.remove("bg-indigo-600");
+            setTimeout(() => {
+              button.innerHTML = originalText;
+              button.classList.remove("bg-green-600");
+              button.classList.add("bg-indigo-600");
+            }, 2000);
+          }
         }
-      }
-    })
-    .catch(err => {
-      console.error('Failed to copy JSON:', err);
-      if (window.showErrorMessage) {
-        window.showErrorMessage('Failed to copy JSON: ' + err.message);
-      } else {
-        alert('Failed to copy JSON: ' + err);
-      }
-    });
-}
+      })
+      .catch((err) => {
+        console.error("Failed to copy JSON:", err);
+        if (window.showErrorMessage) {
+          window.showErrorMessage("Failed to copy JSON: " + err.message);
+        } else {
+          alert("Failed to copy JSON: " + err);
+        }
+      });
+  }
 
-// Only expose globally if not already defined
-if (!window.copyJsonToClipboard) {
-  window.copyJsonToClipboard = copyJsonToClipboard;
-}
+  // Only expose globally if not already defined
+  if (!window.copyJsonToClipboard) {
+    window.copyJsonToClipboard = copyJsonToClipboard;
+  }
 </script>

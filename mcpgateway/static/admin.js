@@ -3235,7 +3235,10 @@ async function testTool(toolId) {
         }
         if (descElement) {
             if (tool.description) {
-                descElement.innerHTML = tool.description.replace(/\n/g, '<br/>');
+                descElement.innerHTML = tool.description.replace(
+                    /\n/g,
+                    "<br/>",
+                );
             } else {
                 descElement.textContent = "No description available.";
             }
