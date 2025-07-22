@@ -10,12 +10,15 @@ Authors: Mihai Criveti
 # Standard
 import asyncio
 import os
+import tempfile
 from unittest.mock import AsyncMock, patch
 
 # Third-Party
+from _pytest.monkeypatch import MonkeyPatch
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.config import Settings
@@ -107,3 +110,57 @@ def mock_websocket():
 #     import mcpgateway.translate as translate
 #     translate._run_stdio_to_sse = AsyncMock(return_value=None)
 #     translate._run_sse_to_stdio = AsyncMock(return_value=None)
+
+
+@pytest.fixture(scope="module")  # one DB per test module is usually fine
+def app_with_temp_db():
+    """Return a FastAPI app wired to a fresh SQLite database."""
+    mp = MonkeyPatch()
+
+    # 1) create temp SQLite file
+    fd, path = tempfile.mkstemp(suffix=".db")
+    url = f"sqlite:///{path}"
+
+    # 2) patch settings
+    # First-Party
+    from mcpgateway.config import settings
+
+    mp.setattr(settings, "database_url", url, raising=False)
+
+    # First-Party
+    import mcpgateway.db as db_mod
+
+    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    mp.setattr(db_mod, "engine", engine, raising=False)
+    mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+
+    # 4) patch the already‑imported main module **without reloading**
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    mp.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
+    # (patch engine too if your code references it)
+    mp.setattr(main_mod, "engine", engine, raising=False)
+
+    # 4) create schema
+    db_mod.Base.metadata.create_all(bind=engine)
+
+    # 5) reload main so routers, deps pick up new SessionLocal
+    # if "mcpgateway.main" in sys.modules:
+    #     import importlib
+
+    #     importlib.reload(sys.modules["mcpgateway.main"])
+    # else:
+    #     import mcpgateway.main  # noqa: F401
+
+    # First-Party
+    from mcpgateway.main import app
+
+    yield app
+
+    # 6) teardown
+    mp.undo()
+    engine.dispose()
+    os.close(fd)
+    os.unlink(path)
