@@ -166,12 +166,12 @@ class TestRPCSecurityValidation:
 
         results = []
         for i, payload in enumerate(self.XSS_PAYLOADS):
-            logger.debug(f"Testing XSS payload #{i+1}: {payload[:50]}...")
+            logger.debug(f"Testing XSS payload #{i + 1}: {payload[:50]}...")
             try:
                 RPCRequest(jsonrpc="2.0", method=payload, id=1)
-                results.append(f"❌ XSS #{i+1} was NOT rejected (security issue!): {payload[:30]}...")
+                results.append(f"❌ XSS #{i + 1} was NOT rejected (security issue!): {payload[:30]}...")
             except ValidationError as e:
-                results.append(f"✅ XSS #{i+1} correctly rejected: {payload[:30]}... -> {str(e).split(chr(10))[0]}")
+                results.append(f"✅ XSS #{i + 1} correctly rejected: {payload[:30]}... -> {str(e).split(chr(10))[0]}")
 
         # Print all results
         for result in results:
@@ -183,12 +183,12 @@ class TestRPCSecurityValidation:
 
         results = []
         for i, payload in enumerate(self.SQL_INJECTION_PAYLOADS):
-            logger.debug(f"Testing SQL injection #{i+1}: {payload}")
+            logger.debug(f"Testing SQL injection #{i + 1}: {payload}")
             try:
                 RPCRequest(jsonrpc="2.0", method=payload, id=1)
-                results.append(f"❌ SQL injection #{i+1} was NOT rejected (security issue!): {payload}")
+                results.append(f"❌ SQL injection #{i + 1} was NOT rejected (security issue!): {payload}")
             except ValidationError as e:
-                results.append(f"✅ SQL injection #{i+1} correctly rejected: {payload} -> {str(e).split(chr(10))[0]}")
+                results.append(f"✅ SQL injection #{i + 1} correctly rejected: {payload} -> {str(e).split(chr(10))[0]}")
 
         # Print all results
         for result in results:
@@ -200,12 +200,12 @@ class TestRPCSecurityValidation:
 
         results = []
         for i, payload in enumerate(self.COMMAND_INJECTION_PAYLOADS):
-            logger.debug(f"Testing command injection #{i+1}: {payload}")
+            logger.debug(f"Testing command injection #{i + 1}: {payload}")
             try:
                 RPCRequest(jsonrpc="2.0", method=payload, id=1)
-                results.append(f"❌ Command injection #{i+1} was NOT rejected (security issue!): {payload}")
+                results.append(f"❌ Command injection #{i + 1} was NOT rejected (security issue!): {payload}")
             except ValidationError as e:
-                results.append(f"✅ Command injection #{i+1} correctly rejected: {payload} -> {str(e).split(chr(10))[0]}")
+                results.append(f"✅ Command injection #{i + 1} correctly rejected: {payload} -> {str(e).split(chr(10))[0]}")
 
         # Print all results
         for result in results:
@@ -217,12 +217,12 @@ class TestRPCSecurityValidation:
 
         results = []
         for i, payload in enumerate(self.PATH_TRAVERSAL_PAYLOADS):
-            logger.debug(f"Testing path traversal #{i+1}: {payload}")
+            logger.debug(f"Testing path traversal #{i + 1}: {payload}")
             try:
                 RPCRequest(jsonrpc="2.0", method=payload, id=1)
-                results.append(f"❌ Path traversal #{i+1} was NOT rejected (security issue!): {payload[:30]}...")
+                results.append(f"❌ Path traversal #{i + 1} was NOT rejected (security issue!): {payload[:30]}...")
             except ValidationError as e:
-                results.append(f"✅ Path traversal #{i+1} correctly rejected: {payload[:30]}... -> {str(e).split(chr(10))[0]}")
+                results.append(f"✅ Path traversal #{i + 1} correctly rejected: {payload[:30]}... -> {str(e).split(chr(10))[0]}")
 
         # Print all results
         for result in results:
@@ -308,12 +308,12 @@ class TestRPCSecurityValidation:
 
         results = []
         for i, payload in enumerate(self.UNICODE_PAYLOADS):
-            logger.debug(f"Testing Unicode attack #{i+1}: {repr(payload[:30])}...")
+            logger.debug(f"Testing Unicode attack #{i + 1}: {repr(payload[:30])}...")
             try:
                 RPCRequest(jsonrpc="2.0", method=payload, id=1)
-                results.append(f"❌ Unicode attack #{i+1} was NOT rejected (security issue!)")
+                results.append(f"❌ Unicode attack #{i + 1} was NOT rejected (security issue!)")
             except ValidationError:
-                results.append(f"✅ Unicode attack #{i+1} correctly rejected")
+                results.append(f"✅ Unicode attack #{i + 1} correctly rejected")
 
         # Print all results
         for result in results:
@@ -325,12 +325,12 @@ class TestRPCSecurityValidation:
 
         results = []
         for i, payload in enumerate(self.CRLF_INJECTION_PAYLOADS):
-            logger.debug(f"Testing CRLF injection #{i+1}: {repr(payload[:30])}...")
+            logger.debug(f"Testing CRLF injection #{i + 1}: {repr(payload[:30])}...")
             try:
                 RPCRequest(jsonrpc="2.0", method=payload, id=1)
-                results.append(f"❌ CRLF injection #{i+1} was NOT rejected (security issue!)")
+                results.append(f"❌ CRLF injection #{i + 1} was NOT rejected (security issue!)")
             except ValidationError:
-                results.append(f"✅ CRLF injection #{i+1} correctly rejected")
+                results.append(f"✅ CRLF injection #{i + 1} correctly rejected")
 
         # Print all results
         for result in results:
@@ -470,8 +470,8 @@ class TestRPCSecurityValidation:
             deep_params = {"level1": {}}
             current = deep_params["level1"]
             for i in range(20):
-                current[f"level{i+2}"] = {}
-                current = current[f"level{i+2}"]
+                current[f"level{i + 2}"] = {}
+                current = current[f"level{i + 2}"]
 
             try:
                 RPCRequest(jsonrpc="2.0", method="valid_method", params=deep_params)
