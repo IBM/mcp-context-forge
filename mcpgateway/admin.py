@@ -2293,12 +2293,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         # Convert KeyError to ValidationError-like response
         return JSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
 
-    except ValueError as ex:
+    except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
-        error_ctx = []
-        logger.info(f" ALL -> {ex.errors()}")
-        for err in ex.errors():
-            error_ctx.append(str(err["ctx"]["error"]))
+        error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
         return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     try:
