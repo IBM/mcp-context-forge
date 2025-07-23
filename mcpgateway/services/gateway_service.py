@@ -386,7 +386,7 @@ class GatewayService:
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
-            return GatewayRead.model_validate(gateway)
+            return GatewayRead.model_validate(db_gateway)
         except* GatewayConnectionError as ge:
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
