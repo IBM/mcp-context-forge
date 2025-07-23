@@ -448,9 +448,10 @@ class MCPPathRewriteMiddleware:
             return
 
         # Call auth check first
-        auth_ok = await streamable_http_auth(scope, receive, send)
-        if not auth_ok:
-            return
+        if settings.auth_required:
+            auth_ok = await streamable_http_auth(scope, receive, send)
+            if not auth_ok:
+                return
 
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path
