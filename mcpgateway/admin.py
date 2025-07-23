@@ -435,12 +435,6 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     except CoreValidationError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
 
-    except ValidationError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-
-    except IntegrityError as ex:
-        logger.error(f"Database error: {ex}")
-        return JSONResponse(content={"message": f"Server already exists with name: {server.name}", "success": False}, status_code=409)
     except Exception as ex:
         if isinstance(ex, ServerError):
             # Custom server logic error — 500 Internal Server Error makes sense
@@ -456,11 +450,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
         if isinstance(ex, ValidationError):
             # Pydantic or input validation failure — 422 Unprocessable Entity is correct
-            return JSONResponse(content={"message": ErrorFormatter.format_validation_error(ex), "success": False}, status_code=422)
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
 
         if isinstance(ex, IntegrityError):
             # DB constraint violation — 409 Conflict is appropriate
-            return JSONResponse(content={"message": ErrorFormatter.format_database_error(ex), "success": False}, status_code=409)
+            return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
 
         # For any other unhandled error, default to 500
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
