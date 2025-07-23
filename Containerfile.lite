@@ -67,6 +67,7 @@ RUN set -euo pipefail \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
     && /app/.venv/bin/uv pip install ".[redis,postgres]" \
+    && /app/.venv/bin/pip uninstall --yes uv pip \
     && rm -rf /root/.cache /var/cache/dnf
 
 # ----------------------------------------------------------------------------
