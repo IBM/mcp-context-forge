@@ -27,18 +27,18 @@ TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
 # Project-wide clean-up targets
 # -----------------------------------------------------------------------------
 DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .pytype \
-                 dist build site .eggs *.egg-info .cache htmlcov certs \
-                 $(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
-                 node_modules
+	dist build site .eggs *.egg-info .cache htmlcov certs \
+	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
+	node_modules
 
 FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
-                  $(PROJECT_NAME).sbom.json \
-                  snakefood.dot packages.dot classes.dot \
-                  $(DOCS_DIR)/pstats.png \
-                  $(DOCS_DIR)/docs/test/sbom.md \
-                  $(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
+	$(PROJECT_NAME).sbom.json \
+	snakefood.dot packages.dot classes.dot \
+	$(DOCS_DIR)/pstats.png \
+	$(DOCS_DIR)/docs/test/sbom.md \
+	$(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
 				  $(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
-                  *.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
+	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
 				  .depsorter_cache.json .depupdate.*
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
@@ -459,11 +459,11 @@ images:
 
 # List of individual lint targets; lint loops over these
 LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
-           ruff pyright radon pyroma pyrefly spellcheck importchecker \
+	ruff pyright radon pyroma pyrefly spellcheck importchecker \
 		   pytype check-manifest markdownlint vulture unimport
 
 .PHONY: lint $(LINTERS) black fawltydeps wily depend snakeviz pstats \
-        spellcheck-sort tox pytype sbom
+	spellcheck-sort tox pytype sbom
 
 
 ## --------------------------------------------------------------------------- ##
@@ -840,7 +840,7 @@ osv-scan: osv-scan-source osv-scan-image
 # help: sonar-info           - How to create a token & which env vars to export
 
 .PHONY: sonar-deps-podman sonar-deps-docker sonar-up-podman sonar-up-docker \
-        sonar-submit-docker sonar-submit-podman pysonar-scanner sonar-info
+	sonar-submit-docker sonar-submit-podman pysonar-scanner sonar-info
 
 # ───── Configuration ─────────────────────────────────────────────────────
 # server image tag
@@ -1191,10 +1191,10 @@ endef
 #         container-build-multi use-docker use-podman show-runtime
 
 .PHONY: container-build container-run container-run-ssl container-run-ssl-host \
-        container-push container-info container-stop container-logs container-shell \
-        container-health image-list image-clean image-retag container-check-image \
-        container-build-multi use-docker use-podman show-runtime print-runtime \
-        print-image container-validate-env container-check-ports container-wait-healthy
+	container-push container-info container-stop container-logs container-shell \
+	container-health image-list image-clean image-retag container-check-image \
+	container-build-multi use-docker use-podman show-runtime print-runtime \
+	print-image container-validate-env container-check-ports container-wait-healthy
 
 
 # Containerfile to use (can be overridden)
@@ -1592,8 +1592,8 @@ container-wait-healthy:
 # help: podman-top           - Show live top-level process info in container
 
 .PHONY: podman-dev podman podman-prod podman-build podman-run podman-run-shell \
-        podman-run-host podman-run-ssl podman-run-ssl-host podman-stop podman-test \
-        podman-logs podman-stats podman-top podman-shell
+	podman-run-host podman-run-ssl podman-run-ssl-host podman-stop podman-test \
+	podman-logs podman-stats podman-top podman-shell
 
 podman-dev:
 	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
@@ -1670,8 +1670,8 @@ podman-top:
 # help: docker-logs          - Follow container logs (⌃C to quit)
 
 .PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-host docker-run-ssl \
-        docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
-        docker-top docker-shell
+	docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
+	docker-top docker-shell
 
 docker-dev:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
@@ -1764,11 +1764,11 @@ ifeq ($(strip $(COMPOSE_CMD)),)
   COMPOSE_CMD := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || true)
   # If not found, check for podman compose
   ifeq ($(strip $(COMPOSE_CMD)),)
-    COMPOSE_CMD := $(shell podman compose version >/dev/null 2>&1 && echo "podman compose" || true)
+	COMPOSE_CMD := $(shell podman compose version >/dev/null 2>&1 && echo "podman compose" || true)
   endif
   # If still not found, check for podman-compose
   ifeq ($(strip $(COMPOSE_CMD)),)
-    COMPOSE_CMD := $(shell command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose")
+	COMPOSE_CMD := $(shell command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose")
   endif
 endif
 
@@ -1780,9 +1780,9 @@ $(COMPOSE_CMD) -f $(COMPOSE_FILE)
 endef
 
 .PHONY: compose-up compose-restart compose-build compose-pull \
-        compose-logs compose-ps compose-shell compose-stop compose-down \
-        compose-rm compose-clean compose-validate compose-exec \
-        compose-logs-service compose-restart-service compose-scale compose-up-safe
+	compose-logs compose-ps compose-shell compose-stop compose-down \
+	compose-rm compose-clean compose-validate compose-exec \
+	compose-logs-service compose-restart-service compose-scale compose-up-safe
 
 # Validate compose file
 compose-validate:
@@ -1883,8 +1883,8 @@ compose-up-safe: compose-validate compose-up
 # help: ibmcloud-ce-rm              - Delete the Code Engine application
 
 .PHONY: ibmcloud-check-env ibmcloud-cli-install ibmcloud-login ibmcloud-ce-login \
-        ibmcloud-list-containers ibmcloud-tag ibmcloud-push ibmcloud-deploy \
-        ibmcloud-ce-logs ibmcloud-ce-status ibmcloud-ce-rm
+	ibmcloud-list-containers ibmcloud-tag ibmcloud-push ibmcloud-deploy \
+	ibmcloud-ce-logs ibmcloud-ce-status ibmcloud-ce-rm
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📦  Load environment file with IBM Cloud Code Engine configuration
@@ -1910,7 +1910,7 @@ IBMCLOUD_REGISTRY_SECRET ?= $(IBMCLOUD_PROJECT)-registry-secret
 # IBMCLOUD_API_KEY             = IBM Cloud IAM API key (optional, use --sso if not set)
 
 ibmcloud-check-env:
-    @test -f .env.ce || { \
+	@test -f .env.ce || { \
 		echo "❌ Missing required .env.ce file!"; \
 		exit 1; \
 	}
@@ -2100,9 +2100,9 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # help: minikube-registry-url 	- Echo the dynamic registry URL (e.g. http://localhost:32790)
 
 .PHONY: minikube-install helm-install minikube-start minikube-stop minikube-delete \
-        minikube-tunnel minikube-dashboard minikube-image-load minikube-k8s-apply \
-        minikube-status minikube-context minikube-ssh minikube-reset minikube-registry-url \
-        minikube-port-forward
+	minikube-tunnel minikube-dashboard minikube-image-load minikube-k8s-apply \
+	minikube-status minikube-context minikube-ssh minikube-reset minikube-registry-url \
+	minikube-port-forward
 
 # -----------------------------------------------------------------------------
 # 🚀  INSTALLATION HELPERS
@@ -2285,7 +2285,7 @@ GIT_REPO    ?= https://github.com/ibm/mcp-context-forge.git
 GIT_PATH    ?= k8s
 
 .PHONY: argocd-cli-install argocd-install argocd-password argocd-forward \
-        argocd-login argocd-app-bootstrap argocd-app-sync
+	argocd-login argocd-app-bootstrap argocd-app-sync
 
 argocd-cli-install:
 	@echo "🔧 Installing Argo CD CLI..."
@@ -2347,7 +2347,7 @@ argocd-app-sync:
 # help: local-pypi-clean       - Full cycle: build → upload → install locally
 
 .PHONY: local-pypi-install local-pypi-start local-pypi-start-auth local-pypi-stop local-pypi-upload \
-        local-pypi-upload-auth local-pypi-test local-pypi-clean
+	local-pypi-upload-auth local-pypi-test local-pypi-clean
 
 LOCAL_PYPI_DIR := $(HOME)/local-pypi
 LOCAL_PYPI_URL := http://localhost:8085
@@ -2495,7 +2495,7 @@ local-pypi-debug:
 
 
 .PHONY: devpi-install devpi-init devpi-start devpi-stop devpi-setup-user devpi-upload \
-        devpi-delete devpi-test devpi-clean devpi-status devpi-web devpi-restart
+	devpi-delete devpi-test devpi-clean devpi-status devpi-web devpi-restart
 
 DEVPI_HOST := localhost
 DEVPI_PORT := 3141
@@ -2741,14 +2741,14 @@ devpi-delete: devpi-setup-user                 ## Delete mcp-contextforge-gatewa
 # ──────────────────────────
 # SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' -not -path './node_modules/*')
 SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
-    -not -path './node_modules/*' \
-    -not -path './.venv/*' \
-    -not -path './venv/*' \
-    -not -path './$(VENV_DIR)/*' \
-    -not -path './.git/*' \
-    -not -path './dist/*' \
-    -not -path './build/*' \
-    -not -path './.tox/*')
+	-not -path './node_modules/*' \
+	-not -path './.venv/*' \
+	-not -path './venv/*' \
+	-not -path './$(VENV_DIR)/*' \
+	-not -path './.git/*' \
+	-not -path './dist/*' \
+	-not -path './build/*' \
+	-not -path './.tox/*')
 
 
 .PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
