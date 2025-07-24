@@ -244,6 +244,37 @@ class GatewayService:
         else:
             self._redis_client = None
 
+    async def _validate_gateway_url(self, url: str, headers: dict, timeout=5):
+        """
+        Validate if the given URL is a live Server-Sent Events (SSE) endpoint.
+
+        This function performs a GET request followed by a HEAD request to the provided URL
+        to ensure the endpoint is reachable and returns a valid `Content-Type` header indicating
+        Server-Sent Events (`text/event-stream`).
+
+        Args:
+            url (str): The full URL of the endpoint to validate.
+            headers (dict): Headers to be included in the requests (e.g., Authorization).
+            timeout (int, optional): Timeout in seconds for both requests. Defaults to 5.
+
+        Returns:
+            bool: True if the endpoint is reachable and supports SSE (Content-Type is
+                'text/event-stream'), otherwise False.
+        """
+        async with httpx.AsyncClient() as client:
+            timeout = httpx.Timeout(timeout)
+            try:
+                async with client.stream("GET", url, headers=headers, timeout=timeout) as response:
+                    response.raise_for_status()
+                    response_head = await client.request("HEAD", url, headers=headers, timeout=timeout)
+                    response.raise_for_status()
+                    content_type = response_head.headers.get("Content-Type", "")
+                    if "text/event-stream" in content_type.lower():
+                        return True
+                    return False
+            except Exception:
+                return False
+
     async def initialize(self) -> None:
         """Initialize the service and start health check if this instance is the leader.
 
@@ -830,13 +861,11 @@ class GatewayService:
 
             # Update last seen timestamp
             gateway.last_seen = datetime.now(timezone.utc)
-
-            if "error" in result:
-                raise GatewayError(f"Gateway error: {result['error'].get('message')}")
-            return result.get("result")
-
-        except Exception as e:
-            raise GatewayConnectionError(f"Failed to forward request to {gateway.name}: {str(e)}")
+        except Exception:
+            raise GatewayConnectionError(f"Failed to forward request to {gateway.name}")
+        if "error" in result:
+            raise GatewayError(f"Gateway error: {result['error'].get('message')}")
+        return result.get("result")
 
     async def _handle_gateway_failure(self, gateway: str) -> None:
         """Tracks and handles gateway failures during health checks.
@@ -1158,21 +1187,23 @@ class GatewayService:
                 # Store the context managers so they stay alive
                 decoded_auth = decode_auth(authentication)
 
-                # Use async with for both sse_client and ClientSession
-                async with sse_client(url=server_url, headers=decoded_auth) as streams:
-                    async with ClientSession(*streams) as session:
-                        # Initialize the session
-                        response = await session.initialize()
-                        capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                if await self._validate_gateway_url(url=server_url, headers=decoded_auth):
+                    # Use async with for both sse_client and ClientSession
+                    async with sse_client(url=server_url, headers=decoded_auth) as streams:
+                        async with ClientSession(*streams) as session:
+                            # Initialize the session
+                            response = await session.initialize()
+                            capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
 
-                        response = await session.list_tools()
-                        tools = response.tools
-                        tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                            response = await session.list_tools()
+                            tools = response.tools
+                            tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
 
-                        tools = [ToolCreate.model_validate(tool) for tool in tools]
-                        logger.info(f"{tools[0]=}")
+                            tools = [ToolCreate.model_validate(tool) for tool in tools]
+                            logger.info(f"{tools[0]=}")
 
-                return capabilities, tools
+                    return capabilities, tools
+                raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
             async def connect_to_streamablehttp_server(server_url: str, authentication: Optional[Dict[str, str]] = None):
                 """
@@ -1217,8 +1248,8 @@ class GatewayService:
                 capabilities, tools = await connect_to_streamablehttp_server(url, authentication)
 
             return capabilities, tools
-        except Exception as e:
-            raise GatewayConnectionError(f"Failed to initialize gateway at {url}: {str(e)}")
+        except Exception:
+            raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).
