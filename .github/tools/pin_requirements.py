@@ -9,10 +9,11 @@ This script reads the dependencies from pyproject.toml and converts
 version specifiers from >= to == for reproducible builds.
 """
 
-import tomllib
+# Standard
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
+import tomllib
 
 
 def pin_requirements(pyproject_path="pyproject.toml", output_path="requirements.txt"):
@@ -78,6 +79,7 @@ def pin_requirements(pyproject_path="pyproject.toml", output_path="requirements.
 
 def main():
     """Main entry point."""
+    # Standard
     import argparse
 
     parser = argparse.ArgumentParser(
