@@ -11,12 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 ### Security Notice
 
 > **This is a security-focused release. Upgrading is highly recommended.**
-> 
+>
 > This release continues our security-first approach with the Admin UI and Admin API **disabled by default**. To enable these features for local development, update your `.env` file:
 > ```bash
 > # Enable the visual Admin UI (true/false)
 > MCPGATEWAY_UI_ENABLED=true
-> 
+>
 > # Enable the Admin API endpoints (true/false)
 > MCPGATEWAY_ADMIN_API_ENABLED=true
 > ```
@@ -131,7 +131,7 @@ This release represents a major milestone in code quality, security, and reliabi
 
 #### 🏆 Top Contributors in 0.4.0
 - **Mihai Criveti** (@crivetimihai) - Release coordinator, security improvements, and extensive testing infrastructure
-- **Madhav Kandukuri** (@madhav165) - Major input validation framework, security fixes, and test coverage improvements  
+- **Madhav Kandukuri** (@madhav165) - Major input validation framework, security fixes, and test coverage improvements
 - **Keval Mahajan** (@kevalmahajan) - HTTPX retry mechanism implementation and UI improvements
 - **Manav Gupta** (@manavgup) - Comprehensive doctest coverage and Playwright test suite
 
