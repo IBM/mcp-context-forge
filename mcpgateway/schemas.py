@@ -2033,6 +2033,11 @@ class GatewayRead(BaseModelWithConfigDict):
         """
         auth_type = values.auth_type
         auth_value_encoded = values.auth_value
+
+        # Skip validation logic if masked value
+        if auth_value_encoded == "*****":
+            return values
+
         auth_value = decode_auth(auth_value_encoded)
         if auth_type == "basic":
             auth = auth_value.get("Authorization")

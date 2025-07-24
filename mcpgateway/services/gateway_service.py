@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 import logging
 import os
 import tempfile
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING, Union
 import uuid
 
 # Third-Party
@@ -412,6 +412,106 @@ class GatewayService:
                 other: ExceptionGroup[BaseException]
             logger.error(f"Other grouped errors: {other.exceptions}")
             raise other.exceptions[0]
+
+    async def masked_GatewayRead(self, gateways: Union[GatewayRead, list[GatewayRead]]) -> Union[GatewayRead, list[GatewayRead]]:
+        """
+        Masks sensitive authentication fields in one or multiple GatewayRead objects.
+
+        This method takes a single GatewayRead instance or a list of them, and returns
+        the same type with sensitive fields replaced by "*****". The sensitive fields masked
+        include: "auth_username", "auth_password", "auth_token", "auth_header_value", "auth_value".
+
+        Args:
+            gateways (Union[GatewayRead, list[GatewayRead]]): One or more GatewayRead instances.
+
+        Returns:
+            Union[GatewayRead, list[GatewayRead]]: The input GatewayRead(s) with sensitive fields masked.
+
+        Examples:
+            >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.schemas import GatewayRead
+            >>> import asyncio
+            >>> # Create a mock GatewayRead instance
+            >>> gw = MagicMock()
+            >>> gw.model_dump.return_value = {
+            ...     "auth_username": "user",
+            ...     "auth_password": "pass",
+            ...     "auth_token": "token",
+            ...     "auth_header_value": "header",
+            ...     "auth_value": "value",
+            ...     "other_field": "data"
+            ... }
+            >>> # Patch model_validate to return the dict for simplicity
+            >>> GatewayRead.model_validate = staticmethod(lambda data: data)
+            >>> # Mock service with method
+            >>> class Service:
+            ...     async def masked_GatewayRead(self, gateways):
+            ...         single_input = False
+            ...         if not isinstance(gateways, list):
+            ...             gateways = [gateways]
+            ...             single_input = True
+            ...         masked_gateways = []
+            ...         sensitive_fields = [
+            ...             "auth_username", "auth_password", "auth_token",
+            ...             "auth_header_value", "auth_value"
+            ...         ]
+            ...         for gateway in gateways:
+            ...             data = gateway if isinstance(gateway, dict) else gateway.model_dump()
+            ...             for field in sensitive_fields:
+            ...                 if data.get(field):
+            ...                     data[field] = "*****"
+            ...             masked_gateways.append(GatewayRead.model_validate(data))
+            ...         return masked_gateways[0] if single_input else masked_gateways
+            >>> service = Service()
+            >>> # Test single gateway masking
+            >>> masked = asyncio.run(service.masked_GatewayRead(gw))
+            >>> masked["auth_username"]
+            '*****'
+            >>> masked["auth_password"]
+            '*****'
+            >>> masked["auth_token"]
+            '*****'
+            >>> masked["auth_header_value"]
+            '*****'
+            >>> masked["auth_value"]
+            '*****'
+            >>> masked["other_field"]
+            'data'
+            >>> # Test list of gateways
+            >>> masked_list = asyncio.run(service.masked_GatewayRead([gw, gw]))
+            >>> isinstance(masked_list, list)
+            True
+            >>> len(masked_list)
+            2
+            >>> masked_list[0]["auth_token"]
+            '*****'
+        """
+        single_input = False
+        if not isinstance(gateways, list):
+            gateways = [gateways]
+            single_input = True
+
+        masked_gateways = []
+        sensitive_fields = [
+            "auth_username",
+            "auth_password",
+            "auth_token",
+            "auth_header_value",
+            "auth_value",
+        ]
+
+        for gateway in gateways:
+            # data = gateway.model_dump()
+            if isinstance(gateway, dict):
+                data = gateway
+            else:
+                data = gateway.model_dump()
+            for field in sensitive_fields:
+                if data.get(field):
+                    data[field] = "*****"
+            masked_gateways.append(GatewayRead.model_validate(data))
+
+        return masked_gateways[0] if single_input else masked_gateways
 
     async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
         """List all registered gateways.

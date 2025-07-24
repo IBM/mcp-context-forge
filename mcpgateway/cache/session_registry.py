@@ -1198,10 +1198,10 @@ class SessionRegistry(SessionBackend):
             >>> from mcpgateway.cache.session_registry import SessionRegistry
             >>>
             >>> reg = SessionRegistry()
-            >>> body = {'protocol_version': '2025-03-26'}
+            >>> body = {'protocol_version': '2025-06-18'}
             >>> result = asyncio.run(reg.handle_initialize_logic(body))
             >>> result.protocol_version
-            '2025-03-26'
+            '2025-06-18'
             >>> result.server_info.name
             'MCP_Gateway'
             >>>
