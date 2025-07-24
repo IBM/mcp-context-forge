@@ -1,3 +1,5 @@
+*.sarif
+devskim-results.sarif
 debug_login_page.png
 docs/pstats.png
 mcp.prof
