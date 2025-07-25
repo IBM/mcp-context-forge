@@ -80,6 +80,8 @@ exec gunicorn -c gunicorn.config.py \
     --timeout "${GUNICORN_TIMEOUT}" \
     --max-requests "${GUNICORN_MAX_REQUESTS}" \
     --max-requests-jitter "${GUNICORN_MAX_REQUESTS_JITTER}" \
+    --reload \
+    --reload-extra-file gunicorn.config.py \
     --access-logfile - \
     --error-logfile - \
     --forwarded-allow-ips="*" \
