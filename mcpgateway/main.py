@@ -1780,7 +1780,7 @@ async def list_gateways(
     """
     logger.debug(f"User '{user}' requested list of gateways with include_inactive={include_inactive}")
     gateways = await gateway_service.list_gateways(db, include_inactive=include_inactive)
-    return await gateway_service.masked_GatewayRead(gateways)
+    return await gateway_service.masked_gateway_read(gateways)
 
 
 @gateway_router.post("", response_model=GatewayRead)
@@ -1829,7 +1829,7 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str 
     """
     logger.debug(f"User '{user}' requested gateway {gateway_id}")
     gateways = await gateway_service.get_gateway(db, gateway_id)
-    return await gateway_service.masked_GatewayRead(gateways)
+    return await gateway_service.masked_gateway_read(gateways)
 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)

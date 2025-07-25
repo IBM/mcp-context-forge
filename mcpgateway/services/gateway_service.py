@@ -413,7 +413,7 @@ class GatewayService:
             logger.error(f"Other grouped errors: {other.exceptions}")
             raise other.exceptions[0]
 
-    async def masked_GatewayRead(self, gateways: Union[GatewayRead, list[GatewayRead]]) -> Union[GatewayRead, list[GatewayRead]]:
+    async def masked_gateway_read(self, gateways: Union[GatewayRead, list[GatewayRead]]) -> Union[GatewayRead, list[GatewayRead]]:
         """
         Masks sensitive authentication fields in one or multiple GatewayRead objects.
 
@@ -445,7 +445,7 @@ class GatewayService:
             >>> GatewayRead.model_validate = staticmethod(lambda data: data)
             >>> # Mock service with method
             >>> class Service:
-            ...     async def masked_GatewayRead(self, gateways):
+            ...     async def masked_gateway_read(self, gateways):
             ...         single_input = False
             ...         if not isinstance(gateways, list):
             ...             gateways = [gateways]
@@ -464,7 +464,7 @@ class GatewayService:
             ...         return masked_gateways[0] if single_input else masked_gateways
             >>> service = Service()
             >>> # Test single gateway masking
-            >>> masked = asyncio.run(service.masked_GatewayRead(gw))
+            >>> masked = asyncio.run(service.masked_gateway_read(gw))
             >>> masked["auth_username"]
             '*****'
             >>> masked["auth_password"]
@@ -478,7 +478,7 @@ class GatewayService:
             >>> masked["other_field"]
             'data'
             >>> # Test list of gateways
-            >>> masked_list = asyncio.run(service.masked_GatewayRead([gw, gw]))
+            >>> masked_list = asyncio.run(service.masked_gateway_read([gw, gw]))
             >>> isinstance(masked_list, list)
             True
             >>> len(masked_list)
