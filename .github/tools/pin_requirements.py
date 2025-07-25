@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Extract dependencies from pyproject.toml and pin versions.
 
 Copyright 2025 Mihai Criveti
