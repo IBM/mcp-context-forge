@@ -736,13 +736,13 @@ class TestAdminGatewayRoutes:
             "enabled": True,
             "auth_type": "bearer",
             "auth_token": "Bearer hidden",  # Should be masked
-            "auth_value": "Some value"
+            "auth_value": "Some value",
         }
 
         mock_list_gateways.return_value = [mock_gateway]
         result = await admin_list_gateways(False, mock_db, "test-user")
 
-        assert result[0].auth_type == "bearer"
+        assert result[0]["authType"] == "bearer"
 
     @patch.object(GatewayService, "get_gateway")
     async def test_admin_get_gateway_all_transports(self, mock_get_gateway, mock_db):
@@ -760,7 +760,7 @@ class TestAdminGatewayRoutes:
             mock_get_gateway.return_value = mock_gateway
 
             result = await admin_get_gateway(f"gateway-{transport}", mock_db, "test-user")
-            assert result.transport == transport
+            assert result["transport"] == transport
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_valid_auth_types(self, mock_register_gateway, mock_request, mock_db):

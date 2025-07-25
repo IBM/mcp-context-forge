@@ -1018,7 +1018,8 @@ async def admin_list_gateways(
         ...     updated_at=datetime.now(timezone.utc),
         ...     is_active=True,
         ...     auth_type=None, auth_username=None, auth_password=None, auth_token=None,
-        ...     auth_header_key=None, auth_header_value=None
+        ...     auth_header_key=None, auth_header_value=None,
+        ...     slug="test-gateway"
         ... )
         >>>
         >>> # Mock the gateway_service.list_gateways method
@@ -1039,7 +1040,8 @@ async def admin_list_gateways(
         ...     description="Another test", transport="HTTP", created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc), enabled=False,
         ...     auth_type=None, auth_username=None, auth_password=None, auth_token=None,
-        ...     auth_header_key=None, auth_header_value=None
+        ...     auth_header_key=None, auth_header_value=None,
+        ...     slug="test-gateway"
         ... )
         >>> gateway_service.list_gateways = AsyncMock(return_value=[
         ...     mock_gateway, # Return the GatewayRead objects, not pre-dumped dicts
@@ -1078,7 +1080,8 @@ async def admin_list_gateways(
     """
     logger.debug(f"User {user} requested gateway list")
     gateways = await gateway_service.list_gateways(db, include_inactive=include_inactive)
-    return await gateway_service.masked_GatewayRead([gateway.model_dump(by_alias=True) for gateway in gateways])
+    masked_gateways = await gateway_service.masked_GatewayRead(gateways)
+    return [gateway.model_dump(by_alias=True) for gateway in masked_gateways]
 
 
 @admin_router.post("/gateways/{gateway_id}/toggle")
@@ -2111,7 +2114,8 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         ...     description="Gateway for getting", transport="HTTP",
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
         ...     enabled=True, auth_type=None, auth_username=None, auth_password=None,
-        ...     auth_token=None, auth_header_key=None, auth_header_value=None
+        ...     auth_token=None, auth_header_key=None, auth_header_value=None,
+        ...     slug="test-gateway"
         ... )
         >>>
         >>> # Mock the gateway_service.get_gateway method
@@ -2155,8 +2159,9 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
     """
     logger.debug(f"User {user} requested details for gateway ID {gateway_id}")
     try:
-        gateways = await gateway_service.get_gateway(db, gateway_id)
-        return await gateway_service.masked_GatewayRead(gateways.model_dump(by_alias=True))
+        gateway = await gateway_service.get_gateway(db, gateway_id)
+        masked_gateway = await gateway_service.masked_GatewayRead(gateway)
+        return masked_gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
