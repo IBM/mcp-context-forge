@@ -244,7 +244,7 @@ class GatewayService:
         else:
             self._redis_client = None
 
-    async def _validate_gateway_url(self, url: str, headers: dict, timeout=5):
+    async def _validate_gateway_url(self, url: str, headers: dict, transport_type: str, timeout=5):
         """
         Validate if the given URL is a live Server-Sent Events (SSE) endpoint.
 
@@ -255,6 +255,7 @@ class GatewayService:
         Args:
             url (str): The full URL of the endpoint to validate.
             headers (dict): Headers to be included in the requests (e.g., Authorization).
+            transport_type (str): SSE or STREAMABLEHTTP
             timeout (int, optional): Timeout in seconds for both requests. Defaults to 5.
 
         Returns:
@@ -265,12 +266,22 @@ class GatewayService:
             timeout = httpx.Timeout(timeout)
             try:
                 async with client.stream("GET", url, headers=headers, timeout=timeout) as response:
-                    response.raise_for_status()
-                    response_head = await client.request("HEAD", url, headers=headers, timeout=timeout)
-                    response.raise_for_status()
-                    content_type = response_head.headers.get("Content-Type", "")
-                    if "text/event-stream" in content_type.lower():
-                        return True
+                    response_headers = dict(response.headers)
+                    location = response_headers.get("location")
+                    content_type = response_headers.get("content-type")
+                    if transport_type == "STREAMABLEHTTP":
+                        if location:
+                            async with client.stream("GET", location, headers=headers, timeout=timeout) as response_redirect:
+                                response_headers = dict(response_redirect.headers)
+                                mcp_session_id = response_headers.get("mcp-session-id")
+                                content_type = response_headers.get("content-type")
+                                if mcp_session_id is not None and mcp_session_id != "":
+                                    if content_type is not None and content_type != "" and "application/json" in content_type:
+                                        return True
+
+                    elif transport_type == "SSE":
+                        if content_type is not None and content_type != "" and "text/event-stream" in content_type:
+                            return True
                     return False
             except Exception:
                 return False
@@ -1187,7 +1198,7 @@ class GatewayService:
                 # Store the context managers so they stay alive
                 decoded_auth = decode_auth(authentication)
 
-                if await self._validate_gateway_url(url=server_url, headers=decoded_auth):
+                if await self._validate_gateway_url(url=server_url, headers=decoded_auth, transport_type="SSE"):
                     # Use async with for both sse_client and ClientSession
                     async with sse_client(url=server_url, headers=decoded_auth) as streams:
                         async with ClientSession(*streams) as session:
@@ -1220,25 +1231,26 @@ class GatewayService:
                     authentication = {}
                 # Store the context managers so they stay alive
                 decoded_auth = decode_auth(authentication)
+                if await self._validate_gateway_url(url=server_url, headers=decoded_auth, transport_type="STREAMABLEHTTP"):
+                    # Use async with for both streamablehttp_client and ClientSession
+                    async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, _get_session_id):
+                        async with ClientSession(read_stream, write_stream) as session:
+                            # Initialize the session
+                            response = await session.initialize()
+                            # if get_session_id:
+                            #     session_id = get_session_id()
+                            #     if session_id:
+                            #         print(f"Session ID: {session_id}")
+                            capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                            response = await session.list_tools()
+                            tools = response.tools
+                            tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                            tools = [ToolCreate.model_validate(tool) for tool in tools]
+                            for tool in tools:
+                                tool.request_type = "STREAMABLEHTTP"
 
-                # Use async with for both streamablehttp_client and ClientSession
-                async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, _get_session_id):
-                    async with ClientSession(read_stream, write_stream) as session:
-                        # Initialize the session
-                        response = await session.initialize()
-                        # if get_session_id:
-                        #     session_id = get_session_id()
-                        #     if session_id:
-                        #         print(f"Session ID: {session_id}")
-                        capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                        response = await session.list_tools()
-                        tools = response.tools
-                        tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
-                        tools = [ToolCreate.model_validate(tool) for tool in tools]
-                        for tool in tools:
-                            tool.request_type = "STREAMABLEHTTP"
-
-                return capabilities, tools
+                    return capabilities, tools
+                raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
             capabilities = {}
             tools = []
