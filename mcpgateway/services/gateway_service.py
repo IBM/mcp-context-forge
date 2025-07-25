@@ -492,13 +492,7 @@ class GatewayService:
             single_input = True
 
         masked_gateways = []
-        sensitive_fields = [
-            "auth_username", "authUsername",
-            "auth_password", "authPassword",
-            "auth_token", "authToken",
-            "auth_header_value", "authHeaderValue",
-            "auth_value", "authValue"
-        ]
+        sensitive_fields = ["auth_username", "authUsername", "auth_password", "authPassword", "auth_token", "authToken", "auth_header_value", "authHeaderValue", "auth_value", "authValue"]
 
         for gateway in gateways:
             # data = gateway.model_dump()
