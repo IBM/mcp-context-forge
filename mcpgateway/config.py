@@ -494,7 +494,8 @@ class Settings(BaseSettings):
         r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
     )
 
-    validation_dangerous_js_pattern: str = r"javascript:|vbscript:|on\w+\s*=|data:.*script"
+    validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
+
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
