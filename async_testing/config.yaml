@@ -4,20 +4,20 @@ async_linting:
   mypy_config:
     warn_unused_coroutine: true
     strict: true
-  
+
 profiling:
   output_dir: "async_testing/profiles"
   snakeviz_port: 8080
   profile_scenarios:
-    - "websocket_stress_test" 
+    - "websocket_stress_test"
     - "database_query_performance"
     - "concurrent_mcp_calls"
-    
+
 monitoring:
   aiomonitor_port: 50101
   debug_mode: true
   task_tracking: true
-  
+
 performance_thresholds:
   websocket_connection: 100  # ms
   database_query: 50         # ms
