@@ -184,19 +184,6 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 ## --- House-keeping -----------------------------------------------------------
 # help: clean                - Remove caches, build artefacts, virtualenv, docs, certs, coverage, SBOM, database files, etc.
 .PHONY: clean
-# clean:
-# 	@echo "🧹  Cleaning workspace..."
-# 	@# Remove matching directories
-# 	@for dir in $(DIRS_TO_CLEAN); do \
-# 		find . -type d -name "$$dir" -exec rm -rf {} +; \
-# 	done
-# 	@# Remove listed files
-# 	@rm -f $(FILES_TO_CLEAN)
-# 	@# Delete Python bytecode
-# 	@find . -name '*.py[cod]' -delete
-# 	@# Delete coverage annotated files
-# 	@find . -name '*.py,cover' -delete
-# 	@echo "✅  Clean complete."
 clean:
 	@echo "🧹  Cleaning workspace..."
 	@bash -eu -o pipefail -c '\
@@ -277,12 +264,6 @@ htmlcov:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -i -d $(COVERAGE_DIR)"
 	@echo "✅  HTML coverage report ready → $(COVERAGE_DIR)/index.html"
 
-# pytest-examples:
-# 	@echo "🧪 Testing README examples..."
-# 	@test -d "$(VENV_DIR)" || $(MAKE) venv
-# 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-# 		python3 -m pip install -q pytest pytest-examples && \
-# 		pytest -v test_readme.py"
 pytest-examples:
 	@echo "🧪 Testing README examples..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -696,7 +677,7 @@ security-scan: trivy grype-scan
 LINTERS += yamllint jsonlint tomllint
 
 # ➋  Individual targets
-# .PHONY: yamllint jsonlint tomllint
+.PHONY: yamllint jsonlint tomllint
 
 yamllint:                         ## 📑 YAML linting
 	@echo '📑  yamllint ...'
@@ -943,24 +924,15 @@ trivy-install:
 	@echo "📥 Installing Trivy..."
 	@curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
-# trivy:
-# 	@command -v trivy >/dev/null 2>&1 || { \
-# 		echo "❌ trivy not installed."; \
-# 		echo "💡 Install with:"; \
-# 		echo "   • macOS: brew install trivy"; \
-# 		echo "   • Linux: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin"; \
-# 		echo "   • Or run: make trivy-install"; \
-# 		exit 1; \
-# 	}
 trivy:
-	@command -v trivy >/dev/null 2>&1 || { echo "⚠️ trivy not installed"; exit 1; }
-	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user enable --now podman.socket 2>/dev/null || true; \
-	fi
-	@echo "🔎  trivy vulnerability scan..."
-	# (existing trivy scan commands)
-
-
+	@command -v trivy >/dev/null 2>&1 || { \
+		echo "❌ trivy not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • macOS: brew install trivy"; \
+		echo "   • Linux: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin"; \
+		echo "   • Or run: make trivy-install"; \
+		exit 1; \
+	}
 	@systemctl --user enable --now podman.socket 2>/dev/null || true
 	@echo "🔎  trivy vulnerability scan..."
 	@trivy --format table --severity HIGH,CRITICAL image $(IMG)
@@ -1381,30 +1353,6 @@ container-health:
 	@echo "Logs:"
 	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{range .State.Health.Log}}{{.Output}}{{end}}' 2>/dev/null || true
 
-# container-build-multi:
-# 	@echo "🔨 Building multi-architecture image..."
-# 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
-# 		if ! docker buildx ls | grep -q "$(PROJECT_NAME)-builder"; then \
-# 			echo "📦 Creating buildx builder..."; \
-# 			docker buildx create --name $(PROJECT_NAME)-builder --use; \
-# 		fi; \
-# 		docker buildx build \
-# 			--platform=linux/amd64,linux/arm64 \
-# 			-f $(CONTAINER_FILE) \
-# 			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-# 			--push \
-# 			.; \
-# 	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
-# 		echo "📦 Building manifest with Podman..."; \
-# 		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64 \
-# 			-f $(CONTAINER_FILE) \
-# 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
-# 			.; \
-# 		echo "💡 To push: podman manifest push $(IMAGE_BASE):$(IMAGE_TAG)"; \
-# 	else \
-# 		echo "❌ Multi-arch builds require Docker buildx or Podman"; \
-# 		exit 1; \
-# 	fi
 container-build-multi:
 	@echo "🔨 Building multi-architecture image..."
 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
@@ -1430,7 +1378,6 @@ container-build-multi:
 		echo "❌ Multi-arch builds require Docker buildx or Podman"; \
 		exit 1; \
 	fi
-
 
 # Helper targets for debugging image issues
 image-list:
@@ -1494,20 +1441,6 @@ container-validate-env:
 	@test -f .env || { echo "❌ Missing .env file"; exit 1; }
 	@grep -q "^MCP_" .env || { echo "⚠️  No MCP_ variables found in .env"; }
 	@echo "✅ Environment validated"
-
-# container-check-ports:
-# 	@echo "🔍 Checking port availability..."
-# 	@failed=0; \
-# 	for port in 4444 8000 8080; do \
-# 		if lsof -Pi :$$port -sTCP:LISTEN -t >/dev/null 2>&1; then \
-# 			echo "❌ Port $$port is already in use"; \
-# 			lsof -Pi :$$port -sTCP:LISTEN; \
-# 			failed=1; \
-# 		else \
-# 			echo "✅ Port $$port is available"; \
-# 		fi; \
-# 	done; \
-# 	test $$failed -eq 0
 
 container-check-ports:
 	@echo "🔍 Checking port availability..."
@@ -1573,6 +1506,7 @@ container-wait-healthy:
 	done; \
 	echo "⚠️  Container not healthy after 60 seconds"; \
 	exit 1
+
 # =============================================================================
 # 🦭 PODMAN CONTAINER BUILD & RUN
 # =============================================================================
@@ -1798,15 +1732,11 @@ compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
 
-# compose-restart:
-# 	@echo "🔄  Restarting stack (build + pull if needed)..."
-# 	IMAGE_LOCAL=$(IMAGE_LOCAL) $(COMPOSE) up -d --pull=missing --build  # These flags might conflict
 compose-restart:
 	@echo "🔄  Restarting stack..."
 	$(COMPOSE) pull
 	$(COMPOSE) build
 	IMAGE_LOCAL=$(IMAGE_LOCAL) $(COMPOSE) up -d
-
 
 compose-build:
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) build
@@ -2739,7 +2669,6 @@ devpi-delete: devpi-setup-user                 ## Delete mcp-contextforge-gatewa
 # ──────────────────────────
 # Which shell files to scan
 # ──────────────────────────
-# SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' -not -path './node_modules/*')
 SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
 	-not -path './node_modules/*' \
 	-not -path './.venv/*' \
@@ -2785,7 +2714,6 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	  /bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --quiet bashate" ; \
 	fi
 	@echo "✅  Shell linters ready."
-
 
 # -----------------------------------------------------------------------------
 
@@ -3033,11 +2961,13 @@ test-full: coverage test-ui-report
 # help: pip-audit           - Audit Python dependencies for published CVEs
 # help: gitleaks-install    - Install gitleaks secret scanner
 # help: gitleaks            - Scan git history for secrets
+# help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
+# help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy dlint interrogate prospector pip-audit
+SECURITY_TOOLS := semgrep dodgy dlint interrogate prospector pip-audit devskim
 
-.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim
 
 ## --------------------------------------------------------------------------- ##
 ##  Master security target
@@ -3140,6 +3070,63 @@ gitleaks:                           ## 🔍 Scan for secrets in git history
 	@echo "💡 To scan git history: gitleaks detect --source . --log-opts='--all'"
 
 ## --------------------------------------------------------------------------- ##
+##  DevSkim (.NET-based security patterns scanner)
+## --------------------------------------------------------------------------- ##
+devskim-install-dotnet:             ## 📦 Install .NET SDK and DevSkim CLI
+	@echo "📦 Installing .NET SDK and DevSkim CLI..."
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		echo "🍏 Installing .NET SDK for macOS..."; \
+		brew install --cask dotnet-sdk || brew upgrade --cask dotnet-sdk; \
+	elif [ "$$(uname)" = "Linux" ]; then \
+		echo "🐧 Installing .NET SDK for Linux..."; \
+		if command -v apt-get >/dev/null 2>&1; then \
+			wget -q https://packages.microsoft.com/config/ubuntu/$$(lsb_release -rs)/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb 2>/dev/null || \
+			wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb; \
+			sudo dpkg -i /tmp/packages-microsoft-prod.deb; \
+			sudo apt-get update; \
+			sudo apt-get install -y dotnet-sdk-9.0 || sudo apt-get install -y dotnet-sdk-8.0 || sudo apt-get install -y dotnet-sdk-7.0; \
+			rm -f /tmp/packages-microsoft-prod.deb; \
+		elif command -v dnf >/dev/null 2>&1; then \
+			sudo dnf install -y dotnet-sdk-9.0 || sudo dnf install -y dotnet-sdk-8.0; \
+		else \
+			echo "❌ Unsupported Linux distribution. Please install .NET SDK manually."; \
+			echo "   Visit: https://dotnet.microsoft.com/download"; \
+			exit 1; \
+		fi; \
+	else \
+		echo "❌ Unsupported OS. Please install .NET SDK manually."; \
+		echo "   Visit: https://dotnet.microsoft.com/download"; \
+		exit 1; \
+	fi
+	@echo "🔧 Installing DevSkim CLI tool..."
+	@export PATH="$$PATH:$$HOME/.dotnet/tools" && \
+		dotnet tool install --global Microsoft.CST.DevSkim.CLI || \
+		dotnet tool update --global Microsoft.CST.DevSkim.CLI
+	@echo "✅  DevSkim installed successfully!"
+	@echo "💡  You may need to add ~/.dotnet/tools to your PATH:"
+	@echo "    export PATH=\"\$$PATH:\$$HOME/.dotnet/tools\""
+
+devskim:                            ## 🛡️  Run DevSkim security patterns analysis
+	@echo "🛡️  Running DevSkim static analysis..."
+	@if command -v devskim >/dev/null 2>&1 || [ -f "$$HOME/.dotnet/tools/devskim" ]; then \
+		export PATH="$$PATH:$$HOME/.dotnet/tools" && \
+		echo "📂 Scanning mcpgateway/ for security anti-patterns..." && \
+		devskim analyze --source-code mcpgateway --output-file devskim-results.sarif -f sarif && \
+		echo "" && \
+		echo "📊 Detailed findings:" && \
+		devskim analyze --source-code mcpgateway -f text && \
+		echo "" && \
+		echo "📄 SARIF report saved to: devskim-results.sarif" && \
+		echo "💡 To view just the summary: devskim analyze --source-code mcpgateway -f text | grep -E '(Critical|Important|Moderate|Low)' | sort | uniq -c"; \
+	else \
+		echo "❌ DevSkim not found in PATH or ~/.dotnet/tools/"; \
+		echo "💡 Install with:"; \
+		echo "   • Run 'make devskim-install-dotnet'"; \
+		echo "   • Or install .NET SDK and run: dotnet tool install --global Microsoft.CST.DevSkim.CLI"; \
+		echo "   • Then add to PATH: export PATH=\"\$$PATH:\$$HOME/.dotnet/tools\""; \
+	fi
+
+## --------------------------------------------------------------------------- ##
 ##  Security reporting and advanced targets
 ## --------------------------------------------------------------------------- ##
 security-report:                    ## 📊 Generate comprehensive security report
@@ -3156,6 +3143,14 @@ security-report:                    ## 📊 Generate comprehensive security repo
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q dodgy && \
 		$(VENV_DIR)/bin/dodgy mcpgateway tests || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
+	@echo "" >> $(DOCS_DIR)/docs/security/report.md
+	@echo "## DevSkim Security Anti-patterns" >> $(DOCS_DIR)/docs/security/report.md
+	@if command -v devskim >/dev/null 2>&1 || [ -f "$$HOME/.dotnet/tools/devskim" ]; then \
+		export PATH="$$PATH:$$HOME/.dotnet/tools" && \
+		devskim analyze --source-code mcpgateway --format text >> $(DOCS_DIR)/docs/security/report.md 2>&1 || true; \
+	else \
+		echo "DevSkim not installed - skipping" >> $(DOCS_DIR)/docs/security/report.md; \
+	fi
 	@echo "✅ Security report saved to $(DOCS_DIR)/docs/security/report.md"
 
 security-fix:                       ## 🔧 Auto-fix security issues where possible
@@ -3173,3 +3168,4 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "   - Dependency updates (run 'make update')"
 	@echo "   - Secrets in code (review dodgy/gitleaks output)"
 	@echo "   - Security patterns (review semgrep output)"
+	@echo "   - DevSkim findings (review devskim-results.sarif)"
