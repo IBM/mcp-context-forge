@@ -517,7 +517,7 @@ class SessionManagerWrapper:
         """
 
         path = scope["modified_path"]
-        match = re.search(r"/servers/(?P<server_id>\d+)/mcp", path)
+        match = re.search(r"/servers/(?P<server_id>[^/]+)/mcp", path)
 
         if match:
             server_id = match.group("server_id")
