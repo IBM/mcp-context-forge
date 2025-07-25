@@ -1078,7 +1078,7 @@ async def admin_list_gateways(
     """
     logger.debug(f"User {user} requested gateway list")
     gateways = await gateway_service.list_gateways(db, include_inactive=include_inactive)
-    return [gateway.model_dump(by_alias=True) for gateway in gateways]
+    return await gateway_service.masked_GatewayRead([gateway.model_dump(by_alias=True) for gateway in gateways])
 
 
 @admin_router.post("/gateways/{gateway_id}/toggle")
@@ -2155,8 +2155,8 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
     """
     logger.debug(f"User {user} requested details for gateway ID {gateway_id}")
     try:
-        gateway = await gateway_service.get_gateway(db, gateway_id)
-        return gateway.model_dump(by_alias=True)
+        gateways = await gateway_service.get_gateway(db, gateway_id)
+        return await gateway_service.masked_GatewayRead(gateways.model_dump(by_alias=True))
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

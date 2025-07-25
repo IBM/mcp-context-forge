@@ -493,11 +493,11 @@ class GatewayService:
 
         masked_gateways = []
         sensitive_fields = [
-            "auth_username",
-            "auth_password",
-            "auth_token",
-            "auth_header_value",
-            "auth_value",
+            "auth_username", "authUsername",
+            "auth_password", "authPassword",
+            "auth_token", "authToken",
+            "auth_header_value", "authHeaderValue",
+            "auth_value", "authValue"
         ]
 
         for gateway in gateways:
