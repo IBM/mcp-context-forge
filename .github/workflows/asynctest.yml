@@ -1,13 +1,11 @@
 # ===============================================================
-# 🧪  PyTest & Coverage - Quality Gate
+# 🔄  Async Safety & Performance Testing
 # ===============================================================
 #
-#   - runs the full test-suite across three Python versions
-#   - measures branch + line coverage (fails < 40 %)
-#   - uploads the XML/HTML coverage reports as build artifacts
-#   - (optionally) generates / commits an SVG badge - kept disabled
-#   - posts a concise per-file coverage table to the job summary
-#   - executes on every push / PR to *main*  ➕  a weekly cron
+#   - runs the async safety and performance tests across multiple Python versions
+#   - includes linting, debugging, profiling, benchmarking, and validation
+#   - uploads the test artifacts as build artifacts
+#   - performs a performance regression check
 # ---------------------------------------------------------------
 
 name: Tests & Coverage
