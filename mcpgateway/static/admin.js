@@ -1419,6 +1419,7 @@ async function editTool(toolId) {
         );
 
         if (!response.ok) {
+            // If the response is not OK, throw an error
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
@@ -4194,7 +4195,7 @@ async function handleResourceFormSubmit(e) {
     const form = e.target;
     const formData = new FormData(form);
     const status = safeGetElement("status-resources");
-    const loading = safeGetElement("add-gateway-loading");
+    const loading = safeGetElement("add-resource-loading");
     try {
         // Validate inputs
         const name = formData.get("name");
@@ -4391,6 +4392,61 @@ async function handleToolFormSubmit(event) {
         showErrorMessage(error.message);
     }
 }
+async function handleEditToolFormSubmit(event) {
+    event.preventDefault();
+
+    const form = event.target;
+
+    try {
+        const formData = new FormData(form);
+
+        // Basic validation (customize as needed)
+        const name = formData.get("name");
+        const url = formData.get("url");
+        const nameValidation = validateInputName(name, "tool");
+        const urlValidation = validateUrl(url);
+
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+        if (!urlValidation.valid) {
+            throw new Error(urlValidation.error);
+        }
+
+        // // Save CodeMirror editors' contents if present
+        
+        if (window.editToolHeadersEditor) window.editToolHeadersEditor.save();
+        if (window.editToolSchemaEditor) window.editToolSchemaEditor.save();
+
+        const isInactiveCheckedBool = isInactiveChecked("tools");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+            headers: { "X-Requested-With": "XMLHttpRequest" }
+        });
+       console.log("response:", response);
+       result = await response.json();
+       console.log("result edit tool form:", result);
+       if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        else {
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#tools`
+                : `${window.ROOT_PATH}/admin#tools`;
+            window.location.href = redirectUrl;
+        }
+
+    } catch (error) {
+        console.error("Fetch error:", error);
+        showErrorMessage(error.message);
+    }
+}
+
+
 
 // ===================================================================
 // ENHANCED FORM VALIDATION for All Forms
@@ -4925,6 +4981,16 @@ function setupFormHandlers() {
             }
         });
     }
+    const editToolForm = safeGetElement("edit-tool-form");
+    if (editToolForm) {
+        editToolForm.addEventListener("submit", handleEditToolFormSubmit);
+        editToolForm.addEventListener("click", () => {
+            if (getComputedStyle(editToolForm).display !== "none") {
+                refreshEditors();
+            }
+        });
+    }
+
 }
 
 function setupSchemaModeHandlers() {

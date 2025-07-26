@@ -417,20 +417,27 @@ class TestAdminToolRoutes:
         """Test editing tool with all possible error paths."""
         tool_id = "tool-1"
 
-        # Test ToolNameConflictError
-        mock_update_tool.side_effect = ToolNameConflictError("Name already exists")
-        result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
-        assert result.status_code == 400
+        # IntegrityError should return 409 with JSON body
+        # Third-Party
+        from sqlalchemy.exc import IntegrityError
 
-        # Test ToolError
+        mock_update_tool.side_effect = IntegrityError("Integrity constraint", {}, Exception("Duplicate key"))
+        result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
+        assert result.status_code == 409
+
+        # ToolError should return 500 with JSON body
         mock_update_tool.side_effect = ToolError("Tool configuration error")
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
         assert result.status_code == 500
+        data = result.body
+        assert b"Tool configuration error" in data
 
-        # Test generic exception
+        # Generic Exception should return 500 with JSON body
         mock_update_tool.side_effect = Exception("Unexpected error")
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
         assert result.status_code == 500
+        data = result.body
+        assert b"Unexpected error" in data
 
     @patch.object(ToolService, "update_tool")
     async def test_admin_edit_tool_with_empty_optional_fields(self, mock_update_tool, mock_request, mock_db):
@@ -451,7 +458,12 @@ class TestAdminToolRoutes:
 
         result = await admin_edit_tool("tool-1", mock_request, mock_db, "test-user")
 
-        assert isinstance(result, RedirectResponse)
+        # Validate response type and content
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is True
+        assert payload["message"] == "Edit tool successfully"
 
         # Verify empty strings are handled correctly
         call_args = mock_update_tool.call_args[0]
