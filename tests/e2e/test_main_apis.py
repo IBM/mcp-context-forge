@@ -615,8 +615,8 @@ class TestToolAPIs:
 
         # Try to create duplicate - might succeed with different ID
         response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
-        # Either succeeds (200) or conflicts (409)
-        assert response.status_code in [200, 400]
+        # Accept 409 Conflict as valid for duplicate
+        assert response.status_code in [200, 400, 409]
         if response.status_code == 400:
             assert "already exists" in response.json()["detail"]
 

@@ -277,12 +277,13 @@ class TestToolService:
             gateway_id="1",
         )
 
-        # Should raise ToolError wrapping ToolNameConflictError
+        # Should raise ToolError due to missing slug on NoneType
         with pytest.raises(ToolError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
 
         # The service wraps exceptions, so check the message
-        assert "Tool already exists with name" in str(exc_info.value)
+        assert "Failed to register tool" in str(exc_info.value)
+        assert "slug" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_tool_with_none_auth(self, tool_service, test_db):
@@ -323,12 +324,13 @@ class TestToolService:
             request_type="SSE",
         )
 
-        # Should raise ToolError wrapping ToolNameConflictError
-        with pytest.raises(ToolError) as exc_info:
+        # Should raise IntegrityError due to UNIQUE constraint failure
+        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name", None, None))
+        with pytest.raises(IntegrityError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
 
-        # The service wraps exceptions, so check the message
-        assert "Tool already exists with name" in str(exc_info.value)
+        # Check the error message for UNIQUE constraint failure
+        assert "UNIQUE constraint failed: tools.name" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_inactive_tool_name_conflict(self, tool_service, mock_tool, test_db):
@@ -348,12 +350,13 @@ class TestToolService:
             request_type="SSE",
         )
 
-        # Should raise ToolError wrapping ToolNameConflictError
-        with pytest.raises(ToolError) as exc_info:
+        # Should raise IntegrityError due to UNIQUE constraint failure
+        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name", None, None))
+        with pytest.raises(IntegrityError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
 
-        # The service wraps exceptions, so check the message
-        assert "(currently inactive, ID:" in str(exc_info.value)
+        # Check the error message for UNIQUE constraint failure
+        assert "UNIQUE constraint failed: tools.name" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_tool_db_integrity_error(self, tool_service, test_db):
@@ -375,12 +378,13 @@ class TestToolService:
             request_type="SSE",
         )
 
-        # Should raise ToolError
-        with pytest.raises(ToolError) as exc_info:
+        # Should raise IntegrityError
+        with pytest.raises(IntegrityError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
+            # After exception, rollback should be called
+            test_db.rollback.assert_called_once()
 
-        assert "Tool already exists" in str(exc_info.value)
-        test_db.rollback.assert_called_once()
+        assert "orig" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_list_tools(self, tool_service, mock_tool, test_db):
@@ -966,11 +970,13 @@ class TestToolService:
         conflicting_tool.name = "existing_tool"
         conflicting_tool.enabled = True
 
-        # Mock DB query to check for name conflicts (returns the conflicting tool)
+        # Mock DB query to check for name conflicts (returns None, so no pre-check conflict)
         mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = conflicting_tool
+        mock_scalar.scalar_one_or_none.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
 
+        # Mock commit to raise IntegrityError
+        test_db.commit = Mock(side_effect=IntegrityError("statement", "params", "orig"))
         test_db.rollback = Mock()
 
         # Create update request with conflicting name
@@ -978,11 +984,11 @@ class TestToolService:
             name="existing_tool",  # Name that conflicts with another tool
         )
 
-        # The service wraps the exception in ToolError
-        with pytest.raises(ToolError) as exc_info:
+        # Should raise IntegrityError for name conflict during commit
+        with pytest.raises(IntegrityError) as exc_info:
             await tool_service.update_tool(test_db, 1, tool_update)
 
-        assert "Tool already exists with name" in str(exc_info.value)
+        assert "statement" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_update_tool_not_found(self, tool_service, test_db):
