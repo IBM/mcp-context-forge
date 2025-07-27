@@ -2264,7 +2264,7 @@ argocd-app-sync:
 # =============================================================================
 # help: 🏠 LOCAL PYPI SERVER
 # help: local-pypi-install     - Install pypiserver for local testing
-# help: local-pypi-start       - Start local PyPI server on :8084 (no auth)
+# help: local-pypi-start       - Start local PyPI server on :8085 (no auth)
 # help: local-pypi-start-auth  - Start local PyPI server with basic auth (admin/admin)
 # help: local-pypi-stop        - Stop local PyPI server
 # help: local-pypi-upload      - Upload existing package to local PyPI (no auth)
@@ -2286,12 +2286,12 @@ local-pypi-install:
 	@mkdir -p $(LOCAL_PYPI_DIR)
 
 local-pypi-start: local-pypi-install local-pypi-stop
-	@echo "🚀  Starting local PyPI server on http://localhost:8084..."
+	@echo "🚀  Starting local PyPI server on http://localhost:8085..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 	export PYPISERVER_BOTTLE_MEMFILE_MAX_OVERRIDE_BYTES=10485760 && \
-	pypi-server run -p 8084 -a . -P . $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
+	pypi-server run -p 8085 -a . -P . $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
 	@sleep 2
-	@echo "✅  Local PyPI server started at http://localhost:8084"
+	@echo "✅  Local PyPI server started at http://localhost:8085"
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
 	@echo "🔓  No authentication required (open mode)"
 
@@ -2336,14 +2336,14 @@ local-pypi-upload:
 		echo "❌  No dist/ directory or files found. Run 'make dist' first."; \
 		exit 1; \
 	fi
-	@if ! curl -s http://localhost:8084 >/dev/null 2>&1; then \
-		echo "❌  Local PyPI server not running on port 8084. Run 'make local-pypi-start' first."; \
+	@if ! curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+		echo "❌  Local PyPI server not running on port 8085. Run 'make local-pypi-start' first."; \
 		exit 1; \
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	twine upload --verbose --repository-url http://localhost:8084 --skip-existing dist/*"
+	twine upload --verbose --repository-url $(LOCAL_PYPI_URL) --skip-existing dist/*"
 	@echo "✅  Package uploaded to local PyPI"
-	@echo "🌐  Browse packages: http://localhost:8084"
+	@echo "🌐  Browse packages: $(LOCAL_PYPI_URL)"
 
 local-pypi-upload-auth:
 	@echo "📤  Uploading existing package to local PyPI with auth..."
@@ -2383,9 +2383,7 @@ local-pypi-status:
 	@echo "🔍  Local PyPI server status:"
 	@if [ -f $(LOCAL_PYPI_PID) ] && kill -0 $(cat $(LOCAL_PYPI_PID)) 2>/dev/null; then \
 		echo "✅  Server running (PID: $(cat $(LOCAL_PYPI_PID)))"; \
-		if curl -s http://localhost:8084 >/dev/null 2>&1; then \
-			echo "🌐  Server on port 8084: http://localhost:8084"; \
-		elif curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+		if curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
 			echo "🌐  Server on port 8085: $(LOCAL_PYPI_URL)"; \
 		fi; \
 		echo "📂  Directory: $(LOCAL_PYPI_DIR)"; \
