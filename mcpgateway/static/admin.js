@@ -4414,7 +4414,7 @@ async function handleEditToolFormSubmit(event) {
         }
 
         // // Save CodeMirror editors' contents if present
-        
+
         if (window.editToolHeadersEditor) window.editToolHeadersEditor.save();
         if (window.editToolSchemaEditor) window.editToolSchemaEditor.save();
 
