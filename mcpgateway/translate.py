@@ -895,6 +895,8 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
 
     Raises:
         ImportError: If httpx package is not available.
+        RuntimeError: If the subprocess fails to create stdin/stdout pipes.
+        Exception: For any unexpected error in SSE stream processing.
 
     Examples:
         >>> import asyncio
@@ -954,8 +956,6 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
             >>> asyncio.run(test_read())
             True
         """
-        nonlocal message_endpoint
-
         if not process.stdout:
             raise RuntimeError("Process stdout not available")
 
@@ -997,6 +997,10 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
 
         Args:
             client: The HTTP client to use for SSE streaming.
+
+        Raises:
+            HTTPStatusError: If the SSE endpoint returns a non-200 status code.
+            Exception: For unexpected errors in SSE stream processing.
 
         Examples:
             >>> import asyncio
@@ -1090,6 +1094,10 @@ async def _simple_sse_pump(client: httpx.AsyncClient, url: str, max_retries: int
         url: The SSE endpoint URL to connect to.
         max_retries: Maximum number of connection retry attempts.
         initial_retry_delay: Initial delay between retries in seconds.
+
+    Raises:
+        HTTPStatusError: If the SSE endpoint returns a non-200 status code.
+        Exception: For unexpected errors in SSE stream processing.
     """
     retry_delay = initial_retry_delay
     retry_count = 0
