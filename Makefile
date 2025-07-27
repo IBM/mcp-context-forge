@@ -933,7 +933,9 @@ trivy:
 		echo "   • Or run: make trivy-install"; \
 		exit 1; \
 	}
-	@systemctl --user enable --now podman.socket 2>/dev/null || true
+	@if command -v systemctl >/dev/null 2>&1; then \
+		systemctl --user enable --now podman.socket 2>/dev/null || true; \
+	fi
 	@echo "🔎  trivy vulnerability scan..."
 	@trivy --format table --severity HIGH,CRITICAL image $(IMG)
 
@@ -1157,16 +1159,11 @@ endef
 # help: use-podman           - Switch to Podman runtime
 # help: show-runtime         - Show current container runtime
 
-# .PHONY: container-build container-run container-run-host container-run-ssl container-run-ssl-host \
-#         container-push container-info container-stop container-logs container-shell \
-#         container-health image-list image-clean image-retag container-check-image \
-#         container-build-multi use-docker use-podman show-runtime
-
 .PHONY: container-build container-run container-run-ssl container-run-ssl-host \
-	container-push container-info container-stop container-logs container-shell \
-	container-health image-list image-clean image-retag container-check-image \
-	container-build-multi use-docker use-podman show-runtime print-runtime \
-	print-image container-validate-env container-check-ports container-wait-healthy
+        container-push container-info container-stop container-logs container-shell \
+        container-health image-list image-clean image-retag container-check-image \
+        container-build-multi use-docker use-podman show-runtime print-runtime \
+        print-image container-validate-env container-check-ports container-wait-healthy
 
 
 # Containerfile to use (can be overridden)
@@ -1430,9 +1427,8 @@ show-runtime:
 # help: container-check-ports  - Check if required ports are available
 
 # Pre-flight validation
-.PHONY: container-validate check-ports
+.PHONY: container-validate container-check-ports
 
-# container-validate: container-validate-env check-ports
 container-validate: container-validate-env container-check-ports
 	@echo "✅ All validations passed"
 
@@ -1446,7 +1442,7 @@ container-check-ports:
 	@echo "🔍 Checking port availability..."
 	@if ! command -v lsof >/dev/null 2>&1; then \
 		echo "⚠️  lsof not installed - skipping port check"; \
-		echo "💡 Install with: brew install lsof (macOS) or apt-get install lsof (Linux)"; \
+		echo "💡  Install with: brew install lsof (macOS) or apt-get install lsof (Linux)"; \
 		exit 0; \
 	fi
 	@failed=0; \
@@ -2268,7 +2264,7 @@ argocd-app-sync:
 # =============================================================================
 # help: 🏠 LOCAL PYPI SERVER
 # help: local-pypi-install     - Install pypiserver for local testing
-# help: local-pypi-start       - Start local PyPI server on :8084 (no auth)
+# help: local-pypi-start       - Start local PyPI server on :8085 (no auth)
 # help: local-pypi-start-auth  - Start local PyPI server with basic auth (admin/admin)
 # help: local-pypi-stop        - Stop local PyPI server
 # help: local-pypi-upload      - Upload existing package to local PyPI (no auth)
@@ -2290,12 +2286,12 @@ local-pypi-install:
 	@mkdir -p $(LOCAL_PYPI_DIR)
 
 local-pypi-start: local-pypi-install local-pypi-stop
-	@echo "🚀  Starting local PyPI server on http://localhost:8084..."
+	@echo "🚀  Starting local PyPI server on http://localhost:8085..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 	export PYPISERVER_BOTTLE_MEMFILE_MAX_OVERRIDE_BYTES=10485760 && \
-	pypi-server run -p 8084 -a . -P . $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
+	pypi-server run -p 8085 -a . -P . $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
 	@sleep 2
-	@echo "✅  Local PyPI server started at http://localhost:8084"
+	@echo "✅  Local PyPI server started at http://localhost:8085"
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
 	@echo "🔓  No authentication required (open mode)"
 
@@ -2340,14 +2336,14 @@ local-pypi-upload:
 		echo "❌  No dist/ directory or files found. Run 'make dist' first."; \
 		exit 1; \
 	fi
-	@if ! curl -s http://localhost:8084 >/dev/null 2>&1; then \
-		echo "❌  Local PyPI server not running on port 8084. Run 'make local-pypi-start' first."; \
+	@if ! curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+		echo "❌  Local PyPI server not running on port 8085. Run 'make local-pypi-start' first."; \
 		exit 1; \
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	twine upload --verbose --repository-url http://localhost:8084 --skip-existing dist/*"
+	twine upload --verbose --repository-url $(LOCAL_PYPI_URL) --skip-existing dist/*"
 	@echo "✅  Package uploaded to local PyPI"
-	@echo "🌐  Browse packages: http://localhost:8084"
+	@echo "🌐  Browse packages: $(LOCAL_PYPI_URL)"
 
 local-pypi-upload-auth:
 	@echo "📤  Uploading existing package to local PyPI with auth..."
@@ -2387,9 +2383,7 @@ local-pypi-status:
 	@echo "🔍  Local PyPI server status:"
 	@if [ -f $(LOCAL_PYPI_PID) ] && kill -0 $(cat $(LOCAL_PYPI_PID)) 2>/dev/null; then \
 		echo "✅  Server running (PID: $(cat $(LOCAL_PYPI_PID)))"; \
-		if curl -s http://localhost:8084 >/dev/null 2>&1; then \
-			echo "🌐  Server on port 8084: http://localhost:8084"; \
-		elif curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+		if curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
 			echo "🌐  Server on port 8085: $(LOCAL_PYPI_URL)"; \
 		fi; \
 		echo "📂  Directory: $(LOCAL_PYPI_DIR)"; \
@@ -2679,6 +2673,8 @@ SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
 	-not -path './build/*' \
 	-not -path './.tox/*')
 
+# Define shfmt binary location
+SHFMT := $(shell command -v shfmt 2>/dev/null || echo "$(HOME)/go/bin/shfmt")
 
 .PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
 
@@ -2697,15 +2693,21 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	  esac ; \
 	fi ; \
 	# -------- shfmt (Go) -------- \
-	if ! command -v shfmt >/dev/null 2>&1 ; then \
+	if ! command -v shfmt >/dev/null 2>&1 && [ ! -f "$(HOME)/go/bin/shfmt" ] ; then \
 	  echo "🛠  Installing shfmt..." ; \
 	  if command -v go >/dev/null 2>&1; then \
 	    GO111MODULE=on go install mvdan.cc/sh/v3/cmd/shfmt@latest; \
-	    mkdir -p $(VENV_DIR)/bin; \
-	    ln -sf $$HOME/go/bin/shfmt $(VENV_DIR)/bin/shfmt 2>/dev/null || true; \
+	    echo "✅  shfmt installed to $(HOME)/go/bin/shfmt"; \
 	  else \
-	    echo "⚠️  Go not found - install Go or brew/apt shfmt package manually"; \
+	    case "$$(uname -s)" in \
+	      Darwin)  brew install shfmt ;; \
+	      Linux)   { command -v apt-get && sudo apt-get update -qq && sudo apt-get install -y shfmt ; } || \
+	               { echo "⚠️  Go not found - install Go or shfmt package manually"; } ;; \
+	      *) echo "⚠️  Please install shfmt manually" ;; \
+	    esac ; \
 	  fi ; \
+	else \
+	  echo "✅  shfmt already installed at: $$(command -v shfmt || echo $(HOME)/go/bin/shfmt)"; \
 	fi ; \
 	# -------- bashate (pip) ----- \
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
@@ -2719,10 +2721,14 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 
 shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
 	@echo "🔍  Running shfmt (diff-only)..."
-	@command -v shfmt >/dev/null 2>&1 || { \
+	@if command -v shfmt >/dev/null 2>&1; then \
+		shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true; \
+	elif [ -f "$(SHFMT)" ]; then \
+		$(SHFMT) -d -i 4 -ci $(SHELL_SCRIPTS) || true; \
+	else \
 		echo "⚠️  shfmt not installed - skipping"; \
 		echo "💡  Install with: go install mvdan.cc/sh/v3/cmd/shfmt@latest"; \
-	} && shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true
+	fi
 	@echo "🔍  Running ShellCheck..."
 	@command -v shellcheck >/dev/null 2>&1 || { \
 		echo "⚠️  shellcheck not installed - skipping"; \
@@ -2735,7 +2741,16 @@ shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
 
 shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 	@echo "🎨  Formatting shell scripts with shfmt -w..."
-	@shfmt -w -i 4 -ci $(SHELL_SCRIPTS)
+	@if command -v shfmt >/dev/null 2>&1; then \
+		shfmt -w -i 4 -ci $(SHELL_SCRIPTS); \
+	elif [ -f "$(SHFMT)" ]; then \
+		$(SHFMT) -w -i 4 -ci $(SHELL_SCRIPTS); \
+	else \
+		echo "❌  shfmt not found in PATH or $(HOME)/go/bin/"; \
+		echo "💡  Install with: go install mvdan.cc/sh/v3/cmd/shfmt@latest"; \
+		echo "    Or: brew install shfmt (macOS)"; \
+		exit 1; \
+	fi
 	@echo "✅  shfmt formatting done."
 
 
