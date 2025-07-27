@@ -69,9 +69,13 @@ jobs:
             cmd: |
               vulture mcpgateway --min-confidence 80
 
-          # - id: pylint
-          #   setup: pip install pylint
-          #   cmd: pylint mcpgateway
+          - id: pylint
+            setup: pip install pylint
+            cmd: pylint mcpgateway --errors-only --fail-under=10
+
+          - id: interrogate
+            setup: pip install interrogate
+            cmd: interrogate -vv mcpgateway --fail-under 100
 
           # - id: mypy
           #   setup: pip install mypy
