@@ -37,9 +37,11 @@ FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
 	$(DOCS_DIR)/pstats.png \
 	$(DOCS_DIR)/docs/test/sbom.md \
 	$(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
-				  $(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
+	$(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
 	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
-				  .depsorter_cache.json .depupdate.*
+	.depsorter_cache.json .depupdate.* \
+	grype-results.sarif devskim-results.sarif \
+	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
@@ -1185,15 +1187,6 @@ container-info:
 	@echo "Actual Image:   $(call get_image_name)"
 	@echo "Container File: $(CONTAINER_FILE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-# container-build:
-# 	@echo "🔨 Building with $(CONTAINER_RUNTIME)..."
-# 	$(CONTAINER_RUNTIME) build \
-# 		--platform=linux/amd64 \
-# 		-f $(CONTAINER_FILE) \
-# 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-# 		.
-# 	@echo "✅ Built image: $(call get_image_name)"
 
 # Auto-detect platform based on uname
 PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
