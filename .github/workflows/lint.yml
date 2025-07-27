@@ -77,6 +77,13 @@ jobs:
             setup: pip install interrogate
             cmd: interrogate -vv mcpgateway --fail-under 100
 
+          # Advanced Python Analysis
+          - id: radon
+            setup: pip install radon
+            cmd: |
+              radon cc mcpgateway --min C --show-complexity
+              radon mi mcpgateway --min B
+
           # - id: mypy
           #   setup: pip install mypy
           #   cmd: mypy mcpgateway
