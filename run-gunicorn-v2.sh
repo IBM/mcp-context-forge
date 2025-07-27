@@ -14,22 +14,32 @@
 #    - Optional TLS/SSL support for secure connections
 #    - Database initialization before server start
 #    - Comprehensive error handling and user feedback
+#    - Process lock to prevent duplicate instances
+#    - Auto-detection of optimal worker count based on CPU cores
+#    - Support for preloading application code (memory optimization)
 #
 #  Environment Variables:
 #    PYTHON                        : Path to Python interpreter (optional)
 #    VIRTUAL_ENV                   : Path to active virtual environment (auto-detected)
-#    GUNICORN_WORKERS             : Number of worker processes (default: 2 × CPU cores + 1)
+#    GUNICORN_WORKERS             : Number of worker processes (default: 2, or "auto")
 #    GUNICORN_TIMEOUT             : Worker timeout in seconds (default: 600)
 #    GUNICORN_MAX_REQUESTS        : Max requests per worker before restart (default: 1000)
 #    GUNICORN_MAX_REQUESTS_JITTER : Random jitter for max requests (default: 100)
+#    GUNICORN_PRELOAD_APP         : Preload app before forking workers (default: false)
+#    GUNICORN_DEV_MODE            : Enable developer mode with hot reload (default: false)
 #    SSL                          : Enable TLS/SSL (true/false, default: false)
 #    CERT_FILE                    : Path to SSL certificate (default: certs/cert.pem)
 #    KEY_FILE                     : Path to SSL private key (default: certs/key.pem)
+#    SKIP_DB_INIT                 : Skip database initialization (default: false)
+#    FORCE_START                  : Force start even if another instance is running (default: false)
 #
 #  Usage:
 #    ./run-gunicorn.sh                     # Run with defaults
 #    SSL=true ./run-gunicorn.sh            # Run with TLS enabled
 #    GUNICORN_WORKERS=16 ./run-gunicorn.sh # Run with 16 workers
+#    GUNICORN_PRELOAD_APP=true ./run-gunicorn.sh # Preload app for memory optimization
+#    GUNICORN_DEV_MODE=true ./run-gunicorn.sh    # Run in developer mode with hot reload
+#    FORCE_START=true ./run-gunicorn.sh    # Force start (bypass lock check)
 #───────────────────────────────────────────────────────────────────────────────
 
 # Exit immediately on error, undefined variable, or pipe failure
@@ -49,7 +59,62 @@ cd "${SCRIPT_DIR}" || {
 }
 
 #────────────────────────────────────────────────────────────────────────────────
-# SECTION 2: Virtual Environment Activation
+# SECTION 2: Process Lock Check
+# Prevent multiple instances from running simultaneously unless forced
+#────────────────────────────────────────────────────────────────────────────────
+LOCK_FILE="/tmp/mcpgateway-gunicorn.lock"
+FORCE_START=${FORCE_START:-false}
+
+check_existing_process() {
+    if [[ -f "${LOCK_FILE}" ]]; then
+        local pid
+        pid=$(<"${LOCK_FILE}")
+
+        # Check if the process is actually running
+        if kill -0 "${pid}" 2>/dev/null; then
+            echo "⚠️  WARNING: Another instance of MCP Gateway appears to be running (PID: ${pid})"
+
+            # Check if it's actually gunicorn
+            if ps -p "${pid}" -o comm= | grep -q gunicorn; then
+                if [[ "${FORCE_START}" != "true" ]]; then
+                    echo "❌  FATAL: MCP Gateway is already running!"
+                    echo "   To stop it: kill ${pid}"
+                    echo "   To force start anyway: FORCE_START=true $0"
+                    exit 1
+                else
+                    echo "⚠️  Force starting despite existing process..."
+                fi
+            else
+                echo "🔧  Lock file exists but process ${pid} is not gunicorn. Cleaning up..."
+                rm -f "${LOCK_FILE}"
+            fi
+        else
+            echo "🔧  Stale lock file found. Cleaning up..."
+            rm -f "${LOCK_FILE}"
+        fi
+    fi
+}
+
+# Create cleanup function
+cleanup() {
+    # Only clean up if we're the process that created the lock
+    if [[ -f "${LOCK_FILE}" ]] && [[ "$(<"${LOCK_FILE}")" == "$" ]]; then
+        rm -f "${LOCK_FILE}"
+        echo "🔧  Cleaned up lock file"
+    fi
+}
+
+# Set up signal handlers for cleanup (but not EXIT - let gunicorn manage that)
+trap cleanup INT TERM
+
+# Check for existing process
+check_existing_process
+
+# Create lock file with current PID (will be updated with gunicorn PID later)
+echo $$ > "${LOCK_FILE}"
+
+#────────────────────────────────────────────────────────────────────────────────
+# SECTION 3: Virtual Environment Activation
 # Check if a virtual environment is already active. If not, try to activate one
 # from known locations. This ensures dependencies are properly isolated.
 #────────────────────────────────────────────────────────────────────────────────
@@ -83,7 +148,7 @@ else
 fi
 
 #────────────────────────────────────────────────────────────────────────────────
-# SECTION 3: Python Interpreter Detection
+# SECTION 4: Python Interpreter Detection
 # Locate a suitable Python interpreter with the following precedence:
 #   1. User-provided PYTHON environment variable
 #   2. 'python' binary in active virtual environment
@@ -136,7 +201,7 @@ if ! "${PYTHON}" -c "import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)"
 fi
 
 #────────────────────────────────────────────────────────────────────────────────
-# SECTION 4: Display Application Banner
+# SECTION 5: Display Application Banner
 # Show a fancy ASCII art banner for the MCP Gateway
 #────────────────────────────────────────────────────────────────────────────────
 cat <<'EOF'
@@ -149,14 +214,18 @@ cat <<'EOF'
 EOF
 
 #────────────────────────────────────────────────────────────────────────────────
-# SECTION 5: Configure Gunicorn Settings
+# SECTION 6: Configure Gunicorn Settings
 # Set up Gunicorn parameters with sensible defaults that can be overridden
 # via environment variables for different deployment scenarios
 #────────────────────────────────────────────────────────────────────────────────
 
 # Number of worker processes (adjust based on CPU cores and expected load)
-# Default: 2 × CPU cores + 1 (automatically detected)
+# Default: 2 (safe default for most systems)
+# Set to "auto" for automatic detection based on CPU cores
 if [[ -z "${GUNICORN_WORKERS:-}" ]]; then
+    # Default to 2 workers if not specified
+    GUNICORN_WORKERS=2
+elif [[ "${GUNICORN_WORKERS}" == "auto" ]]; then
     # Try to detect CPU count
     if command -v nproc &>/dev/null; then
         CPU_COUNT=$(nproc)
@@ -165,7 +234,13 @@ if [[ -z "${GUNICORN_WORKERS:-}" ]]; then
     else
         CPU_COUNT=4  # Fallback to reasonable default
     fi
-    GUNICORN_WORKERS=$((CPU_COUNT * 2 + 1))
+
+    # Use a more conservative formula: min(2*CPU+1, 16) to avoid too many workers
+    CALCULATED_WORKERS=$((CPU_COUNT * 2 + 1))
+    GUNICORN_WORKERS=$((CALCULATED_WORKERS > 16 ? 16 : CALCULATED_WORKERS))
+
+    echo "🔧  Auto-detected CPU cores: ${CPU_COUNT}"
+    echo "   Calculated workers: ${CALCULATED_WORKERS} → Capped at: ${GUNICORN_WORKERS}"
 fi
 
 # Worker timeout in seconds (increase for long-running requests)
@@ -177,13 +252,27 @@ GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-1000}
 # Random jitter for max requests (prevents all workers restarting simultaneously)
 GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-100}
 
+# Preload application before forking workers (saves memory but slower reload)
+GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-false}
+
+# Developer mode with hot reload (disables preload, enables file watching)
+GUNICORN_DEV_MODE=${GUNICORN_DEV_MODE:-false}
+
+# Check for conflicting options
+if [[ "${GUNICORN_DEV_MODE}" == "true" && "${GUNICORN_PRELOAD_APP}" == "true" ]]; then
+    echo "⚠️  WARNING: Developer mode disables application preloading"
+    GUNICORN_PRELOAD_APP="false"
+fi
+
 echo "📊  Gunicorn Configuration:"
 echo "   Workers: ${GUNICORN_WORKERS}"
 echo "   Timeout: ${GUNICORN_TIMEOUT}s"
 echo "   Max Requests: ${GUNICORN_MAX_REQUESTS} (±${GUNICORN_MAX_REQUESTS_JITTER})"
+echo "   Preload App: ${GUNICORN_PRELOAD_APP}"
+echo "   Developer Mode: ${GUNICORN_DEV_MODE}"
 
 #────────────────────────────────────────────────────────────────────────────────
-# SECTION 6: Configure TLS/SSL Settings
+# SECTION 7: Configure TLS/SSL Settings
 # Handle optional TLS configuration for secure HTTPS connections
 #────────────────────────────────────────────────────────────────────────────────
 
@@ -226,31 +315,43 @@ else
 fi
 
 #────────────────────────────────────────────────────────────────────────────────
-# SECTION 7: Database Initialization
+# SECTION 8: Database Initialization
 # Run database setup/migrations before starting the server
 #────────────────────────────────────────────────────────────────────────────────
-echo "🗄️  Initializing database..."
-if ! "${PYTHON}" -m mcpgateway.db; then
-    echo "❌  FATAL: Database initialization failed!"
-    echo "   Please check your database configuration and connection."
-    exit 1
+SKIP_DB_INIT=${SKIP_DB_INIT:-false}
+
+if [[ "${SKIP_DB_INIT}" != "true" ]]; then
+    echo "🗄️  Initializing database..."
+    if ! "${PYTHON}" -m mcpgateway.db; then
+        echo "❌  FATAL: Database initialization failed!"
+        echo "   Please check your database configuration and connection."
+        echo "   To skip DB initialization: SKIP_DB_INIT=true $0"
+        exit 1
+    fi
+    echo "✓  Database initialized successfully"
+else
+    echo "⚠️  Skipping database initialization (SKIP_DB_INIT=true)"
 fi
-echo "✓  Database initialized successfully"
 
 #────────────────────────────────────────────────────────────────────────────────
-# SECTION 8: Launch Gunicorn Server
-# Start the Gunicorn server with all configured options
-# Using 'exec' replaces this shell process with Gunicorn for cleaner process management
+# SECTION 9: Verify Gunicorn Installation
+# Check that gunicorn is available before attempting to start
 #────────────────────────────────────────────────────────────────────────────────
-echo "🚀  Starting Gunicorn server..."
-echo "─────────────────────────────────────────────────────────────────────"
-
-# Check if gunicorn is available
 if ! command -v gunicorn &> /dev/null; then
     echo "❌  FATAL: gunicorn command not found!"
     echo "   Please install it with: pip install gunicorn"
     exit 1
 fi
+
+echo "✓  Gunicorn found: $(command -v gunicorn)"
+
+#────────────────────────────────────────────────────────────────────────────────
+# SECTION 10: Launch Gunicorn Server
+# Start the Gunicorn server with all configured options
+# Using 'exec' replaces this shell process with Gunicorn for cleaner process management
+#────────────────────────────────────────────────────────────────────────────────
+echo "🚀  Starting Gunicorn server..."
+echo "─────────────────────────────────────────────────────────────────────"
 
 # Build command array to handle spaces in paths properly
 cmd=(
@@ -263,7 +364,28 @@ cmd=(
     --max-requests-jitter  "${GUNICORN_MAX_REQUESTS_JITTER}"
     --access-logfile -
     --error-logfile -
+    --forwarded-allow-ips="*"
+    --pid "${LOCK_FILE}"  # Use lock file as PID file
 )
+
+# Add developer mode flags if enabled
+if [[ "${GUNICORN_DEV_MODE}" == "true" ]]; then
+    cmd+=( --reload --reload-extra-file gunicorn.config.py )
+    echo "🔧  Developer mode enabled - hot reload active"
+    echo "   Watching for changes in Python files and gunicorn.config.py"
+
+    # In dev mode, reduce workers to 1 for better debugging
+    if [[ "${GUNICORN_WORKERS}" -gt 2 ]]; then
+        echo "   Reducing workers to 2 for developer mode (was ${GUNICORN_WORKERS})"
+        cmd[5]=2  # Update the workers argument
+    fi
+fi
+
+# Add preload flag if enabled (and not in dev mode)
+if [[ "${GUNICORN_PRELOAD_APP}" == "true" && "${GUNICORN_DEV_MODE}" != "true" ]]; then
+    cmd+=( --preload )
+    echo "✓  Application preloading enabled"
+fi
 
 # Add SSL arguments if enabled
 if [[ "${SSL}" == "true" ]]; then
@@ -273,5 +395,13 @@ fi
 # Add the application module
 cmd+=( "mcpgateway.main:app" )
 
+# Display final command for debugging
+echo "📋  Command: ${cmd[*]}"
+echo "─────────────────────────────────────────────────────────────────────"
+
 # Launch Gunicorn with all configured options
+# Remove EXIT trap before exec - let gunicorn handle its own cleanup
+trap - EXIT
+# exec replaces this shell with gunicorn, so cleanup trap won't fire on normal exit
+# The PID file will be managed by gunicorn itself
 exec "${cmd[@]}"
