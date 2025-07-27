@@ -67,11 +67,11 @@ check_existing_process() {
     if [[ -f "${LOCK_FILE}" ]]; then
         local pid
         pid=$(<"${LOCK_FILE}")
-        
+
         # Check if the process is actually running
         if kill -0 "${pid}" 2>/dev/null; then
             echo "⚠️  WARNING: Another instance of MCP Gateway appears to be running (PID: ${pid})"
-            
+
             # Check if it's actually gunicorn
             if ps -p "${pid}" -o comm= | grep -q gunicorn; then
                 if [[ "${FORCE_START}" != "true" ]]; then
@@ -232,11 +232,11 @@ elif [[ "${GUNICORN_WORKERS}" == "auto" ]]; then
     else
         CPU_COUNT=4  # Fallback to reasonable default
     fi
-    
+
     # Use a more conservative formula: min(2*CPU+1, 16) to avoid too many workers
     CALCULATED_WORKERS=$((CPU_COUNT * 2 + 1))
     GUNICORN_WORKERS=$((CALCULATED_WORKERS > 16 ? 16 : CALCULATED_WORKERS))
-    
+
     echo "🔧  Auto-detected CPU cores: ${CPU_COUNT}"
     echo "   Calculated workers: ${CALCULATED_WORKERS} → Capped at: ${GUNICORN_WORKERS}"
 fi
@@ -352,7 +352,7 @@ if [[ "${GUNICORN_DEV_MODE}" == "true" ]]; then
     cmd+=( --reload --reload-extra-file gunicorn.config.py )
     echo "🔧  Developer mode enabled - hot reload active"
     echo "   Watching for changes in Python files and gunicorn.config.py"
-    
+
     # In dev mode, reduce workers to 1 for better debugging
     if [[ "${GUNICORN_WORKERS}" -gt 2 ]]; then
         echo "   Reducing workers to 2 for developer mode (was ${GUNICORN_WORKERS})"
