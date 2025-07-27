@@ -2673,6 +2673,8 @@ SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
 	-not -path './build/*' \
 	-not -path './.tox/*')
 
+# Define shfmt binary location
+SHFMT := $(shell command -v shfmt 2>/dev/null || echo "$(HOME)/go/bin/shfmt")
 
 .PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
 
@@ -2691,15 +2693,21 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	  esac ; \
 	fi ; \
 	# -------- shfmt (Go) -------- \
-	if ! command -v shfmt >/dev/null 2>&1 ; then \
+	if ! command -v shfmt >/dev/null 2>&1 && [ ! -f "$(HOME)/go/bin/shfmt" ] ; then \
 	  echo "🛠  Installing shfmt..." ; \
 	  if command -v go >/dev/null 2>&1; then \
 	    GO111MODULE=on go install mvdan.cc/sh/v3/cmd/shfmt@latest; \
-	    mkdir -p $(VENV_DIR)/bin; \
-	    ln -sf $$HOME/go/bin/shfmt $(VENV_DIR)/bin/shfmt 2>/dev/null || true; \
+	    echo "✅  shfmt installed to $(HOME)/go/bin/shfmt"; \
 	  else \
-	    echo "⚠️  Go not found - install Go or brew/apt shfmt package manually"; \
+	    case "$$(uname -s)" in \
+	      Darwin)  brew install shfmt ;; \
+	      Linux)   { command -v apt-get && sudo apt-get update -qq && sudo apt-get install -y shfmt ; } || \
+	               { echo "⚠️  Go not found - install Go or shfmt package manually"; } ;; \
+	      *) echo "⚠️  Please install shfmt manually" ;; \
+	    esac ; \
 	  fi ; \
+	else \
+	  echo "✅  shfmt already installed at: $$(command -v shfmt || echo $(HOME)/go/bin/shfmt)"; \
 	fi ; \
 	# -------- bashate (pip) ----- \
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
@@ -2713,10 +2721,14 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 
 shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
 	@echo "🔍  Running shfmt (diff-only)..."
-	@command -v shfmt >/dev/null 2>&1 || { \
+	@if command -v shfmt >/dev/null 2>&1; then \
+		shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true; \
+	elif [ -f "$(SHFMT)" ]; then \
+		$(SHFMT) -d -i 4 -ci $(SHELL_SCRIPTS) || true; \
+	else \
 		echo "⚠️  shfmt not installed - skipping"; \
 		echo "💡  Install with: go install mvdan.cc/sh/v3/cmd/shfmt@latest"; \
-	} && shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true
+	fi
 	@echo "🔍  Running ShellCheck..."
 	@command -v shellcheck >/dev/null 2>&1 || { \
 		echo "⚠️  shellcheck not installed - skipping"; \
@@ -2729,7 +2741,16 @@ shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
 
 shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 	@echo "🎨  Formatting shell scripts with shfmt -w..."
-	@shfmt -w -i 4 -ci $(SHELL_SCRIPTS)
+	@if command -v shfmt >/dev/null 2>&1; then \
+		shfmt -w -i 4 -ci $(SHELL_SCRIPTS); \
+	elif [ -f "$(SHFMT)" ]; then \
+		$(SHFMT) -w -i 4 -ci $(SHELL_SCRIPTS); \
+	else \
+		echo "❌  shfmt not found in PATH or $(HOME)/go/bin/"; \
+		echo "💡  Install with: go install mvdan.cc/sh/v3/cmd/shfmt@latest"; \
+		echo "    Or: brew install shfmt (macOS)"; \
+		exit 1; \
+	fi
 	@echo "✅  shfmt formatting done."
 
 
