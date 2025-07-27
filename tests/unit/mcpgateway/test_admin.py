@@ -74,7 +74,6 @@ from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerService
 from mcpgateway.services.tool_service import (
     ToolError,
-    ToolNameConflictError,
     ToolNotFoundError,
     ToolService,
 )
