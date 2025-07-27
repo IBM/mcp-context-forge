@@ -4425,28 +4425,24 @@ async function handleEditToolFormSubmit(event) {
         const response = await fetch(form.action, {
             method: "POST",
             body: formData,
-            headers: { "X-Requested-With": "XMLHttpRequest" }
+            headers: { "X-Requested-With": "XMLHttpRequest" },
         });
-       console.log("response:", response);
-       result = await response.json();
-       console.log("result edit tool form:", result);
-       if (!result.success) {
+        console.log("response:", response);
+        result = await response.json();
+        console.log("result edit tool form:", result);
+        if (!result.success) {
             throw new Error(result.message || "An error occurred");
-        }
-        else {
+        } else {
             const redirectUrl = isInactiveCheckedBool
                 ? `${window.ROOT_PATH}/admin?include_inactive=true#tools`
                 : `${window.ROOT_PATH}/admin#tools`;
             window.location.href = redirectUrl;
         }
-
     } catch (error) {
         console.error("Fetch error:", error);
         showErrorMessage(error.message);
     }
 }
-
-
 
 // ===================================================================
 // ENHANCED FORM VALIDATION for All Forms
@@ -4990,7 +4986,6 @@ function setupFormHandlers() {
             }
         });
     }
-
 }
 
 function setupSchemaModeHandlers() {
