@@ -933,7 +933,9 @@ trivy:
 		echo "   • Or run: make trivy-install"; \
 		exit 1; \
 	}
-	@systemctl --user enable --now podman.socket 2>/dev/null || true
+	@if command -v systemctl >/dev/null 2>&1; then \
+		systemctl --user enable --now podman.socket 2>/dev/null || true; \
+	fi
 	@echo "🔎  trivy vulnerability scan..."
 	@trivy --format table --severity HIGH,CRITICAL image $(IMG)
 
@@ -1157,16 +1159,11 @@ endef
 # help: use-podman           - Switch to Podman runtime
 # help: show-runtime         - Show current container runtime
 
-# .PHONY: container-build container-run container-run-host container-run-ssl container-run-ssl-host \
-#         container-push container-info container-stop container-logs container-shell \
-#         container-health image-list image-clean image-retag container-check-image \
-#         container-build-multi use-docker use-podman show-runtime
-
 .PHONY: container-build container-run container-run-ssl container-run-ssl-host \
-	container-push container-info container-stop container-logs container-shell \
-	container-health image-list image-clean image-retag container-check-image \
-	container-build-multi use-docker use-podman show-runtime print-runtime \
-	print-image container-validate-env container-check-ports container-wait-healthy
+        container-push container-info container-stop container-logs container-shell \
+        container-health image-list image-clean image-retag container-check-image \
+        container-build-multi use-docker use-podman show-runtime print-runtime \
+        print-image container-validate-env container-check-ports container-wait-healthy
 
 
 # Containerfile to use (can be overridden)
@@ -1430,9 +1427,8 @@ show-runtime:
 # help: container-check-ports  - Check if required ports are available
 
 # Pre-flight validation
-.PHONY: container-validate check-ports
+.PHONY: container-validate container-check-ports
 
-# container-validate: container-validate-env check-ports
 container-validate: container-validate-env container-check-ports
 	@echo "✅ All validations passed"
 
@@ -1446,7 +1442,7 @@ container-check-ports:
 	@echo "🔍 Checking port availability..."
 	@if ! command -v lsof >/dev/null 2>&1; then \
 		echo "⚠️  lsof not installed - skipping port check"; \
-		echo "💡 Install with: brew install lsof (macOS) or apt-get install lsof (Linux)"; \
+		echo "💡  Install with: brew install lsof (macOS) or apt-get install lsof (Linux)"; \
 		exit 0; \
 	fi
 	@failed=0; \
