@@ -41,7 +41,7 @@ import importlib
 import sys
 import types
 from typing import Sequence
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -772,7 +772,7 @@ async def test_run_sse_to_stdio_with_data_processing(monkeypatch, translate):
 
         class _Resp:
             status_code = 200
-            
+
             async def __aenter__(self):
                 return self
 
@@ -814,6 +814,7 @@ async def test_run_sse_to_stdio_with_data_processing(monkeypatch, translate):
     # Add timeout to prevent hanging
     await asyncio.wait_for(_test_logic(), timeout=5.0)
 
+
 @pytest.mark.asyncio
 async def test_run_sse_to_stdio_importerror(monkeypatch, translate):
     monkeypatch.setattr(translate, "httpx", None)
@@ -824,9 +825,11 @@ async def test_run_sse_to_stdio_importerror(monkeypatch, translate):
 @pytest.mark.asyncio
 async def test_pump_sse_to_stdio_full(monkeypatch, translate):
     # First, ensure httpx is properly imported and set
+    # Third-Party
     import httpx as real_httpx
-    setattr(translate, 'httpx', real_httpx)
-    
+
+    setattr(translate, "httpx", real_httpx)
+
     # Capture printed output for simple mode
     printed = []
     monkeypatch.setattr("builtins.print", lambda x: printed.append(x))
@@ -839,7 +842,7 @@ async def test_pump_sse_to_stdio_full(monkeypatch, translate):
         "event: message",
         'data: {"jsonrpc":"2.0","result":"ok"}',
         "",
-        "event: message", 
+        "event: message",
         "data: another",
         "",
         "event: keepalive",
@@ -851,7 +854,7 @@ async def test_pump_sse_to_stdio_full(monkeypatch, translate):
 
     class DummyResponse:
         status_code = 200
-        
+
         async def __aenter__(self):
             return self
 
@@ -870,7 +873,7 @@ async def test_pump_sse_to_stdio_full(monkeypatch, translate):
     class DummyClient:
         def __init__(self, *args, **kwargs):
             pass
-            
+
         async def __aenter__(self):
             return self
 
@@ -898,10 +901,10 @@ async def test_pump_sse_to_stdio_full(monkeypatch, translate):
 
     # Verify the messages were printed (simple mode prints to stdout)
     assert '{"jsonrpc":"2.0","result":"ok"}' in printed
-    assert 'another' in printed
+    assert "another" in printed
     # Keepalive and endpoint should not be printed (they're logged, not printed)
-    assert '{}' not in printed
-    assert 'http://example.com/message' not in printed
+    assert "{}" not in printed
+    assert "http://example.com/message" not in printed
 
 
 # ---------------------------------------------------------------------------#

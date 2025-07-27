@@ -380,22 +380,22 @@ class SSEEvent:
     Attributes:
         event: The event type (e.g., 'message', 'keepalive', 'endpoint')
         data: The event data payload
-        id: Optional event ID
+        event_id: Optional event ID
         retry: Optional retry interval in milliseconds
     """
 
-    def __init__(self, event: str = "message", data: str = "", id: Optional[str] = None, retry: Optional[int] = None):
+    def __init__(self, event: str = "message", data: str = "", event_id: Optional[str] = None, retry: Optional[int] = None):
         """Initialize an SSE event.
 
         Args:
             event: Event type, defaults to "message"
             data: Event data payload
-            id: Optional event ID
+            event_id: Optional event ID
             retry: Optional retry interval in milliseconds
         """
         self.event = event
         self.data = data
-        self.id = id
+        self.event_id = event_id
         self.retry = retry
 
     @classmethod
@@ -443,7 +443,7 @@ class SSEEvent:
             else:
                 current_event.data = value
         elif field == "id":
-            current_event.id = value
+            current_event.event_id = value
         elif field == "retry":
             try:
                 current_event.retry = int(value)
