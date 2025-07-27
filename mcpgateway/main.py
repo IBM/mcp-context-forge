@@ -93,7 +93,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService, GatewayNameConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import (
     PromptError,
