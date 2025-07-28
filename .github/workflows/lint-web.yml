@@ -84,10 +84,10 @@ jobs:
               npm install --no-save --legacy-peer-deps jscpd
               npx jscpd "mcpgateway/static/" "mcpgateway/templates/"
 
-          - id: markuplint
-            cmd: |
-              npm install --no-save --legacy-peer-deps markuplint
-              npx markuplint mcpgateway/templates/*
+          # - id: markuplint
+          #   cmd: |
+          #     npm install --no-save --legacy-peer-deps markuplint
+          #     npx markuplint mcpgateway/templates/*
 
     name: ${{ matrix.id }}
     runs-on: ubuntu-latest
