@@ -47,6 +47,7 @@ import socket
 import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
+import asyncio
 
 # Third-Party
 from fastapi import APIRouter, Depends, Request
@@ -792,11 +793,19 @@ async def version_endpoint(
     if REDIS_AVAILABLE and settings.cache_type.lower() == "redis" and settings.redis_url:
         try:
             client = aioredis.Redis.from_url(settings.redis_url)
-            await client.ping()
-            info = await client.info()
-            redis_version = info.get("redis_version")
-            redis_ok = True
+            
+            response = await asyncio.wait_for(client.ping(), timeout=3.0)
+            if response is True:
+                redis_ok = True
+                info = await asyncio.wait_for(client.info(), timeout=3.0)
+                redis_version = info.get("redis_version", "unknown")
+            else:
+                print("RESPONSE ++",response)
+                redis_ok = False
+                redis_version = "Ping failed"
         except Exception as exc:
+            redis_ok = False
+            print("EXCEPTION ++",str(exc))
             redis_version = str(exc)
 
     payload = _build_payload(redis_version, redis_ok)
