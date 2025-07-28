@@ -42,7 +42,7 @@ jobs:
           - id: eslint
             cmd: |
               npm install --no-save \
-                eslint@8 \
+                eslint \
                 eslint-config-standard \
                 eslint-config-prettier \
                 eslint-plugin-import \
