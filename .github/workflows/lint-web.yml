@@ -31,17 +31,17 @@ jobs:
           # -------------------------------------------------------
           - id: htmlhint
             cmd: |
-              npm install --no-save htmlhint
+              npm install --no-save --legacy-peer-deps htmlhint
               npx htmlhint "mcpgateway/templates/*.html"
 
           - id: stylelint
             cmd: |
-              npm install --no-save stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order
+              npm install --no-save --legacy-peer-deps stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order
               npx stylelint "mcpgateway/static/*.css"
 
           - id: eslint
             cmd: |
-              npm install --no-save \
+              npm install --no-save --legacy-peer-deps \
                 eslint \
                 eslint-config-standard \
                 eslint-config-prettier \
@@ -57,7 +57,7 @@ jobs:
           # -------------------------------------------------------
           - id: retire
             cmd: |
-              npm install --no-save retire
+              npm install --no-save --legacy-peer-deps retire
               npx retire --path mcpgateway/static
 
           - id: npm-audit
@@ -72,7 +72,7 @@ jobs:
           # -------------------------------------------------------
           - id: jshint
             cmd: |
-              npm install --no-save jshint
+              npm install --no-save --legacy-peer-deps jshint
               if [ -f .jshintrc ]; then
                 npx jshint --config .jshintrc "mcpgateway/static/*.js"
               else
@@ -81,12 +81,12 @@ jobs:
 
           - id: jscpd
             cmd: |
-              npm install --no-save jscpd
+              npm install --no-save --legacy-peer-deps jscpd
               npx jscpd "mcpgateway/static/" "mcpgateway/templates/"
 
           - id: markuplint
             cmd: |
-              npm install --no-save markuplint
+              npm install --no-save --legacy-peer-deps markuplint
               npx markuplint mcpgateway/templates/*
 
     name: ${{ matrix.id }}
