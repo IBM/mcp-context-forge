@@ -5,7 +5,7 @@
 #   - runs each web linter in its own matrix job for visibility
 #   - mirrors the actual CLI commands used locally (no `make`)
 #   - ensures fast-failure isolation: one failure doesn't hide others
-#   - uses existing package.json dependencies
+#   - installs tools per-job without package.json
 #   - logs are grouped and plain-text for readability
 # ---------------------------------------------------------------
 
@@ -31,25 +31,40 @@ jobs:
           # -------------------------------------------------------
           - id: htmlhint
             cmd: |
-              npx htmlhint "mcpgateway/templates/**/*.html"
+              npm install --no-save htmlhint
+              npx htmlhint "mcpgateway/templates/*.html"
 
           - id: stylelint
             cmd: |
-              npx stylelint "mcpgateway/static/**/*.css"
+              npm install --no-save stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order
+              npx stylelint "mcpgateway/static/*.css"
 
           - id: eslint
             cmd: |
-              npx eslint "mcpgateway/static/**/*.js"
+              npm install --no-save \
+                eslint@8 \
+                eslint-config-standard \
+                eslint-config-prettier \
+                eslint-plugin-import \
+                eslint-plugin-n \
+                eslint-plugin-prettier \
+                eslint-plugin-promise \
+                prettier
+              npx eslint "mcpgateway/static/*.js"
 
           # -------------------------------------------------------
           # 🔒 Security Scanners
           # -------------------------------------------------------
           - id: retire
             cmd: |
+              npm install --no-save retire
               npx retire --path mcpgateway/static
 
           - id: npm-audit
             cmd: |
+              if [ ! -f package.json ]; then
+                npm init -y >/dev/null
+              fi
               npm audit --audit-level=high || true
 
           # -------------------------------------------------------
@@ -57,18 +72,21 @@ jobs:
           # -------------------------------------------------------
           - id: jshint
             cmd: |
+              npm install --no-save jshint
               if [ -f .jshintrc ]; then
-                npx jshint --config .jshintrc "mcpgateway/static/**/*.js"
+                npx jshint --config .jshintrc "mcpgateway/static/*.js"
               else
-                npx jshint --esversion=11 "mcpgateway/static/**/*.js"
+                npx jshint --esversion=11 "mcpgateway/static/*.js"
               fi
 
           - id: jscpd
             cmd: |
+              npm install --no-save jscpd
               npx jscpd "mcpgateway/static/" "mcpgateway/templates/"
 
           - id: markuplint
             cmd: |
+              npm install --no-save markuplint
               npx markuplint mcpgateway/templates/*
 
     name: ${{ matrix.id }}
@@ -92,44 +110,7 @@ jobs:
           node-version: '20'
 
       # -----------------------------------------------------------
-      # 2️⃣  Install ALL dependencies from package.json
-      # -----------------------------------------------------------
-      - name: 📦  Install project dependencies
-        run: |
-          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
-
-      # -----------------------------------------------------------
-      # 3️⃣  Install additional tool if not in package.json
-      # -----------------------------------------------------------
-      - name: 🔧  Install additional tools
-        run: |
-          # Check and install tools not in package.json
-          if ! npm list htmlhint >/dev/null 2>&1; then
-            npm install --legacy-peer-deps --no-save htmlhint
-          fi
-          if ! npm list retire >/dev/null 2>&1; then
-            npm install --legacy-peer-deps --no-save retire
-          fi
-          if ! npm list jshint >/dev/null 2>&1; then
-            npm install --legacy-peer-deps --no-save jshint
-          fi
-          if ! npm list jscpd >/dev/null 2>&1; then
-            npm install --legacy-peer-deps --no-save jscpd
-          fi
-          if ! npm list markuplint >/dev/null 2>&1; then
-            npm install --legacy-peer-deps --no-save markuplint
-          fi1; then
-            npm install --no-save jshint
-          fi
-          if ! npm list jscpd >/dev/null 2>&1; then
-            npm install --no-save jscpd
-          fi
-          if ! npm list markuplint >/dev/null 2>&1; then
-            npm install --no-save markuplint
-          fi
-
-      # -----------------------------------------------------------
-      # 3️⃣  Run Linter / Validator
+      # 2️⃣  Run Linter (install and execute in one step)
       # -----------------------------------------------------------
       - name: 🔍  Run ${{ matrix.id }}
         run: ${{ matrix.cmd }}
