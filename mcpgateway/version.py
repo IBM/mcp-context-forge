@@ -800,12 +800,10 @@ async def version_endpoint(
                 info = await asyncio.wait_for(client.info(), timeout=3.0)
                 redis_version = info.get("redis_version", "unknown")
             else:
-                print("RESPONSE ++",response)
                 redis_ok = False
                 redis_version = "Ping failed"
         except Exception as exc:
             redis_ok = False
-            print("EXCEPTION ++",str(exc))
             redis_version = str(exc)
 
     payload = _build_payload(redis_version, redis_ok)
