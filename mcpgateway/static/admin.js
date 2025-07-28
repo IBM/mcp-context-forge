@@ -3022,50 +3022,73 @@ function updateEditToolRequestTypes(selectedMethod = null) {
 // TOOL SELECT FUNCTIONALITY
 // ===================================================================
 
-function initToolSelect(selectId, pillsId, warnId, max = 6) {
-    const select = safeGetElement(selectId);
-    const pillsBox = safeGetElement(pillsId);
-    const warnBox = safeGetElement(warnId);
+function initToolSelect(
+    selectId,
+    pillsId,
+    warnId,
+    max = 6,
+    selectBtnId = null,
+    clearBtnId = null,
+) {
+    const container = document.getElementById(selectId);
+    const pillsBox = document.getElementById(pillsId);
+    const warnBox = document.getElementById(warnId);
+    const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
+    const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
 
-    if (!select || !pillsBox || !warnBox) {
+    if (!container || !pillsBox || !warnBox) {
         console.warn(
             `Tool select elements not found: ${selectId}, ${pillsId}, ${warnId}`,
         );
         return;
     }
 
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     const pillClasses =
-        "inline-block px-2 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded";
+        "inline-block px-3 py-1 text-xs font-semibold text-indigo-700 bg-indigo-100 rounded-full shadow";
 
     function update() {
         try {
-            const chosen = Array.from(select.selectedOptions);
-            const count = chosen.length;
+            const checked = Array.from(checkboxes).filter((cb) => cb.checked);
+            const count = checked.length;
 
             // Rebuild pills safely
             pillsBox.innerHTML = "";
-            chosen.forEach((opt) => {
+            checked.forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
-                span.textContent = opt.text; // Safe text content
+                span.textContent =
+                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                 pillsBox.appendChild(span);
             });
 
             // Warning when > max
             if (count > max) {
                 warnBox.textContent = `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.`;
-                warnBox.className = "text-yellow-600 text-sm mt-2";
             } else {
                 warnBox.textContent = "";
-                warnBox.className = "";
             }
         } catch (error) {
             console.error("Error updating tool select:", error);
         }
     }
 
+    if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = false));
+            update();
+        });
+    }
+
+    if (selectBtn) {
+        selectBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = true));
+            update();
+        });
+    }
+
     update(); // Initial render
-    select.addEventListener("change", update);
+    checkboxes.forEach((cb) => cb.addEventListener("change", update));
 }
 
 // ===================================================================
@@ -4415,8 +4438,12 @@ async function handleEditToolFormSubmit(event) {
 
         // // Save CodeMirror editors' contents if present
 
-        if (window.editToolHeadersEditor) window.editToolHeadersEditor.save();
-        if (window.editToolSchemaEditor) window.editToolSchemaEditor.save();
+        if (window.editToolHeadersEditor) {
+            window.editToolHeadersEditor.save();
+        }
+        if (window.editToolSchemaEditor) {
+            window.editToolSchemaEditor.save();
+        }
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
@@ -4428,7 +4455,7 @@ async function handleEditToolFormSubmit(event) {
             headers: { "X-Requested-With": "XMLHttpRequest" },
         });
         console.log("response:", response);
-        result = await response.json();
+        const result = await response.json();
         console.log("result edit tool form:", result);
         if (!result.success) {
             throw new Error(result.message || "An error occurred");
@@ -4838,12 +4865,16 @@ function initializeToolSelects() {
         "selectedToolsPills",
         "selectedToolsWarning",
         6,
+        "selectAllToolsBtn",
+        "clearAllToolsBtn",
     );
     initToolSelect(
         "edit-server-tools",
         "selectedEditToolsPills",
         "selectedEditToolsWarning",
         6,
+        "selectAllEditToolsBtn",
+        "clearAllEditToolsBtn",
     );
 }
 
