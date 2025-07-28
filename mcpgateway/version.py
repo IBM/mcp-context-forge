@@ -39,6 +39,7 @@ Examples:
 from __future__ import annotations
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 import json
 import os
@@ -47,7 +48,6 @@ import socket
 import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
-import asyncio
 
 # Third-Party
 from fastapi import APIRouter, Depends, Request
@@ -765,7 +765,7 @@ async def version_endpoint(
         >>> # Test with Redis available
         >>> async def test_with_redis():
         ...     mock_redis = AsyncMock()
-        ...     mock_redis.ping = AsyncMock()
+        ...     mock_redis.ping = AsyncMock(return_value=True)  
         ...     mock_redis.info = AsyncMock(return_value={"redis_version": "7.0.5"})
         ...
         ...     with patch('mcpgateway.version.REDIS_AVAILABLE', True):
@@ -793,7 +793,7 @@ async def version_endpoint(
     if REDIS_AVAILABLE and settings.cache_type.lower() == "redis" and settings.redis_url:
         try:
             client = aioredis.Redis.from_url(settings.redis_url)
-            
+
             response = await asyncio.wait_for(client.ping(), timeout=3.0)
             if response is True:
                 redis_ok = True
