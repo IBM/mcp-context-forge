@@ -8,6 +8,290 @@ owner: Mihai Criveti
 
 A flexible FastAPI-based gateway and router for **Model Context Protocol (MCP)** with support for virtual servers. It acts as a unified interface for tools, resources, prompts, virtual servers, and federated gateways - all accessible via rich multi-transport APIs and an interactive web-based Admin UI.
 
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic Core</title>
+    <style>
+        .diagram-body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f7fa;
+            color: #2c3e50;
+        }
+
+        .diagram-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .diagram-h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 40px;
+            font-size: 2.5em;
+            font-weight: 600;
+        }
+
+        /* Agentic Core section */
+        .diagram-agentic-core {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .diagram-section-title {
+            color: white;
+            font-size: 1.8em;
+            text-align: center;
+            margin-bottom: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .diagram-three-column-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 30px;
+            align-items: start;
+        }
+
+        .diagram-column {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .diagram-component-group {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        .diagram-component-group:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .diagram-group-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .diagram-group-items {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .diagram-item {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            padding: 8px 14px;
+            font-size: 0.95em;
+            color: #ecf0f1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .diagram-item:hover {
+            background: rgba(255, 255, 255, 0.25);
+            transform: translateX(4px);
+        }
+
+        /* Center column special styling */
+        .diagram-center-column {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .diagram-gateway-box {
+            width: 100%;
+            background: rgba(52, 152, 219, 0.2);
+            border: 2px solid rgba(52, 152, 219, 0.6);
+            border-radius: 12px;
+            padding: 25px;
+            text-align: center;
+        }
+
+        .diagram-gateway-box:hover {
+            background: rgba(52, 152, 219, 0.3);
+            border-color: rgba(52, 152, 219, 0.8);
+        }
+
+        .diagram-gateway-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: white;
+        }
+
+        .diagram-open-source-badge {
+            display: inline-block;
+            background: rgba(46, 204, 113, 0.3);
+            border: 1px solid rgba(46, 204, 113, 0.6);
+            border-radius: 20px;
+            padding: 4px 16px;
+            font-size: 0.85em;
+            margin-bottom: 20px;
+            color: #2ecc71;
+        }
+
+        .diagram-capability-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            text-align: left;
+            margin-top: 20px;
+        }
+
+        .diagram-capability {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .diagram-protocol-detail {
+            font-size: 0.8em;
+            opacity: 0.8;
+            margin-left: 24px;
+            margin-top: 4px;
+        }
+
+        @media (max-width: 968px) {
+            .diagram-three-column-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="diagram-container">
+        <div class="diagram-agentic-core">
+            <div class="diagram-section-title">
+                ⚡ ContextForge MCP Gateway Use Case Overview
+            </div>
+
+            <div class="diagram-three-column-layout">
+                <!-- Left Column -->
+                <div class="diagram-column">
+                    <div class="diagram-component-group">
+                        <div class="diagram-group-title">🤖 Agent Frameworks</div>
+                        <div class="diagram-group-items">
+                            <div class="diagram-item">🔗 Langchain</div>
+                            <div class="diagram-item">📊 Langgraph</div>
+                            <div class="diagram-item">👥 crew.ai</div>
+                            <div class="diagram-item">🔄 Autogen</div>
+                            <div class="diagram-item">🐍 PydanticAI</div>
+                            <div class="diagram-item">🤗 Huggingface Smol</div>
+                            <div class="diagram-item">🐝 Agent Bee</div>
+                        </div>
+                    </div>
+
+                    <div class="diagram-component-group">
+                        <div class="diagram-group-title">💻 Visual Studio Code</div>
+                        <div class="diagram-group-items">
+                            <div class="diagram-item">🤖 GitHub Copilot</div>
+                            <div class="diagram-item">🔧 Cline</div>
+                            <div class="diagram-item">➡️ Continue</div>
+                        </div>
+                    </div>
+
+                    <div class="diagram-component-group">
+                        <div class="diagram-group-title">🔧 Other Clients</div>
+                        <div class="diagram-group-items">
+                            <div class="diagram-item">🌐 OpenWebUI</div>
+                            <div class="diagram-item">⌨️ MCP-CLI</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Center Column -->
+                <div class="diagram-center-column">
+                    <div class="diagram-gateway-box">
+                        <div class="diagram-gateway-title">🌐 MCP Gateway</div>
+                        <div class="diagram-capability-list">
+                            <div class="diagram-capability">📚 MCP Registry</div>
+                            <div class="diagram-capability">🖥️ Virtual Servers</div>
+                            <div class="diagram-capability">🔐 Authorization</div>
+                            <div class="diagram-capability">🔑 Authentication</div>
+                            <div class="diagram-capability" style="padding: 10px 12px;">
+                                <div>🔄 Protocol Conversion → any to any</div>
+                                <div style="font-size: 0.8em; opacity: 0.8; margin-left: 24px;">(stdio, SSE, Streamable HTTP, JSON-RPC, REST)</div>
+                            </div>
+                            <div class="diagram-capability">📊 Observability</div>
+                            <div class="diagram-capability">⏱️ Rate Limiting</div>
+                            <div class="diagram-capability">🔀 HA / Routing</div>
+                            <div class="diagram-capability">💚 Healthchecks</div>
+                            <div class="diagram-capability">🛠️ API / UI / CLI</div>
+                        </div>
+                    </div>
+
+                    <div class="diagram-gateway-box">
+                        <div class="diagram-gateway-title">🔌 Plugin Framework</div>
+                        <div class="diagram-capability-list">
+                            <div class="diagram-capability">🔒 PII Filtering</div>
+                            <div class="diagram-capability">🛡️ XSS Filtering</div>
+                            <div class="diagram-capability">📋 Open Policy Agent</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column -->
+                <div class="diagram-column">
+                    <div class="diagram-component-group">
+                        <div class="diagram-group-title">🔌 MCP Servers</div>
+                        <div class="diagram-group-items">
+                            <div class="diagram-item">🐙 GitHub</div>
+                            <div class="diagram-item">📋 Jira</div>
+                            <div class="diagram-item">🎫 ServiceNow</div>
+                            <div class="diagram-item">🎭 Playwright</div>
+                            <div class="diagram-item">🎨 Figma</div>
+                            <div class="diagram-item">📅 Monday</div>
+                            <div class="diagram-item">📦 Box</div>
+                            <div class="diagram-item">🌐 Internet Search</div>
+                        </div>
+                    </div>
+
+                    <div class="diagram-component-group">
+                        <div class="diagram-group-title">🔗 REST APIs</div>
+                        <div class="diagram-group-items">
+                            <div class="diagram-item">🌍 External Services</div>
+                            <div class="diagram-item">☁️ Cloud Providers</div>
+                            <div class="diagram-item">📊 Data Sources</div>
+                            <div class="diagram-item">🏢 Enterprise Systems</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
 ![MCP Gateway](images/mcpgateway.gif)
 
 **⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component with **NO OFFICIAL SUPPORT** from IBM or its affiliates that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle. See [SECURITY.md](https://github.com/IBM/mcp-context-forge/blob/main/SECURITY.md) for more details, and the [roadmap](architecture/roadmap.md) for upcoming features.

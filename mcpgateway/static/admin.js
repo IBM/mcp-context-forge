@@ -1419,6 +1419,7 @@ async function editTool(toolId) {
         );
 
         if (!response.ok) {
+            // If the response is not OK, throw an error
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
@@ -3021,50 +3022,73 @@ function updateEditToolRequestTypes(selectedMethod = null) {
 // TOOL SELECT FUNCTIONALITY
 // ===================================================================
 
-function initToolSelect(selectId, pillsId, warnId, max = 6) {
-    const select = safeGetElement(selectId);
-    const pillsBox = safeGetElement(pillsId);
-    const warnBox = safeGetElement(warnId);
+function initToolSelect(
+    selectId,
+    pillsId,
+    warnId,
+    max = 6,
+    selectBtnId = null,
+    clearBtnId = null,
+) {
+    const container = document.getElementById(selectId);
+    const pillsBox = document.getElementById(pillsId);
+    const warnBox = document.getElementById(warnId);
+    const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
+    const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
 
-    if (!select || !pillsBox || !warnBox) {
+    if (!container || !pillsBox || !warnBox) {
         console.warn(
             `Tool select elements not found: ${selectId}, ${pillsId}, ${warnId}`,
         );
         return;
     }
 
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     const pillClasses =
-        "inline-block px-2 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded";
+        "inline-block px-3 py-1 text-xs font-semibold text-indigo-700 bg-indigo-100 rounded-full shadow";
 
     function update() {
         try {
-            const chosen = Array.from(select.selectedOptions);
-            const count = chosen.length;
+            const checked = Array.from(checkboxes).filter((cb) => cb.checked);
+            const count = checked.length;
 
             // Rebuild pills safely
             pillsBox.innerHTML = "";
-            chosen.forEach((opt) => {
+            checked.forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
-                span.textContent = opt.text; // Safe text content
+                span.textContent =
+                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                 pillsBox.appendChild(span);
             });
 
             // Warning when > max
             if (count > max) {
                 warnBox.textContent = `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.`;
-                warnBox.className = "text-yellow-600 text-sm mt-2";
             } else {
                 warnBox.textContent = "";
-                warnBox.className = "";
             }
         } catch (error) {
             console.error("Error updating tool select:", error);
         }
     }
 
+    if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = false));
+            update();
+        });
+    }
+
+    if (selectBtn) {
+        selectBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = true));
+            update();
+        });
+    }
+
     update(); // Initial render
-    select.addEventListener("change", update);
+    checkboxes.forEach((cb) => cb.addEventListener("change", update));
 }
 
 // ===================================================================
@@ -4194,7 +4218,7 @@ async function handleResourceFormSubmit(e) {
     const form = e.target;
     const formData = new FormData(form);
     const status = safeGetElement("status-resources");
-    const loading = safeGetElement("add-gateway-loading");
+    const loading = safeGetElement("add-resource-loading");
     try {
         // Validate inputs
         const name = formData.get("name");
@@ -4378,6 +4402,61 @@ async function handleToolFormSubmit(event) {
         );
 
         const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        } else {
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#tools`
+                : `${window.ROOT_PATH}/admin#tools`;
+            window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Fetch error:", error);
+        showErrorMessage(error.message);
+    }
+}
+async function handleEditToolFormSubmit(event) {
+    event.preventDefault();
+
+    const form = event.target;
+
+    try {
+        const formData = new FormData(form);
+
+        // Basic validation (customize as needed)
+        const name = formData.get("name");
+        const url = formData.get("url");
+        const nameValidation = validateInputName(name, "tool");
+        const urlValidation = validateUrl(url);
+
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+        if (!urlValidation.valid) {
+            throw new Error(urlValidation.error);
+        }
+
+        // // Save CodeMirror editors' contents if present
+
+        if (window.editToolHeadersEditor) {
+            window.editToolHeadersEditor.save();
+        }
+        if (window.editToolSchemaEditor) {
+            window.editToolSchemaEditor.save();
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("tools");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+        });
+        console.log("response:", response);
+        const result = await response.json();
+        console.log("result edit tool form:", result);
         if (!result.success) {
             throw new Error(result.message || "An error occurred");
         } else {
@@ -4786,12 +4865,16 @@ function initializeToolSelects() {
         "selectedToolsPills",
         "selectedToolsWarning",
         6,
+        "selectAllToolsBtn",
+        "clearAllToolsBtn",
     );
     initToolSelect(
         "edit-server-tools",
         "selectedEditToolsPills",
         "selectedEditToolsWarning",
         6,
+        "selectAllEditToolsBtn",
+        "clearAllEditToolsBtn",
     );
 }
 
@@ -4922,6 +5005,15 @@ function setupFormHandlers() {
         editResourceForm.addEventListener("submit", () => {
             if (window.editResourceContentEditor) {
                 window.editResourceContentEditor.save();
+            }
+        });
+    }
+    const editToolForm = safeGetElement("edit-tool-form");
+    if (editToolForm) {
+        editToolForm.addEventListener("submit", handleEditToolFormSubmit);
+        editToolForm.addEventListener("click", () => {
+            if (getComputedStyle(editToolForm).display !== "none") {
+                refreshEditors();
             }
         });
     }

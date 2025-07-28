@@ -521,7 +521,7 @@ class SessionManagerWrapper:
         """
 
         path = scope["modified_path"]
-        match = re.search(r"/servers/(?P<server_id>[^/]+)/mcp", path)
+        match = re.search(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp", path)
 
         # Extract request headers from scope
         headers = dict(Headers(scope=scope))

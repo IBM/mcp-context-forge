@@ -37,9 +37,11 @@ FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
 	$(DOCS_DIR)/pstats.png \
 	$(DOCS_DIR)/docs/test/sbom.md \
 	$(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
-				  $(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
+	$(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
 	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
-				  .depsorter_cache.json .depupdate.*
+	.depsorter_cache.json .depupdate.* \
+	grype-results.sarif devskim-results.sarif \
+	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
@@ -221,8 +223,10 @@ clean:
 ## --- Automated checks --------------------------------------------------------
 smoketest:
 	@echo "🚀 Running smoketest..."
-	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
-	@echo "✅ Smoketest passed!"
+	@bash -c '\
+		./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }; \
+		echo "✅ Smoketest passed!" \
+	'
 
 test:
 	@echo "🧪 Running tests..."
@@ -712,11 +716,14 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 # 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS
 # =============================================================================
 # help: 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
-# help: install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js & Prettier via npm
+# help: install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js, Prettier, JSHint, jscpd & markuplint via npm
 # help: nodejsscan           - Run nodejsscan for JS security vulnerabilities
 # help: lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js, nodejsscan and npm audit
+# help: jshint               - Run JSHint for additional JavaScript analysis
+# help: jscpd                - Detect copy-pasted code in JS/HTML/CSS files
+# help: markuplint           - Modern HTML linting with markuplint
 # help: format-web           - Format HTML, CSS & JS files with Prettier
-.PHONY: install-web-linters nodejsscan lint-web format-web
+.PHONY: install-web-linters nodejsscan lint-web jshint jscpd markuplint format-web
 
 install-web-linters:
 	@echo "🔧 Installing HTML/CSS/JS lint, security & formatting tools..."
@@ -729,7 +736,10 @@ install-web-linters:
 		stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
 		eslint eslint-config-standard \
 		retire \
-		prettier
+		prettier \
+		jshint \
+		jscpd \
+		markuplint
 
 nodejsscan:
 	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
@@ -751,6 +761,24 @@ lint-web: install-web-linters nodejsscan
 	else \
 	  echo "⚠️  Skipping npm audit: no package.json found"; \
 	fi
+
+jshint: install-web-linters
+	@echo "🔍 Running JSHint for JavaScript analysis..."
+	@if [ -f .jshintrc ]; then \
+	  echo "📋 Using .jshintrc configuration"; \
+	  npx jshint --config .jshintrc mcpgateway/static/*.js || true; \
+	else \
+	  echo "📋 No .jshintrc found, using defaults with ES11"; \
+	  npx jshint --esversion=11 mcpgateway/static/*.js || true; \
+	fi
+
+jscpd: install-web-linters
+	@echo "🔍 Detecting copy-pasted code with jscpd..."
+	@npx jscpd "mcpgateway/static/" "mcpgateway/templates/" || true
+
+markuplint: install-web-linters
+	@echo "🔍 Running markuplint for modern HTML validation..."
+	@npx markuplint mcpgateway/templates/* || true
 
 format-web: install-web-linters
 	@echo "🎨 Formatting HTML, CSS & JS with Prettier..."
@@ -933,7 +961,9 @@ trivy:
 		echo "   • Or run: make trivy-install"; \
 		exit 1; \
 	}
-	@systemctl --user enable --now podman.socket 2>/dev/null || true
+	@if command -v systemctl >/dev/null 2>&1; then \
+		systemctl --user enable --now podman.socket 2>/dev/null || true; \
+	fi
 	@echo "🔎  trivy vulnerability scan..."
 	@trivy --format table --severity HIGH,CRITICAL image $(IMG)
 
@@ -1157,21 +1187,16 @@ endef
 # help: use-podman           - Switch to Podman runtime
 # help: show-runtime         - Show current container runtime
 
-# .PHONY: container-build container-run container-run-host container-run-ssl container-run-ssl-host \
-#         container-push container-info container-stop container-logs container-shell \
-#         container-health image-list image-clean image-retag container-check-image \
-#         container-build-multi use-docker use-podman show-runtime
-
 .PHONY: container-build container-run container-run-ssl container-run-ssl-host \
-	container-push container-info container-stop container-logs container-shell \
-	container-health image-list image-clean image-retag container-check-image \
-	container-build-multi use-docker use-podman show-runtime print-runtime \
-	print-image container-validate-env container-check-ports container-wait-healthy
+        container-push container-info container-stop container-logs container-shell \
+        container-health image-list image-clean image-retag container-check-image \
+        container-build-multi use-docker use-podman show-runtime print-runtime \
+        print-image container-validate-env container-check-ports container-wait-healthy
 
 
 # Containerfile to use (can be overridden)
 #CONTAINER_FILE ?= Containerfile
-CONTAINER_FILE ?= $(shell [ -f "Containerfile" ] && echo "Containerfile" || echo "Dockerfile")
+CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
 
 
 # Define COMMA for the conditional Z flag
@@ -1188,15 +1213,6 @@ container-info:
 	@echo "Actual Image:   $(call get_image_name)"
 	@echo "Container File: $(CONTAINER_FILE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-# container-build:
-# 	@echo "🔨 Building with $(CONTAINER_RUNTIME)..."
-# 	$(CONTAINER_RUNTIME) build \
-# 		--platform=linux/amd64 \
-# 		-f $(CONTAINER_FILE) \
-# 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-# 		.
-# 	@echo "✅ Built image: $(call get_image_name)"
 
 # Auto-detect platform based on uname
 PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
@@ -1253,6 +1269,7 @@ container-run-ssl: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		-u $(id -u):$(id -g) \
 		--env-file=.env \
 		-e SSL=true \
 		-e CERT_FILE=certs/cert.pem \
@@ -1273,6 +1290,7 @@ container-run-ssl-host: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		-u $(id -u):$(id -g) \
 		--network=host \
 		--env-file=.env \
 		-e SSL=true \
@@ -1430,9 +1448,8 @@ show-runtime:
 # help: container-check-ports  - Check if required ports are available
 
 # Pre-flight validation
-.PHONY: container-validate check-ports
+.PHONY: container-validate container-check-ports
 
-# container-validate: container-validate-env check-ports
 container-validate: container-validate-env container-check-ports
 	@echo "✅ All validations passed"
 
@@ -1446,7 +1463,7 @@ container-check-ports:
 	@echo "🔍 Checking port availability..."
 	@if ! command -v lsof >/dev/null 2>&1; then \
 		echo "⚠️  lsof not installed - skipping port check"; \
-		echo "💡 Install with: brew install lsof (macOS) or apt-get install lsof (Linux)"; \
+		echo "💡  Install with: brew install lsof (macOS) or apt-get install lsof (Linux)"; \
 		exit 0; \
 	fi
 	@failed=0; \
@@ -2268,7 +2285,7 @@ argocd-app-sync:
 # =============================================================================
 # help: 🏠 LOCAL PYPI SERVER
 # help: local-pypi-install     - Install pypiserver for local testing
-# help: local-pypi-start       - Start local PyPI server on :8084 (no auth)
+# help: local-pypi-start       - Start local PyPI server on :8085 (no auth)
 # help: local-pypi-start-auth  - Start local PyPI server with basic auth (admin/admin)
 # help: local-pypi-stop        - Stop local PyPI server
 # help: local-pypi-upload      - Upload existing package to local PyPI (no auth)
@@ -2290,12 +2307,12 @@ local-pypi-install:
 	@mkdir -p $(LOCAL_PYPI_DIR)
 
 local-pypi-start: local-pypi-install local-pypi-stop
-	@echo "🚀  Starting local PyPI server on http://localhost:8084..."
+	@echo "🚀  Starting local PyPI server on http://localhost:8085..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 	export PYPISERVER_BOTTLE_MEMFILE_MAX_OVERRIDE_BYTES=10485760 && \
-	pypi-server run -p 8084 -a . -P . $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
+	pypi-server run -p 8085 -a . -P . $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
 	@sleep 2
-	@echo "✅  Local PyPI server started at http://localhost:8084"
+	@echo "✅  Local PyPI server started at http://localhost:8085"
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
 	@echo "🔓  No authentication required (open mode)"
 
@@ -2340,14 +2357,14 @@ local-pypi-upload:
 		echo "❌  No dist/ directory or files found. Run 'make dist' first."; \
 		exit 1; \
 	fi
-	@if ! curl -s http://localhost:8084 >/dev/null 2>&1; then \
-		echo "❌  Local PyPI server not running on port 8084. Run 'make local-pypi-start' first."; \
+	@if ! curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+		echo "❌  Local PyPI server not running on port 8085. Run 'make local-pypi-start' first."; \
 		exit 1; \
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	twine upload --verbose --repository-url http://localhost:8084 --skip-existing dist/*"
+	twine upload --verbose --repository-url $(LOCAL_PYPI_URL) --skip-existing dist/*"
 	@echo "✅  Package uploaded to local PyPI"
-	@echo "🌐  Browse packages: http://localhost:8084"
+	@echo "🌐  Browse packages: $(LOCAL_PYPI_URL)"
 
 local-pypi-upload-auth:
 	@echo "📤  Uploading existing package to local PyPI with auth..."
@@ -2387,9 +2404,7 @@ local-pypi-status:
 	@echo "🔍  Local PyPI server status:"
 	@if [ -f $(LOCAL_PYPI_PID) ] && kill -0 $(cat $(LOCAL_PYPI_PID)) 2>/dev/null; then \
 		echo "✅  Server running (PID: $(cat $(LOCAL_PYPI_PID)))"; \
-		if curl -s http://localhost:8084 >/dev/null 2>&1; then \
-			echo "🌐  Server on port 8084: http://localhost:8084"; \
-		elif curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+		if curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
 			echo "🌐  Server on port 8085: $(LOCAL_PYPI_URL)"; \
 		fi; \
 		echo "📂  Directory: $(LOCAL_PYPI_DIR)"; \
@@ -2679,6 +2694,8 @@ SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
 	-not -path './build/*' \
 	-not -path './.tox/*')
 
+# Define shfmt binary location
+SHFMT := $(shell command -v shfmt 2>/dev/null || echo "$(HOME)/go/bin/shfmt")
 
 .PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
 
@@ -2697,15 +2714,21 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	  esac ; \
 	fi ; \
 	# -------- shfmt (Go) -------- \
-	if ! command -v shfmt >/dev/null 2>&1 ; then \
+	if ! command -v shfmt >/dev/null 2>&1 && [ ! -f "$(HOME)/go/bin/shfmt" ] ; then \
 	  echo "🛠  Installing shfmt..." ; \
 	  if command -v go >/dev/null 2>&1; then \
 	    GO111MODULE=on go install mvdan.cc/sh/v3/cmd/shfmt@latest; \
-	    mkdir -p $(VENV_DIR)/bin; \
-	    ln -sf $$HOME/go/bin/shfmt $(VENV_DIR)/bin/shfmt 2>/dev/null || true; \
+	    echo "✅  shfmt installed to $(HOME)/go/bin/shfmt"; \
 	  else \
-	    echo "⚠️  Go not found - install Go or brew/apt shfmt package manually"; \
+	    case "$$(uname -s)" in \
+	      Darwin)  brew install shfmt ;; \
+	      Linux)   { command -v apt-get && sudo apt-get update -qq && sudo apt-get install -y shfmt ; } || \
+	               { echo "⚠️  Go not found - install Go or shfmt package manually"; } ;; \
+	      *) echo "⚠️  Please install shfmt manually" ;; \
+	    esac ; \
 	  fi ; \
+	else \
+	  echo "✅  shfmt already installed at: $$(command -v shfmt || echo $(HOME)/go/bin/shfmt)"; \
 	fi ; \
 	# -------- bashate (pip) ----- \
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
@@ -2719,10 +2742,14 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 
 shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
 	@echo "🔍  Running shfmt (diff-only)..."
-	@command -v shfmt >/dev/null 2>&1 || { \
+	@if command -v shfmt >/dev/null 2>&1; then \
+		shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true; \
+	elif [ -f "$(SHFMT)" ]; then \
+		$(SHFMT) -d -i 4 -ci $(SHELL_SCRIPTS) || true; \
+	else \
 		echo "⚠️  shfmt not installed - skipping"; \
 		echo "💡  Install with: go install mvdan.cc/sh/v3/cmd/shfmt@latest"; \
-	} && shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true
+	fi
 	@echo "🔍  Running ShellCheck..."
 	@command -v shellcheck >/dev/null 2>&1 || { \
 		echo "⚠️  shellcheck not installed - skipping"; \
@@ -2735,7 +2762,16 @@ shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
 
 shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 	@echo "🎨  Formatting shell scripts with shfmt -w..."
-	@shfmt -w -i 4 -ci $(SHELL_SCRIPTS)
+	@if command -v shfmt >/dev/null 2>&1; then \
+		shfmt -w -i 4 -ci $(SHELL_SCRIPTS); \
+	elif [ -f "$(SHFMT)" ]; then \
+		$(SHFMT) -w -i 4 -ci $(SHELL_SCRIPTS); \
+	else \
+		echo "❌  shfmt not found in PATH or $(HOME)/go/bin/"; \
+		echo "💡  Install with: go install mvdan.cc/sh/v3/cmd/shfmt@latest"; \
+		echo "    Or: brew install shfmt (macOS)"; \
+		exit 1; \
+	fi
 	@echo "✅  shfmt formatting done."
 
 
@@ -2743,47 +2779,112 @@ shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 # =============================================================================
 # help: 🛢️  ALEMBIC DATABASE MIGRATIONS
 # help: alembic-install   - Install Alembic CLI (and SQLAlchemy) in the current env
-# help: db-new            - Create a new migration  (override with MSG="your title")
-# help: db-up             - Upgrade DB to the latest revision (head)
-# help: db-down           - Downgrade one revision       (override with REV=<id|steps>)
-# help: db-current        - Show the current head revision for the database
-# help: db-history        - Show the full migration graph / history
-# help: db-revision-id    - Echo just the current revision id (handy for scripting)
+# help: db-init           - Initialize alembic migrations
+# help: db-migrate        - Create a new migration
+# help: db-upgrade        - Upgrade database to latest migration
+# help: db-downgrade      - Downgrade database by one revision
+# help: db-current        - Show current database revision
+# help: db-history        - Show migration history
+# help: db-heads          - Show available heads
+# help: db-show           - Show a specific revision
+# help: db-stamp          - Stamp database with a specific revision
+# help: db-reset          - Reset database (CAUTION: drops all data)
+# help: db-status         - Show detailed database status
+# help: db-check          - Check if migrations are up to date
+# help: db-fix-head       - Fix multiple heads issue
 # -----------------------------------------------------------------------------
 
-# ──────────────────────────
-# Internals & defaults
-# ──────────────────────────
-ALEMBIC ?= alembic        # Override to e.g. `poetry run alembic`
-MSG     ?= "auto migration"
-REV     ?= -1             # Default: one step down; can be hash, -n, +n, etc.
+# Database migration commands
+ALEMBIC_CONFIG = mcpgateway/alembic.ini
 
-.PHONY: alembic-install db-new db-up db-down db-current db-history db-revision-id
+.PHONY: alembic-install db-init db-migrate db-upgrade db-downgrade db-current db-history db-heads db-show db-stamp db-reset db-status db-check db-fix-head
 
 alembic-install:
 	@echo "➜ Installing Alembic ..."
 	pip install --quiet alembic sqlalchemy
 
-db-new:
-	@echo "➜ Generating revision: $(MSG)"
-	$(ALEMBIC) -c mcpgateway/alembic.ini revision --autogenerate -m $(MSG)
+.PHONY: db-init
+db-init: ## Initialize alembic migrations
+	@echo "🗄️ Initializing database migrations..."
+	alembic -c $(ALEMBIC_CONFIG) init alembic
 
-db-up:
-	@echo "➜ Upgrading database to head ..."
-	$(ALEMBIC) -c mcpgateway/alembic.ini upgrade head
+.PHONY: db-migrate
+db-migrate: ## Create a new migration
+	@echo "�️ Creating new migration..."
+	@read -p "Enter migration message: " msg; \
+	alembic -c $(ALEMBIC_CONFIG) revision --autogenerate -m "$$msg"
 
-db-down:
-	@echo "➜ Downgrading database → $(REV) ..."
-	$(ALEMBIC) -c mcpgateway/alembic.ini downgrade $(REV)
+.PHONY: db-upgrade
+db-upgrade: ## Upgrade database to latest migration
+	@echo "🗄️ Upgrading database..."
+	alembic -c $(ALEMBIC_CONFIG) upgrade head
 
-db-current:
-	$(ALEMBIC) -c mcpgateway/alembic.ini current
+.PHONY: db-downgrade
+db-downgrade: ## Downgrade database by one revision
+	@echo "�️ Downgrading database..."
+	alembic -c $(ALEMBIC_CONFIG) downgrade -1
 
-db-history:
-	$(ALEMBIC) -c mcpgateway/alembic.ini history --verbose
+.PHONY: db-current
+db-current: ## Show current database revision
+	@echo "🗄️ Current database revision:"
+	@alembic -c $(ALEMBIC_CONFIG) current
 
-db-revision-id:
-	@$(ALEMBIC) -c mcpgateway/alembic.ini current --verbose | awk '/Current revision/ {print $$3}'
+.PHONY: db-history
+db-history: ## Show migration history
+	@echo "🗄️ Migration history:"
+	@alembic -c $(ALEMBIC_CONFIG) history
+
+.PHONY: db-heads
+db-heads: ## Show available heads
+	@echo "�️ Available heads:"
+	@alembic -c $(ALEMBIC_CONFIG) heads
+
+.PHONY: db-show
+db-show: ## Show a specific revision
+	@read -p "Enter revision ID: " rev; \
+	alembic -c $(ALEMBIC_CONFIG) show $$rev
+
+.PHONY: db-stamp
+db-stamp: ## Stamp database with a specific revision
+	@read -p "Enter revision to stamp: " rev; \
+	alembic -c $(ALEMBIC_CONFIG) stamp $$rev
+
+.PHONY: db-reset
+db-reset: ## Reset database (CAUTION: drops all data)
+	@echo "⚠️  WARNING: This will drop all data!"
+	@read -p "Are you sure? (y/N): " confirm; \
+	if [ "$$confirm" = "y" ]; then \
+		alembic -c $(ALEMBIC_CONFIG) downgrade base && \
+		alembic -c $(ALEMBIC_CONFIG) upgrade head; \
+		echo "✅ Database reset complete"; \
+	else \
+		echo "❌ Database reset cancelled"; \
+	fi
+
+.PHONY: db-status
+db-status: ## Show detailed database status
+	@echo "�️ Database Status:"
+	@echo "Current revision:"
+	@alembic -c $(ALEMBIC_CONFIG) current
+	@echo ""
+	@echo "Pending migrations:"
+	@alembic -c $(ALEMBIC_CONFIG) history -r current:head
+
+.PHONY: db-check
+db-check: ## Check if migrations are up to date
+	@echo "🗄️ Checking migration status..."
+	@if alembic -c $(ALEMBIC_CONFIG) current | grep -q "(head)"; then \
+		echo "✅ Database is up to date"; \
+	else \
+		echo "⚠️  Database needs migration"; \
+		echo "Run 'make db-upgrade' to apply pending migrations"; \
+		exit 1; \
+	fi
+
+.PHONY: db-fix-head
+db-fix-head: ## Fix multiple heads issue
+	@echo "�️ Fixing multiple heads..."
+	alembic -c $(ALEMBIC_CONFIG) merge -m "merge heads"
 
 
 # =============================================================================
