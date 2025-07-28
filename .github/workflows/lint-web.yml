@@ -1,0 +1,166 @@
+# ===============================================================
+# 🕸️  Web Lint & Static Analysis - Frontend Code Quality Gate
+# ===============================================================
+# Author: Mihai Criveti
+#   - runs each web linter in its own matrix job for visibility
+#   - mirrors the actual CLI commands used locally (no `make`)
+#   - ensures fast-failure isolation: one failure doesn't hide others
+#   - each job installs Node.js and required npm packages
+#   - logs are grouped and plain-text for readability
+# ---------------------------------------------------------------
+
+name: Web Lint & Static Analysis
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-web:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # -------------------------------------------------------
+          # 🧼 HTML/CSS/JS Linters & Validators
+          # -------------------------------------------------------
+          - id: htmlhint
+            setup: npm install --no-save htmlhint
+            cmd: |
+              npx htmlhint "mcpgateway/templates/**/*.html"
+
+          - id: stylelint
+            setup: |
+              npm install --no-save \
+                stylelint \
+                stylelint-config-standard \
+                @stylistic/stylelint-config \
+                stylelint-order
+            cmd: |
+              npx stylelint "mcpgateway/static/**/*.css"
+
+          - id: eslint
+            setup: |
+              npm install --no-save \
+                eslint \
+                eslint-config-standard
+            cmd: |
+              npx eslint "mcpgateway/static/**/*.js"
+
+          # -------------------------------------------------------
+          # 🔒 Security Scanners
+          # -------------------------------------------------------
+          - id: retire
+            setup: npm install --no-save retire
+            cmd: |
+              npx retire --path mcpgateway/static
+
+          - id: npm-audit
+            setup: |
+              # Initialize package.json if needed for audit
+              if [ ! -f package.json ]; then
+                npm init -y >/dev/null
+              fi
+            cmd: |
+              npm audit --audit-level=high
+
+          # -------------------------------------------------------
+          # 🔍 Additional Code Quality Tools
+          # -------------------------------------------------------
+          - id: jshint
+            setup: npm install --no-save jshint
+            cmd: |
+              if [ -f .jshintrc ]; then
+                npx jshint --config .jshintrc "mcpgateway/static/**/*.js"
+              else
+                npx jshint --esversion=11 "mcpgateway/static/**/*.js"
+              fi
+
+          - id: jscpd
+            setup: npm install --no-save jscpd
+            cmd: |
+              npx jscpd "mcpgateway/static/" "mcpgateway/templates/"
+
+          - id: markuplint
+            setup: npm install --no-save markuplint
+            cmd: |
+              npx markuplint mcpgateway/templates/*
+
+    name: ${{ matrix.id }}
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # -----------------------------------------------------------
+      # 1️⃣  Node.js Setup
+      # -----------------------------------------------------------
+      - name: 📦  Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      # -----------------------------------------------------------
+      # 2️⃣  Install Tool-Specific Requirements
+      # -----------------------------------------------------------
+      - name: 🔧  Install tool - ${{ matrix.id }}
+        run: ${{ matrix.setup }}
+
+      # -----------------------------------------------------------
+      # 3️⃣  Run Linter / Validator
+      # -----------------------------------------------------------
+      - name: 🔍  Run ${{ matrix.id }}
+        run: ${{ matrix.cmd }}
+
+  # -------------------------------------------------------
+  # 🐍 Python-based JS Security Scanner (separate job)
+  # -------------------------------------------------------
+  nodejsscan:
+    name: nodejsscan
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # -----------------------------------------------------------
+      # 1️⃣  Python Setup
+      # -----------------------------------------------------------
+      - name: 🐍  Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # -----------------------------------------------------------
+      # 2️⃣  Install nodejsscan
+      # -----------------------------------------------------------
+      - name: 🔧  Install nodejsscan
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install nodejsscan
+
+      # -----------------------------------------------------------
+      # 3️⃣  Run nodejsscan
+      # -----------------------------------------------------------
+      - name: 🔒  Run nodejsscan
+        run: |
+          nodejsscan --directory ./mcpgateway/static
