@@ -765,7 +765,7 @@ async def version_endpoint(
         >>> # Test with Redis available
         >>> async def test_with_redis():
         ...     mock_redis = AsyncMock()
-        ...     mock_redis.ping = AsyncMock(return_value=True)  
+        ...     mock_redis.ping = AsyncMock(return_value=True)
         ...     mock_redis.info = AsyncMock(return_value={"redis_version": "7.0.5"})
         ...
         ...     with patch('mcpgateway.version.REDIS_AVAILABLE', True):
