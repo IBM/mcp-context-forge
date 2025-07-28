@@ -3331,8 +3331,18 @@ async function testTool(toolId) {
                     input.type = "number";
                 } else if (prop.type === "boolean") {
                     input.type = "checkbox";
+                    input.value = true;
                     input.className =
                         "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded";
+
+                    // Add a second hidden input to include `false` in the Form
+                    // will be overriden in the map generation due to the same name being used as the key
+                    const hiddenInput = document.createElement("input");
+                    hiddenInput.name = input.name;
+                    hiddenInput.required = input.required;
+                    hiddenInput.type = "hidden";
+                    hiddenInput.value = false;
+                    fieldDiv.appendChild(hiddenInput);
                 }
 
                 fieldDiv.appendChild(input);
