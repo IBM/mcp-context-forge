@@ -1,0 +1,13 @@
+{
+  "esversion": 11,
+  "browser": true,
+  "devel": true,
+  "string": true,
+  "globals": {
+    "console": true,
+    "window": true,
+    "document": true,
+    "fetch": true,
+    "URLSearchParams": true
+  }
+}
