@@ -223,8 +223,10 @@ clean:
 ## --- Automated checks --------------------------------------------------------
 smoketest:
 	@echo "🚀 Running smoketest..."
-	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
-	@echo "✅ Smoketest passed!"
+	@bash -c '\
+		./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }; \
+		echo "✅ Smoketest passed!" \
+	'
 
 test:
 	@echo "🧪 Running tests..."
@@ -1194,7 +1196,7 @@ endef
 
 # Containerfile to use (can be overridden)
 #CONTAINER_FILE ?= Containerfile
-CONTAINER_FILE ?= $(shell [ -f "Containerfile" ] && echo "Containerfile" || echo "Dockerfile")
+CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
 
 
 # Define COMMA for the conditional Z flag
@@ -1267,6 +1269,7 @@ container-run-ssl: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		-u $(id -u):$(id -g) \
 		--env-file=.env \
 		-e SSL=true \
 		-e CERT_FILE=certs/cert.pem \
@@ -1287,6 +1290,7 @@ container-run-ssl-host: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		-u $(id -u):$(id -g) \
 		--network=host \
 		--env-file=.env \
 		-e SSL=true \

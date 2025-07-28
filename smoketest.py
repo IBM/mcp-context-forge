@@ -59,7 +59,7 @@ SUPERGW_CMD = [
     "-y",
     "supergateway",
     "--stdio",
-    "uvx mcp-server-time --local-timezone=Europe/Dublin",
+    "\"uvx mcp-server-time --local-timezone=Europe/Dublin\"",
     "--port",
     str(PORT_TIME_SERVER),
 ]
@@ -296,9 +296,17 @@ def step_4_docker_run():
 def step_5_start_time_server(restart=False):
     global _supergw_proc, _supergw_log_file
 
+    nvm_sh = os.path.expanduser("~/.nvm/nvm.sh")
+    cmd = f'source "{nvm_sh}" && nvm use default >/dev/null && npx --version'
+
     # Check if npx is available
     try:
-        npx_version = subprocess.check_output(["npx", "--version"], text=True, stderr=subprocess.DEVNULL).strip()
+        npx_version = subprocess.check_output(
+            ["bash", "-c", cmd],
+            text=True,
+            stderr=subprocess.DEVNULL
+        ).strip()
+
         logging.info("🔍 Found npx version: %s", npx_version)
     except (subprocess.CalledProcessError, FileNotFoundError):
         raise RuntimeError("npx not found. Please install Node.js and npm.")
@@ -337,8 +345,16 @@ def step_5_start_time_server(restart=False):
         logging.info("📝 Logging supergateway output to: %s", log_filename)
 
         # Start the process with output capture
+        cmd_str = " ".join(SUPERGW_CMD)
+        bash_cmd = f'''
+        export NVM_DIR="$HOME/.nvm"
+        source "{nvm_sh}"
+        nvm use default >/dev/null
+        exec {cmd_str}
+        '''
+
         _supergw_proc = subprocess.Popen(
-            SUPERGW_CMD,
+            ["bash", "-c", bash_cmd],
             stdout=_supergw_log_file,
             stderr=subprocess.STDOUT,
             text=True,
@@ -593,11 +609,13 @@ def main():
         logging.error("  - Check if port %d is already in use: lsof -i :%d", PORT_TIME_SERVER, PORT_TIME_SERVER)
         logging.error("  - Look for supergateway_*.log files for detailed output")
         logging.error("  - Try running with -v for verbose output")
-
-    if not failed:
-        cleanup()
-    else:
-        logging.warning("⚠️  Skipping cleanup due to failure. Run with --cleanup-only to clean up manually.")
+    finally:
+        if not failed:
+            cleanup()
+            sys.exit(0)
+        else:
+            logging.warning("⚠️  Skipping cleanup due to failure. Run with --cleanup-only to clean up manually.")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
