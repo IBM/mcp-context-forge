@@ -4415,8 +4415,12 @@ async function handleEditToolFormSubmit(event) {
 
         // // Save CodeMirror editors' contents if present
 
-        if (window.editToolHeadersEditor) window.editToolHeadersEditor.save();
-        if (window.editToolSchemaEditor) window.editToolSchemaEditor.save();
+        if (window.editToolHeadersEditor) {
+            window.editToolHeadersEditor.save();
+        }
+        if (window.editToolSchemaEditor) {
+            window.editToolSchemaEditor.save();
+        }
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
@@ -4428,7 +4432,7 @@ async function handleEditToolFormSubmit(event) {
             headers: { "X-Requested-With": "XMLHttpRequest" },
         });
         console.log("response:", response);
-        result = await response.json();
+        const result = await response.json();
         console.log("result edit tool form:", result);
         if (!result.success) {
             throw new Error(result.message || "An error occurred");
