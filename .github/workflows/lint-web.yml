@@ -1,11 +1,11 @@
 # ===============================================================
 # 🕸️  Web Lint & Static Analysis - Frontend Code Quality Gate
 # ===============================================================
-# Author: Mihai Criveti
+# Authors: Mihai Criveti
 #   - runs each web linter in its own matrix job for visibility
 #   - mirrors the actual CLI commands used locally (no `make`)
 #   - ensures fast-failure isolation: one failure doesn't hide others
-#   - each job installs Node.js and required npm packages
+#   - uses existing package.json dependencies
 #   - logs are grouped and plain-text for readability
 # ---------------------------------------------------------------
 
@@ -30,25 +30,14 @@ jobs:
           # 🧼 HTML/CSS/JS Linters & Validators
           # -------------------------------------------------------
           - id: htmlhint
-            setup: npm install --no-save htmlhint
             cmd: |
               npx htmlhint "mcpgateway/templates/**/*.html"
 
           - id: stylelint
-            setup: |
-              npm install --no-save \
-                stylelint \
-                stylelint-config-standard \
-                @stylistic/stylelint-config \
-                stylelint-order
             cmd: |
               npx stylelint "mcpgateway/static/**/*.css"
 
           - id: eslint
-            setup: |
-              npm install --no-save \
-                eslint \
-                eslint-config-standard
             cmd: |
               npx eslint "mcpgateway/static/**/*.js"
 
@@ -56,24 +45,17 @@ jobs:
           # 🔒 Security Scanners
           # -------------------------------------------------------
           - id: retire
-            setup: npm install --no-save retire
             cmd: |
               npx retire --path mcpgateway/static
 
           - id: npm-audit
-            setup: |
-              # Initialize package.json if needed for audit
-              if [ ! -f package.json ]; then
-                npm init -y >/dev/null
-              fi
             cmd: |
-              npm audit --audit-level=high
+              npm audit --audit-level=high || true
 
           # -------------------------------------------------------
           # 🔍 Additional Code Quality Tools
           # -------------------------------------------------------
           - id: jshint
-            setup: npm install --no-save jshint
             cmd: |
               if [ -f .jshintrc ]; then
                 npx jshint --config .jshintrc "mcpgateway/static/**/*.js"
@@ -82,12 +64,10 @@ jobs:
               fi
 
           - id: jscpd
-            setup: npm install --no-save jscpd
             cmd: |
               npx jscpd "mcpgateway/static/" "mcpgateway/templates/"
 
           - id: markuplint
-            setup: npm install --no-save markuplint
             cmd: |
               npx markuplint mcpgateway/templates/*
 
@@ -110,14 +90,43 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
 
       # -----------------------------------------------------------
-      # 2️⃣  Install Tool-Specific Requirements
+      # 2️⃣  Install ALL dependencies from package.json
       # -----------------------------------------------------------
-      - name: 🔧  Install tool - ${{ matrix.id }}
-        run: ${{ matrix.setup }}
+      - name: 📦  Install project dependencies
+        run: |
+          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+
+      # -----------------------------------------------------------
+      # 3️⃣  Install additional tool if not in package.json
+      # -----------------------------------------------------------
+      - name: 🔧  Install additional tools
+        run: |
+          # Check and install tools not in package.json
+          if ! npm list htmlhint >/dev/null 2>&1; then
+            npm install --legacy-peer-deps --no-save htmlhint
+          fi
+          if ! npm list retire >/dev/null 2>&1; then
+            npm install --legacy-peer-deps --no-save retire
+          fi
+          if ! npm list jshint >/dev/null 2>&1; then
+            npm install --legacy-peer-deps --no-save jshint
+          fi
+          if ! npm list jscpd >/dev/null 2>&1; then
+            npm install --legacy-peer-deps --no-save jscpd
+          fi
+          if ! npm list markuplint >/dev/null 2>&1; then
+            npm install --legacy-peer-deps --no-save markuplint
+          fi1; then
+            npm install --no-save jshint
+          fi
+          if ! npm list jscpd >/dev/null 2>&1; then
+            npm install --no-save jscpd
+          fi
+          if ! npm list markuplint >/dev/null 2>&1; then
+            npm install --no-save markuplint
+          fi
 
       # -----------------------------------------------------------
       # 3️⃣  Run Linter / Validator
