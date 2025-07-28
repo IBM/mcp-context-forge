@@ -45,6 +45,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    ARRAY,
 )
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
@@ -198,6 +199,18 @@ server_prompt_association = Table(
     Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
 )
+class GlobalConfig(Base):
+    """Global configuration settings.
+
+    Attributes:
+        id (int): Primary key
+        passthrough_headers (List[str]): List of headers allowed to be passed through globally
+    """
+
+    __tablename__ = "global_config"
+
+    id = Column(Integer, primary_key=True)
+    passthrough_headers: Mapped[Optional[List[str]]] = Column(JSON, nullable=True)  # Store list of strings as JSON array
 
 
 class ToolMetric(Base):
@@ -1111,6 +1124,9 @@ class Gateway(Base):
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]]
+    
+    # Header passthrough configuration
+    passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array
 
     # Relationship with local tools this gateway provides
     tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan")

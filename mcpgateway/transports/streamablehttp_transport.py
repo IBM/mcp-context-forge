@@ -36,7 +36,7 @@ import contextvars
 from dataclasses import dataclass
 import logging
 import re
-from typing import List, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 # Third-Party
@@ -71,6 +71,7 @@ tool_service = ToolService()
 mcp_app = Server("mcp-streamable-http-stateless")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default=None)
+request_headers_var = contextvars.ContextVar("request_headers", default={})
 
 # ------------------------------ Event store ------------------------------
 
@@ -342,6 +343,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     Args:
         name (str): The name of the tool to invoke.
         arguments (dict): A dictionary of arguments to pass to the tool.
+        headers (Optional[dict]): Optional request headers from the client.
 
     Returns:
         List of content (TextContent, ImageContent, or EmbeddedResource) from the tool response.
@@ -360,9 +362,10 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
         >>> sig.return_annotation
         typing.List[typing.Union[mcp.types.TextContent, mcp.types.ImageContent, mcp.types.EmbeddedResource]]
     """
+    request_headers = request_headers_var.get()
     try:
         async with get_db() as db:
-            result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments)
+            result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=request_headers)
             if not result or not result.content:
                 logger.warning(f"No content returned by tool: {name}")
                 return []
@@ -392,11 +395,12 @@ async def list_tools() -> List[types.Tool]:
         typing.List[mcp.types.Tool]
     """
     server_id = server_id_var.get()
+    request_headers = request_headers_var.get()
 
     if server_id:
         try:
             async with get_db() as db:
-                tools = await tool_service.list_server_tools(db, server_id)
+                tools = await tool_service.list_server_tools(db, server_id, request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception(f"Error listing tools:{e}")
@@ -404,7 +408,7 @@ async def list_tools() -> List[types.Tool]:
     else:
         try:
             async with get_db() as db:
-                tools = await tool_service.list_tools(db)
+                tools = await tool_service.list_tools(db, request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception(f"Error listing tools:{e}")
@@ -518,6 +522,11 @@ class SessionManagerWrapper:
 
         path = scope["modified_path"]
         match = re.search(r"/servers/(?P<server_id>[^/]+)/mcp", path)
+
+        # Extract request headers from scope
+        headers = dict(Headers(scope=scope))
+        # Store headers in context for tool invocations
+        request_headers_var.set(headers)
 
         if match:
             server_id = match.group("server_id")
