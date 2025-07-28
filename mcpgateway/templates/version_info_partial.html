@@ -179,65 +179,80 @@
           </span>
         </div>
       </div>
-
       <!-- Redis Status -->
       <div
-        class="border rounded-lg p-4 {% if payload.redis.available %}border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20{% else %}border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20{% endif %}"
+        class="border rounded-lg p-4
+          {% if payload.settings.cache_type == 'redis' and payload.redis.reachable %}
+            border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20
+          {% elif payload.settings.cache_type == 'redis' and not payload.redis.reachable %}
+            border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20
+          {% else %}
+            border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/20
+          {% endif %}"
       >
         <div class="flex items-center justify-between">
           <div>
-            <h4
-              class="font-medium {% if payload.redis.available %}text-green-800 dark:text-green-300{% else %}text-red-800 dark:text-red-300{% endif %}"
-            >
-              Redis
+            <h4 class="font-medium
+              {% if payload.settings.cache_type == 'redis' and payload.redis.reachable %}
+                text-green-800 dark:text-green-300
+              {% elif payload.settings.cache_type == 'redis' and not payload.redis.reachable %}
+                text-red-800 dark:text-red-300
+              {% else %}
+                text-gray-800 dark:text-gray-300
+              {% endif %}">
+              Cache
             </h4>
-            <p
-              class="text-sm {% if payload.redis.available %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %}"
-            >
-              Cache Service
+            <p class="text-sm
+              {% if payload.settings.cache_type == 'redis' and payload.redis.reachable %}
+                text-green-600 dark:text-green-400
+              {% elif payload.settings.cache_type == 'redis' and not payload.redis.reachable %}
+                text-red-600 dark:text-red-400
+              {% else %}
+                text-gray-600 dark:text-gray-400
+              {% endif %}">
+              {{ payload.settings.cache_type | capitalize }} Cache
             </p>
           </div>
           <div class="flex items-center">
-            {% if payload.redis.available %}
-            <svg
-              class="h-8 w-8 text-green-500"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-              ></path>
-            </svg>
+            {% if payload.settings.cache_type == 'redis' and payload.redis.reachable %}
+              <svg class="h-8 w-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            {% elif payload.settings.cache_type == 'redis' and not payload.redis.reachable %}
+              <svg class="h-8 w-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
             {% else %}
-            <svg
-              class="h-8 w-8 text-red-500"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-              ></path>
-            </svg>
+              <svg class="h-8 w-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M12 9v2m0 4h.01M12 4a8 8 0 100 16 8 8 0 000-16z"/>
+              </svg>
             {% endif %}
           </div>
         </div>
+
         <div class="mt-2">
-          <span
-            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if payload.redis.available %}bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200{% else %}bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200{% endif %}"
-          >
-            {% if payload.redis.available %}✅ Available{% else %}❌ Not
-            Available{% endif %}
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+            {% if payload.settings.cache_type == 'redis' and payload.redis.reachable %}
+              bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-200
+            {% elif payload.settings.cache_type == 'redis' and not payload.redis.reachable %}
+              bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200
+            {% else %}
+              bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200
+            {% endif %}">
+            {% if payload.settings.cache_type == 'redis' and payload.redis.reachable %}
+              ✅ Connected
+            {% elif payload.settings.cache_type == 'redis' and not payload.redis.reachable %}
+              ❌ Connection Failed
+            {% else %}
+              ⚙️ Redis Not Configured
+            {% endif %}
           </span>
         </div>
       </div>
+
     </div>
   </div>
 
