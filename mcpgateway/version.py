@@ -39,6 +39,7 @@ Examples:
 from __future__ import annotations
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 import json
 import os
@@ -764,7 +765,7 @@ async def version_endpoint(
         >>> # Test with Redis available
         >>> async def test_with_redis():
         ...     mock_redis = AsyncMock()
-        ...     mock_redis.ping = AsyncMock()
+        ...     mock_redis.ping = AsyncMock(return_value=True)
         ...     mock_redis.info = AsyncMock(return_value={"redis_version": "7.0.5"})
         ...
         ...     with patch('mcpgateway.version.REDIS_AVAILABLE', True):
@@ -792,11 +793,17 @@ async def version_endpoint(
     if REDIS_AVAILABLE and settings.cache_type.lower() == "redis" and settings.redis_url:
         try:
             client = aioredis.Redis.from_url(settings.redis_url)
-            await client.ping()
-            info = await client.info()
-            redis_version = info.get("redis_version")
-            redis_ok = True
+
+            response = await asyncio.wait_for(client.ping(), timeout=3.0)
+            if response is True:
+                redis_ok = True
+                info = await asyncio.wait_for(client.info(), timeout=3.0)
+                redis_version = info.get("redis_version", "unknown")
+            else:
+                redis_ok = False
+                redis_version = "Ping failed"
         except Exception as exc:
+            redis_ok = False
             redis_version = str(exc)
 
     payload = _build_payload(redis_version, redis_ok)

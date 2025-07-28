@@ -94,7 +94,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import (
     PromptError,
@@ -1808,6 +1808,8 @@ async def register_gateway(
             return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=502)
         if isinstance(ex, ValueError):
             return JSONResponse(content={"message": "Unable to process input"}, status_code=400)
+        if isinstance(ex, GatewayNameConflictError):
+            return JSONResponse(content={"message": "Gateway name already exists"}, status_code=400)
         if isinstance(ex, RuntimeError):
             return JSONResponse(content={"message": "Error during execution"}, status_code=500)
         return JSONResponse(content={"message": "Unexpected error"}, status_code=500)

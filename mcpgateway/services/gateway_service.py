@@ -386,12 +386,17 @@ class GatewayService:
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
-            return GatewayRead.model_validate(gateway)
+            return GatewayRead.model_validate(db_gateway)
         except* GatewayConnectionError as ge:
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
             logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
             raise ge.exceptions[0]
+        except* GatewayNameConflictError as gnce:
+            if TYPE_CHECKING:
+                gnce: ExceptionGroup[GatewayNameConflictError]
+            logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
+            raise gnce.exceptions[0]
         except* ValueError as ve:
             if TYPE_CHECKING:
                 ve: ExceptionGroup[ValueError]

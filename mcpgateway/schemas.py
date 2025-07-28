@@ -550,8 +550,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     integration_type: Optional[Literal["MCP", "REST"]] = Field(None, description="Tool integration type")
+    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
     annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
@@ -645,8 +645,8 @@ class ToolUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: When value is unsafe
         """
-        integration_type = values.config.get("integration_type", "MCP")
 
+        integration_type = values.data.get("integration_type", "MCP")
         if integration_type == "MCP":
             allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
         else:  # REST
