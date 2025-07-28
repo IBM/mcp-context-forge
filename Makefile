@@ -714,11 +714,14 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 # 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS
 # =============================================================================
 # help: 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
-# help: install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js & Prettier via npm
+# help: install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js, Prettier, JSHint, jscpd & markuplint via npm
 # help: nodejsscan           - Run nodejsscan for JS security vulnerabilities
 # help: lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js, nodejsscan and npm audit
+# help: jshint               - Run JSHint for additional JavaScript analysis
+# help: jscpd                - Detect copy-pasted code in JS/HTML/CSS files
+# help: markuplint           - Modern HTML linting with markuplint
 # help: format-web           - Format HTML, CSS & JS files with Prettier
-.PHONY: install-web-linters nodejsscan lint-web format-web
+.PHONY: install-web-linters nodejsscan lint-web jshint jscpd markuplint format-web
 
 install-web-linters:
 	@echo "🔧 Installing HTML/CSS/JS lint, security & formatting tools..."
@@ -731,7 +734,10 @@ install-web-linters:
 		stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
 		eslint eslint-config-standard \
 		retire \
-		prettier
+		prettier \
+		jshint \
+		jscpd \
+		markuplint
 
 nodejsscan:
 	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
@@ -753,6 +759,24 @@ lint-web: install-web-linters nodejsscan
 	else \
 	  echo "⚠️  Skipping npm audit: no package.json found"; \
 	fi
+
+jshint: install-web-linters
+	@echo "🔍 Running JSHint for JavaScript analysis..."
+	@if [ -f .jshintrc ]; then \
+	  echo "📋 Using .jshintrc configuration"; \
+	  npx jshint --config .jshintrc mcpgateway/static/*.js || true; \
+	else \
+	  echo "📋 No .jshintrc found, using defaults with ES11"; \
+	  npx jshint --esversion=11 mcpgateway/static/*.js || true; \
+	fi
+
+jscpd: install-web-linters
+	@echo "🔍 Detecting copy-pasted code with jscpd..."
+	@npx jscpd "mcpgateway/static/" "mcpgateway/templates/" || true
+
+markuplint: install-web-linters
+	@echo "🔍 Running markuplint for modern HTML validation..."
+	@npx markuplint mcpgateway/templates/* || true
 
 format-web: install-web-linters
 	@echo "🎨 Formatting HTML, CSS & JS with Prettier..."
