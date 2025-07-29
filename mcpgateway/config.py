@@ -533,6 +533,9 @@ class Settings(BaseSettings):
     # Rate limiting
     validation_max_requests_per_minute: int = 60
 
+    ### passthrough headers
+    default_passthrough_headers = ["Authorization", "X-Tenant-Id", "X-Trace-Id"]
+
 
 def extract_using_jq(data, jq_filter=""):
     """

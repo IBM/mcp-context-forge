@@ -36,6 +36,8 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import GlobalConfig, ToolResult
 
+from mcpgateway.utils.passthrough_headers import get_passthrough_headers
+
 logger = logging.getLogger(__name__)
 
 
@@ -182,13 +184,7 @@ class ForwardingService:
         except Exception as e:
             raise ForwardingError(f"Forward request failed: {str(e)}")
 
-    async def forward_tool_request(
-        self, 
-        db: Session, 
-        tool_name: str, 
-        arguments: Dict[str, Any],
-        request_headers: Optional[Dict[str, str]] = None
-    ) -> ToolResult:
+    async def forward_tool_request(self, db: Session, tool_name: str, arguments: Dict[str, Any], request_headers: Optional[Dict[str, str]] = None) -> ToolResult:
         """Forward a tool invocation request.
 
         Locates the specified tool in the database, verifies it's federated,
@@ -259,13 +255,7 @@ class ForwardingService:
                 raise ForwardingError(f"Tool {tool_name} is not federated")
 
             # Forward to gateway
-            result = await self._forward_to_gateway(
-                db,
-                tool.gateway_id,
-                "tools/invoke",
-                {"name": tool_name, "arguments": arguments},
-                request_headers
-            )
+            result = await self._forward_to_gateway(db, tool.gateway_id, "tools/invoke", {"name": tool_name, "arguments": arguments}, request_headers)
 
             # Parse result
             return ToolResult(
@@ -354,63 +344,6 @@ class ForwardingService:
 
         except Exception as e:
             raise ForwardingError(f"Failed to forward resource request: {str(e)}")
-
-    def _get_passthrough_headers(
-        self,
-        request_headers: Dict[str, str],
-        gateway: DbGateway,
-        db: Session
-    ) -> Dict[str, str]:
-        """Get headers that should be passed through to the target gateway.
-
-        Args:
-            request_headers: Headers from the incoming request
-            gateway: Target gateway
-            db: Database session for global config lookup
-
-        Returns:
-            Dict of headers that should be passed through
-        """
-        # Get global passthrough headers first
-        global_config = db.query(GlobalConfig).first()
-        allowed_headers = global_config.passthrough_headers if global_config else []
-        
-        # Gateway specific headers override global config
-        if gateway.passthrough_headers is not None:
-            allowed_headers = gateway.passthrough_headers
-            
-        passthrough_headers = {}
-        
-        # Get auth headers to check for conflicts
-        auth_headers = self._get_auth_headers()
-        auth_header_keys = {key.lower(): key for key in auth_headers.keys()}
-        
-        # Copy allowed headers from request
-        for header_name in allowed_headers:
-            header_value = request_headers.get(header_name)
-            if header_value:
-                # Skip if header would conflict with existing auth headers
-                header_lower = header_name.lower()
-                if header_lower in auth_header_keys:
-                    logger.warning(f"Skipping {header_name} header passthrough as it conflicts with authentication headers")
-                    continue
-                
-                # Skip if header would conflict with gateway auth
-                if gateway.auth_type == "basic" and header_lower == "authorization":
-                    logger.warning(f"Skipping Authorization header passthrough due to basic auth configuration on gateway {gateway.name}")
-                    continue
-                if gateway.auth_type == "bearer" and header_lower == "authorization":
-                    logger.warning(f"Skipping Authorization header passthrough due to bearer auth configuration on gateway {gateway.name}")
-                    continue
-                if (gateway.auth_type == "headers" and 
-                    gateway.auth_header_key and 
-                    header_lower == gateway.auth_header_key.lower()):
-                    logger.warning(f"Skipping {header_name} header passthrough due to header auth configuration on gateway {gateway.name}")
-                    continue
-                    
-                passthrough_headers[header_name] = header_value
-                
-        return passthrough_headers
 
     async def _forward_to_gateway(
         self,
@@ -502,8 +435,7 @@ class ForwardingService:
                     # Merge auth headers with passthrough headers
                     headers = self._get_auth_headers()
                     if request_headers:
-                        passthrough_headers = self._get_passthrough_headers(request_headers, gateway, db)
-                        headers.update(passthrough_headers)
+                        headers = get_passthrough_headers(request_headers, headers, db, gateway)
 
                     response = await self._http_client.post(
                         f"{gateway.url}/rpc",
@@ -529,13 +461,7 @@ class ForwardingService:
         except Exception as e:
             raise ForwardingError(f"Failed to forward to {gateway.name}: {str(e)}")
 
-    async def _forward_to_all(
-        self, 
-        db: Session, 
-        method: str, 
-        params: Optional[Dict[str, Any]] = None,
-        request_headers: Optional[Dict[str, str]] = None
-    ) -> List[Any]:
+    async def _forward_to_all(self, db: Session, method: str, params: Optional[Dict[str, Any]] = None, request_headers: Optional[Dict[str, str]] = None) -> List[Any]:
         """Forward request to all active gateways.
 
         Broadcasts the same request to all enabled gateways in parallel,

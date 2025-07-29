@@ -48,6 +48,7 @@ from mcpgateway.schemas import (
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
 # Local
 from ..config import extract_using_jq
@@ -186,57 +187,6 @@ class ToolService:
         """
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
-
-    def _get_combined_headers(self, db: Session, tool: DbTool, base_headers: Dict[str, str], request_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        """Get combined headers including auth and passthrough headers.
-
-        Args:
-            db: Database session
-            tool: Tool object
-            base_headers: Base headers to start with
-            request_headers: Optional request headers to pass through
-
-        Returns:
-            Combined headers dictionary
-        """
-        headers = base_headers.copy()
-
-        # Get global passthrough headers configuration
-        global_config = db.query(GlobalConfig).first()
-        allowed_headers = global_config.passthrough_headers if global_config else []
-
-        # Apply tool-specific passthrough headers if configured
-        if tool.gateway_id:
-            gateway = db.query(DbGateway).filter(DbGateway.id == tool.gateway_id).first()
-            if gateway and gateway.passthrough_headers is not None:
-                allowed_headers = gateway.passthrough_headers
-
-        # Get auth headers first to check for conflicts
-        auth_headers = decode_auth(tool.auth_value)
-        auth_header_keys = {key.lower(): key for key in auth_headers.keys()}
-        headers.update(auth_headers)
-        # Copy allowed headers from request
-        if request_headers and allowed_headers:
-            for header_name in allowed_headers:
-                header_value = request_headers.get(header_name.lower())
-                if header_value:
-                    header_lower = header_name.lower()
-                    # Skip if header would conflict with existing auth headers
-                    if header_lower in auth_header_keys:
-                        logger.warning(f"Skipping {header_name} header passthrough as it conflicts with authentication headers")
-                        continue
-
-                    # Skip if header would conflict with tool auth settings
-                    if tool.auth_type == "basic" and header_lower == "authorization":
-                        logger.warning(f"Skipping Authorization header passthrough due to basic auth configuration on tool {tool.name}")
-                        continue
-                    if tool.auth_type == "bearer" and header_lower == "authorization":
-                        logger.warning(f"Skipping Authorization header passthrough due to bearer auth configuration on tool {tool.name}")
-                        continue
-
-                    headers[header_name] = header_value
-
-        return headers
 
     def _convert_tool_to_read(self, tool: DbTool) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
@@ -639,8 +589,13 @@ class ToolService:
         error_message = None
         try:
             # Get combined headers for the tool including base headers, auth, and passthrough headers
-            headers = self._get_combined_headers(db, tool, tool.headers or {}, request_headers)
+            # headers = self._get_combined_headers(db, tool, tool.headers or {}, request_headers)
+            headers = tool.headers or {}
             if tool.integration_type == "REST":
+                credentials = decode_auth(tool.auth_value)
+                headers.update(credentials)
+
+                headers = get_passthrough_headers(request_headers, headers, db)
                 # Build the payload based on integration type
                 payload = arguments.copy()
 
@@ -684,10 +639,11 @@ class ToolService:
             elif tool.integration_type == "MCP":
                 transport = tool.request_type.lower()
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
+                headers = decode_auth(gateway.auth_value)
 
                 # Get combined headers including gateway auth and passthrough
                 # base_headers = decode_auth(gateway.auth_value) if gateway and gateway.auth_value else {}
-                # headers = self._get_combined_headers(db, tool, base_headers, request_headers)
+                headers = get_passthrough_headers(request_headers, headers, db, gateway)
 
                 async def connect_to_sse_server(server_url: str) -> str:
                     """
