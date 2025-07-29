@@ -2123,9 +2123,9 @@ class RPCRequest(BaseModel):
             ValueError: When value is not safe
         """
         SecurityValidator.validate_no_xss(v, "RPC method name")
-        if not re.match(r"^[a-zA-Z][a-zA-Z0-9_\./]*$", v):
+        if not re.match(settings.validation_tool_method_pattern, v):
             raise ValueError("Invalid method name format")
-        if len(v) > 128:  # MCP method name limit
+        if len(v) > settings.validation_max_method_length:
             raise ValueError("Method name too long")
         return v
 
