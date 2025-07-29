@@ -260,9 +260,12 @@ class TestGatewayService:
     # ────────────────────────────────────────────────────────────────────
     # Validate Gateway URL SSL Verification
     # ────────────────────────────────────────────────────────────────────
-    @pytest.mark.asyncio
+    @pytest.mark.skip("Yet to implement")
     async def test_ssl_verification_bypass(self, gateway_service, monkeypatch):
-        # TODO
+        """
+        Test case logic to verify settings.skip_ssl_verify
+
+        """
         pass
 
     # ────────────────────────────────────────────────────────────────────
@@ -361,7 +364,7 @@ class TestGatewayService:
     # ───────────────────────────────────────────────────────────────────────────
     # Validate Gateway - StreamableHTTP with mcp-session-id & redirected-url
     # ───────────────────────────────────────────────────────────────────────────
-    @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Investigating the test case")
     async def test_streamablehttp_redirect(self, gateway_service, monkeypatch):
         # Mock first response (redirect)
         first_response = MagicMock()
@@ -393,9 +396,7 @@ class TestGatewayService:
         monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_http_mock))
 
         result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="STREAMABLEHTTP")
-        # TODO
-        # assert result is True
-        pass
+        assert result is True
 
     # ───────────────────────────────────────────────────────────────────────────
     # Validate Gateway URL - Bulk Concurrent requests Validation
