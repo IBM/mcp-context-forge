@@ -1882,13 +1882,12 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If auth type is invalid
         """
-        auth_type = values.get("auth_type")
+        auth_type = values.data.get("auth_type")
 
         if auth_type == "basic":
             # For basic authentication, both username and password must be present
-            username = values.get("auth_username")
-            password = values.get("auth_password")
-
+            username = values.data.get("auth_username")
+            password = values.data.get("auth_password")
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
@@ -1897,7 +1896,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         if auth_type == "bearer":
             # For bearer authentication, only token is required
-            token = values.get("auth_token")
+            token = values.data.get("auth_token")
 
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
@@ -1906,8 +1905,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         if auth_type == "authheaders":
             # For headers authentication, both key and value must be present
-            header_key = values.get("auth_header_key")
-            header_value = values.get("auth_header_value")
+            header_key = values.data.get("auth_header_key")
+            header_value = values.data.get("auth_header_value")
 
             if not header_key or not header_value:
                 raise ValueError("For 'headers' auth, both 'auth_header_key' and 'auth_header_value' must be provided.")
