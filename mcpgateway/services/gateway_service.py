@@ -431,7 +431,9 @@ class GatewayService:
             >>> db = MagicMock()
             >>> gateway_obj = MagicMock()
             >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway_obj]
-            >>> GatewayRead.model_validate = MagicMock(return_value='gateway_read')
+            >>> mocked_gateway_read = MagicMock()
+            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
+            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
             >>> import asyncio
             >>> result = asyncio.run(service.list_gateways(db))
             >>> result == ['gateway_read']
@@ -584,7 +586,6 @@ class GatewayService:
             GatewayNotFoundError: If the gateway is not found
 
         Examples:
-            >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from unittest.mock import MagicMock
             >>> from mcpgateway.schemas import GatewayRead
             >>> service = GatewayService()
@@ -592,7 +593,9 @@ class GatewayService:
             >>> gateway_mock = MagicMock()
             >>> gateway_mock.enabled = True
             >>> db.get.return_value = gateway_mock
-            >>> GatewayRead.model_validate = MagicMock(return_value='gateway_read')
+            >>> mocked_gateway_read = MagicMock()
+            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
+            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
             >>> import asyncio
             >>> result = asyncio.run(service.get_gateway(db, 'gateway_id'))
             >>> result == 'gateway_read'
