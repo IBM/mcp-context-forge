@@ -244,47 +244,54 @@ class GatewayService:
         else:
             self._redis_client = None
 
-    async def _validate_gateway_url(self, url: str, headers: dict, transport_type: str, timeout=5):
+    async def _validate_gateway_url(self, url: str, headers: dict, transport_type: str, timeout: Optional[int] = None):
         """
         Validate if the given URL is a live Server-Sent Events (SSE) endpoint.
-
-        This function performs a GET request followed by a HEAD request to the provided URL
-        to ensure the endpoint is reachable and returns a valid `Content-Type` header indicating
-        Server-Sent Events (`text/event-stream`).
 
         Args:
             url (str): The full URL of the endpoint to validate.
             headers (dict): Headers to be included in the requests (e.g., Authorization).
             transport_type (str): SSE or STREAMABLEHTTP
-            timeout (int, optional): Timeout in seconds for both requests. Defaults to 5.
+            timeout (int, optional): Timeout in seconds. Defaults to settings.gateway_validation_timeout.
 
         Returns:
-            bool: True if the endpoint is reachable and supports SSE (Content-Type is
-                'text/event-stream'), otherwise False.
+            bool: True if the endpoint is reachable and supports SSE/StreamableHTTP, otherwise False.
         """
-        async with httpx.AsyncClient() as client:
-            timeout = httpx.Timeout(timeout)
-            try:
-                async with client.stream("GET", url, headers=headers, timeout=timeout) as response:
-                    response_headers = dict(response.headers)
-                    location = response_headers.get("location")
-                    content_type = response_headers.get("content-type")
-                    if transport_type == "STREAMABLEHTTP":
-                        if location:
-                            async with client.stream("GET", location, headers=headers, timeout=timeout) as response_redirect:
-                                response_headers = dict(response_redirect.headers)
-                                mcp_session_id = response_headers.get("mcp-session-id")
-                                content_type = response_headers.get("content-type")
-                                if mcp_session_id is not None and mcp_session_id != "":
-                                    if content_type is not None and content_type != "" and "application/json" in content_type:
-                                        return True
-
-                    elif transport_type == "SSE":
-                        if content_type is not None and content_type != "" and "text/event-stream" in content_type:
-                            return True
+        if timeout is None:
+            timeout = settings.gateway_validation_timeout
+        validation_client = ResilientHttpClient(client_args={"timeout": settings.gateway_validation_timeout, "verify": not settings.skip_ssl_verify})
+        try:
+            async with validation_client.client.stream("GET", url, headers=headers, timeout=timeout) as response:
+                response_headers = dict(response.headers)
+                location = response_headers.get("location")
+                content_type = response_headers.get("content-type")
+                if response.status_code in (401, 403):
+                    logger.debug(f"Authentication failed for {url} with status {response.status_code}")
                     return False
-            except Exception:
+
+                if transport_type == "STREAMABLEHTTP":
+                    if location:
+                        async with validation_client.client.stream("GET", location, headers=headers, timeout=timeout) as response_redirect:
+                            response_headers = dict(response_redirect.headers)
+                            mcp_session_id = response_headers.get("mcp-session-id")
+                            content_type = response_headers.get("content-type")
+                            if response_redirect.status_code in (401, 403):
+                                logger.debug(f"Authentication failed at redirect location {location}")
+                                return False
+                            if mcp_session_id is not None and mcp_session_id != "":
+                                if content_type is not None and content_type != "" and "application/json" in content_type:
+                                    return True
+
+                elif transport_type == "SSE":
+                    if content_type is not None and content_type != "" and "text/event-stream" in content_type:
+                        return True
                 return False
+        except Exception as e:
+            print(str(e))
+            logger.debug(f"Gateway validation failed for {url}: {str(e)}", exc_info=True)
+            return False
+        finally:
+            await validation_client.aclose()
 
     async def initialize(self) -> None:
         """Initialize the service and start health check if this instance is the leader.
@@ -1260,7 +1267,8 @@ class GatewayService:
                 capabilities, tools = await connect_to_streamablehttp_server(url, authentication)
 
             return capabilities, tools
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Gateway initialization failed for {url}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
