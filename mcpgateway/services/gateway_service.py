@@ -1148,10 +1148,11 @@ class GatewayService:
             >>> import asyncio
             >>> async def test_params():
             ...     try:
-            ...         await service._initialize_gateway("invalid://url")
+            ...         await service._initialize_gateway("http://invalid://url")
             ...     except Exception as e:
-            ...         return "Failed" in str(e) or "GatewayConnectionError" in str(type(e).__name__)
-            >>> asyncio.run(test_params())
+            ...         return "True" if ("Failed" in str(e) or "GatewayConnectionError" in str(type(e).__name__)) else "False"
+            
+            >>> print (asyncio.run(test_params()))
             True
 
             >>> # Test default parameters
