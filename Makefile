@@ -223,8 +223,10 @@ clean:
 ## --- Automated checks --------------------------------------------------------
 smoketest:
 	@echo "🚀 Running smoketest..."
-	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
-	@echo "✅ Smoketest passed!"
+	@bash -c '\
+		./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }; \
+		echo "✅ Smoketest passed!" \
+	'
 
 test:
 	@echo "🧪 Running tests..."
@@ -1194,7 +1196,7 @@ endef
 
 # Containerfile to use (can be overridden)
 #CONTAINER_FILE ?= Containerfile
-CONTAINER_FILE ?= $(shell [ -f "Containerfile" ] && echo "Containerfile" || echo "Dockerfile")
+CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
 
 
 # Define COMMA for the conditional Z flag
@@ -1267,6 +1269,7 @@ container-run-ssl: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		-u $(id -u):$(id -g) \
 		--env-file=.env \
 		-e SSL=true \
 		-e CERT_FILE=certs/cert.pem \
@@ -1287,6 +1290,7 @@ container-run-ssl-host: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		-u $(id -u):$(id -g) \
 		--network=host \
 		--env-file=.env \
 		-e SSL=true \
@@ -2775,47 +2779,112 @@ shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 # =============================================================================
 # help: 🛢️  ALEMBIC DATABASE MIGRATIONS
 # help: alembic-install   - Install Alembic CLI (and SQLAlchemy) in the current env
-# help: db-new            - Create a new migration  (override with MSG="your title")
-# help: db-up             - Upgrade DB to the latest revision (head)
-# help: db-down           - Downgrade one revision       (override with REV=<id|steps>)
-# help: db-current        - Show the current head revision for the database
-# help: db-history        - Show the full migration graph / history
-# help: db-revision-id    - Echo just the current revision id (handy for scripting)
+# help: db-init           - Initialize alembic migrations
+# help: db-migrate        - Create a new migration
+# help: db-upgrade        - Upgrade database to latest migration
+# help: db-downgrade      - Downgrade database by one revision
+# help: db-current        - Show current database revision
+# help: db-history        - Show migration history
+# help: db-heads          - Show available heads
+# help: db-show           - Show a specific revision
+# help: db-stamp          - Stamp database with a specific revision
+# help: db-reset          - Reset database (CAUTION: drops all data)
+# help: db-status         - Show detailed database status
+# help: db-check          - Check if migrations are up to date
+# help: db-fix-head       - Fix multiple heads issue
 # -----------------------------------------------------------------------------
 
-# ──────────────────────────
-# Internals & defaults
-# ──────────────────────────
-ALEMBIC ?= alembic        # Override to e.g. `poetry run alembic`
-MSG     ?= "auto migration"
-REV     ?= -1             # Default: one step down; can be hash, -n, +n, etc.
+# Database migration commands
+ALEMBIC_CONFIG = mcpgateway/alembic.ini
 
-.PHONY: alembic-install db-new db-up db-down db-current db-history db-revision-id
+.PHONY: alembic-install db-init db-migrate db-upgrade db-downgrade db-current db-history db-heads db-show db-stamp db-reset db-status db-check db-fix-head
 
 alembic-install:
 	@echo "➜ Installing Alembic ..."
 	pip install --quiet alembic sqlalchemy
 
-db-new:
-	@echo "➜ Generating revision: $(MSG)"
-	$(ALEMBIC) -c mcpgateway/alembic.ini revision --autogenerate -m $(MSG)
+.PHONY: db-init
+db-init: ## Initialize alembic migrations
+	@echo "🗄️ Initializing database migrations..."
+	alembic -c $(ALEMBIC_CONFIG) init alembic
 
-db-up:
-	@echo "➜ Upgrading database to head ..."
-	$(ALEMBIC) -c mcpgateway/alembic.ini upgrade head
+.PHONY: db-migrate
+db-migrate: ## Create a new migration
+	@echo "�️ Creating new migration..."
+	@read -p "Enter migration message: " msg; \
+	alembic -c $(ALEMBIC_CONFIG) revision --autogenerate -m "$$msg"
 
-db-down:
-	@echo "➜ Downgrading database → $(REV) ..."
-	$(ALEMBIC) -c mcpgateway/alembic.ini downgrade $(REV)
+.PHONY: db-upgrade
+db-upgrade: ## Upgrade database to latest migration
+	@echo "🗄️ Upgrading database..."
+	alembic -c $(ALEMBIC_CONFIG) upgrade head
 
-db-current:
-	$(ALEMBIC) -c mcpgateway/alembic.ini current
+.PHONY: db-downgrade
+db-downgrade: ## Downgrade database by one revision
+	@echo "�️ Downgrading database..."
+	alembic -c $(ALEMBIC_CONFIG) downgrade -1
 
-db-history:
-	$(ALEMBIC) -c mcpgateway/alembic.ini history --verbose
+.PHONY: db-current
+db-current: ## Show current database revision
+	@echo "🗄️ Current database revision:"
+	@alembic -c $(ALEMBIC_CONFIG) current
 
-db-revision-id:
-	@$(ALEMBIC) -c mcpgateway/alembic.ini current --verbose | awk '/Current revision/ {print $$3}'
+.PHONY: db-history
+db-history: ## Show migration history
+	@echo "🗄️ Migration history:"
+	@alembic -c $(ALEMBIC_CONFIG) history
+
+.PHONY: db-heads
+db-heads: ## Show available heads
+	@echo "�️ Available heads:"
+	@alembic -c $(ALEMBIC_CONFIG) heads
+
+.PHONY: db-show
+db-show: ## Show a specific revision
+	@read -p "Enter revision ID: " rev; \
+	alembic -c $(ALEMBIC_CONFIG) show $$rev
+
+.PHONY: db-stamp
+db-stamp: ## Stamp database with a specific revision
+	@read -p "Enter revision to stamp: " rev; \
+	alembic -c $(ALEMBIC_CONFIG) stamp $$rev
+
+.PHONY: db-reset
+db-reset: ## Reset database (CAUTION: drops all data)
+	@echo "⚠️  WARNING: This will drop all data!"
+	@read -p "Are you sure? (y/N): " confirm; \
+	if [ "$$confirm" = "y" ]; then \
+		alembic -c $(ALEMBIC_CONFIG) downgrade base && \
+		alembic -c $(ALEMBIC_CONFIG) upgrade head; \
+		echo "✅ Database reset complete"; \
+	else \
+		echo "❌ Database reset cancelled"; \
+	fi
+
+.PHONY: db-status
+db-status: ## Show detailed database status
+	@echo "�️ Database Status:"
+	@echo "Current revision:"
+	@alembic -c $(ALEMBIC_CONFIG) current
+	@echo ""
+	@echo "Pending migrations:"
+	@alembic -c $(ALEMBIC_CONFIG) history -r current:head
+
+.PHONY: db-check
+db-check: ## Check if migrations are up to date
+	@echo "🗄️ Checking migration status..."
+	@if alembic -c $(ALEMBIC_CONFIG) current | grep -q "(head)"; then \
+		echo "✅ Database is up to date"; \
+	else \
+		echo "⚠️  Database needs migration"; \
+		echo "Run 'make db-upgrade' to apply pending migrations"; \
+		exit 1; \
+	fi
+
+.PHONY: db-fix-head
+db-fix-head: ## Fix multiple heads issue
+	@echo "�️ Fixing multiple heads..."
+	alembic -c $(ALEMBIC_CONFIG) merge -m "merge heads"
 
 
 # =============================================================================
