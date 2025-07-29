@@ -53,14 +53,18 @@ from fastapi.security.utils import get_authorization_scheme_param
 import jwt
 from jwt import PyJWTError
 
+
 # First-Party
 from mcpgateway.config import settings
 
 basic_security = HTTPBasic(auto_error=False)
 security = HTTPBearer(auto_error=False)
 
+import logging
+logger = logging.getLogger(__name__)
 
 async def verify_jwt_token(token: str) -> dict:
+    
     """Verify and decode a JWT token.
 
     Decodes and validates a JWT token using the configured secret key
@@ -108,29 +112,75 @@ async def verify_jwt_token(token: str) -> dict:
         ...     print(e.status_code, e.detail)
         401 Invalid token
     """
+    # try:
+    #     Decode and validate token
+    #     payload = jwt.decode(
+    #         token,
+    #         settings.jwt_secret_key,
+    #         algorithms=[settings.jwt_algorithm],
+    #         # options={"require": ["exp"]},  # Require expiration
+    #     )
+    #     return payload  # Contains the claims (e.g., user info)
+    # except jwt.ExpiredSignatureError:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_401_UNAUTHORIZED,
+    #         detail="Token has expired",
+    #         headers={"WWW-Authenticate": "Bearer"},
+    #     )
+    # except PyJWTError:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_401_UNAUTHORIZED,
+    #         detail="Invalid token",
+    #         headers={"WWW-Authenticate": "Bearer"},
+    #     )
     try:
-        # Decode and validate token
+        # First decode to check claims
+        unverified = jwt.decode(token, options={"verify_signature": False})
+
+        # Check for expiration claim
+        if "exp" not in unverified and settings.require_token_expiration:
+            raise jwt.MissingRequiredClaimError("exp")
+
+        # Log warning for non-expiring tokens
+        if "exp" not in unverified:
+            logger.warning(
+                "JWT token without expiration accepted. "
+                "Consider enabling REQUIRE_TOKEN_EXPIRATION for better security. "
+                f"Token sub: {unverified.get('sub', 'unknown')}"
+            )
+
+        # Full validation
+        options = {}
+        if settings.require_token_expiration:
+            options["require"] = ["exp"]
+
         payload = jwt.decode(
             token,
             settings.jwt_secret_key,
             algorithms=[settings.jwt_algorithm],
-            # options={"require": ["exp"]},  # Require expiration
+            options=options
         )
-        return payload  # Contains the claims (e.g., user info)
+        return payload
+
+    except jwt.MissingRequiredClaimError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is missing required expiration claim. Set REQUIRE_TOKEN_EXPIRATION=false to allow.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except PyJWTError:
+    except jwt.PyJWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
+    
 async def verify_credentials(token: str) -> dict:
     """Verify credentials using a JWT token.
 
