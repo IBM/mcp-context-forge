@@ -197,6 +197,8 @@ class ForwardingService:
             db: Database session for tool and gateway lookups
             tool_name: Name of the tool to invoke
             arguments: Tool arguments as key-value pairs
+            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Defaults to None.
 
         Returns:
             ToolResult object containing the tool execution results

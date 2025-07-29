@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Optional
 from sqlalchemy.orm import Session
 import logging
 
@@ -7,9 +7,6 @@ from mcpgateway.models import GlobalConfig
 from mcpgateway.db import Gateway as DbGateway
 
 logger = logging.getLogger(__name__)
-
-
-from typing import Optional
 
 
 def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[str, str], db: Session, gateway: Optional[DbGateway] = None) -> Dict[str, str]:

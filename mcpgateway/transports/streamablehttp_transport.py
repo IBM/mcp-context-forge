@@ -343,7 +343,6 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     Args:
         name (str): The name of the tool to invoke.
         arguments (dict): A dictionary of arguments to pass to the tool.
-        headers (Optional[dict]): Optional request headers from the client.
 
     Returns:
         List of content (TextContent, ImageContent, or EmbeddedResource) from the tool response.

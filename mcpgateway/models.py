@@ -613,14 +613,13 @@ class JSONRPCError(BaseModel):
 # Global configuration types
 class GlobalConfig(BaseModel):
     """Global server configuration.
-    
+
     Attributes:
         passthrough_headers (Optional[List[str]]): List of headers allowed to be passed through globally
     """
-    passthrough_headers: Optional[List[str]] = Field(
-        default=None,
-        description="List of headers allowed to be passed through globally"
-    )
+
+    passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through globally")
+
 
 # Transport message types
 class SSEEvent(BaseModel):
