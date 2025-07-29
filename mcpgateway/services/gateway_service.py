@@ -262,6 +262,7 @@ class GatewayService:
         validation_client = ResilientHttpClient(client_args={"timeout": settings.gateway_validation_timeout, "verify": not settings.skip_ssl_verify})
         try:
             async with validation_client.client.stream("GET", url, headers=headers, timeout=timeout) as response:
+                response.raise_for_status()
                 response_headers = dict(response.headers)
                 location = response_headers.get("location")
                 content_type = response_headers.get("content-type")
@@ -286,8 +287,10 @@ class GatewayService:
                     if content_type is not None and content_type != "" and "text/event-stream" in content_type:
                         return True
                 return False
+        except httpx.UnsupportedProtocol as e:
+            logger.debug(f"Gateway URL Unsupported Protocol for {url}: {str(e)}", exc_info=True)
+            return False
         except Exception as e:
-            print(str(e))
             logger.debug(f"Gateway validation failed for {url}: {str(e)}", exc_info=True)
             return False
         finally:
@@ -1148,11 +1151,11 @@ class GatewayService:
             >>> import asyncio
             >>> async def test_params():
             ...     try:
-            ...         await service._initialize_gateway("http://invalid://url")
+            ...         await service._initialize_gateway("hello//")
             ...     except Exception as e:
-            ...         return "True" if ("Failed" in str(e) or "GatewayConnectionError" in str(type(e).__name__)) else "False"
-            
-            >>> print (asyncio.run(test_params()))
+            ...         return isinstance(e, GatewayConnectionError) or "Failed" in str(e)
+
+            >>> asyncio.run(test_params())
             True
 
             >>> # Test default parameters
