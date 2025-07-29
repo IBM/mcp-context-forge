@@ -105,6 +105,14 @@ def _create_jwt_token(
     if expires_in_minutes > 0:
         expire = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=expires_in_minutes)
         payload["exp"] = int(expire.timestamp())
+    else:
+        # Warn about non-expiring token
+        print(
+            "⚠️  WARNING: Creating token without expiration. This is a security risk!\n"
+            "   Consider using --exp with a value > 0 for production use.\n"
+            "   Once JWT API (#425) is available, use it for automatic token renewal.",
+            file=sys.stderr
+        )    
     return jwt.encode(payload, secret, algorithm=algorithm)
 
 

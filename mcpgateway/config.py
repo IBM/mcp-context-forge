@@ -61,7 +61,8 @@ import jq
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict 
+from pydantic import Field
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,6 +116,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
+
+    require_token_expiration: bool = Field(
+    default=False,  # Default to flexible mode for backward compatibility
+    description="Require all JWT tokens to have expiration claims"
+     )
 
     #  Encryption key phrase for auth storage
     auth_encryption_secret: str = "my-test-salt"
