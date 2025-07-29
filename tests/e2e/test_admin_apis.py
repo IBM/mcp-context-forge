@@ -286,7 +286,7 @@ class TestAdminToolAPIs:
 
         # Try to create duplicate
         response = await client.post("/admin/tools/", data=form_data, headers=TEST_AUTH_HEADER)
-        assert response.status_code in [400, 500]  # Could be either
+        assert response.status_code in [400, 409, 500]  # Could be either
         assert response.json()["success"] is False
 
 

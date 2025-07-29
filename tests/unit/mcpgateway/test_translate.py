@@ -41,7 +41,7 @@ import importlib
 import sys
 import types
 from typing import Sequence
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -677,16 +677,6 @@ async def test_run_sse_to_stdio(monkeypatch, translate):
         setattr(translate, "httpx", _real_httpx)
 
         # Patch httpx.AsyncClient so no real HTTP happens
-        class _Resp:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_): ...
-
-            async def aiter_lines(self):
-                if False:  # never yield
-                    yield ""
-
         class _Client:
             def __init__(self, *_, **__): ...
 
@@ -696,11 +686,17 @@ async def test_run_sse_to_stdio(monkeypatch, translate):
             async def __aexit__(self, *_): ...
 
             def stream(self, *_a, **_kw):
-                return _Resp()
+                # Immediately raise an exception to exit _simple_sse_pump
+                raise Exception("Test exception - no connection")
 
         monkeypatch.setattr(translate.httpx, "AsyncClient", _Client)
 
-        await translate._run_sse_to_stdio("http://dummy/sse", None)  # exits quickly
+        # The function should handle the exception and exit
+        try:
+            await translate._run_sse_to_stdio("http://dummy/sse", None)
+        except Exception as e:
+            # Expected - the mock raises an exception
+            assert "Test exception" in str(e)
 
     # Add timeout to prevent hanging
     await asyncio.wait_for(_test_logic(), timeout=3.0)
@@ -730,17 +726,6 @@ async def test_run_sse_to_stdio_with_auth(monkeypatch, translate):
         # Track the headers passed to httpx.AsyncClient
         captured_headers = {}
 
-        class _Resp:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_):
-                pass
-
-            async def aiter_lines(self):
-                return
-                yield ""  # pragma: no cover
-
         class _Client:
             def __init__(self, *_, headers=None, **__):
                 nonlocal captured_headers
@@ -753,11 +738,16 @@ async def test_run_sse_to_stdio_with_auth(monkeypatch, translate):
                 pass
 
             def stream(self, *_a, **_kw):
-                return _Resp()
+                # Immediately raise an exception to exit _simple_sse_pump
+                raise Exception("Test exception - no connection")
 
         monkeypatch.setattr(translate.httpx, "AsyncClient", _Client)
 
-        await translate._run_sse_to_stdio("http://dummy/sse", "test-bearer-token")
+        try:
+            await translate._run_sse_to_stdio("http://dummy/sse", "test-bearer-token")
+        except Exception:
+            # Expected - the mock raises an exception
+            pass
 
         assert captured_headers.get("Authorization") == "Bearer test-bearer-token"
 
@@ -770,41 +760,19 @@ async def test_run_sse_to_stdio_with_data_processing(monkeypatch, translate):
     """Test _run_sse_to_stdio with actual SSE data processing."""
 
     async def _test_logic():
-        written_data = []
-
-        # Mock subprocess to capture stdin data
-        class _DummyStdin:
-            def write(self, data):
-                written_data.append(data)
-
-            async def drain(self):
-                pass
-
-        class _DummyStdout:
-            async def readline(self):
-                return b""  # EOF immediately
-
-        class _DummyProc:
-            def __init__(self):
-                self.stdin = _DummyStdin()
-                self.stdout = _DummyStdout()
-
-        dummy_proc = _DummyProc()
-
-        async def _fake_shell(*_a, **_kw):
-            return dummy_proc
-
-        monkeypatch.setattr(translate.asyncio, "create_subprocess_shell", _fake_shell)
-
-        # Mock httpx to simulate SSE response that terminates quickly
+        # Mock httpx to simulate SSE response
         # Third-Party
         import httpx as _real_httpx
 
         setattr(translate, "httpx", _real_httpx)
 
-        lines_yielded = 0
+        # Capture printed output
+        printed = []
+        monkeypatch.setattr("builtins.print", lambda x: printed.append(x))
 
         class _Resp:
+            status_code = 200
+
             async def __aenter__(self):
                 return self
 
@@ -812,19 +780,12 @@ async def test_run_sse_to_stdio_with_data_processing(monkeypatch, translate):
                 pass
 
             async def aiter_lines(self):
-                nonlocal lines_yielded
-                # Yield a few lines then stop to prevent infinite loop
-                if lines_yielded == 0:
-                    lines_yielded += 1
-                    yield "event: message"
-                elif lines_yielded == 1:
-                    lines_yielded += 1
-                    yield 'data: {"jsonrpc":"2.0","result":"test"}'
-                elif lines_yielded == 2:
-                    lines_yielded += 1
-                    yield ""
-                # After 3 yields, stop iteration
-                return
+                # Yield test data
+                yield "event: message"
+                yield 'data: {"jsonrpc":"2.0","result":"test"}'
+                yield ""
+                # End the stream
+                raise Exception("Test stream ended")
 
         class _Client:
             def __init__(self, *_, **__):
@@ -841,11 +802,14 @@ async def test_run_sse_to_stdio_with_data_processing(monkeypatch, translate):
 
         monkeypatch.setattr(translate.httpx, "AsyncClient", _Client)
 
-        # This should complete quickly now
-        await translate._run_sse_to_stdio("http://dummy/sse", None)
+        # Call without stdio_command (simple mode)
+        try:
+            await translate._run_sse_to_stdio("http://dummy/sse", None)
+        except Exception as e:
+            assert "Test stream ended" in str(e)
 
-        # # Verify that data was processed
-        # assert len(written_data) > 0
+        # Verify that data was printed
+        assert '{"jsonrpc":"2.0","result":"test"}' in printed
 
     # Add timeout to prevent hanging
     await asyncio.wait_for(_test_logic(), timeout=5.0)
@@ -860,30 +824,37 @@ async def test_run_sse_to_stdio_importerror(monkeypatch, translate):
 
 @pytest.mark.asyncio
 async def test_pump_sse_to_stdio_full(monkeypatch, translate):
-    # Prepare fake process with mock stdin
-    written = []
+    # First, ensure httpx is properly imported and set
+    # Third-Party
+    import httpx as real_httpx
 
-    class DummyStdin:
-        def write(self, data):
-            written.append(data)
+    setattr(translate, "httpx", real_httpx)
 
-        async def drain(self):
-            written.append("drained")
-
-    class DummyProcess:
-        stdin = DummyStdin()
+    # Capture printed output for simple mode
+    printed = []
+    monkeypatch.setattr("builtins.print", lambda x: printed.append(x))
 
     # Prepare fake response with aiter_lines
     lines = [
+        "event: endpoint",
+        "data: http://example.com/message",
+        "",
         "event: message",
-        "data: ",  # Should be skipped
-        "data: {}",  # Should be skipped
-        'data: {"jsonrpc":"2.0","result":"ok"}',  # Should be written
-        "data: another",  # Should be written
-        "notdata: ignored",  # Should be ignored
+        'data: {"jsonrpc":"2.0","result":"ok"}',
+        "",
+        "event: message",
+        "data: another",
+        "",
+        "event: keepalive",
+        "data: {}",
+        "",
     ]
 
+    line_index = 0
+
     class DummyResponse:
+        status_code = 200
+
         async def __aenter__(self):
             return self
 
@@ -891,10 +862,18 @@ async def test_pump_sse_to_stdio_full(monkeypatch, translate):
             pass
 
         async def aiter_lines(self):
-            for line in lines:
-                yield line
+            nonlocal line_index
+            while line_index < len(lines):
+                yield lines[line_index]
+                line_index += 1
+            # After all lines, raise an exception to simulate connection close
+            # This is what would happen in a real SSE stream when the server closes
+            raise real_httpx.ReadError("Connection closed")
 
     class DummyClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -904,28 +883,28 @@ async def test_pump_sse_to_stdio_full(monkeypatch, translate):
         def stream(self, *a, **k):
             return DummyResponse()
 
-    # Patch httpx.AsyncClient to return DummyClient
-    monkeypatch.setattr(translate, "httpx", MagicMock())
-    translate.httpx.AsyncClient = MagicMock(return_value=DummyClient())
+    # Only patch AsyncClient, not the whole httpx module
+    original_client = translate.httpx.AsyncClient
+    monkeypatch.setattr(translate.httpx, "AsyncClient", lambda *args, **kwargs: DummyClient())
 
-    # Patch asyncio.create_subprocess_shell to return DummyProcess
-    monkeypatch.setattr(translate.asyncio, "create_subprocess_shell", AsyncMock(return_value=DummyProcess()))
+    try:
+        # Call without stdio_command - will use simple mode
+        # Set max_retries to 1 to exit quickly after the stream ends
+        await translate._run_sse_to_stdio("http://dummy/sse", None, max_retries=1)
+    except Exception as e:
+        # The stream will raise ReadError, then retry once and fail
+        # This is expected behavior
+        assert "Connection closed" in str(e) or "Max retries" in str(e)
 
-    # Patch process.stdout so read_stdout() exits immediately
-    class DummyStdout:
-        async def readline(self):
-            return b""
+    # Restore
+    monkeypatch.setattr(translate.httpx, "AsyncClient", original_client)
 
-    DummyProcess.stdout = DummyStdout()
-
-    # Actually call _run_sse_to_stdio, which will define and call pump_sse_to_stdio
-    await translate._run_sse_to_stdio("http://dummy/sse", None)
-
-    # Check that only the correct data was written and drained
-    # Should skip empty and {} data, write the others
-    assert b'{"jsonrpc":"2.0","result":"ok"}\n' in written
-    assert b"another\n" in written
-    assert "drained" in written
+    # Verify the messages were printed (simple mode prints to stdout)
+    assert '{"jsonrpc":"2.0","result":"ok"}' in printed
+    assert "another" in printed
+    # Keepalive and endpoint should not be printed (they're logged, not printed)
+    assert "{}" not in printed
+    assert "http://example.com/message" not in printed
 
 
 # ---------------------------------------------------------------------------#

@@ -27,6 +27,10 @@ include *.sh
 include *.txt
 
 # 3️⃣  Tooling/lint configuration dot-files (explicit so they're not lost)
+include .env.make
+include .interrogaterc
+include .jshintrc
+include whitesource.config
 include .darglint
 include .dockerignore
 include .flake8
@@ -54,7 +58,7 @@ recursive-include alembic *.py
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
 
-# 6️⃣  Never publish caches, compiled or build outputs
+# 6️⃣  Never publish caches, compiled or build outputs, deployment, agent_runtimes, etc.
 global-exclude __pycache__ *.py[cod] *.so *.dylib
 prune build
 prune dist
@@ -63,3 +67,8 @@ prune *.egg-info
 prune charts
 prune k8s
 prune .devcontainer
+
+# Exclude deployment, mcp-servers and agent_runtimes
+prune deployment
+prune mcp-servers
+prune agent_runtimes

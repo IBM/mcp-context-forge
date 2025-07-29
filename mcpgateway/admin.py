@@ -63,7 +63,7 @@ from mcpgateway.services.prompt_service import PromptNotFoundError, PromptServic
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
-from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -1600,23 +1600,24 @@ async def admin_add_tool(
         JSONResponse: a JSON response with `{"message": ..., "success": ...}` and an appropriate HTTP status code.
 
     Examples:
+        Examples:
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
         >>> from fastapi import Request
         >>> from fastapi.responses import JSONResponse
         >>> from starlette.datastructures import FormData
-        >>> from mcpgateway.services.tool_service import ToolNameConflictError
-        >>> from pydantic import ValidationError
+        >>> from sqlalchemy.exc import IntegrityError
         >>> from mcpgateway.utils.error_formatter import ErrorFormatter
-        >>>
+        >>> import json
+
         >>> mock_db = MagicMock()
         >>> mock_user = "test_user"
-        >>>
+
         >>> # Happy path: Add a new tool successfully
         >>> form_data_success = FormData([
-        ...     ("name", "New_Tool"), # Corrected name to be valid
+        ...     ("name", "New_Tool"),
         ...     ("url", "http://new.tool.com"),
-        ...     ("requestType", "SSE"), # Changed to a valid RequestType for MCP integration
+        ...     ("requestType", "SSE"),
         ...     ("integrationType", "MCP"),
         ...     ("headers", '{"X-Api-Key": "abc"}')
         ... ])
@@ -1624,60 +1625,70 @@ async def admin_add_tool(
         >>> mock_request_success.form = AsyncMock(return_value=form_data_success)
         >>> original_register_tool = tool_service.register_tool
         >>> tool_service.register_tool = AsyncMock()
-        >>>
+
         >>> async def test_admin_add_tool_success():
         ...     response = await admin_add_tool(mock_request_success, mock_db, mock_user)
         ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body.decode())["success"] is True
-        >>>
+
         >>> asyncio.run(test_admin_add_tool_success())
         True
-        >>>
-        >>> # Error path: Tool name conflict
-        >>> form_data_conflict = FormData([("name", "Existing_Tool"), ("url", "http://existing.com"), ("requestType", "SSE"), ("integrationType", "MCP")]) # Corrected name and requestType
+
+        >>> # Error path: Tool name conflict via IntegrityError
+        >>> form_data_conflict = FormData([
+        ...     ("name", "Existing_Tool"),
+        ...     ("url", "http://existing.com"),
+        ...     ("requestType", "SSE"),
+        ...     ("integrationType", "MCP")
+        ... ])
         >>> mock_request_conflict = MagicMock(spec=Request)
         >>> mock_request_conflict.form = AsyncMock(return_value=form_data_conflict)
-        >>> tool_service.register_tool = AsyncMock(side_effect=ToolNameConflictError("Tool name already exists"))
-        >>>
-        >>> async def test_admin_add_tool_conflict():
+        >>> fake_integrity_error = IntegrityError("Mock Integrity Error", {}, None)
+        >>> tool_service.register_tool = AsyncMock(side_effect=fake_integrity_error)
+
+        >>> async def test_admin_add_tool_integrity_error():
         ...     response = await admin_add_tool(mock_request_conflict, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 400 and json.loads(response.body.decode())["success"] is False
-        >>>
-        >>> asyncio.run(test_admin_add_tool_conflict())
+        ...     return isinstance(response, JSONResponse) and response.status_code == 409 and json.loads(response.body.decode())["success"] is False
+
+        >>> asyncio.run(test_admin_add_tool_integrity_error())
         True
-        >>>
-        >>> # Error path: Missing required field (Pydantic validation error)
-        >>> form_data_missing = FormData([("url", "http://missing.com"), ("requestType", "SSE"), ("integrationType", "MCP")]) # 'name' is missing, added requestType
+
+        >>> # Error path: Missing required field (Pydantic ValidationError)
+        >>> form_data_missing = FormData([
+        ...     ("url", "http://missing.com"),
+        ...     ("requestType", "SSE"),
+        ...     ("integrationType", "MCP")
+        ... ])
         >>> mock_request_missing = MagicMock(spec=Request)
         >>> mock_request_missing.form = AsyncMock(return_value=form_data_missing)
-        >>> # We don't need to mock tool_service.register_tool, ValidationError happens during ToolCreate()
-        >>>
+
         >>> async def test_admin_add_tool_validation_error():
-        ...     try:
-        ...         response = await admin_add_tool(mock_request_missing, mock_db, mock_user)
-        ...     except ValidationError as e:
-        ...         print(type(e))
-        ...         response = JSONResponse(content={"success": False}, status_code=422)
-        ...         return False
+        ...     response = await admin_add_tool(mock_request_missing, mock_db, mock_user)
         ...     return isinstance(response, JSONResponse) and response.status_code == 422 and json.loads(response.body.decode())["success"] is False
-        >>>
+
         >>> asyncio.run(test_admin_add_tool_validation_error())  # doctest: +ELLIPSIS
         True
-        >>>
-        >>> # Error path: Generic unexpected exception
-        >>> form_data_generic_error = FormData([("name", "Generic_Error_Tool"), ("url", "http://generic.com"), ("requestType", "SSE"), ("integrationType", "MCP")]) # Corrected name and requestType
+
+        >>> # Error path: Unexpected exception
+        >>> form_data_generic_error = FormData([
+        ...     ("name", "Generic_Error_Tool"),
+        ...     ("url", "http://generic.com"),
+        ...     ("requestType", "SSE"),
+        ...     ("integrationType", "MCP")
+        ... ])
         >>> mock_request_generic_error = MagicMock(spec=Request)
         >>> mock_request_generic_error.form = AsyncMock(return_value=form_data_generic_error)
         >>> tool_service.register_tool = AsyncMock(side_effect=Exception("Unexpected error"))
-        >>>
+
         >>> async def test_admin_add_tool_generic_exception():
         ...     response = await admin_add_tool(mock_request_generic_error, mock_db, mock_user)
         ...     return isinstance(response, JSONResponse) and response.status_code == 500 and json.loads(response.body.decode())["success"] is False
-        >>>
+
         >>> asyncio.run(test_admin_add_tool_generic_exception())
         True
-        >>>
+
         >>> # Restore original method
         >>> tool_service.register_tool = original_register_tool
+
     """
     logger.debug(f"User {user} is adding a new tool")
     form = await request.form()
@@ -1708,16 +1719,18 @@ async def admin_add_tool(
             content={"message": "Tool registered successfully!", "success": True},
             status_code=200,
         )
-    except ToolNameConflictError as e:
-        return JSONResponse(content={"message": str(e), "success": False}, status_code=400)
-    except ToolError as e:
-        return JSONResponse(content={"message": str(e), "success": False}, status_code=500)
-    except ValidationError as e:  # This block should catch ValidationError
-        logger.error(f"ValidationError in admin_edit_tool: {str(e)}")
-        return JSONResponse(content=ErrorFormatter.format_validation_error(e), status_code=422)
-    except Exception as e:
-        logger.error(f"Unexpected error in admin_edit_tool: {str(e)}")
-        return JSONResponse(content={"message": str(e), "success": False}, status_code=500)
+    except IntegrityError as ex:
+        error_message = ErrorFormatter.format_database_error(ex)
+        logger.error(f"IntegrityError in admin_add_resource: {error_message}")
+        return JSONResponse(status_code=409, content=error_message)
+    except ToolError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    except ValidationError as ex:  # This block should catch ValidationError
+        logger.error(f"ValidationError in admin_add_tool: {str(ex)}")
+        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    except Exception as ex:
+        logger.error(f"Unexpected error in admin_add_tool: {str(ex)}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
@@ -1762,86 +1775,134 @@ async def admin_edit_tool(
         an error message if the update fails.
 
     Examples:
+            Examples:
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
         >>> from fastapi import Request
         >>> from fastapi.responses import RedirectResponse, JSONResponse
         >>> from starlette.datastructures import FormData
-        >>> from mcpgateway.services.tool_service import ToolNameConflictError, ToolError
+        >>> from sqlalchemy.exc import IntegrityError
+        >>> from mcpgateway.services.tool_service import ToolError
         >>> from pydantic import ValidationError
-        >>> from mcpgateway.utils.error_formatter import ErrorFormatter # Added import
-        >>>
+        >>> from mcpgateway.utils.error_formatter import ErrorFormatter
+        >>> import json
+
         >>> mock_db = MagicMock()
         >>> mock_user = "test_user"
         >>> tool_id = "tool-to-edit"
-        >>>
+
         >>> # Happy path: Edit tool successfully
-        >>> form_data_success = FormData([("name", "Updated_Tool"), ("url", "http://updated.com"), ("is_inactive_checked", "false"), ("requestType", "SSE"), ("integrationType", "MCP")]) # Corrected name and added requestType for MCP
+        >>> form_data_success = FormData([
+        ...     ("name", "Updated_Tool"),
+        ...     ("url", "http://updated.com"),
+        ...     ("is_inactive_checked", "false"),
+        ...     ("requestType", "SSE"),
+        ...     ("integrationType", "MCP")
+        ... ])
         >>> mock_request_success = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_success.form = AsyncMock(return_value=form_data_success)
         >>> original_update_tool = tool_service.update_tool
         >>> tool_service.update_tool = AsyncMock()
-        >>>
+
         >>> async def test_admin_edit_tool_success():
         ...     response = await admin_edit_tool(tool_id, mock_request_success, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303 and "/admin#tools" in response.headers["location"]
-        >>>
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body.decode())["success"] is True
+
         >>> asyncio.run(test_admin_edit_tool_success())
         True
-        >>>
+
         >>> # Edge case: Edit tool with inactive checkbox checked
-        >>> form_data_inactive = FormData([("name", "Inactive_Edit"), ("url", "http://inactive.com"), ("is_inactive_checked", "true"), ("requestType", "SSE"), ("integrationType", "MCP")]) # Corrected name and requestType for MCP
+        >>> form_data_inactive = FormData([
+        ...     ("name", "Inactive_Edit"),
+        ...     ("url", "http://inactive.com"),
+        ...     ("is_inactive_checked", "true"),
+        ...     ("requestType", "SSE"),
+        ...     ("integrationType", "MCP")
+        ... ])
         >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": "/api"})
         >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
-        >>>
+
         >>> async def test_admin_edit_tool_inactive_checked():
         ...     response = await admin_edit_tool(tool_id, mock_request_inactive, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303 and "/api/admin/?include_inactive=true#tools" in response.headers["location"]
-        >>>
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body.decode())["success"] is True
+
         >>> asyncio.run(test_admin_edit_tool_inactive_checked())
         True
-        >>>
-        >>> # Error path: Tool name conflict
-        >>> form_data_conflict = FormData([("name", "Conflicting_Name"), ("url", "http://conflict.com"), ("requestType", "SSE"), ("integrationType", "MCP")]) # Corrected name and requestType for MCP
+
+        >>> # Error path: Tool name conflict (simulated with IntegrityError)
+        >>> form_data_conflict = FormData([
+        ...     ("name", "Conflicting_Name"),
+        ...     ("url", "http://conflict.com"),
+        ...     ("requestType", "SSE"),
+        ...     ("integrationType", "MCP")
+        ... ])
         >>> mock_request_conflict = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_conflict.form = AsyncMock(return_value=form_data_conflict)
-        >>> tool_service.update_tool = AsyncMock(side_effect=ToolNameConflictError("Name conflict"))
-        >>>
-        >>> async def test_admin_edit_tool_conflict():
+        >>> tool_service.update_tool = AsyncMock(side_effect=IntegrityError("Conflict", {}, None))
+
+        >>> async def test_admin_edit_tool_integrity_error():
         ...     response = await admin_edit_tool(tool_id, mock_request_conflict, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 400 and json.loads(response.body.decode())["success"] is False
-        >>>
-        >>> asyncio.run(test_admin_edit_tool_conflict())
+        ...     return isinstance(response, JSONResponse) and response.status_code == 409 and json.loads(response.body.decode())["success"] is False
+
+        >>> asyncio.run(test_admin_edit_tool_integrity_error())
         True
-        >>>
-        >>> # Error path: Generic ToolError
-        >>> form_data_tool_error = FormData([("name", "Tool_Error"), ("url", "http://toolerror.com"), ("requestType", "SSE"), ("integrationType", "MCP")]) # Corrected name and requestType for MCP
+
+        >>> # Error path: ToolError raised
+        >>> form_data_tool_error = FormData([
+        ...     ("name", "Tool_Error"),
+        ...     ("url", "http://toolerror.com"),
+        ...     ("requestType", "SSE"),
+        ...     ("integrationType", "MCP")
+        ... ])
         >>> mock_request_tool_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_tool_error.form = AsyncMock(return_value=form_data_tool_error)
         >>> tool_service.update_tool = AsyncMock(side_effect=ToolError("Tool specific error"))
-        >>>
+
         >>> async def test_admin_edit_tool_tool_error():
         ...     response = await admin_edit_tool(tool_id, mock_request_tool_error, mock_db, mock_user)
         ...     return isinstance(response, JSONResponse) and response.status_code == 500 and json.loads(response.body.decode())["success"] is False
-        >>>
+
         >>> asyncio.run(test_admin_edit_tool_tool_error())
         True
-        >>>
-        >>> # Error path: Pydantic Validation Error (e.g., invalid URL format)
-        >>> form_data_validation_error = FormData([("name", "Bad_URL"), ("url", "invalid-url"), ("requestType", "SSE"), ("integrationType", "MCP")])
+
+        >>> # Error path: Pydantic Validation Error
+        >>> form_data_validation_error = FormData([
+        ...     ("name", "Bad_URL"),
+        ...     ("url", "not-a-valid-url"),
+        ...     ("requestType", "SSE"),
+        ...     ("integrationType", "MCP")
+        ... ])
         >>> mock_request_validation_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_validation_error.form = AsyncMock(return_value=form_data_validation_error)
-        >>> # No need to mock tool_service.update_tool, ValidationError happens during ToolUpdate(**tool_data)
-        >>>
+
         >>> async def test_admin_edit_tool_validation_error():
         ...     response = await admin_edit_tool(tool_id, mock_request_validation_error, mock_db, mock_user)
         ...     return isinstance(response, JSONResponse) and response.status_code == 422 and json.loads(response.body.decode())["success"] is False
-        >>>
-        >>> asyncio.run(test_admin_edit_tool_validation_error())  # doctest: +ELLIPSIS
+
+        >>> asyncio.run(test_admin_edit_tool_validation_error())
         True
-        >>>
+
+        >>> # Error path: Unexpected exception
+        >>> form_data_unexpected = FormData([
+        ...     ("name", "Crash_Tool"),
+        ...     ("url", "http://crash.com"),
+        ...     ("requestType", "SSE"),
+        ...     ("integrationType", "MCP")
+        ... ])
+        >>> mock_request_unexpected = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_unexpected.form = AsyncMock(return_value=form_data_unexpected)
+        >>> tool_service.update_tool = AsyncMock(side_effect=Exception("Unexpected server crash"))
+
+        >>> async def test_admin_edit_tool_unexpected_error():
+        ...     response = await admin_edit_tool(tool_id, mock_request_unexpected, mock_db, mock_user)
+        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and json.loads(response.body.decode())["success"] is False
+
+        >>> asyncio.run(test_admin_edit_tool_unexpected_error())
+        True
+
         >>> # Restore original method
         >>> tool_service.update_tool = original_update_tool
+
     """
     logger.debug(f"User {user} is editing tool ID {tool_id}")
     form = await request.form()
@@ -1865,24 +1926,20 @@ async def admin_edit_tool(
     try:
         tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
         await tool_service.update_tool(db, tool_id, tool)
-
-        root_path = request.scope.get("root_path", "")
-        is_inactive_checked = form.get("is_inactive_checked", "false")
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
-    except ToolNameConflictError as e:
-        logger.error(f"ToolNameConflictError in admin_edit_tool: {str(e)}")
-        return JSONResponse(content={"message": str(e), "success": False}, status_code=400)
-    except ToolError as e:
-        logger.error(f"ToolError in admin_edit_tool: {str(e)}")
-        return JSONResponse(content={"message": str(e), "success": False}, status_code=500)
-    except ValidationError as e:  # Catch Pydantic validation errors
-        logger.error(f"ValidationError in admin_edit_tool: {str(e)}")
-        return JSONResponse(content=ErrorFormatter.format_validation_error(e), status_code=422)
-    except Exception as e:  # Generic catch-all for unexpected errors
-        logger.error(f"Unexpected error in admin_edit_tool: {str(e)}")
-        return JSONResponse(content={"message": str(e), "success": False}, status_code=500)
+        return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
+    except IntegrityError as ex:
+        error_message = ErrorFormatter.format_database_error(ex)
+        logger.error(f"IntegrityError in admin_edit_resource: {error_message}")
+        return JSONResponse(status_code=409, content=error_message)
+    except ToolError as ex:
+        logger.error(f"ToolError in admin_edit_tool: {str(ex)}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    except ValidationError as ex:  # Catch Pydantic validation errors
+        logger.error(f"ValidationError in admin_edit_tool: {str(ex)}")
+        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    except Exception as ex:  # Generic catch-all for unexpected errors
+        logger.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/delete")

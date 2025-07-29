@@ -7,7 +7,7 @@
 This script verifies a full install + runtime setup of the MCP Gateway:
 - Creates a virtual environment and installs dependencies.
 - Builds and runs the Docker HTTPS container.
-- Starts the MCP Time Server via npx supergateway.
+- Starts the MCP Time Server via mcpgateway.translate.
 - Verifies /health, /ready, /version before registering the gateway.
 - Federates the time server as a gateway, verifies its tool list.
 - Invokes the remote tool via /rpc and checks the result.
@@ -46,7 +46,7 @@ from mcpgateway.config import settings
 
 # ───────────────────────── Ports / constants ────────────────────────────
 PORT_GATEWAY = 4444  # HTTPS container
-PORT_TIME_SERVER = 8002  # supergateway
+PORT_TIME_SERVER = 8002  # mcpgateway.translate
 DOCKER_CONTAINER = "mcpgateway"
 
 MAKE_VENV_CMD = ["make", "venv", "install", "install-dev"]
@@ -54,10 +54,10 @@ MAKE_DOCKER_BUILD = ["make", "docker"]
 MAKE_DOCKER_RUN = ["make", "docker-run-ssl-host"]
 MAKE_DOCKER_STOP = ["make", "docker-stop"]
 
-SUPERGW_CMD = [
-    "npx",
-    "-y",
-    "supergateway",
+TRANSLATE_CMD = [
+    "python3",
+    "-m",
+    "mcpgateway.translate",
     "--stdio",
     "uvx mcp-server-time --local-timezone=Europe/Dublin",
     "--port",
@@ -222,30 +222,30 @@ def request(method: str, path: str, *, json_data=None, **kw):
 
 
 # ───────────────────────────── Cleanup logic ─────────────────────────────
-_supergw_proc: subprocess.Popen | None = None
-_supergw_log_file = None
+_translate_proc: subprocess.Popen | None = None
+_translate_log_file = None
 
 
 def cleanup():
     log_section("Cleanup", "🧹")
-    global _supergw_proc, _supergw_log_file
+    global _translate_proc, _translate_log_file
 
-    # Clean up the supergateway process
-    if _supergw_proc and _supergw_proc.poll() is None:
-        logging.info("🔄 Terminating supergateway process (PID: %d)", _supergw_proc.pid)
-        _supergw_proc.terminate()
+    # Clean up the translate process
+    if _translate_proc and _translate_proc.poll() is None:
+        logging.info("🔄 Terminating mcpgateway.translate process (PID: %d)", _translate_proc.pid)
+        _translate_proc.terminate()
         try:
-            _supergw_proc.wait(timeout=5)
-            logging.info("✅ Supergateway process terminated cleanly")
+            _translate_proc.wait(timeout=5)
+            logging.info("✅ mcpgateway.translate process terminated cleanly")
         except subprocess.TimeoutExpired:
-            logging.warning("⚠️  Supergateway didn't terminate in time, killing it")
-            _supergw_proc.kill()
-            _supergw_proc.wait()
+            logging.warning("⚠️  mcpgateway.translate didn't terminate in time, killing it")
+            _translate_proc.kill()
+            _translate_proc.wait()
 
     # Close log file if open
-    if _supergw_log_file:
-        _supergw_log_file.close()
-        _supergw_log_file = None
+    if _translate_log_file:
+        _translate_log_file.close()
+        _translate_log_file = None
 
     # Stop docker container
     logging.info("🐋 Stopping Docker container")
@@ -294,14 +294,7 @@ def step_4_docker_run():
 
 
 def step_5_start_time_server(restart=False):
-    global _supergw_proc, _supergw_log_file
-
-    # Check if npx is available
-    try:
-        npx_version = subprocess.check_output(["npx", "--version"], text=True, stderr=subprocess.DEVNULL).strip()
-        logging.info("🔍 Found npx version: %s", npx_version)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        raise RuntimeError("npx not found. Please install Node.js and npm.")
+    global _translate_proc, _translate_log_file
 
     # Check if uvx is available
     try:
@@ -329,23 +322,22 @@ def step_5_start_time_server(restart=False):
 
     if not port_open(PORT_TIME_SERVER):
         log_section("Launching MCP-Time-Server", "⏰")
-        logging.info("🚀 Command: %s", " ".join(shlex.quote(c) for c in SUPERGW_CMD))
+        logging.info("🚀 Command: %s", " ".join(shlex.quote(c) for c in TRANSLATE_CMD))
 
         # Create a log file for the time server output
-        log_filename = f"supergateway_{int(time.time())}.log"
-        _supergw_log_file = open(log_filename, "w")
-        logging.info("📝 Logging supergateway output to: %s", log_filename)
+        log_filename = f"translate_{int(time.time())}.log"
+        _translate_log_file = open(log_filename, "w")
+        logging.info("📝 Logging mcpgateway.translate output to: %s", log_filename)
 
-        # Start the process with output capture
-        _supergw_proc = subprocess.Popen(
-            SUPERGW_CMD,
-            stdout=_supergw_log_file,
+        # Start the process directly
+        _translate_proc = subprocess.Popen(
+            TRANSLATE_CMD,
+            stdout=_translate_log_file,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1
         )
-
-        logging.info("🔍 Started supergateway process with PID: %d", _supergw_proc.pid)
+        logging.info("🔍 Started mcpgateway.translate process with PID: %d", _translate_proc.pid)
 
         # Wait for the server to start
         start_time = time.time()
@@ -354,10 +346,10 @@ def step_5_start_time_server(restart=False):
 
         while time.time() - start_time < timeout:
             # Check if process is still running
-            exit_code = _supergw_proc.poll()
+            exit_code = _translate_proc.poll()
             if exit_code is not None:
                 # Process exited, read the log file
-                _supergw_log_file.close()
+                _translate_log_file.close()
                 with open(log_filename, "r") as f:
                     output = f.read()
                 logging.error("❌ Time-Server process exited with code %d", exit_code)
@@ -373,7 +365,7 @@ def step_5_start_time_server(restart=False):
                 time.sleep(1)
 
                 # Double-check it's still running
-                if _supergw_proc.poll() is None:
+                if _translate_proc.poll() is None:
                     return
                 else:
                     raise RuntimeError("Time-Server started but then immediately exited")
@@ -385,11 +377,11 @@ def step_5_start_time_server(restart=False):
             time.sleep(check_interval)
 
         # Timeout reached
-        if _supergw_proc.poll() is None:
-            _supergw_proc.terminate()
-            _supergw_proc.wait()
+        if _translate_proc.poll() is None:
+            _translate_proc.terminate()
+            _translate_proc.wait()
 
-        _supergw_log_file.close()
+        _translate_log_file.close()
         with open(log_filename, "r") as f:
             output = f.read()
         logging.error("📋 Process output:\n%s", output)
@@ -588,16 +580,17 @@ def main():
         failed = True
         logging.error("❌  Failure: %s", e, exc_info=args.verbose)
         logging.error("\n💡 Troubleshooting tips:")
-        logging.error("  - Check if npx is installed: npx --version")
         logging.error("  - Check if uvx is installed: uvx --version")
         logging.error("  - Check if port %d is already in use: lsof -i :%d", PORT_TIME_SERVER, PORT_TIME_SERVER)
-        logging.error("  - Look for supergateway_*.log files for detailed output")
+        logging.error("  - Look for translate_*.log files for detailed output")
         logging.error("  - Try running with -v for verbose output")
-
-    if not failed:
-        cleanup()
-    else:
-        logging.warning("⚠️  Skipping cleanup due to failure. Run with --cleanup-only to clean up manually.")
+    finally:
+        if not failed:
+            cleanup()
+            sys.exit(0)
+        else:
+            logging.warning("⚠️  Skipping cleanup due to failure. Run with --cleanup-only to clean up manually.")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
