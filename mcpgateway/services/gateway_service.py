@@ -262,7 +262,6 @@ class GatewayService:
         validation_client = ResilientHttpClient(client_args={"timeout": settings.gateway_validation_timeout, "verify": not settings.skip_ssl_verify})
         try:
             async with validation_client.client.stream("GET", url, headers=headers, timeout=timeout) as response:
-                response.raise_for_status()
                 response_headers = dict(response.headers)
                 location = response_headers.get("location")
                 content_type = response_headers.get("content-type")

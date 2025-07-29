@@ -145,7 +145,7 @@ async def verify_jwt_token(token: str) -> dict:
 
         # Log warning for non-expiring tokens
         if "exp" not in unverified:
-            logger.warning("JWT token without expiration accepted. " "Consider enabling REQUIRE_TOKEN_EXPIRATION for better security. " f"Token sub: {unverified.get('sub', 'unknown')}")
+            logger.warning(f"JWT token without expiration accepted. Consider enabling REQUIRE_TOKEN_EXPIRATION for better security. Token sub: {unverified.get('sub', 'unknown')}")
 
         # Full validation
         options = {}
