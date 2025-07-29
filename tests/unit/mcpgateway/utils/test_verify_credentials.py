@@ -41,7 +41,15 @@ SECRET = "unit-secret"
 ALGO = "HS256"
 
 
-def _token(payload: dict, *, exp_delta: int | None = None, secret: str = SECRET) -> str:
+# def _token(payload: dict, *, exp_delta: int | None = None, secret: str = SECRET) -> str:
+#     """Return a signed JWT with optional expiry offset (minutes)."""
+#     if exp_delta is not None:
+#         expire = datetime.now(timezone.utc) + timedelta(minutes=exp_delta)
+#         payload = payload | {"exp": int(expire.timestamp())}
+#     return jwt.encode(payload, secret, algorithm=ALGO)
+
+
+def _token(payload: dict, *, exp_delta: int | None = 60, secret: str = SECRET) -> str:
     """Return a signed JWT with optional expiry offset (minutes)."""
     if exp_delta is not None:
         expire = datetime.now(timezone.utc) + timedelta(minutes=exp_delta)
@@ -56,6 +64,7 @@ def _token(payload: dict, *, exp_delta: int | None = None, secret: str = SECRET)
 async def test_verify_jwt_token_success(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
 
     token = _token({"sub": "abc"})
     data = await vc.verify_jwt_token(token)
