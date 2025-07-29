@@ -16,6 +16,7 @@ Authors: Mihai Criveti
 from __future__ import annotations
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -265,13 +266,46 @@ class TestGatewayService:
         pass
 
     # ────────────────────────────────────────────────────────────────────
-    # Validate Gateway URL Auth Failure
+    # Validate Gateway URL Auth Failure - 401
     # ────────────────────────────────────────────────────────────────────
     @pytest.mark.asyncio
-    async def test_validate_auth_failure(self, gateway_service, monkeypatch):
+    async def test_validate_auth_failure_401(self, gateway_service, monkeypatch):
         # Mock the response object to be returned inside the async with block
         response_mock = MagicMock()
         response_mock.status_code = 401
+        response_mock.headers = {"content-type": "text/event-stream"}
+
+        # Create an async context manager mock that returns response_mock
+        stream_context = MagicMock()
+        stream_context.__aenter__ = AsyncMock(return_value=response_mock)
+        stream_context.__aexit__ = AsyncMock(return_value=None)
+
+        # Mock the AsyncClient to return this context manager from .stream()
+        client_mock = MagicMock()
+        client_mock.stream = AsyncMock(return_value=stream_context)
+        client_mock.aclose = AsyncMock()
+
+        # Mock ResilientHttpClient to return this client
+        resilient_client_mock = MagicMock()
+        resilient_client_mock.client = client_mock
+        resilient_client_mock.aclose = AsyncMock()
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_client_mock))
+
+        # Run the method
+        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="SSE")
+
+        # Expect False due to 401
+        assert result is False
+
+    # ────────────────────────────────────────────────────────────────────
+    # Validate Gateway URL Auth Failure - 403
+    # ────────────────────────────────────────────────────────────────────
+    @pytest.mark.asyncio
+    async def test_validate_auth_failure_403(self, gateway_service, monkeypatch):
+        # Mock the response object to be returned inside the async with block
+        response_mock = MagicMock()
+        response_mock.status_code = 403
         response_mock.headers = {"content-type": "text/event-stream"}
 
         # Create an async context manager mock that returns response_mock
@@ -324,14 +358,6 @@ class TestGatewayService:
 
         assert result is False
 
-    # ────────────────────────────────────────────────────────────────────
-    # Validate Gateway URL Bulk Connections Validation
-    # ────────────────────────────────────────────────────────────────────
-    @pytest.mark.asyncio
-    async def test_bulk_concurrent_validation(self, gateway_service, monkeypatch):
-        # TODO
-        pass
-
     # ───────────────────────────────────────────────────────────────────────────
     # Validate Gateway - StreamableHTTP with mcp-session-id & redirected-url
     # ───────────────────────────────────────────────────────────────────────────
@@ -370,6 +396,38 @@ class TestGatewayService:
         # TODO
         # assert result is True
         pass
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # Validate Gateway URL - Bulk Concurrent requests Validation
+    # ───────────────────────────────────────────────────────────────────────────
+    @pytest.mark.asyncio
+    async def test_bulk_concurrent_validation(self, gateway_service, monkeypatch):
+        urls = [f"http://gateway{i}.com" for i in range(20)]
+
+        # Simulate a successful stream context
+        stream_context = AsyncMock()
+        stream_context.__aenter__.return_value.status_code = 200
+        stream_context.__aenter__.return_value.headers = {"content-type": "text/event-stream"}
+        stream_context.__aexit__.return_value = AsyncMock()
+
+        # Mock client to return the above stream context
+        mock_client = MagicMock()
+        mock_client.stream.return_value = stream_context
+        mock_client.aclose = AsyncMock()
+
+        # ResilientHttpClient mock returns a .client and .aclose
+        resilient_client_mock = MagicMock()
+        resilient_client_mock.client = mock_client
+        resilient_client_mock.aclose = AsyncMock()
+
+        # Patch ResilientHttpClient where it’s used in your module
+        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_client_mock))
+
+        # Run the validations concurrently
+        results = await asyncio.gather(*[gateway_service._validate_gateway_url(url, {}, "SSE") for url in urls])
+
+        # All should be True (validation success)
+        assert all(results)
 
     # ────────────────────────────────────────────────────────────────────
     # LIST / GET
