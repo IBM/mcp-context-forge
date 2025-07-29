@@ -420,7 +420,6 @@ class TestGatewayService:
         assert tool_service_stub.toggle_tool_status.called
         assert result == mock_gateway_read
 
-
     # ────────────────────────────────────────────────────────────────────
     # DELETE
     # ────────────────────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 import logging
 import os
 import tempfile
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING
 import uuid
 
 # Third-Party
@@ -519,7 +519,7 @@ class GatewayService:
 
                         if settings.masked_auth_value not in (token, password, header_value):
                             # Check if values differ from existing ones
-                            if (gateway.auth_value != gateway_update.auth_value):
+                            if gateway.auth_value != gateway_update.auth_value:
                                 gateway.auth_value = gateway_update.auth_value
 
                 # Try to reinitialize connection if URL changed
