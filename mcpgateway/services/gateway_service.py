@@ -386,7 +386,7 @@ class GatewayService:
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
-            return GatewayRead.model_validate(db_gateway)
+            return GatewayRead.model_validate(db_gateway).masked()
         except* GatewayConnectionError as ge:
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -412,100 +412,6 @@ class GatewayService:
                 other: ExceptionGroup[BaseException]
             logger.error(f"Other grouped errors: {other.exceptions}")
             raise other.exceptions[0]
-
-    async def masked_gateway_read(self, gateways: Union[GatewayRead, list[GatewayRead]]) -> Union[GatewayRead, list[GatewayRead]]:
-        """
-        Masks sensitive authentication fields in one or multiple GatewayRead objects.
-
-        This method takes a single GatewayRead instance or a list of them, and returns
-        the same type with sensitive fields replaced by "*****". The sensitive fields masked
-        include: "auth_username", "auth_password", "auth_token", "auth_header_value", "auth_value".
-
-        Args:
-            gateways (Union[GatewayRead, list[GatewayRead]]): One or more GatewayRead instances.
-
-        Returns:
-            Union[GatewayRead, list[GatewayRead]]: The input GatewayRead(s) with sensitive fields masked.
-
-        Examples:
-            >>> from unittest.mock import MagicMock
-            >>> from mcpgateway.schemas import GatewayRead
-            >>> import asyncio
-            >>> # Create a mock GatewayRead instance
-            >>> gw = MagicMock()
-            >>> gw.model_dump.return_value = {
-            ...     "auth_username": "user",
-            ...     "auth_password": "pass",
-            ...     "auth_token": "token",
-            ...     "auth_header_value": "header",
-            ...     "auth_value": "value",
-            ...     "other_field": "data"
-            ... }
-            >>> # Patch model_validate to return the dict for simplicity
-            >>> GatewayRead.model_validate = staticmethod(lambda data: data)
-            >>> # Mock service with method
-            >>> class Service:
-            ...     async def masked_gateway_read(self, gateways):
-            ...         single_input = False
-            ...         if not isinstance(gateways, list):
-            ...             gateways = [gateways]
-            ...             single_input = True
-            ...         masked_gateways = []
-            ...         sensitive_fields = [
-            ...             "auth_username", "auth_password", "auth_token",
-            ...             "auth_header_value", "auth_value"
-            ...         ]
-            ...         for gateway in gateways:
-            ...             data = gateway if isinstance(gateway, dict) else gateway.model_dump()
-            ...             for field in sensitive_fields:
-            ...                 if data.get(field):
-            ...                     data[field] = "*****"
-            ...             masked_gateways.append(GatewayRead.model_validate(data))
-            ...         return masked_gateways[0] if single_input else masked_gateways
-            >>> service = Service()
-            >>> # Test single gateway masking
-            >>> masked = asyncio.run(service.masked_gateway_read(gw))
-            >>> masked["auth_username"]
-            '*****'
-            >>> masked["auth_password"]
-            '*****'
-            >>> masked["auth_token"]
-            '*****'
-            >>> masked["auth_header_value"]
-            '*****'
-            >>> masked["auth_value"]
-            '*****'
-            >>> masked["other_field"]
-            'data'
-            >>> # Test list of gateways
-            >>> masked_list = asyncio.run(service.masked_gateway_read([gw, gw]))
-            >>> isinstance(masked_list, list)
-            True
-            >>> len(masked_list)
-            2
-            >>> masked_list[0]["auth_token"]
-            '*****'
-        """
-        single_input = False
-        if not isinstance(gateways, list):
-            gateways = [gateways]
-            single_input = True
-
-        masked_gateways = []
-        sensitive_fields = ["auth_username", "authUsername", "auth_password", "authPassword", "auth_token", "authToken", "auth_header_value", "authHeaderValue", "auth_value", "authValue"]
-
-        for gateway in gateways:
-            # data = gateway.model_dump()
-            if isinstance(gateway, dict):
-                data = gateway
-            else:
-                data = gateway.model_dump()
-            for field in sensitive_fields:
-                if data.get(field):
-                    data[field] = "*****"
-            masked_gateways.append(GatewayRead.model_validate(data))
-
-        return masked_gateways[0] if single_input else masked_gateways
 
     async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
         """List all registered gateways.
@@ -548,7 +454,7 @@ class GatewayService:
             query = query.where(DbGateway.enabled)
 
         gateways = db.execute(query).scalars().all()
-        return [GatewayRead.model_validate(g) for g in gateways]
+        return [GatewayRead.model_validate(g).masked() for g in gateways]
 
     async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate, include_inactive: bool = True) -> GatewayRead:
         """Update a gateway.
@@ -599,9 +505,20 @@ class GatewayService:
                 if getattr(gateway, "auth_type", None) is not None:
                     gateway.auth_type = gateway_update.auth_type
 
+                    # If auth_type is empty, update the auth_value too
+                    if gateway_update.auth_type == "":
+                        gateway.auth_value = ""
+
                     # if auth_type is not None and only then check auth_value
-                    if getattr(gateway, "auth_value", {}) != {}:
-                        gateway.auth_value = gateway_update.auth_value
+                    if getattr(gateway, "auth_value", "") != "":
+                        token = gateway_update.auth_token
+                        password = gateway_update.auth_password
+                        header_value = gateway_update.auth_header_value
+
+                        if settings.masked_auth_value not in (token, password, header_value):
+                            # Check if values differ from existing ones
+                            if (gateway.auth_value != gateway_update.auth_value):
+                                gateway.auth_value = gateway_update.auth_value
 
                 # Try to reinitialize connection if URL changed
                 if gateway_update.url is not None:
@@ -646,7 +563,7 @@ class GatewayService:
                 await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {gateway.name}")
-                return GatewayRead.model_validate(gateway)
+                return GatewayRead.model_validate(gateway).masked()
 
         except Exception as e:
             db.rollback()
@@ -709,7 +626,7 @@ class GatewayService:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
-            return GatewayRead.model_validate(gateway)
+            return GatewayRead.model_validate(gateway).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -797,7 +714,7 @@ class GatewayService:
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
-            return GatewayRead.model_validate(gateway)
+            return GatewayRead.model_validate(gateway).masked()
 
         except Exception as e:
             db.rollback()

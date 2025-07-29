@@ -1882,6 +1882,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If auth type is invalid
         """
+        values = values.data
         auth_type = values.get("auth_type")
 
         if auth_type == "basic":
@@ -2035,7 +2036,7 @@ class GatewayRead(BaseModelWithConfigDict):
         auth_value_encoded = values.auth_value
 
         # Skip validation logic if masked value
-        if auth_value_encoded == "*****":
+        if auth_value_encoded == settings.masked_auth_value:
             return values
 
         auth_value = decode_auth(auth_value_encoded)
@@ -2061,6 +2062,21 @@ class GatewayRead(BaseModelWithConfigDict):
             values.auth_header_key, values.auth_header_value = k, v
 
         return values
+
+    def masked(self) -> "GatewayRead":
+        """Return a masked version of the model with sensitive auth fields hidden."""
+        masked_data = self.model_dump()
+        
+        # Only mask if auth_value is present and not already masked
+        if masked_data.get("auth_value") and masked_data["auth_value"] != settings.masked_auth_value:
+            masked_data["auth_value"] = settings.masked_auth_value
+        
+        # Optionally mask other sensitive derived fields
+        masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
+        masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
+        masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+
+        return GatewayRead.model_validate(masked_data)
 
 
 class FederatedTool(BaseModelWithConfigDict):
