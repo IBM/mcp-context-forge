@@ -550,8 +550,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     integration_type: Optional[Literal["MCP", "REST"]] = Field(None, description="Tool integration type")
+    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
     annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
@@ -645,8 +645,8 @@ class ToolUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: When value is unsafe
         """
-        integration_type = values.config.get("integration_type", "MCP")
 
+        integration_type = values.data.get("integration_type", "MCP")
         if integration_type == "MCP":
             allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
         else:  # REST
@@ -1882,14 +1882,13 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If auth type is invalid
         """
-        values = values.data
-        auth_type = values.get("auth_type")
+
+        auth_type = values.data.get("auth_type")
 
         if auth_type == "basic":
             # For basic authentication, both username and password must be present
-            username = values.get("auth_username")
-            password = values.get("auth_password")
-
+            username = values.data.get("auth_username")
+            password = values.data.get("auth_password")
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
@@ -1898,7 +1897,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         if auth_type == "bearer":
             # For bearer authentication, only token is required
-            token = values.get("auth_token")
+            token = values.data.get("auth_token")
 
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
@@ -1907,8 +1906,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         if auth_type == "authheaders":
             # For headers authentication, both key and value must be present
-            header_key = values.get("auth_header_key")
-            header_value = values.get("auth_header_value")
+            header_key = values.data.get("auth_header_key")
+            header_value = values.data.get("auth_header_value")
 
             if not header_key or not header_value:
                 raise ValueError("For 'headers' auth, both 'auth_header_key' and 'auth_header_value' must be provided.")

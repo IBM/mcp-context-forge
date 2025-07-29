@@ -421,12 +421,6 @@ class TestPromptService:
         assert "name" in required
         assert "code" in required
 
-    def test_get_required_arguments(self, prompt_service):
-        template = "Hello, {{ name }}! Your code is {{ code }}."
-        required = prompt_service._get_required_arguments(template)
-        assert "name" in required
-        assert "code" in required
-
     def test_render_template_fallback_and_error(self, prompt_service):
         # Patch jinja_env.from_string to raise
         prompt_service._jinja_env.from_string = Mock(side_effect=Exception("bad"))

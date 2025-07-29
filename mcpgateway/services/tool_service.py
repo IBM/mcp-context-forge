@@ -269,7 +269,7 @@ class ToolService:
             Created tool information.
 
         Raises:
-            ToolNameConflictError: If tool name already exists.
+            IntegrityError: If there is a database integrity error.
             ToolError: For other tool registration errors.
 
         Examples:
@@ -296,17 +296,6 @@ class ToolService:
             'tool_read'
         """
         try:
-            if not tool.gateway_id:
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name)).scalar_one_or_none()
-            else:
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name).where(DbTool.gateway_id == tool.gateway_id)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
-            if existing_tool:
-                raise ToolNameConflictError(
-                    existing_tool.name,
-                    enabled=existing_tool.enabled,
-                    tool_id=existing_tool.id,
-                )
-
             if tool.auth is None:
                 auth_type = None
                 auth_value = None
@@ -335,12 +324,11 @@ class ToolService:
             await self._notify_tool_added(db_tool)
             logger.info(f"Registered tool: {db_tool.name}")
             return self._convert_tool_to_read(db_tool)
-        except IntegrityError:
-            db.rollback()
-            raise ToolError(f"Tool already exists: {tool.name}")
-        except Exception as e:
-            db.rollback()
-            raise ToolError(f"Failed to register tool: {str(e)}")
+        except IntegrityError as ie:
+            logger.error(f"IntegrityError during tool registration: {ie}")
+            raise ie
+        except Exception as ex:
+            raise ToolError(f"Failed to register tool: {str(ex)}")
 
     async def list_tools(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None) -> List[ToolRead]:
         """
@@ -719,7 +707,7 @@ class ToolService:
 
         Raises:
             ToolNotFoundError: If the tool is not found.
-            ToolNameConflictError: If a new name conflicts with an existing tool.
+            IntegrityError: If there is a database integrity error.
             ToolError: For other update errors.
 
         Examples:
@@ -744,16 +732,6 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-            if tool_update.name is not None and not (tool_update.name == tool.name and tool_update.gateway_id == tool.gateway_id):
-                # pylint: disable=comparison-with-callable
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool_update.name).where(DbTool.gateway_id == tool_update.gateway_id).where(DbTool.id != tool_id)).scalar_one_or_none()
-                if existing_tool:
-                    raise ToolNameConflictError(
-                        tool_update.name,
-                        enabled=existing_tool.enabled,
-                        tool_id=existing_tool.id,
-                    )
-
             if tool_update.name is not None:
                 tool.name = tool_update.name
             if tool_update.url is not None:
@@ -787,9 +765,12 @@ class ToolService:
             await self._notify_tool_updated(tool)
             logger.info(f"Updated tool: {tool.name}")
             return self._convert_tool_to_read(tool)
-        except Exception as e:
+        except IntegrityError as ie:
+            logger.error(f"IntegrityError during tool update: {ie}")
+            raise ie
+        except Exception as ex:
             db.rollback()
-            raise ToolError(f"Failed to update tool: {str(e)}")
+            raise ToolError(f"Failed to update tool: {str(ex)}")
 
     async def _notify_tool_updated(self, tool: DbTool) -> None:
         """

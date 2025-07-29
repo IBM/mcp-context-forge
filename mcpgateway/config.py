@@ -60,7 +60,7 @@ from fastapi import HTTPException
 import jq
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logging.basicConfig(
@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
+
+    require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
 
     #  Encryption key phrase for auth storage
     auth_encryption_secret: str = "my-test-salt"
@@ -493,8 +495,8 @@ class Settings(BaseSettings):
     validation_dangerous_html_pattern: str = (
         r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
     )
+    validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
 
-    validation_dangerous_js_pattern: str = r"javascript:|vbscript:|on\w+\s*=|data:.*script"
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
