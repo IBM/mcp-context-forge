@@ -280,6 +280,9 @@ class Settings(BaseSettings):
     health_check_timeout: int = 10  # seconds
     unhealthy_threshold: int = 5  # after this many failures, mark as Offline
 
+    # Validation Gateway URL
+    gateway_validation_timeout: int = 5  # seconds
+
     filelock_name: str = "gateway_service_leader.lock"
 
     # Default Roots
