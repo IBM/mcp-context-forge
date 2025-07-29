@@ -17,6 +17,7 @@ Examples:
     ...     basic_auth_user = 'user'
     ...     basic_auth_password = 'pass'
     ...     auth_required = True
+    ...     require_token_expiration = False
     >>> vc.settings = DummySettings()
     >>> import jwt
     >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
@@ -87,6 +88,7 @@ async def verify_jwt_token(token: str) -> dict:
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
+        ...     require_token_expiration = False
         >>> vc.settings = DummySettings()
         >>> import jwt
         >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
@@ -196,6 +198,7 @@ async def verify_credentials(token: str) -> dict:
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
+        ...     require_token_expiration = False
         >>> vc.settings = DummySettings()
         >>> import jwt
         >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
@@ -236,6 +239,7 @@ async def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Dep
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
+        ...     require_token_expiration = False
         >>> vc.settings = DummySettings()
         >>> import jwt
         >>> from fastapi.security import HTTPAuthorizationCredentials
@@ -415,6 +419,7 @@ async def require_auth_override(
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
+        ...     require_token_expiration = False
         >>> vc.settings = DummySettings()
         >>> import jwt
         >>> import asyncio
