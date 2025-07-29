@@ -742,7 +742,7 @@ class TestAdminGatewayRoutes:
         mock_list_gateways.return_value = [mock_gateway]
         result = await admin_list_gateways(False, mock_db, "test-user")
 
-        assert result[0]["authType"] == "bearer"
+        assert result[0]["auth_type"] == "bearer"
 
     @patch.object(GatewayService, "get_gateway")
     async def test_admin_get_gateway_all_transports(self, mock_get_gateway, mock_db):
