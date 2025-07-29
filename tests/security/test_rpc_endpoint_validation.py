@@ -39,14 +39,13 @@ class TestRPCEndpointValidation:
     @pytest.fixture
     def client(self):
         """Create a test client for the FastAPI app."""
-        return TestClient(app)   
+        return TestClient(app)
+
     @pytest.fixture
     def auth_headers(self):
         """Create authorization headers for testing."""
         # You might need to adjust this based on your auth setup
         return {"Authorization": "Bearer test-token", "Content-Type": "application/json"}
-    
-     
 
     def test_rpc_endpoint_with_malicious_methods(self, client, auth_headers):
         """Test that malicious method names are rejected before processing.

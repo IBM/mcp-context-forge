@@ -39,6 +39,7 @@ Examples:
 """
 
 # Standard
+import logging
 from typing import Optional
 
 # Third-Party
@@ -51,8 +52,6 @@ from fastapi.security import (
 )
 from fastapi.security.utils import get_authorization_scheme_param
 import jwt
-from jwt import PyJWTError
-
 
 # First-Party
 from mcpgateway.config import settings
@@ -60,11 +59,11 @@ from mcpgateway.config import settings
 basic_security = HTTPBasic(auto_error=False)
 security = HTTPBearer(auto_error=False)
 
-import logging
+# Standard
 logger = logging.getLogger(__name__)
 
+
 async def verify_jwt_token(token: str) -> dict:
-    
     """Verify and decode a JWT token.
 
     Decodes and validates a JWT token using the configured secret key
@@ -78,6 +77,7 @@ async def verify_jwt_token(token: str) -> dict:
 
     Raises:
         HTTPException: 401 status if the token has expired or is invalid.
+        MissingRequiredClaimError: If the 'exp' claim is required but missing.
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
@@ -143,23 +143,14 @@ async def verify_jwt_token(token: str) -> dict:
 
         # Log warning for non-expiring tokens
         if "exp" not in unverified:
-            logger.warning(
-                "JWT token without expiration accepted. "
-                "Consider enabling REQUIRE_TOKEN_EXPIRATION for better security. "
-                f"Token sub: {unverified.get('sub', 'unknown')}"
-            )
+            logger.warning("JWT token without expiration accepted. " "Consider enabling REQUIRE_TOKEN_EXPIRATION for better security. " f"Token sub: {unverified.get('sub', 'unknown')}")
 
         # Full validation
         options = {}
         if settings.require_token_expiration:
             options["require"] = ["exp"]
 
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret_key,
-            algorithms=[settings.jwt_algorithm],
-            options=options
-        )
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm], options=options)
         return payload
 
     except jwt.MissingRequiredClaimError:
@@ -180,7 +171,8 @@ async def verify_jwt_token(token: str) -> dict:
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+
 async def verify_credentials(token: str) -> dict:
     """Verify credentials using a JWT token.
 
