@@ -1094,6 +1094,20 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 > 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for persistence, or `redis` for distributed caching.
 
+### Database Management
+
+MCP Gateway uses Alembic for database migrations. Common commands:
+
+- `make db-current` - Show current database version
+- `make db-upgrade` - Apply pending migrations
+- `make db-migrate` - Create new migration
+- `make db-history` - Show migration history
+- `make db-status` - Detailed migration status
+
+#### Troubleshooting
+
+If you see "No 'script_location' key found", ensure you're running from the project root directory.
+
 ### Development
 
 | Setting    | Description            | Default | Options |
