@@ -111,8 +111,8 @@ def _create_jwt_token(
             "⚠️  WARNING: Creating token without expiration. This is a security risk!\n"
             "   Consider using --exp with a value > 0 for production use.\n"
             "   Once JWT API (#425) is available, use it for automatic token renewal.",
-            file=sys.stderr
-        )    
+            file=sys.stderr,
+        )
     return jwt.encode(payload, secret, algorithm=algorithm)
 
 
