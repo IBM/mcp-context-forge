@@ -28,25 +28,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import (
-    Boolean,
-    Column,
-    create_engine,
-    DateTime,
-    event,
-    Float,
-    ForeignKey,
-    func,
-    Integer,
-    JSON,
-    make_url,
-    select,
-    String,
-    Table,
-    Text,
-    UniqueConstraint,
-    ARRAY,
-)
+from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -199,6 +181,8 @@ server_prompt_association = Table(
     Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
 )
+
+
 class GlobalConfig(Base):
     """Global configuration settings.
 
@@ -1124,7 +1108,7 @@ class Gateway(Base):
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]]
-    
+
     # Header passthrough configuration
     passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array
 

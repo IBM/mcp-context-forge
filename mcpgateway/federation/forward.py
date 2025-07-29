@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.models import GlobalConfig, ToolResult
+from mcpgateway.models import ToolResult
 
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
@@ -137,6 +137,8 @@ class ForwardingService:
             method: RPC method name (e.g., "tools/list", "resources/read")
             params: Optional method parameters as key-value pairs
             target_gateway_id: Optional specific gateway ID for targeted forwarding
+            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Defaults to None.
 
         Returns:
             Any: Single gateway response for targeted requests (when target_gateway_id
@@ -364,6 +366,8 @@ class ForwardingService:
             gateway_id: ID of the gateway to forward to
             method: RPC method name
             params: Optional method parameters
+            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Defaults to None.
 
         Returns:
             The 'result' field from the gateway's JSON-RPC response
@@ -472,6 +476,8 @@ class ForwardingService:
             db: Database session for gateway queries
             method: RPC method name to invoke on all gateways
             params: Optional method parameters
+            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Defaults to None.
 
         Returns:
             List of successful responses from active gateways

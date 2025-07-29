@@ -1,9 +1,10 @@
-from mcpgateway.models import GlobalConfig
-from mcpgateway.db import Gateway as DbGateway
 from typing import Dict
 from sqlalchemy.orm import Session
-from mcpgateway.config import settings
 import logging
+
+from mcpgateway.config import settings
+from mcpgateway.models import GlobalConfig
+from mcpgateway.db import Gateway as DbGateway
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
 
     Args:
         request_headers: Headers from the incoming request
+        base_headers: Base headers that should always be included
         gateway: Target gateway (optional)
         db: Database session for global config lookup
 
@@ -58,5 +60,7 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
                         continue
 
                 passthrough_headers[header_name] = header_value
+            else:
+                logger.warning(f"Header {header_name} not found in request headers, skipping passthrough")
 
     return passthrough_headers

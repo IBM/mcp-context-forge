@@ -2022,7 +2022,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
-                result = await gateway_service.forward_request(db, method, params, request_headers=headers)
+                result = await gateway_service.forward_request(db, method, params)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
 

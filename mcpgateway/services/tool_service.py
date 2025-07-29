@@ -35,7 +35,6 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import GlobalConfig
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
@@ -549,6 +548,8 @@ class ToolService:
             db: Database session.
             name: Name of tool to invoke.
             arguments: Tool arguments.
+            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Defaults to None.
 
         Returns:
             Tool invocation result.

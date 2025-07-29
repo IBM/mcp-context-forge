@@ -51,6 +51,7 @@ from functools import lru_cache
 from importlib.resources import files
 import json
 import logging
+import os
 from pathlib import Path
 import re
 from typing import Annotated, Any, ClassVar, Dict, List, Optional, Set, Union
@@ -533,8 +534,14 @@ class Settings(BaseSettings):
     # Rate limiting
     validation_max_requests_per_minute: int = 60
 
-    ### passthrough headers
-    default_passthrough_headers = ["Authorization", "X-Tenant-Id", "X-Trace-Id"]
+    # passthrough headers
+    default_passthrough_headers: Any = os.environ.get("DEFAULT_PASSTHROUGH_HEADERS", ["Authorization", "X-Tenant-Id", "X-Trace-Id"])
+    if not isinstance(default_passthrough_headers, list):
+        try:
+            default_passthrough_headers = eval(default_passthrough_headers)
+        except:
+            logger.warning("Invalid DEFAULT_PASSTHROUGH_HEADERS format in .env. Must be a list of header names, e.g. ['Authorization', 'X-Tenant-Id']")
+            default_passthrough_headers = []
 
 
 def extract_using_jq(data, jq_filter=""):
