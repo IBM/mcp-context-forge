@@ -43,6 +43,7 @@ include .coveragerc
 include .bumpversion.cfg
 include .yamllint
 include .editorconfig
+include .snyk
 
 # 4️⃣  Runtime data that lives *inside* the package at import time
 recursive-include mcpgateway/templates *.html
@@ -67,6 +68,7 @@ prune *.egg-info
 prune charts
 prune k8s
 prune .devcontainer
+
 
 # Exclude deployment, mcp-servers and agent_runtimes
 prune deployment

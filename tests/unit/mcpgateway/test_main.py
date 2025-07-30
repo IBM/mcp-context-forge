@@ -239,9 +239,9 @@ class TestHealthAndInfrastructure:
 class TestProtocolEndpoints:
     """Tests for MCP protocol operations: initialize, ping, notifications, etc."""
 
-    @patch("mcpgateway.main.validate_request")
+    # @patch("mcpgateway.main.validate_request")
     @patch("mcpgateway.main.session_registry.handle_initialize_logic")
-    def test_initialize_endpoint(self, mock_handle_initialize, _mock_validate, test_client, auth_headers):
+    def test_initialize_endpoint(self, mock_handle_initialize, test_client, auth_headers):
         """Test MCP protocol initialization."""
         mock_capabilities = ServerCapabilities(
             prompts={"listChanged": True},
@@ -271,8 +271,8 @@ class TestProtocolEndpoints:
         assert body["protocolVersion"] == PROTOCOL_VERSION
         mock_handle_initialize.assert_called_once()
 
-    @patch("mcpgateway.main.validate_request")
-    def test_ping_endpoint(self, _mock_validate, test_client, auth_headers):
+    # @patch("mcpgateway.main.validate_request")
+    def test_ping_endpoint(self, test_client, auth_headers):
         """Test MCP ping endpoint."""
         req = {"jsonrpc": "2.0", "method": "ping", "id": "test-id"}
         response = test_client.post("/protocol/ping", json=req, headers=auth_headers)
@@ -807,8 +807,8 @@ class TestRPCEndpoints:
         mock_invoke_tool.assert_called_once_with(db=ANY, name="test_tool", arguments={"param": "value"})
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
-    @patch("mcpgateway.main.validate_request")
-    def test_rpc_prompt_get(self, _mock_validate, mock_get_prompt, test_client, auth_headers):
+    # @patch("mcpgateway.main.validate_request")
+    def test_rpc_prompt_get(self, mock_get_prompt, test_client, auth_headers):
         """Test prompt retrieval via JSON-RPC."""
         mock_get_prompt.return_value = {
             "messages": [{"role": "user", "content": {"type": "text", "text": "Rendered prompt"}}],
@@ -829,8 +829,8 @@ class TestRPCEndpoints:
         mock_get_prompt.assert_called_once_with(ANY, "test_prompt", {"param": "value"})
 
     @patch("mcpgateway.main.tool_service.list_tools")
-    @patch("mcpgateway.main.validate_request")
-    def test_rpc_list_tools(self, _mock_validate, mock_list_tools, test_client, auth_headers):
+    # @patch("mcpgateway.main.validate_request")
+    def test_rpc_list_tools(self, mock_list_tools, test_client, auth_headers):
         """Test listing tools via JSON-RPC."""
         mock_tool = MagicMock()
         mock_tool.model_dump.return_value = MOCK_TOOL_READ
@@ -849,26 +849,26 @@ class TestRPCEndpoints:
         assert isinstance(body, list)
         mock_list_tools.assert_called_once()
 
-    @patch("mcpgateway.main.validate_request")
-    def test_rpc_invalid_request(self, mock_validate, test_client, auth_headers):
+    @patch("mcpgateway.main.RPCRequest")
+    def test_rpc_invalid_request(self, mock_rpc_request, test_client, auth_headers):
         """Test RPC error handling for invalid requests."""
-        mock_validate.side_effect = Exception("Invalid request")
+        mock_rpc_request.side_effect = ValueError("Invalid method")
 
         req = {"jsonrpc": "1.0", "id": "test-id", "method": "invalid_method"}
         response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
-        assert response.status_code == 200
+        assert response.status_code == 422
         body = response.json()
-        assert "error" in body and "Invalid request" in body["error"]["data"]
+        assert "Method invalid" in body.get("message")
 
     def test_rpc_invalid_json(self, test_client, auth_headers):
         """Test RPC error handling for malformed JSON."""
         headers = auth_headers
         headers["content-type"] = "application/json"
         response = test_client.post("/rpc/", content="invalid json", headers=headers)
-        assert response.status_code == 200  # Returns error response, not HTTP error
+        assert response.status_code == 422  # Returns error response, not HTTP error
         body = response.json()
-        assert "error" in body
+        assert "Method invalid" in body.get("message")
 
     @patch("mcpgateway.main.logging_service.set_level")
     def test_set_log_level_endpoint(self, mock_set_level, test_client, auth_headers):

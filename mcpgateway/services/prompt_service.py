@@ -197,7 +197,7 @@ class PromptService:
             Created prompt information
 
         Raises:
-            PromptNameConflictError: If prompt name already exists
+            IntegrityError: If a database integrity error occurs.
             PromptError: For other prompt registration errors
 
         Examples:
@@ -219,16 +219,6 @@ class PromptService:
             ...     pass
         """
         try:
-            # Check for name conflicts (both active and inactive)
-            existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name)).scalar_one_or_none()
-
-            if existing_prompt:
-                raise PromptNameConflictError(
-                    prompt.name,
-                    is_active=existing_prompt.is_active,
-                    prompt_id=existing_prompt.id,
-                )
-
             # Validate template syntax
             self._validate_template(prompt.template)
 
@@ -267,9 +257,9 @@ class PromptService:
             prompt_dict = self._convert_db_prompt(db_prompt)
             return PromptRead.model_validate(prompt_dict)
 
-        except IntegrityError:
-            db.rollback()
-            raise PromptError(f"Prompt already exists: {prompt.name}")
+        except IntegrityError as ie:
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to register prompt: {str(e)}")
@@ -429,7 +419,7 @@ class PromptService:
 
         Raises:
             PromptNotFoundError: If the prompt is not found
-            PromptNameConflictError: If the new prompt name already exists
+            IntegrityError: If a database integrity error occurs.
             PromptError: For other update errors
 
         Examples:
@@ -456,15 +446,6 @@ class PromptService:
                     raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
 
                 raise PromptNotFoundError(f"Prompt not found: {name}")
-
-            if prompt_update.name is not None and prompt_update.name != prompt.name:
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name).where(DbPrompt.id != prompt.id)).scalar_one_or_none()
-                if existing_prompt:
-                    raise PromptNameConflictError(
-                        prompt_update.name,
-                        is_active=existing_prompt.is_active,
-                        prompt_id=existing_prompt.id,
-                    )
 
             if prompt_update.name is not None:
                 prompt.name = prompt_update.name
@@ -494,6 +475,10 @@ class PromptService:
             await self._notify_prompt_updated(prompt)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
 
+        except IntegrityError as ie:
+            db.rollback()
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to update prompt: {str(e)}")

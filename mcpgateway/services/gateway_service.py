@@ -437,7 +437,7 @@ class GatewayService:
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
-            return GatewayRead.model_validate(db_gateway)
+            return GatewayRead.model_validate(db_gateway).masked()
         except* GatewayConnectionError as ge:
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -487,7 +487,9 @@ class GatewayService:
             >>> db = MagicMock()
             >>> gateway_obj = MagicMock()
             >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway_obj]
-            >>> GatewayRead.model_validate = MagicMock(return_value='gateway_read')
+            >>> mocked_gateway_read = MagicMock()
+            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
+            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
             >>> import asyncio
             >>> result = asyncio.run(service.list_gateways(db))
             >>> result == ['gateway_read']
@@ -510,7 +512,7 @@ class GatewayService:
             query = query.where(DbGateway.enabled)
 
         gateways = db.execute(query).scalars().all()
-        return [GatewayRead.model_validate(g) for g in gateways]
+        return [GatewayRead.model_validate(g).masked() for g in gateways]
 
     async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate, include_inactive: bool = True) -> GatewayRead:
         """Update a gateway.
@@ -561,9 +563,20 @@ class GatewayService:
                 if getattr(gateway, "auth_type", None) is not None:
                     gateway.auth_type = gateway_update.auth_type
 
+                    # If auth_type is empty, update the auth_value too
+                    if gateway_update.auth_type == "":
+                        gateway.auth_value = ""
+
                     # if auth_type is not None and only then check auth_value
-                    if getattr(gateway, "auth_value", {}) != {}:
-                        gateway.auth_value = gateway_update.auth_value
+                    if getattr(gateway, "auth_value", "") != "":
+                        token = gateway_update.auth_token
+                        password = gateway_update.auth_password
+                        header_value = gateway_update.auth_header_value
+
+                        if settings.masked_auth_value not in (token, password, header_value):
+                            # Check if values differ from existing ones
+                            if gateway.auth_value != gateway_update.auth_value:
+                                gateway.auth_value = gateway_update.auth_value
 
                 # Try to reinitialize connection if URL changed
                 if gateway_update.url is not None:
@@ -608,7 +621,7 @@ class GatewayService:
                 await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {gateway.name}")
-                return GatewayRead.model_validate(gateway)
+                return GatewayRead.model_validate(gateway).masked()
 
         except Exception as e:
             db.rollback()
@@ -629,7 +642,6 @@ class GatewayService:
             GatewayNotFoundError: If the gateway is not found
 
         Examples:
-            >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from unittest.mock import MagicMock
             >>> from mcpgateway.schemas import GatewayRead
             >>> service = GatewayService()
@@ -637,7 +649,9 @@ class GatewayService:
             >>> gateway_mock = MagicMock()
             >>> gateway_mock.enabled = True
             >>> db.get.return_value = gateway_mock
-            >>> GatewayRead.model_validate = MagicMock(return_value='gateway_read')
+            >>> mocked_gateway_read = MagicMock()
+            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
+            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
             >>> import asyncio
             >>> result = asyncio.run(service.get_gateway(db, 'gateway_id'))
             >>> result == 'gateway_read'
@@ -671,7 +685,7 @@ class GatewayService:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
-            return GatewayRead.model_validate(gateway)
+            return GatewayRead.model_validate(gateway).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -759,7 +773,7 @@ class GatewayService:
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
-            return GatewayRead.model_validate(gateway)
+            return GatewayRead.model_validate(gateway).masked()
 
         except Exception as e:
             db.rollback()

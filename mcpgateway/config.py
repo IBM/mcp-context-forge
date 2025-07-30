@@ -498,6 +498,7 @@ class Settings(BaseSettings):
     validation_dangerous_html_pattern: str = (
         r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
     )
+
     validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
 
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
@@ -508,6 +509,7 @@ class Settings(BaseSettings):
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
     validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # MCP tool naming
+    validation_tool_method_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_\./-]*$"
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255
@@ -517,6 +519,8 @@ class Settings(BaseSettings):
     validation_max_json_depth: int = 10
     validation_max_url_length: int = 2048
     validation_max_rpc_param_size: int = 262144  # 256KB
+
+    validation_max_method_length: int = 128
 
     # Allowed MIME types
     validation_allowed_mime_types: List[str] = [
@@ -537,6 +541,9 @@ class Settings(BaseSettings):
 
     # Rate limiting
     validation_max_requests_per_minute: int = 60
+
+    # Masking value for all sensitive data
+    masked_auth_value: str = "*****"
 
 
 def extract_using_jq(data, jq_filter=""):
