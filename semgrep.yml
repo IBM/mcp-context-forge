@@ -1,0 +1,8 @@
+rules:
+  - id: disable-importlib-resources-compat
+    languages: [python]
+    message: "This rule is intentionally disabled."
+    severity: INFO
+    pattern: import importlib.resources
+    metadata:
+      python_min_version: "3.12"
