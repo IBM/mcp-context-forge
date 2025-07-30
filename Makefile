@@ -3270,3 +3270,239 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "   - Secrets in code (review dodgy/gitleaks output)"
 	@echo "   - Security patterns (review semgrep output)"
 	@echo "   - DevSkim findings (review devskim-results.sarif)"
+
+
+# =============================================================================
+# 🛡️ SNYK - Comprehensive vulnerability scanning and SBOM generation
+# =============================================================================
+# help: 🛡️ SNYK - Comprehensive vulnerability scanning and SBOM generation
+# help: snyk-auth           - Authenticate Snyk CLI with your Snyk account
+# help: snyk-test           - Test for open-source vulnerabilities and license issues
+# help: snyk-code-test      - Test source code for security issues (SAST)
+# help: snyk-container-test - Test container images for vulnerabilities
+# help: snyk-iac-test       - Test Infrastructure as Code files for security issues
+# help: snyk-aibom          - Generate AI Bill of Materials for Python projects
+# help: snyk-sbom           - Generate Software Bill of Materials (SBOM)
+# help: snyk-monitor        - Enable continuous monitoring on Snyk platform
+# help: snyk-all            - Run all Snyk security scans (test, code-test, container-test, iac-test, sbom)
+# help: snyk-helm-test       - Test Helm charts for security issues
+
+.PHONY: snyk-auth snyk-test snyk-code-test snyk-container-test snyk-iac-test snyk-aibom snyk-sbom snyk-monitor snyk-all snyk-helm-test
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Authentication
+## --------------------------------------------------------------------------- ##
+snyk-auth:                          ## 🔑 Authenticate with Snyk (required before first use)
+	@echo "🔑 Authenticating with Snyk..."
+	@command -v snyk >/dev/null 2>&1 || { \
+		echo "❌ Snyk CLI not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • npm: npm install -g snyk"; \
+		echo "   • Homebrew: brew install snyk"; \
+		echo "   • Direct: curl -sSL https://static.snyk.io/cli/latest/snyk-linux -o /usr/local/bin/snyk && chmod +x /usr/local/bin/snyk"; \
+		exit 1; \
+	}
+	@snyk auth
+	@echo "✅ Snyk authentication complete!"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Dependency Testing
+## --------------------------------------------------------------------------- ##
+snyk-test:                          ## 🔍 Test for open-source vulnerabilities
+	@echo "🔍 Running Snyk open-source vulnerability scan..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📦 Testing Python dependencies..."
+	@if [ -f "requirements.txt" ]; then \
+		snyk test --file=requirements.txt --severity-threshold=high --org=$${SNYK_ORG:-} || true; \
+	fi
+	@if [ -f "pyproject.toml" ]; then \
+		echo "📦 Testing pyproject.toml dependencies..."; \
+		snyk test --file=pyproject.toml --severity-threshold=high --org=$${SNYK_ORG:-} || true; \
+	fi
+	@if [ -f "requirements-dev.txt" ]; then \
+		echo "📦 Testing dev dependencies..."; \
+		snyk test --file=requirements-dev.txt --severity-threshold=high --dev --org=$${SNYK_ORG:-} || true; \
+	fi
+	@echo "💡 Run 'snyk monitor' to continuously monitor this project"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Code (SAST) Testing
+## --------------------------------------------------------------------------- ##
+snyk-code-test:                     ## 🔐 Test source code for security issues
+	@echo "🔐 Running Snyk Code static analysis..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📂 Scanning mcpgateway/ for security issues..."
+	@snyk code test mcpgateway/ \
+		--severity-threshold=high \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=snyk-code-results.json || true
+	@echo "📊 Summary of findings:"
+	@snyk code test mcpgateway/ --severity-threshold=high || true
+	@echo "📄 Detailed results saved to: snyk-code-results.json"
+	@echo "💡 To include ignored issues, add: --include-ignores"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Container Testing
+## --------------------------------------------------------------------------- ##
+snyk-container-test:                ## 🐳 Test container images for vulnerabilities
+	@echo "🐳 Running Snyk container vulnerability scan..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "🔍 Testing container image $(IMAGE_NAME):$(IMAGE_TAG)..."
+	@snyk container test $(IMAGE_NAME):$(IMAGE_TAG) \
+		--file=$(CONTAINERFILE) \
+		--severity-threshold=high \
+		--exclude-app-vulns \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=snyk-container-results.json || true
+	@echo "📊 Summary of container vulnerabilities:"
+	@snyk container test $(IMAGE_NAME):$(IMAGE_TAG) --file=$(CONTAINERFILE) --severity-threshold=high || true
+	@echo "📄 Detailed results saved to: snyk-container-results.json"
+	@echo "💡 To include application vulnerabilities, remove --exclude-app-vulns"
+	@echo "💡 To exclude base image vulns, add: --exclude-base-image-vulns"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Infrastructure as Code Testing
+## --------------------------------------------------------------------------- ##
+snyk-iac-test:                      ## 🏗️ Test IaC files for security issues
+	@echo "🏗️ Running Snyk Infrastructure as Code scan..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📂 Scanning for IaC security issues..."
+	@if [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ]; then \
+		echo "🐳 Testing docker-compose files..."; \
+		snyk iac test docker-compose*.y*ml \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} \
+			--json-file-output=snyk-iac-compose-results.json || true; \
+	fi
+	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ]; then \
+		echo "📦 Testing Dockerfile/Containerfile..."; \
+		snyk iac test $(CONTAINERFILE) \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} \
+			--json-file-output=snyk-iac-docker-results.json || true; \
+	fi
+	@if [ -f "Makefile" ]; then \
+		echo "🔧 Testing Makefile..."; \
+		snyk iac test Makefile \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} || true; \
+	fi
+	@if [ -d "charts/mcp-stack" ]; then \
+		echo "⎈ Testing Helm charts..."; \
+		snyk iac test charts/mcp-stack/ \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} \
+			--json-file-output=snyk-helm-results.json || true; \
+	fi
+	@echo "💡 To generate a report, add: --report"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk AI Bill of Materials
+## --------------------------------------------------------------------------- ##
+snyk-aibom:                         ## 🤖 Generate AI Bill of Materials
+	@echo "🤖 Generating AI Bill of Materials..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📊 Scanning for AI models, datasets, and tools..."
+	@snyk aibom \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=aibom.json \
+		mcpgateway/ || { \
+			echo "⚠️  AIBOM generation failed. This feature requires:"; \
+			echo "   • Python project with AI/ML dependencies"; \
+			echo "   • Snyk plan that supports AIBOM"; \
+			echo "   • Proper authentication (run 'make snyk-auth')"; \
+		}
+	@if [ -f "aibom.json" ]; then \
+		echo "📄 AI BOM saved to: aibom.json"; \
+		echo "🔍 Summary:"; \
+		cat aibom.json | jq -r '.models[]?.name' 2>/dev/null | sort | uniq | sed 's/^/   • /' || true; \
+	fi
+	@echo "💡 To generate HTML report, add: --html"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Software Bill of Materials
+## --------------------------------------------------------------------------- ##
+snyk-sbom:                          ## 📋 Generate Software Bill of Materials
+	@echo "📋 Generating Software Bill of Materials (SBOM)..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📦 Generating SBOM for mcpgateway..."
+	@snyk sbom \
+		--format=cyclonedx1.5+json \
+		--file=pyproject.toml \
+		--name=mcpgateway \
+		--version=$(shell grep -m1 version pyproject.toml | cut -d'"' -f2 || echo "0.0.0") \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=sbom-cyclonedx.json \
+		. || true
+	@if [ -f "sbom-cyclonedx.json" ]; then \
+		echo "✅ CycloneDX SBOM saved to: sbom-cyclonedx.json"; \
+		echo "📊 Component summary:"; \
+		cat sbom-cyclonedx.json | jq -r '.components[].name' 2>/dev/null | wc -l | xargs echo "   • Total components:"; \
+		cat sbom-cyclonedx.json | jq -r '.vulnerabilities[]?.id' 2>/dev/null | wc -l | xargs echo "   • Known vulnerabilities:"; \
+	fi
+	@echo "📦 Generating SPDX format SBOM..."
+	@snyk sbom \
+		--format=spdx2.3+json \
+		--file=pyproject.toml \
+		--name=mcpgateway \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=sbom-spdx.json \
+		. || true
+	@if [ -f "sbom-spdx.json" ]; then \
+		echo "✅ SPDX SBOM saved to: sbom-spdx.json"; \
+	fi
+	@echo "💡 Supported formats: cyclonedx1.4+json|cyclonedx1.4+xml|cyclonedx1.5+json|cyclonedx1.5+xml|cyclonedx1.6+json|cyclonedx1.6+xml|spdx2.3+json"
+	@echo "💡 To test an SBOM for vulnerabilities: snyk sbom test --file=sbom-cyclonedx.json"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Combined Security Report
+## --------------------------------------------------------------------------- ##
+snyk-all:                           ## 🔐 Run all Snyk security scans
+	@echo "🔐 Running complete Snyk security suite..."
+	@$(MAKE) snyk-test
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@$(MAKE) snyk-code-test
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@$(MAKE) snyk-container-test
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@$(MAKE) snyk-iac-test
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@$(MAKE) snyk-sbom
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ Snyk security scan complete!"
+	@echo "📊 Results saved to:"
+	@ls -la snyk-*.json sbom-*.json 2>/dev/null || echo "   No result files found"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Monitoring (Continuous)
+## --------------------------------------------------------------------------- ##
+snyk-monitor:                       ## 📡 Enable continuous monitoring on Snyk platform
+	@echo "📡 Setting up continuous monitoring..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@snyk monitor \
+		--org=$${SNYK_ORG:-} \
+		--project-name=mcpgateway \
+		--project-environment=production \
+		--project-lifecycle=production \
+		--project-business-criticality=high \
+		--project-tags=security:high,team:platform
+	@echo "✅ Project is now being continuously monitored on Snyk platform"
+	@echo "🌐 View results at: https://app.snyk.io"
+
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Helm Chart Testing
+## --------------------------------------------------------------------------- ##
+snyk-helm-test:                     ## ⎈ Test Helm charts for security issues
+	@echo "⎈ Running Snyk Helm chart security scan..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@if [ -d "charts/mcp-stack" ]; then \
+		echo "📂 Scanning charts/mcp-stack/ for security issues..."; \
+		snyk iac test charts/mcp-stack/ \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} \
+			--json-file-output=snyk-helm-results.json || true; \
+		echo "📄 Detailed results saved to: snyk-helm-results.json"; \
+	else \
+		echo "⚠️  No Helm charts found in charts/mcp-stack/"; \
+	fi
