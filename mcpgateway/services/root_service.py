@@ -20,7 +20,11 @@ from urllib.parse import urlparse
 from mcpgateway.config import settings
 from mcpgateway.models import Root
 
-logger = logging.getLogger(__name__)
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class RootServiceError(Exception):
