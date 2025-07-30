@@ -85,6 +85,7 @@ from mcpgateway.schemas import (
     ResourceCreate,
     ResourceRead,
     ResourceUpdate,
+    RPCRequest,
     ServerCreate,
     ServerRead,
     ServerUpdate,
@@ -131,7 +132,6 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_auth_override
 from mcpgateway.validation.jsonrpc import (
     JSONRPCError,
-    validate_request,
 )
 
 # Import the admin routes from the new module
@@ -1970,11 +1970,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
     try:
         logger.debug(f"User {user} made an RPC request")
         body = await request.json()
-        validate_request(body)
         method = body["method"]
         # rpc_id = body.get("id")
         params = body.get("params", {})
         cursor = params.get("cursor")  # Extract cursor parameter
+
+        RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         if method == "tools/list":
             tools = await tool_service.list_tools(db, cursor=cursor)
@@ -2030,6 +2031,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
     except JSONRPCError as e:
         return e.to_dict()
     except Exception as e:
+        if isinstance(e, ValueError):
+            return JSONResponse(content={"message": "Method invalid"}, status_code=422)
         logger.error(f"RPC error: {str(e)}")
         return {
             "jsonrpc": "2.0",

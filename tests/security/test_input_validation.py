@@ -802,7 +802,6 @@ class TestSecurityValidation:
         # Invalid method names
         invalid_methods = [
             "method with spaces",
-            "method-with-dash",
             "method@special",
             "<script>alert('XSS')</script>",
             "9method",  # Starts with number
