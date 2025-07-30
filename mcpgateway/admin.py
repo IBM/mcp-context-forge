@@ -1019,7 +1019,8 @@ async def admin_list_gateways(
         ...     updated_at=datetime.now(timezone.utc),
         ...     is_active=True,
         ...     auth_type=None, auth_username=None, auth_password=None, auth_token=None,
-        ...     auth_header_key=None, auth_header_value=None
+        ...     auth_header_key=None, auth_header_value=None,
+        ...     slug="test-gateway"
         ... )
         >>>
         >>> # Mock the gateway_service.list_gateways method
@@ -1040,7 +1041,8 @@ async def admin_list_gateways(
         ...     description="Another test", transport="HTTP", created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc), enabled=False,
         ...     auth_type=None, auth_username=None, auth_password=None, auth_token=None,
-        ...     auth_header_key=None, auth_header_value=None
+        ...     auth_header_key=None, auth_header_value=None,
+        ...     slug="test-gateway"
         ... )
         >>> gateway_service.list_gateways = AsyncMock(return_value=[
         ...     mock_gateway, # Return the GatewayRead objects, not pre-dumped dicts
@@ -2169,7 +2171,8 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         ...     description="Gateway for getting", transport="HTTP",
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
         ...     enabled=True, auth_type=None, auth_username=None, auth_password=None,
-        ...     auth_token=None, auth_header_key=None, auth_header_value=None
+        ...     auth_token=None, auth_header_key=None, auth_header_value=None,
+        ...     slug="test-gateway"
         ... )
         >>>
         >>> # Mock the gateway_service.get_gateway method

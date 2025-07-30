@@ -771,7 +771,8 @@ class TestAdminGatewayRoutes:
             "transport": "HTTP",
             "enabled": True,
             "auth_type": "bearer",
-            "auth_token": "hidden",  # Should be masked
+            "auth_token": "Bearer hidden",  # Should be masked
+            "auth_value": "Some value",
         }
 
         mock_list_gateways.return_value = [mock_gateway]
@@ -789,6 +790,8 @@ class TestAdminGatewayRoutes:
             mock_gateway.model_dump.return_value = {
                 "id": f"gateway-{transport}",
                 "transport": transport,
+                "name": f"Gateway {transport}",  # Add this field
+                "url": f"https://gateway-{transport}.com",  # Add this field
             }
             mock_get_gateway.return_value = mock_gateway
 
