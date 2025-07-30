@@ -37,7 +37,11 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import ToolResult
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
-logger = logging.getLogger(__name__)
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class ForwardingError(Exception):

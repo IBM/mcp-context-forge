@@ -74,6 +74,12 @@ from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger("mcpgateway")
+
 # Initialize services
 server_service = ServerService()
 tool_service = ToolService()
@@ -83,7 +89,6 @@ resource_service = ResourceService()
 root_service = RootService()
 
 # Set up basic authentication
-logger = logging.getLogger("mcpgateway")
 
 # Rate limiting storage
 rate_limit_storage = defaultdict(list)

@@ -191,7 +191,9 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     log_format: str = "json"  # json or text
-    log_file: Optional[Path] = None
+    log_filemode: str = "a+"  # append or overwrite
+    log_file: Optional[str] = "mcpgateway.log"
+    log_folder: Optional[str] = "logs"
 
     # Transport
     transport_type: str = "all"  # http, ws, sse, all

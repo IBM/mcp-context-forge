@@ -55,7 +55,11 @@ from mcpgateway.utils.services_auth import decode_auth
 # Local
 from ..config import extract_using_jq
 
-logger = logging.getLogger(__name__)
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class ToolError(Exception):

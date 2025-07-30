@@ -36,7 +36,11 @@ from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
 
-logger = logging.getLogger(__name__)
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class PromptError(Exception):

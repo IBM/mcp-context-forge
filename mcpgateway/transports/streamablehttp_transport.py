@@ -63,8 +63,11 @@ from mcpgateway.db import SessionLocal
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.verify_credentials import verify_credentials
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 # Initialize ToolService and MCP Server
 tool_service = ToolService()
