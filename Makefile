@@ -3094,7 +3094,7 @@ semgrep:                            ## 🔍 Security patterns & anti-patterns
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q semgrep && \
-		$(VENV_DIR)/bin/semgrep --config=auto mcpgateway tests || true"
+		$(VENV_DIR)/bin/semgrep --config=auto mcpgateway tests --exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 || true"
 
 dodgy:                              ## 🔐 Suspicious code patterns
 	@echo "🔐  dodgy - scanning for hardcoded secrets..."
