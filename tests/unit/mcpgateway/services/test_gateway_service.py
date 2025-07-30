@@ -18,7 +18,7 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import httpx
@@ -147,7 +147,7 @@ class TestGatewayService:
     # REGISTER
     # ────────────────────────────────────────────────────────────────────
     @pytest.mark.asyncio
-    async def test_register_gateway(self, gateway_service, test_db):
+    async def test_register_gateway(self, gateway_service, test_db, monkeypatch):
         """Successful gateway registration populates DB and returns data."""
         # DB: no gateway with that name; no existing tools found
         test_db.execute = Mock(
@@ -172,6 +172,18 @@ class TestGatewayService:
             )
         )
         gateway_service._notify_gateway_added = AsyncMock()
+
+        # Patch GatewayRead.model_validate to return a mock with .masked()
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "test_gateway"
+        mock_model.url = "http://example.com/gateway"
+        mock_model.description = "A test gateway"
+
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+            lambda x: mock_model,
+        )
 
         gateway_create = GatewayCreate(
             name="test_gateway",
@@ -435,9 +447,17 @@ class TestGatewayService:
     # ────────────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_list_gateways(self, gateway_service, mock_gateway, test_db):
+    async def test_list_gateways(self, gateway_service, mock_gateway, test_db, monkeypatch):
         """Listing gateways returns the active ones."""
+
         test_db.execute = Mock(return_value=_make_execute_result(scalars_list=[mock_gateway]))
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "test_gateway"
+
+        # Patch using full path string to GatewayRead.model_validate
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: mock_model)
 
         result = await gateway_service.list_gateways(test_db)
 
@@ -448,6 +468,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_get_gateway(self, gateway_service, mock_gateway, test_db):
         """Gateway is fetched and returned by ID."""
+        mock_gateway.masked = Mock(return_value=mock_gateway)
         test_db.get = Mock(return_value=mock_gateway)
         result = await gateway_service.get_gateway(test_db, 1)
         test_db.get.assert_called_once_with(DbGateway, 1)
@@ -465,14 +486,24 @@ class TestGatewayService:
     async def test_get_gateway_inactive(self, gateway_service, mock_gateway, test_db):
         """Inactive gateway is not returned unless explicitly asked for."""
         mock_gateway.enabled = False
+        mock_gateway.id = 1
         test_db.get = Mock(return_value=mock_gateway)
-        result = await gateway_service.get_gateway(test_db, 1, include_inactive=True)
-        assert result.id == 1
-        assert result.enabled == False
-        test_db.get.reset_mock()
-        test_db.get = Mock(return_value=mock_gateway)
-        with pytest.raises(GatewayNotFoundError):
-            result = await gateway_service.get_gateway(test_db, 1, include_inactive=False)
+
+        # Create a mock for GatewayRead with a masked method
+        mock_gateway_read = Mock()
+        mock_gateway_read.id = 1
+        mock_gateway_read.enabled = False
+        mock_gateway_read.masked = Mock(return_value=mock_gateway_read)
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            result = await gateway_service.get_gateway(test_db, 1, include_inactive=True)
+            assert result.id == 1
+            assert result.enabled == False
+
+            # Now test the inactive = False path
+            test_db.get = Mock(return_value=mock_gateway)
+            with pytest.raises(GatewayNotFoundError):
+                await gateway_service.get_gateway(test_db, 1, include_inactive=False)
 
     # ────────────────────────────────────────────────────────────────────
     # UPDATE
@@ -487,22 +518,36 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
+        # Simulate successful gateway initialization
         gateway_service._initialize_gateway = AsyncMock(
             return_value=(
-                {"prompts": {"subscribe": True}, "resources": {"subscribe": True}, "tools": {"subscribe": True}},
+                {
+                    "prompts": {"subscribe": True},
+                    "resources": {"subscribe": True},
+                    "tools": {"subscribe": True},
+                },
                 [],
             )
         )
         gateway_service._notify_gateway_updated = AsyncMock()
 
+        # Create the update payload
         gateway_update = GatewayUpdate(
             name="updated_gateway",
             url="http://example.com/updated",
             description="Updated description",
         )
 
-        result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+        # Create mock return for GatewayRead.model_validate().masked()
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.name = "updated_gateway"
+        mock_gateway_read.masked.return_value = mock_gateway_read  # Ensure .masked() returns the same object
 
+        # Patch the model_validate call in the service
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        # Assertions
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
         gateway_service._initialize_gateway.assert_called_once()
@@ -553,6 +598,7 @@ class TestGatewayService:
         query_proxy.filter.return_value = filter_proxy
         test_db.query = Mock(return_value=query_proxy)
 
+        # Setup gateway service mocks
         gateway_service._notify_gateway_activated = AsyncMock()
         gateway_service._notify_gateway_deactivated = AsyncMock()
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, []))
@@ -561,12 +607,17 @@ class TestGatewayService:
         tool_service_stub.toggle_tool_status = AsyncMock()
         gateway_service.tool_service = tool_service_stub
 
-        result = await gateway_service.toggle_gateway_status(test_db, 1, activate=False)
+        # Patch model_validate to return a mock with .masked()
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            result = await gateway_service.toggle_gateway_status(test_db, 1, activate=False)
 
         assert mock_gateway.enabled is False
         gateway_service._notify_gateway_deactivated.assert_called_once()
         assert tool_service_stub.toggle_tool_status.called
-        assert result.enabled is False
+        assert result == mock_gateway_read
 
     # ────────────────────────────────────────────────────────────────────
     # DELETE

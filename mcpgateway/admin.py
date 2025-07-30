@@ -436,6 +436,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
 
     except Exception as ex:
+        logger.info(f"error,{ex}")
         if isinstance(ex, ServerError):
             # Custom server logic error — 500 Internal Server Error makes sense
             return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -1018,7 +1019,8 @@ async def admin_list_gateways(
         ...     updated_at=datetime.now(timezone.utc),
         ...     is_active=True,
         ...     auth_type=None, auth_username=None, auth_password=None, auth_token=None,
-        ...     auth_header_key=None, auth_header_value=None
+        ...     auth_header_key=None, auth_header_value=None,
+        ...     slug="test-gateway"
         ... )
         >>>
         >>> # Mock the gateway_service.list_gateways method
@@ -1039,7 +1041,8 @@ async def admin_list_gateways(
         ...     description="Another test", transport="HTTP", created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc), enabled=False,
         ...     auth_type=None, auth_username=None, auth_password=None, auth_token=None,
-        ...     auth_header_key=None, auth_header_value=None
+        ...     auth_header_key=None, auth_header_value=None,
+        ...     slug="test-gateway"
         ... )
         >>> gateway_service.list_gateways = AsyncMock(return_value=[
         ...     mock_gateway, # Return the GatewayRead objects, not pre-dumped dicts
@@ -2168,7 +2171,8 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         ...     description="Gateway for getting", transport="HTTP",
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
         ...     enabled=True, auth_type=None, auth_username=None, auth_password=None,
-        ...     auth_token=None, auth_header_key=None, auth_header_value=None
+        ...     auth_token=None, auth_header_key=None, auth_header_value=None,
+        ...     slug="test-gateway"
         ... )
         >>>
         >>> # Mock the gateway_service.get_gateway method
@@ -3163,26 +3167,39 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         >>>
         >>> async def test_admin_add_prompt():
         ...     response = await admin_add_prompt(mock_request, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body == b'{"message":"Prompt registered successfully!","success":true}'
         >>>
         >>> asyncio.run(test_admin_add_prompt())
         True
+
         >>> prompt_service.register_prompt = original_register_prompt
     """
     logger.debug(f"User {user} is adding a new prompt")
     form = await request.form()
-    args_json = form.get("arguments") or "[]"
-    arguments = json.loads(args_json)
-    prompt = PromptCreate(
-        name=form["name"],
-        description=form.get("description"),
-        template=form["template"],
-        arguments=arguments,
-    )
-    await prompt_service.register_prompt(db, prompt)
-
-    root_path = request.scope.get("root_path", "")
-    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+    try:
+        args_json = form.get("arguments") or "[]"
+        arguments = json.loads(args_json)
+        prompt = PromptCreate(
+            name=form["name"],
+            description=form.get("description"),
+            template=form["template"],
+            arguments=arguments,
+        )
+        await prompt_service.register_prompt(db, prompt)
+        return JSONResponse(
+            content={"message": "Prompt registered successfully!", "success": True},
+            status_code=200,
+        )
+    except Exception as ex:
+        if isinstance(ex, ValidationError):
+            logger.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            error_message = ErrorFormatter.format_database_error(ex)
+            logger.error(f"IntegrityError in admin_add_prompt: {error_message}")
+            return JSONResponse(status_code=409, content=error_message)
+        logger.error(f"Error in admin_add_prompt: {ex}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/prompts/{name}/edit")
@@ -3235,7 +3252,7 @@ async def admin_edit_prompt(
         >>>
         >>> async def test_admin_edit_prompt():
         ...     response = await admin_edit_prompt(prompt_name, mock_request, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body == b'{"message":"Prompt update successfully!","success":true}'
         >>>
         >>> asyncio.run(test_admin_edit_prompt())
         True
@@ -3261,20 +3278,35 @@ async def admin_edit_prompt(
     form = await request.form()
     args_json = form.get("arguments") or "[]"
     arguments = json.loads(args_json)
-    prompt = PromptUpdate(
-        name=form["name"],
-        description=form.get("description"),
-        template=form["template"],
-        arguments=arguments,
-    )
-    await prompt_service.update_prompt(db, name, prompt)
+    try:
+        prompt = PromptUpdate(
+            name=form["name"],
+            description=form.get("description"),
+            template=form["template"],
+            arguments=arguments,
+        )
+        await prompt_service.update_prompt(db, name, prompt)
 
-    root_path = request.scope.get("root_path", "")
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+        root_path = request.scope.get("root_path", "")
+        is_inactive_checked = form.get("is_inactive_checked", "false")
 
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
+        # return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+        return JSONResponse(
+            content={"message": "Prompt update successfully!", "success": True},
+            status_code=200,
+        )
+    except Exception as ex:
+        if isinstance(ex, ValidationError):
+            logger.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            error_message = ErrorFormatter.format_database_error(ex)
+            logger.error(f"IntegrityError in admin_add_prompt: {error_message}")
+            return JSONResponse(status_code=409, content=error_message)
+        logger.error(f"Error in admin_add_prompt: {ex}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/prompts/{name}/delete")

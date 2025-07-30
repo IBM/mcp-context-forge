@@ -1,4 +1,4 @@
-version: "3.9"          # Supported by both podman-compose and Docker Compose v2+
+#version: "3.9"          # Supported by both podman-compose and Docker Compose v2+
 
 ###############################################################################
 #  NETWORKS + VOLUMES - declared first so they can be referenced later
@@ -294,8 +294,87 @@ services:
   #     mysql:
   #       condition: service_started
 
+
 ###############################################################################
 #  OPTIONAL MCP SERVERS - drop-in helpers the Gateway can call
+###############################################################################
+
+  ###############################################################################
+  # Fast Time Server - High-performance time/timezone service for MCP
+  ###############################################################################
+  fast_time_server:
+    image: ghcr.io/ibm/fast-time-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8888:8080"    # Map host port 8888 to container port 8080
+    command: ["-transport=sse", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+
+  ###############################################################################
+  # Auto-registration service - registers fast_time_server with gateway
+  ###############################################################################
+  register_fast_time:
+    image: python:3.11-slim
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      fast_time_server:
+        condition: service_started
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    # This is a one-shot container that exits after registration
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Installing MCP Context Forge Gateway..."
+        pip install --quiet mcp-contextforge-gateway
+
+        echo "Installing curl..."
+        apt-get update -qq && apt-get install -y -qq curl
+
+        echo "Waiting for services to be ready..."
+        # Wait for fast_time_server to be ready
+        for i in {1..30}; do
+          if curl -s -f http://fast_time_server:8080/health > /dev/null 2>&1; then
+            echo "✅ fast_time_server is healthy"
+            break
+          fi
+          echo "Waiting for fast_time_server... ($$i/30)"
+          sleep 2
+        done
+
+        echo "Generating JWT token..."
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+
+        echo "Registering fast_time_server with gateway..."
+        RESPONSE=$$(curl -s -X POST http://gateway:4444/gateways \
+          -H "Authorization: Bearer $$MCPGATEWAY_BEARER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{"name":"fast_time","url":"http://fast_time_server:8080/sse"}')
+
+        echo "Registration response: $$RESPONSE"
+
+        # Check if registration was successful
+        if echo "$$RESPONSE" | grep -q '"id"'; then
+          echo "✅ Successfully registered fast_time_server"
+
+          # Optional: Create a virtual server with the time tools
+          echo "Creating virtual server..."
+          curl -s -X POST http://gateway:4444/servers \
+            -H "Authorization: Bearer $$MCPGATEWAY_BEARER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"time_server","description":"Fast time tools","associatedTools":["1","2"]}' || true
+
+          echo "✅ Setup complete!"
+        else
+          echo "❌ Registration failed"
+          exit 1
+        fi
+
+###############################################################################
+#  OTHER MCP SERVERS - drop-in helpers the Gateway can call (not implemented yet)
 # ###############################################################################
 #   mcp_time:
 #     image: mcp/time:latest

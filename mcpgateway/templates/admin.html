@@ -1464,9 +1464,7 @@
           <form
             method="POST"
             action="{{ root_path }}/admin/prompts"
-            id="add-prompt-form"
-            onsubmit="return handleToggleSubmit(event, 'prompts')"
-          >
+            id="add-prompt-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label
@@ -1515,6 +1513,10 @@
                 ></textarea>
               </div>
             </div>
+            <div id="add-prompts-loading" style="display: none">
+              <div class="spinner"></div>
+            </div>
+            <div id="status-prompts"></div>
             <div class="mt-6">
               <button
                 type="submit"
@@ -2708,7 +2710,7 @@
                         name="template"
                         id="edit-prompt-template"
                         class="mt-1 block w-full h-48 rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                        required
+                        
                       ></textarea>
                     </div>
                     <div>

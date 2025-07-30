@@ -244,6 +244,18 @@ class ErrorFormatter:
             >>> result['message']
             'A resource with this URI already exists'
 
+            >>> # Test UNIQUE constraint on server name
+            >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: servers.name"
+            >>> result = ErrorFormatter.format_database_error(mock_error)
+            >>> result['message']
+            'A server with this name already exists'
+
+            >>> # Test UNIQUE constraint on prompt name
+            >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: prompts.name"
+            >>> result = ErrorFormatter.format_database_error(mock_error)
+            >>> result['message']
+            'A prompt with this name already exists'
+
             >>> # Test FOREIGN KEY constraint
             >>> mock_error.orig.__str__ = lambda self: "FOREIGN KEY constraint failed"
             >>> result = ErrorFormatter.format_database_error(mock_error)
@@ -289,6 +301,8 @@ class ErrorFormatter:
                     return {"message": "A resource with this URI already exists", "success": False}
                 elif "servers.name" in error_str:
                     return {"message": "A server with this name already exists", "success": False}
+                elif "prompts.name" in error_str:
+                    return {"message": "A prompt with this name already exists", "success": False}
 
             elif "FOREIGN KEY constraint failed" in error_str:
                 return {"message": "Referenced item not found", "success": False}
