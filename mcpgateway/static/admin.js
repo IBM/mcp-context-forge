@@ -3507,19 +3507,78 @@ async function runToolTest() {
                 }
                 let value;
                 if (prop.type === "array") {
-                    value = formData.getAll(key);
-                    if (prop.items && prop.items.type === "number") {
-                        value = value.map((v) => (v === "" ? null : Number(v)));
-                    } else if (prop.items && prop.items.type === "boolean") {
-                        value = value.map((v) => v === "true" || v === true);
+                    const inputValues = formData.getAll(key);
+                    try {
+                        // Convert values based on the items schema type
+                        if (prop.items && prop.items.type) {
+                            switch (prop.items.type) {
+                                case "object":
+                                    value = inputValues.map((v) => {
+                                        try {
+                                            const parsed = JSON.parse(v);
+                                            if (
+                                                typeof parsed !== "object" ||
+                                                Array.isArray(parsed)
+                                            ) {
+                                                throw new Error(
+                                                    `Value must be an object, got ${typeof parsed}`,
+                                                );
+                                            }
+                                            return parsed;
+                                        } catch (e) {
+                                            console.error(
+                                                `Error parsing object for ${key}:`,
+                                                e,
+                                            );
+                                            throw new Error(
+                                                `Invalid object format for ${key}. Each item must be a valid JSON object.`,
+                                            );
+                                        }
+                                    });
+                                    break;
+                                case "number":
+                                    value = inputValues.map((v) =>
+                                        v === "" ? null : Number(v),
+                                    );
+                                    break;
+                                case "boolean":
+                                    value = inputValues.map(
+                                        (v) => v === "true" || v === true,
+                                    );
+                                    break;
+                                default:
+                                    // For other types (like strings), use raw values
+                                    value = inputValues;
+                            }
+                        } else {
+                            // If no items type specified, use raw values
+                            value = inputValues;
+                        }
+
+                        // Handle empty values
+                        if (
+                            value.length === 0 ||
+                            (value.length === 1 && value[0] === "")
+                        ) {
+                            if (
+                                schema.required &&
+                                schema.required.includes(key)
+                            ) {
+                                params[keyValidation.value] = [];
+                            }
+                            continue;
+                        }
+                        params[keyValidation.value] = value;
+                    } catch (error) {
+                        console.error(
+                            `Error parsing array values for ${key}:`,
+                            error,
+                        );
+                        showErrorMessage(
+                            `Invalid input format for ${key}. Please check the values are in correct format.`,
+                        );
+                        throw error;
                     }
-                    if (
-                        value.length === 0 ||
-                        (value.length === 1 && value[0] === "")
-                    ) {
-                        continue;
-                    }
-                    params[keyValidation.value] = value;
                 } else {
                     value = formData.get(key);
                     if (value === null || value === undefined || value === "") {
