@@ -1882,6 +1882,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If auth type is invalid
         """
+
         auth_type = values.data.get("auth_type")
 
         if auth_type == "basic":
@@ -2032,6 +2033,11 @@ class GatewayRead(BaseModelWithConfigDict):
         """
         auth_type = values.auth_type
         auth_value_encoded = values.auth_value
+
+        # Skip validation logic if masked value
+        if auth_value_encoded == settings.masked_auth_value:
+            return values
+
         auth_value = decode_auth(auth_value_encoded)
         if auth_type == "basic":
             auth = auth_value.get("Authorization")
@@ -2055,6 +2061,40 @@ class GatewayRead(BaseModelWithConfigDict):
             values.auth_header_key, values.auth_header_value = k, v
 
         return values
+
+    def masked(self) -> "GatewayRead":
+        """
+        Return a masked version of the model instance with sensitive authentication fields hidden.
+
+        This method creates a dictionary representation of the model data and replaces sensitive fields
+        such as `auth_value`, `auth_password`, `auth_token`, and `auth_header_value` with a masked
+        placeholder value defined in `settings.masked_auth_value`. Masking is only applied if the fields
+        are present and not already masked.
+
+        Args:
+            None
+
+        Returns:
+            GatewayRead: A new instance of the GatewayRead model with sensitive authentication-related fields
+            masked to prevent exposure of sensitive information.
+
+        Notes:
+            - The `auth_value` field is only masked if it exists and its value is different from the masking
+            placeholder.
+            - Other sensitive fields (`auth_password`, `auth_token`, `auth_header_value`) are masked if present.
+            - Fields not related to authentication remain unchanged.
+        """
+        masked_data = self.model_dump()
+
+        # Only mask if auth_value is present and not already masked
+        if masked_data.get("auth_value") and masked_data["auth_value"] != settings.masked_auth_value:
+            masked_data["auth_value"] = settings.masked_auth_value
+
+        masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
+        masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
+        masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+
+        return GatewayRead.model_validate(masked_data)
 
 
 class FederatedTool(BaseModelWithConfigDict):

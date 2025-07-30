@@ -539,6 +539,9 @@ class Settings(BaseSettings):
     # Rate limiting
     validation_max_requests_per_minute: int = 60
 
+    # Masking value for all sensitive data
+    masked_auth_value: str = "*****"
+
 
 def extract_using_jq(data, jq_filter=""):
     """
