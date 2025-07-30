@@ -33,7 +33,11 @@ from sqlalchemy import create_engine, inspect
 from mcpgateway.config import settings
 from mcpgateway.db import Base
 
-logger = logging.getLogger(__name__)
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 async def main() -> None:

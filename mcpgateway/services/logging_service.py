@@ -10,6 +10,7 @@ It supports RFC 5424 severity levels, log level management, and log event subscr
 """
 
 # Standard
+import os
 import asyncio
 from datetime import datetime, timezone
 import logging
@@ -17,6 +18,29 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # First-Party
 from mcpgateway.models import LogLevel
+from mcpgateway.config import settings
+
+from logging.handlers import RotatingFileHandler
+from pythonjsonlogger import jsonlogger  # You may need to install python-json-logger package
+
+# Create a text formatter
+text_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+# Create a JSON formatter
+json_formatter = jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+
+# Configure root logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    filemode=settings.log_filemode if settings.log_filemode else None,
+    filename=settings.log_file if settings.log_file else None,
+)
+
+file_handler = RotatingFileHandler(os.path.join(settings.log_folder, settings.log_file), maxBytes=1024 * 1024, backupCount=5)
+file_handler.setFormatter(json_formatter)
+text_handler = logging.StreamHandler()  # For console output
+text_handler.setFormatter(text_formatter)
 
 
 class LoggingService:
@@ -44,12 +68,9 @@ class LoggingService:
             >>> service = LoggingService()
             >>> asyncio.run(service.initialize())
         """
-        # Configure root logger
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
         self._loggers[""] = logging.getLogger()
+        # Add the handler to the logger
+        self._loggers[""].addHandler(file_handler)
         logging.info("Logging service initialized")
 
     async def shutdown(self) -> None:
@@ -84,7 +105,8 @@ class LoggingService:
         """
         if name not in self._loggers:
             logger = logging.getLogger(name)
-
+            logger.addHandler(file_handler)
+            logger.addHandler(text_handler)
             # Set level to match service level
             log_level = getattr(logging, self._level.upper())
             logger.setLevel(log_level)
