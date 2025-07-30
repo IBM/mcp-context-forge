@@ -506,6 +506,7 @@ class Settings(BaseSettings):
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
     validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # MCP tool naming
+    validation_tool_method_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_\./-]*$"
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255
@@ -515,6 +516,8 @@ class Settings(BaseSettings):
     validation_max_json_depth: int = 10
     validation_max_url_length: int = 2048
     validation_max_rpc_param_size: int = 262144  # 256KB
+
+    validation_max_method_length: int = 128
 
     # Allowed MIME types
     validation_allowed_mime_types: List[str] = [
