@@ -3197,7 +3197,7 @@ async function testTool(toolId) {
             testButton.textContent = "Testing...";
             testButton.classList.add("opacity-50", "cursor-not-allowed");
         }
-
+        
         // 4. REQUEST CANCELLATION: Enhanced cleanup
         const existingController = toolTestState.activeRequests.get(toolId);
         if (existingController) {
@@ -3307,27 +3307,30 @@ async function testTool(toolId) {
 
                 // Field label - use textContent to avoid double escaping
                 const label = document.createElement("label");
-                label.textContent = keyValidation.value;
-                label.className =
-                    "block text-sm font-medium text-gray-700 dark:text-gray-300";
+                label.className = "block text-sm font-medium text-gray-700 dark:text-gray-300";
+
+                // Create span for label text
+                const labelText = document.createElement("span");
+                labelText.textContent = keyValidation.value;
+                label.appendChild(labelText);
+
+                // Add red star if field is required
+                if (schema.required && schema.required.includes(key)) {
+                    const requiredMark = document.createElement("span");
+                    requiredMark.textContent = " *";
+                    requiredMark.className = "text-red-500";
+                    label.appendChild(requiredMark);
+                }
+
                 fieldDiv.appendChild(label);
 
                 // Description help text - use textContent
                 if (prop.description) {
                     const description = document.createElement("small");
-                    description.textContent = prop.description; // NO escapeHtml here
+                    description.textContent = prop.description;
                     description.className = "text-gray-500 block mb-1";
                     fieldDiv.appendChild(description);
                 }
-
-                // Input field with validation
-                const input = document.createElement("input");
-                input.name = keyValidation.value;
-                input.type = "text";
-                input.required =
-                    schema.required && schema.required.includes(key);
-                input.className =
-                    "mt-1 block w-full rounded-md border border-gray-500 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                 if (prop.type === "array") {
                     const arrayContainer = document.createElement("div");
@@ -3339,24 +3342,23 @@ async function testTool(toolId) {
 
                         const input = document.createElement("input");
                         input.name = keyValidation.value;
-                        input.required =
+                        input.required = 
                             schema.required && schema.required.includes(key);
                         input.className =
                             "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-                        if (prop.items && prop.items.type === "number") {
+
+                        if (prop.items?.type === "number") {
                             input.type = "number";
-                        } else if (
-                            prop.items &&
-                            prop.items.type === "boolean"
-                        ) {
+                        } else if (prop.items?.type === "boolean") {
                             input.type = "checkbox";
                             input.value = "true";
                             input.checked = value === true || value === "true";
                         } else {
                             input.type = "text";
                         }
+
                         if (
-                            typeof value === "string" ||
+                            typeof value === "string" || 
                             typeof value === "number"
                         ) {
                             input.value = value;
@@ -3364,7 +3366,7 @@ async function testTool(toolId) {
 
                         const delBtn = document.createElement("button");
                         delBtn.type = "button";
-                        delBtn.className =
+                        delBtn.className = 
                             "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
                         delBtn.title = "Delete";
                         delBtn.textContent = "×";
@@ -3386,7 +3388,13 @@ async function testTool(toolId) {
                         arrayContainer.appendChild(createArrayInput());
                     });
 
-                    arrayContainer.appendChild(createArrayInput());
+                    if (Array.isArray(prop.default)) {
+                        prop.default.forEach((val) => {
+                            arrayContainer.appendChild(createArrayInput(val));
+                        });
+                    } else {
+                        arrayContainer.appendChild(createArrayInput());
+                    }
 
                     fieldDiv.appendChild(arrayContainer);
                     fieldDiv.appendChild(addBtn);
@@ -3401,19 +3409,32 @@ async function testTool(toolId) {
                     // Add validation based on type
                     if (prop.type === "text") {
                         input.type = "text";
-                    } else if (prop.type === "number") {
+                    } else if (prop.type === "number" || prop.type === "integer") {
                         input.type = "number";
                     } else if (prop.type === "boolean") {
                         input.type = "checkbox";
                         input.className =
                             "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded";
+                    } else {
+                        input.type = "text";
                     }
+
+                    // Set default values here
+                    if (prop.default !== undefined) {
+                        if (input.type === "checkbox") {
+                            input.checked = prop.default === true;
+                        } else {
+                            input.value = prop.default;
+                        }
+                    }
+
                     fieldDiv.appendChild(input);
                 }
 
                 container.appendChild(fieldDiv);
             }
         }
+
         openModal("tool-test-modal");
         console.log("✓ Tool test modal loaded successfully");
     } catch (error) {
