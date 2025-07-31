@@ -3348,9 +3348,19 @@ async function testTool(toolId) {
                         input.className =
                             "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
-                        if (prop.items?.type === "number") {
+                        const itemTypes = Array.isArray(prop.items?.anyOf)
+                            ? prop.items.anyOf.map((t) => t.type)
+                            : [prop.items?.type];
+
+                        if (
+                            itemTypes.includes("number") ||
+                            itemTypes.includes("integer")
+                        ) {
                             input.type = "number";
-                        } else if (prop.items?.type === "boolean") {
+                            input.step = itemTypes.includes("integer")
+                                ? "1"
+                                : "any";
+                        } else if (itemTypes.includes("boolean")) {
                             input.type = "checkbox";
                             input.value = "true";
                             input.checked = value === true || value === "true";
@@ -3390,9 +3400,16 @@ async function testTool(toolId) {
                     });
 
                     if (Array.isArray(prop.default)) {
-                        prop.default.forEach((val) => {
-                            arrayContainer.appendChild(createArrayInput(val));
-                        });
+                        if (prop.default.length > 0) {
+                            prop.default.forEach((val) => {
+                                arrayContainer.appendChild(
+                                    createArrayInput(val),
+                                );
+                            });
+                        } else {
+                            // Create one empty input for empty default arrays
+                            arrayContainer.appendChild(createArrayInput());
+                        }
                     } else {
                         arrayContainer.appendChild(createArrayInput());
                     }
@@ -3537,10 +3554,13 @@ async function runToolTest() {
                         // Convert values based on the items schema type
                         if (prop.items) {
                             const itemType = Array.isArray(prop.items.anyOf)
-                                ? prop.items.anyOf.map(t => t.type)
+                                ? prop.items.anyOf.map((t) => t.type)
                                 : [prop.items.type];
 
-                            if (itemType.includes("number") || itemType.includes("integer")) {
+                            if (
+                                itemType.includes("number") ||
+                                itemType.includes("integer")
+                            ) {
                                 value = inputValues.map((v) => {
                                     const num = Number(v);
                                     if (isNaN(num)) {
@@ -3549,17 +3569,26 @@ async function runToolTest() {
                                     return num;
                                 });
                             } else if (itemType.includes("boolean")) {
-                                value = inputValues.map(v => v === "true" || v === true);
+                                value = inputValues.map(
+                                    (v) => v === "true" || v === true,
+                                );
                             } else if (itemType.includes("object")) {
                                 value = inputValues.map((v) => {
                                     try {
                                         const parsed = JSON.parse(v);
-                                        if (typeof parsed !== "object" || Array.isArray(parsed)) {
-                                            throw new Error(`Value must be an object`);
+                                        if (
+                                            typeof parsed !== "object" ||
+                                            Array.isArray(parsed)
+                                        ) {
+                                            throw new Error(
+                                                "Value must be an object",
+                                            );
                                         }
                                         return parsed;
                                     } catch {
-                                        throw new Error(`Invalid object format for ${key}`);
+                                        throw new Error(
+                                            `Invalid object format for ${key}`,
+                                        );
                                     }
                                 });
                             } else {
