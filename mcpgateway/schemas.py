@@ -1983,6 +1983,10 @@ class GatewayRead(BaseModelWithConfigDict):
 
     last_seen: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last seen timestamp")
 
+    passthrough_headers: Optional[List[str]] = Field(
+        default=None,
+        description="List of headers allowed to be passed through from client to target"
+    )
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
