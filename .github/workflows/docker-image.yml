@@ -93,8 +93,16 @@ jobs:
           restore-keys: ${{ runner.os }}-buildx-
 
       # -------------------------------------------------------------
-      # 3️⃣  Build & tag image (timestamp + latest)
+      # Build & push image (timestamp + latest)
       # -------------------------------------------------------------
+
+      - name: 🔑  Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 🏗️  Build Docker image
         env:
           DOCKER_CONTENT_TRUST: "1"
@@ -102,16 +110,17 @@ jobs:
           TAG=$(date +%s)
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           docker buildx build \
+            --platform linux/amd64,linux/arm64 \
             --file Containerfile.lite \
             --tag $IMAGE_NAME:$TAG \
             --tag $IMAGE_NAME:latest \
             --cache-from type=local,src=${{ env.CACHE_DIR }} \
             --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
-            --load \
+            --push \
             .   # build context is mandatory
 
       # -------------------------------------------------------------
-      # 4️⃣  Image lint (Dockle CLI → SARIF)
+      # Image lint (Dockle CLI → SARIF)
       # -------------------------------------------------------------
       - name: 🔍  Image lint (Dockle)
         id: dockle
@@ -133,7 +142,7 @@ jobs:
           sarif_file: dockle-results.sarif
 
       # -------------------------------------------------------------
-      # 5️⃣  Generate SPDX SBOM with Syft
+      # Generate SPDX SBOM with Syft
       # -------------------------------------------------------------
       - name: 📄  Generate SBOM (Syft)
         uses: anchore/sbom-action@v0
@@ -142,7 +151,7 @@ jobs:
           output-file: sbom.spdx.json
 
       # -------------------------------------------------------------
-      # 6️⃣  Trivy, Grype CVE scan → SARIF
+      # Trivy, Grype CVE scan → SARIF
       # -------------------------------------------------------------
       - name: 🛡️  Trivy vulnerability scan
         id: trivy
@@ -176,23 +185,7 @@ jobs:
           sarif_file: grype-results.sarif
 
       # -------------------------------------------------------------
-      # 7️⃣  Push both tags to GHCR
-      # -------------------------------------------------------------
-      - name: 🔑  Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🚀 Push image to GHCR
-        if: github.ref == 'refs/heads/main'
-        run: |
-          docker push $IMAGE_NAME:${{ env.TAG }}
-          docker push $IMAGE_NAME:latest
-
-      # -------------------------------------------------------------
-      # 8️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
+      # Key-less Cosign sign + attest  (latest **and** timestamp)
       # -------------------------------------------------------------
       - name: 📥 Install Cosign
         if: github.ref == 'refs/heads/main'
@@ -215,7 +208,7 @@ jobs:
           done
 
       # -------------------------------------------------------------
-      # 9️⃣  Single gate - fail job on any scanner error
+      # Single gate - fail job on any scanner error
       # -------------------------------------------------------------
       - name: ⛔  Enforce lint & vuln gates
         if: |
