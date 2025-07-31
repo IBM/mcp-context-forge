@@ -3197,7 +3197,7 @@ async function testTool(toolId) {
             testButton.textContent = "Testing...";
             testButton.classList.add("opacity-50", "cursor-not-allowed");
         }
-        
+
         // 4. REQUEST CANCELLATION: Enhanced cleanup
         const existingController = toolTestState.activeRequests.get(toolId);
         if (existingController) {
@@ -3307,7 +3307,8 @@ async function testTool(toolId) {
 
                 // Field label - use textContent to avoid double escaping
                 const label = document.createElement("label");
-                label.className = "block text-sm font-medium text-gray-700 dark:text-gray-300";
+                label.className =
+                    "block text-sm font-medium text-gray-700 dark:text-gray-300";
 
                 // Create span for label text
                 const labelText = document.createElement("span");
@@ -3342,7 +3343,7 @@ async function testTool(toolId) {
 
                         const input = document.createElement("input");
                         input.name = keyValidation.value;
-                        input.required = 
+                        input.required =
                             schema.required && schema.required.includes(key);
                         input.className =
                             "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
@@ -3358,7 +3359,7 @@ async function testTool(toolId) {
                         }
 
                         if (
-                            typeof value === "string" || 
+                            typeof value === "string" ||
                             typeof value === "number"
                         ) {
                             input.value = value;
@@ -3366,7 +3367,7 @@ async function testTool(toolId) {
 
                         const delBtn = document.createElement("button");
                         delBtn.type = "button";
-                        delBtn.className = 
+                        delBtn.className =
                             "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
                         delBtn.title = "Delete";
                         delBtn.textContent = "×";
@@ -3409,7 +3410,10 @@ async function testTool(toolId) {
                     // Add validation based on type
                     if (prop.type === "text") {
                         input.type = "text";
-                    } else if (prop.type === "number" || prop.type === "integer") {
+                    } else if (
+                        prop.type === "number" ||
+                        prop.type === "integer"
+                    ) {
                         input.type = "number";
                     } else if (prop.type === "boolean") {
                         input.type = "checkbox";

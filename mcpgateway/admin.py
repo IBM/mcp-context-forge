@@ -1318,14 +1318,7 @@ async def admin_ui(
     """
     logger.debug(f"User {user} accessed the admin UI")
     tools = [
-        tool.model_dump(by_alias=True)
-        for tool in sorted(
-            await tool_service.list_tools(db, include_inactive=include_inactive),
-            key=lambda t: (
-                (t.url or "").lower(),
-                (t.original_name or "").lower()
-            )
-        )
+        tool.model_dump(by_alias=True) for tool in sorted(await tool_service.list_tools(db, include_inactive=include_inactive), key=lambda t: ((t.url or "").lower(), (t.original_name or "").lower()))
     ]
     servers = [server.model_dump(by_alias=True) for server in await server_service.list_servers(db, include_inactive=include_inactive)]
     resources = [resource.model_dump(by_alias=True) for resource in await resource_service.list_resources(db, include_inactive=include_inactive)]
