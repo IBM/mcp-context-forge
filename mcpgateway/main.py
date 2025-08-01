@@ -1418,7 +1418,6 @@ async def create_resource(
         return JSONResponse(content=ErrorFormatter.format_validation_error(e), status_code=422)
 
 
-
 @resource_router.get("/{uri:path}")
 async def read_resource(uri: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ResourceContent:
     """
