@@ -598,16 +598,3 @@ MCP_DEBUG=true python my_echo_server.py
 ```
 
 ---
-
-## Next Steps
-
-!!! success "You're ready to build!"
-    Now that you have a working MCP server, you can:
-
-    1. **[Submit your contribution](submit-your-contribution.md)** - Share your server with the community
-    2. Extend your server with additional tools and functionality
-    3. Explore resources and prompts
-    4. Build more complex integrations with external APIs and services
-
-!!! info "Foundation for growth"
-    Your echo server demonstrates all the fundamental patterns needed for MCP development. Use it as a foundation for building more sophisticated tools and services.
