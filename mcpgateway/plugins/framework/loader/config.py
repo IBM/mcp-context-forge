@@ -36,7 +36,7 @@ class ConfigLoader:
         with open(os.path.normpath(config), "r", encoding="utf-8") as file:
             template = file.read()
             if use_jinja:
-                jinja_env = jinja2.Environment(loader=jinja2.BaseLoader())
+                jinja_env = jinja2.Environment(loader=jinja2.BaseLoader(), autoescape=True)
                 rendered_template = jinja_env.from_string(template).render(env=os.environ)
             else:
                 rendered_template = template

@@ -16,7 +16,7 @@ from types import ModuleType
 
 # First-Party
 from mcpgateway.plugins.framework.models import PluginCondition
-from mcpgateway.plugins.framework.types import GlobalContext, PromptPrehookPayload
+from mcpgateway.plugins.framework.types import GlobalContext, PromptPosthookPayload, PromptPrehookPayload
 
 
 @cache  # noqa
@@ -77,6 +77,30 @@ def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCon
 
     Args:
         payload: the prompt prehook payload.
+        conditions: the conditions on the plugin that are required for execution.
+        context: the global context.
+
+    Returns:
+        True if the plugin matches criteria.
+    """
+    current_result = True
+    for index, condition in enumerate(conditions):
+        if not matches(condition, context):
+            current_result = False
+
+        if condition.prompts and payload.name not in condition.prompts:
+            current_result = False
+        if current_result:
+            return True
+        elif index < len(conditions) - 1:
+            current_result = True
+    return current_result
+
+def post_prompt_matches(payload: PromptPosthookPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+    """Check for a match on pre-prompt hooks.
+
+    Args:
+        payload: the prompt posthook payload.
         conditions: the conditions on the plugin that are required for execution.
         context: the global context.
 

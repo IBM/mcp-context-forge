@@ -20,6 +20,8 @@ plugins:
       words:
         - search: crap
           replace: crud
+        - search: crud
+          replace: yikes
 
 
 # Plugin directories to scan

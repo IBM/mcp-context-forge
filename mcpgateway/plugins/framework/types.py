@@ -30,10 +30,21 @@ class PromptPrehookPayload:
             args: The prompt arguments for rendering.
         """
         self.name = name
-        self.args = args
+        self.args = args or {}
 
 
-PromptPosthookPayload = PromptResult
+class PromptPosthookPayload:
+    """A prompt payload for a prompt posthook."""
+
+    def __init__(self, name: str, result: PromptResult):
+        """Initialize a prompt posthook payload.
+
+        Args:
+            name: The prompt name.
+            result: The prompt Prompt Result.
+        """
+        self.name = name
+        self.result = result
 
 
 class PluginResult(Generic[T]):
@@ -66,7 +77,7 @@ class GlobalContext:
         request_id: str,
         user: Optional[str] = None,
         tenant_id: Optional[str] = None,
-        server_id: Optional[str] = None,
+        server_id: Optional[str] = None
     ) -> None:
         """Initialize a global context.
 
@@ -80,7 +91,6 @@ class GlobalContext:
         self.user = user
         self.tenant_id = tenant_id
         self.server_id = server_id
-
 
 class PluginContext(GlobalContext):
     """The plugin's context, which lasts a request lifecycle.

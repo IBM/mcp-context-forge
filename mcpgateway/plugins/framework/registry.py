@@ -105,3 +105,11 @@ class PluginInstanceRegistry:
             A list of registered plugin instances.
         """
         return list(self._plugins.values())
+
+    def plugin_count(self) -> int:
+        """Return the number of plugins registered.
+
+        Returns:
+            The number of plugins registered.
+        """
+        return len(self._plugins)
