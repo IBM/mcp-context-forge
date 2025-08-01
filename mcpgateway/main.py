@@ -1413,6 +1413,9 @@ async def create_resource(
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        # Handle validation errors from Pydantic
+        return JSONResponse(content=ErrorFormatter.format_validation_error(e), status_code=422)
 
 
 @resource_router.get("/{uri:path}")
