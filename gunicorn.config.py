@@ -14,6 +14,13 @@ will have to wait a long time for queries
 Reference: https://stackoverflow.com/questions/10855197/frequent-worker-timeout
 """
 
+# Standard
+from importlib.resources import files
+
+# Third-Party
+from alembic import command
+from alembic.config import Config
+
 # First-Party
 # Import Pydantic Settings singleton
 from mcpgateway.config import settings
@@ -51,8 +58,6 @@ reuse_port = True  # Set the SO_REUSEPORT flag on the listening socket
 # ca-certs = '/etc/ca_bundle.crt'
 
 # server hooks
-
-
 def when_ready(server):
     server.log.info("Server is ready. Spawning workers")
 
