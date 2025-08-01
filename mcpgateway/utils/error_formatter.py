@@ -32,7 +32,11 @@ from typing import Any, Dict
 from pydantic import ValidationError
 from sqlalchemy.exc import DatabaseError, IntegrityError
 
-logger = logging.getLogger(__name__)
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class ErrorFormatter:
