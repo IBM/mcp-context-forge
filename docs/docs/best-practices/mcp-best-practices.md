@@ -106,19 +106,19 @@ time_server/
 ├── .gitignore                     # Exclude venvs, artifacts, and secrets from Git
 ├── docs/                          # (Optional) Diagrams, specs, and additional documentation
 ├── tests/                         # Unit and integration tests
-│   ├── __init__.py
-│   ├── test_main.py               # Tests for main entrypoint behavior
-│   └── test_tools.py              # Tests for core tool functionality
+│   ├── __init__.py
+│   ├── test_main.py               # Tests for main entrypoint behavior
+│   └── test_tools.py              # Tests for core tool functionality
 └── src/                           # Application source code
-    └── mcp_time_server/           # Main package named after your server
-        ├── __init__.py            # Marks this directory as a Python package
-        ├── main.py                # Entrypoint that wires everything together
-        ├── mcp_server_base.py     # Optional base class for shared server behavior
-        ├── server.py              # Server logic (e.g., tool registration, lifecycle hooks)
-        └── tools/                 # Directory for all MCP tool implementations
-            ├── __init__.py
-            ├── tools.py           # Tool business logic (e.g., `get_time`, `format_time`)
-            └── tools_registration.py # Registers tools into the MCP framework
+    └── mcp_time_server/           # Main package named after your server
+        ├── __init__.py            # Marks this directory as a Python package
+        ├── main.py                # Entrypoint that wires everything together
+        ├── mcp_server_base.py     # Optional base class for shared server behavior
+        ├── server.py              # Server logic (e.g., tool registration, lifecycle hooks)
+        └── tools/                 # Directory for all MCP tool implementations
+            ├── __init__.py
+            ├── tools.py           # Tool business logic (e.g., `get_time`, `format_time`)
+            └── tools_registration.py # Registers tools into the MCP framework
 ```
 
 ## 📝 Documentation
@@ -165,7 +165,7 @@ MCP_GITHUB_BASE_URL=...
 
 ## 🏷 Required Capabilities (README Metadata Tags)
 
-Add tags at the top of `README.md` between YAML markers to declare your server’s required capabilities.
+Add tags at the top of `README.md` between YAML markers to declare your server's required capabilities.
 
 ### Available Tags:
 

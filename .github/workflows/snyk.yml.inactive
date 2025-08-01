@@ -60,7 +60,7 @@ jobs:
   dependencies:
     name: 📦 Dependency Scan
     runs-on: ubuntu-latest
-    
+
     steps:
       # -------------------------------------------------------------
       # 0️⃣  Checkout source
@@ -108,7 +108,7 @@ jobs:
   code-security:
     name: 🔐 Code Security (SAST)
     runs-on: ubuntu-latest
-    
+
     steps:
       # -------------------------------------------------------------
       # 0️⃣  Checkout source
@@ -163,7 +163,7 @@ jobs:
   container-security:
     name: 🐳 Container Security
     runs-on: ubuntu-latest
-    
+
     steps:
       # -------------------------------------------------------------
       # 0️⃣  Checkout source
@@ -223,7 +223,7 @@ jobs:
   iac-security:
     name: 🏗️ IaC Security
     runs-on: ubuntu-latest
-    
+
     steps:
       # -------------------------------------------------------------
       # 0️⃣  Checkout source
@@ -253,7 +253,7 @@ jobs:
                 --json-file-output="snyk-iac-${file%.y*ml}.json" || true
             fi
           done
-          
+
           # Test Containerfiles
           for file in Containerfile*; do
             if [ -f "$file" ]; then
@@ -308,7 +308,7 @@ jobs:
     name: 📋 Generate SBOM
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
+
     steps:
       # -------------------------------------------------------------
       # 0️⃣  Checkout source
@@ -337,7 +337,7 @@ jobs:
         run: |
           # Get version from pyproject.toml
           VERSION=$(grep -m1 version pyproject.toml | cut -d'"' -f2 || echo "0.0.0")
-          
+
           # Generate CycloneDX format
           snyk sbom \
             --format=cyclonedx1.5+json \
@@ -346,7 +346,7 @@ jobs:
             --version=$VERSION \
             --json-file-output=sbom-cyclonedx.json \
             . || true
-          
+
           # Generate SPDX format
           snyk sbom \
             --format=spdx2.3+json \
@@ -376,7 +376,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [dependencies, code-security, container-security, iac-security]
     if: always()
-    
+
     steps:
       # -------------------------------------------------------------
       # 0️⃣  Download all artifacts
@@ -397,16 +397,16 @@ jobs:
           echo "**Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Severity Threshold:** ${{ github.event.inputs.severity-threshold || 'high' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           echo "## 📋 Scan Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           # List all result files
           echo "### 📁 Generated Reports:" >> $GITHUB_STEP_SUMMARY
           find snyk-results -type f -name "*.json" -o -name "*.sarif" | while read -r file; do
             echo "- \`$(basename "$file")\`" >> $GITHUB_STEP_SUMMARY
           done
-          
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "*View detailed results in the [Security tab](../../security/code-scanning) or download artifacts from this workflow run.*" >> $GITHUB_STEP_SUMMARY
