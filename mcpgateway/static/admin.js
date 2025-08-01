@@ -3417,39 +3417,44 @@ async function testTool(toolId) {
                     fieldDiv.appendChild(arrayContainer);
                     fieldDiv.appendChild(addBtn);
                 } else {
-                    // Input field with validation
-                    const input = document.createElement("input");
-                    input.name = keyValidation.value;
-                    input.required =
-                        schema.required && schema.required.includes(key);
-                    input.className =
-                        "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-                    // Add validation based on type
-                    if (prop.type === "text") {
-                        input.type = "text";
-                    } else if (
-                        prop.type === "number" ||
-                        prop.type === "integer"
-                    ) {
-                        input.type = "number";
-                    } else if (prop.type === "boolean") {
-                        input.type = "checkbox";
-                        input.className =
-                            "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded";
+                    // Input field with validation (with multiline support)
+                    let fieldInput;
+                    const isTextType = prop.type === "text";
+                    if (isTextType) {
+                        fieldInput = document.createElement("textarea");
+                        fieldInput.rows = 4;
                     } else {
-                        input.type = "text";
-                    }
-
-                    // Set default values here
-                    if (prop.default !== undefined) {
-                        if (input.type === "checkbox") {
-                            input.checked = prop.default === true;
+                        fieldInput = document.createElement("input");
+                        if (prop.type === "number" || prop.type === "integer") {
+                            fieldInput.type = "number";
+                        } else if (prop.type === "boolean") {
+                            fieldInput.type = "checkbox";
                         } else {
-                            input.value = prop.default;
+                            fieldInput = document.createElement("textarea");
+                            fieldInput.rows = 1;
                         }
                     }
 
-                    fieldDiv.appendChild(input);
+                    fieldInput.name = keyValidation.value;
+                    fieldInput.required =
+                        schema.required && schema.required.includes(key);
+                    fieldInput.className =
+                        prop.type === "boolean"
+                            ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+                            : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                    // Set default values here
+                    if (prop.default !== undefined) {
+                        if (fieldInput.type === "checkbox") {
+                            fieldInput.checked = prop.default === true;
+                        } else if (isTextType) {
+                            fieldInput.value = prop.default;
+                        } else {
+                            fieldInput.value = prop.default;
+                        }
+                    }
+
+                    fieldDiv.appendChild(fieldInput);
                 }
 
                 container.appendChild(fieldDiv);
