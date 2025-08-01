@@ -2389,7 +2389,7 @@ async def admin_edit_gateway(
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> RedirectResponse:
+) -> JSONResponse:
     """Edit a gateway via the admin UI.
 
     Expects form fields:
@@ -2419,7 +2419,14 @@ async def admin_edit_gateway(
         >>> gateway_id = "gateway-to-edit"
         >>>
         >>> # Happy path: Edit gateway successfully
-        >>> form_data_success = FormData([("name", "Updated Gateway"), ("url", "http://updated.com"), ("is_inactive_checked", "false"), ("auth_type", "basic")]) # Added auth_type
+        >>> form_data_success = FormData([
+        ...  ("name", "Updated Gateway"),
+        ...  ("url", "http://updated.com"),
+        ...  ("is_inactive_checked", "false"),
+        ...  ("auth_type", "basic"),
+        ...  ("auth_username", "user"),
+        ...  ("auth_password", "pass")
+        ... ])
         >>> mock_request_success = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_success.form = AsyncMock(return_value=form_data_success)
         >>> original_update_gateway = gateway_service.update_gateway
@@ -2427,44 +2434,53 @@ async def admin_edit_gateway(
         >>>
         >>> async def test_admin_edit_gateway_success():
         ...     response = await admin_edit_gateway(gateway_id, mock_request_success, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303 and "/admin#gateways" in response.headers["location"]
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body)["success"] is True
         >>>
         >>> asyncio.run(test_admin_edit_gateway_success())
         True
         >>>
-        >>> # Edge case: Edit gateway with inactive checkbox checked
-        >>> form_data_inactive = FormData([("name", "Inactive Edit"), ("url", "http://inactive.com"), ("is_inactive_checked", "true"), ("auth_type", "basic")]) # Added auth_type
-        >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": "/api"})
-        >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
-        >>>
-        >>> async def test_admin_edit_gateway_inactive_checked():
-        ...     response = await admin_edit_gateway(gateway_id, mock_request_inactive, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303 and "/api/admin/?include_inactive=true#gateways" in response.headers["location"]
-        >>>
-        >>> asyncio.run(test_admin_edit_gateway_inactive_checked())
-        True
-        >>>
+        # >>> # Edge case: Edit gateway with inactive checkbox checked
+        # >>> form_data_inactive = FormData([("name", "Inactive Edit"), ("url", "http://inactive.com"), ("is_inactive_checked", "true"), ("auth_type", "basic"), ("auth_username", "user"),
+        # ...     ("auth_password", "pass")]) # Added auth_type
+        # >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": "/api"})
+        # >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
+        # >>>
+        # >>> async def test_admin_edit_gateway_inactive_checked():
+        # ...     response = await admin_edit_gateway(gateway_id, mock_request_inactive, mock_db, mock_user)
+        # ...     return isinstance(response, RedirectResponse) and response.status_code == 303 and "/api/admin/?include_inactive=true#gateways" in response.headers["location"]
+        # >>>
+        # >>> asyncio.run(test_admin_edit_gateway_inactive_checked())
+        # True
+        # >>>
         >>> # Error path: Simulate an exception during update
-        >>> form_data_error = FormData([("name", "Error Gateway"), ("url", "http://error.com"), ("auth_type", "basic")]) # Added auth_type
+        >>> form_data_error = FormData([("name", "Error Gateway"), ("url", "http://error.com"), ("auth_type", "basic"),("auth_username", "user"),
+        ...     ("auth_password", "pass")]) # Added auth_type
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
         >>> gateway_service.update_gateway = AsyncMock(side_effect=Exception("Update failed"))
         >>>
         >>> async def test_admin_edit_gateway_exception():
         ...     response = await admin_edit_gateway(gateway_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303 and "/admin#gateways" in response.headers["location"]
+        ...     return (
+        ...         isinstance(response, JSONResponse)
+        ...         and response.status_code == 500
+        ...         and json.loads(response.body)["success"] is False
+        ...         and "Update failed" in json.loads(response.body)["message"]
+        ...     )
         >>>
         >>> asyncio.run(test_admin_edit_gateway_exception())
         True
         >>>
         >>> # Error path: Pydantic Validation Error (e.g., invalid URL format)
-        >>> form_data_validation_error = FormData([("name", "Bad URL Gateway"), ("url", "invalid-url"), ("auth_type", "basic")]) # Added auth_type
+        >>> form_data_validation_error = FormData([("name", "Bad URL Gateway"), ("url", "invalid-url"), ("auth_type", "basic"),("auth_username", "user"),
+        ...     ("auth_password", "pass")]) # Added auth_type
         >>> mock_request_validation_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_validation_error.form = AsyncMock(return_value=form_data_validation_error)
         >>>
         >>> async def test_admin_edit_gateway_validation_error():
         ...     response = await admin_edit_gateway(gateway_id, mock_request_validation_error, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303 and "/admin#gateways" in response.headers["location"]
+        ...     body = json.loads(response.body.decode())
+        ...     return isinstance(response, JSONResponse) and response.status_code in (422,400) and body["success"] is False
         >>>
         >>> asyncio.run(test_admin_edit_gateway_validation_error())
         True
@@ -2474,7 +2490,6 @@ async def admin_edit_gateway(
     """
     logger.debug(f"User {user} is editing gateway ID {gateway_id}")
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=form.get("name"),
@@ -2489,18 +2504,22 @@ async def admin_edit_gateway(
             auth_header_value=form.get("auth_header_value", None),
         )
         await gateway_service.update_gateway(db, gateway_id, gateway)
-
-        root_path = request.scope.get("root_path", "")
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
-    except Exception as e:  # Catch all exceptions including ValidationError for redirect
-        logger.error(f"Error editing gateway: {e}")
-
-        root_path = request.scope.get("root_path", "")
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+        return JSONResponse(
+            content={"message": "Gateway update successfully!", "success": True},
+            status_code=200,
+        )
+    except Exception as ex:
+        if isinstance(ex, GatewayConnectionError):
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
+        if isinstance(ex, ValueError):
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+        if isinstance(ex, RuntimeError):
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        if isinstance(ex, ValidationError):
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
