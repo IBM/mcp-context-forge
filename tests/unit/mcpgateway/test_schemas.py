@@ -52,6 +52,7 @@ from mcpgateway.schemas import (
     AdminToolCreate,
     EventMessage,
     ListFilters,
+    ResourceCreate,
     ServerCreate,
     ServerMetrics,
     ServerRead,
@@ -841,3 +842,36 @@ class TestToggleAndListSchemas:
         # Test default value
         default_filters = ListFilters()
         assert default_filters.include_inactive is False
+
+
+DANGEROUS_HTML = "<script>alert('xss')</script>"
+SAFE_STRING = "Hello, this is safe."
+SAFE_BYTES = b"Some binary safe content"
+DANGEROUS_HTML_BYTES = DANGEROUS_HTML.encode("utf-8")
+NON_UTF8_BYTES = b"\x80\x81\x82"
+
+
+# Tests for ResourceCreate
+def test_resource_create_with_safe_string():
+    r = ResourceCreate(uri="some-uri", name="test.txt", content=SAFE_STRING)
+    assert isinstance(r.content, str)
+
+
+def test_resource_create_with_dangerous_html_string():
+    with pytest.raises(ValueError, match="Content contains HTML tags"):
+        ResourceCreate(uri="some-uri", name="dangerous.html", content=DANGEROUS_HTML)
+
+
+def test_resource_create_with_safe_bytes():
+    r = ResourceCreate(uri="some-uri", name="test.bin", content=SAFE_BYTES)
+    assert isinstance(r.content, bytes)
+
+
+def test_resource_create_with_dangerous_html_bytes():
+    with pytest.raises(ValueError, match="Content contains HTML tags"):
+        ResourceCreate(uri="some-uri", name="dangerous.html", content=DANGEROUS_HTML_BYTES)
+
+
+def test_resource_create_with_non_utf8_bytes():
+    with pytest.raises(ValueError, match="Content must be UTF-8 decodable"):
+        ResourceCreate(uri="some-uri", name="nonutf8.bin", content=NON_UTF8_BYTES)
