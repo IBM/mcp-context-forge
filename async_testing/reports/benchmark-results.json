@@ -1,0 +1,15 @@
+{
+    "iterations": 1000,
+    "benchmarks": [
+        {
+            "name": "Example Benchmark 1",
+            "total_time": 1.4806689199976972,
+            "average_time": 0.0014806689199976973
+        },
+        {
+            "name": "Example Benchmark 2",
+            "total_time": 2.5625151410058606,
+            "average_time": 0.0025625151410058607
+        }
+    ]
+}
