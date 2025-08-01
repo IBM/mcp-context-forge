@@ -65,7 +65,7 @@ jobs:
           python3 -m pip install --upgrade pip
           # install the project itself in *editable* mode so tests import the same codebase
           # and pull in every dev / test extra declared in pyproject.toml
-          pip install -e .[dev]
+          pip install -e .[dev,asyncpg]
           # belt-and-braces - keep the core test tool-chain pinned here too
           pip install pytest pytest-cov pytest-asyncio coverage[toml]
 
