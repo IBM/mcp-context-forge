@@ -62,7 +62,7 @@ from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayN
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
+from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService, ServerNameConflictError
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
@@ -294,7 +294,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: 
 
 
 @admin_router.post("/servers", response_model=ServerRead)
-async def admin_add_server(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
+async def admin_add_server(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
     """
     Add a new server via the admin UI.
 
@@ -316,7 +316,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         user (str): Authenticated user dependency
 
     Returns:
-        RedirectResponse: A redirect to the admin dashboard catalog section
+        JSONResponse: A JSON response indicating success or failure of the server creation operation.
 
     Examples:
         >>> import asyncio
@@ -436,7 +436,6 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
 
     except Exception as ex:
-        logger.info(f"error,{ex}")
         if isinstance(ex, ServerError):
             # Custom server logic error — 500 Internal Server Error makes sense
             return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -467,7 +466,7 @@ async def admin_edit_server(
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> RedirectResponse:
+) -> JSONResponse:
     """
     Edit an existing server via the admin UI.
 
@@ -490,7 +489,7 @@ async def admin_edit_server(
         user (str): Authenticated user dependency
 
     Returns:
-        RedirectResponse: A redirect to the admin dashboard catalog section with a status code of 303
+        JSONResponse: A JSON response indicating success or failure of the server update operation.
 
     Examples:
         >>> import asyncio
@@ -546,7 +545,7 @@ async def admin_edit_server(
         >>> server_service.update_server = original_update_server
     """
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    # is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
@@ -559,18 +558,42 @@ async def admin_edit_server(
         )
         await server_service.update_server(db, server_id, server)
 
-        root_path = request.scope.get("root_path", "")
+        # root_path = request.scope.get("root_path", "")
 
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
-    except Exception as e:
-        logger.error(f"Error editing server: {e}")
+        # if is_inactive_checked.lower() == "true":
+        #     return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
+        # return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+        return JSONResponse(
+            content={"message": "Server update successfully!", "success": True},
+            status_code=200,
+        )
+    except Exception as ex:
+        if isinstance(ex, ServerNameConflictError):
+            # Custom server name conflict error — 409 Conflict is appropriate
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
 
-        root_path = request.scope.get("root_path", "")
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-        return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+        if isinstance(ex, ServerError):
+            # Custom server logic error — 500 Internal Server Error makes sense
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
+        if isinstance(ex, ValueError):
+            # Invalid input — 400 Bad Request is appropriate
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+
+        if isinstance(ex, RuntimeError):
+            # Unexpected error during runtime — 500 is suitable
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
+        if isinstance(ex, ValidationError):
+            # Pydantic or input validation failure — 422 Unprocessable Entity is correct
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+
+        if isinstance(ex, IntegrityError):
+            # DB constraint violation — 409 Conflict is appropriate
+            return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
+
+        # For any other unhandled error, default to 500
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/toggle")
@@ -1935,7 +1958,7 @@ async def admin_edit_tool(
         return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
-        logger.error(f"IntegrityError in admin_edit_resource: {error_message}")
+        logger.error(f"IntegrityError in admin_tool_resource: {error_message}")
         return JSONResponse(status_code=409, content=error_message)
     except ToolError as ex:
         logger.error(f"ToolError in admin_edit_tool: {str(ex)}")
@@ -2686,7 +2709,7 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user: str 
 
 
 @admin_router.post("/resources")
-async def admin_add_resource(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
+async def admin_add_resource(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
     """
     Add a resource via the admin UI.
 
@@ -2771,7 +2794,7 @@ async def admin_edit_resource(
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> RedirectResponse:
+) -> JSONResponse:
     """
     Edit a resource via the admin UI.
 
@@ -2788,7 +2811,7 @@ async def admin_edit_resource(
         user: Authenticated user.
 
     Returns:
-        RedirectResponse: A redirect response to the admin dashboard.
+        JSONResponse: A JSON response indicating success or failure of the resource update operation.
 
     Examples:
         >>> import asyncio
@@ -2839,18 +2862,28 @@ async def admin_edit_resource(
     """
     logger.debug(f"User {user} is editing resource URI {uri}")
     form = await request.form()
-    resource = ResourceUpdate(
-        name=form["name"],
-        description=form.get("description"),
-        mime_type=form.get("mimeType"),
-        content=form["content"],
-    )
-    await resource_service.update_resource(db, uri, resource)
-    root_path = request.scope.get("root_path", "")
-    is_inactive_checked = form.get("is_inactive_checked", "false")
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+    try:
+        resource = ResourceUpdate(
+            name=form["name"],
+            description=form.get("description"),
+            mime_type=form.get("mimeType"),
+            content=form["content"],
+        )
+        await resource_service.update_resource(db, uri, resource)
+        return JSONResponse(
+            content={"message": "Resource updated successfully!", "success": True},
+            status_code=200,
+        )
+    except Exception as ex:
+        if isinstance(ex, ValidationError):
+            logger.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            error_message = ErrorFormatter.format_database_error(ex)
+            logger.error(f"IntegrityError in admin_edit_resource: {error_message}")
+            return JSONResponse(status_code=409, content=error_message)
+        logger.error(f"Error in admin_edit_resource: {ex}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/resources/{uri:path}/delete")
@@ -3211,7 +3244,7 @@ async def admin_edit_prompt(
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> RedirectResponse:
+) -> JSONResponse:
     """Edit a prompt via the admin UI.
 
     Expects form fields:
@@ -3302,13 +3335,13 @@ async def admin_edit_prompt(
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            logger.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
+            logger.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
-            logger.error(f"IntegrityError in admin_add_prompt: {error_message}")
+            logger.error(f"IntegrityError in admin_edit_prompt: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
-        logger.error(f"Error in admin_add_prompt: {ex}")
+        logger.error(f"Error in admin_edit_prompt: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
