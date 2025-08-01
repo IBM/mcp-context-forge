@@ -27,6 +27,10 @@ include *.yml
 include *.json
 include *.sh
 include *.txt
+recursive-include async_testing *.json
+recursive-include async_testing *.prof
+recursive-include async_testing *.py
+recursive-include async_testing *.yaml
 
 # 3️⃣  Tooling/lint configuration dot-files (explicit so they're not lost)
 include .env.make
