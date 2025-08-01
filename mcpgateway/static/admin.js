@@ -4774,6 +4774,48 @@ async function handleEditToolFormSubmit(event) {
     }
 }
 
+async function handleEditGatewayFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    try {
+        // Validate form inputs
+        const name = formData.get("name");
+        const url = formData.get("url");
+
+        const nameValidation = validateInputName(name, "gateway");
+        const urlValidation = validateUrl(url);
+
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        if (!urlValidation.valid) {
+            throw new Error(urlValidation.error);
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("gateways");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        const redirectUrl = isInactiveCheckedBool
+            ? `${window.ROOT_PATH}/admin?include_inactive=true#gateways`
+            : `${window.ROOT_PATH}/admin#gateways`;
+        window.location.href = redirectUrl;
+    } catch (error) {
+        console.error("Error:", error);
+        showErrorMessage(error.message);
+    }
+}
 // ===================================================================
 // ENHANCED FORM VALIDATION for All Forms
 // ===================================================================
@@ -5331,6 +5373,16 @@ function setupFormHandlers() {
         editToolForm.addEventListener("submit", handleEditToolFormSubmit);
         editToolForm.addEventListener("click", () => {
             if (getComputedStyle(editToolForm).display !== "none") {
+                refreshEditors();
+            }
+        });
+    }
+
+    const editGatewayForm = safeGetElement("edit-gateway-form");
+    if (editGatewayForm) {
+        editGatewayForm.addEventListener("submit", handleEditGatewayFormSubmit);
+        editGatewayForm.addEventListener("click", () => {
+            if (getComputedStyle(editGatewayForm).display !== "none") {
                 refreshEditors();
             }
         });

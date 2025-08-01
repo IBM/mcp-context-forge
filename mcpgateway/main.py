@@ -1812,6 +1812,10 @@ async def register_gateway(
             return JSONResponse(content={"message": "Gateway name already exists"}, status_code=400)
         if isinstance(ex, RuntimeError):
             return JSONResponse(content={"message": "Error during execution"}, status_code=500)
+        if isinstance(ex, ValidationError):
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
         return JSONResponse(content={"message": "Unexpected error"}, status_code=500)
 
 
