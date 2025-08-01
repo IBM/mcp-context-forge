@@ -1326,6 +1326,7 @@ async def admin_ui(
     gateways = [gateway.model_dump(by_alias=True) for gateway in await gateway_service.list_gateways(db, include_inactive=include_inactive)]
     roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
     root_path = settings.app_root_path
+    max_name_length = settings.validation_max_name_length
     response = request.app.state.templates.TemplateResponse(
         request,
         "admin.html",
@@ -1339,6 +1340,7 @@ async def admin_ui(
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,
+            "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
         },
     )

@@ -69,10 +69,10 @@ function validateInputName(name, type = "input") {
         return { valid: false, error: `${type} name cannot be empty` };
     }
 
-    if (cleaned.length > 100) {
+    if (cleaned.length > window.MAX_NAME_LENGTH) {
         return {
             valid: false,
-            error: `${type} name must be 100 characters or less`,
+            error: `${type} name must be ${window.MAX_NAME_LENGTH} characters or less`,
         };
     }
 
