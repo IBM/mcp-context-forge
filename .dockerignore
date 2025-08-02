@@ -1,44 +1,53 @@
+# syntax=docker/dockerfile:1
+#----------------------------------------------------------------------
+# Docker Build Context Optimization
+#
+# This .dockerignore file excludes unnecessary files from the Docker
+# build context to improve build performance and security.
+#----------------------------------------------------------------------
+
+#----------------------------------------------------------------------
+# 1. Development and source directories (not needed in production)
+#----------------------------------------------------------------------
 agent_runtimes/
 charts/
 deployment/
 docs/
 k8s/
 mcp-servers/
-k8s/
 tests/
+test/
+attic/
+*.md
+.benchmarks/
 
-mcp-servers/go/fast-time-server/Dockerfile
-Dockerfile
-Dockerfile.*
-Containerfile.*
-.devcontainer
-.github
-docker-compose.yml
-podman-compose-sonarqube.yaml
+# Development environment directories
+.devcontainer/
+.github/
+.vscode/
+.idea/
 
-node_modules
-docs/
-.vscode
-certs
-mcp.db
-public/
-# VENV
-.python37/
-.python39/
+#----------------------------------------------------------------------
+# 2. Version control
+#----------------------------------------------------------------------
+.git/
+.gitignore
+.gitattributes
+.gitmodules
 
-# Byte-compiled / optimized / DLL files
+#----------------------------------------------------------------------
+# 3. Python build artifacts and caches
+#----------------------------------------------------------------------
+# Byte-compiled files
 __pycache__/
 *.py[cod]
+*.pyc
 *$py.class
-
-# Bak
-*.bak
 
 # C extensions
 *.so
 
 # Distribution / packaging
-.wily/
 .Python
 build/
 develop-eggs/
@@ -52,20 +61,16 @@ parts/
 sdist/
 var/
 wheels/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
+.wily/
 
 # PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
 
 # Unit test / coverage reports
 htmlcov/
@@ -77,48 +82,30 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
+*.py,cover
 .hypothesis/
 .pytest_cache/
+cover/
 
 # Translations
 *.mo
 *.pot
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
 
-# Flask stuff:
-instance/
-.webassets-cache
+# Pyre type checker
+.pyre/
+.pytype/
 
-# Scrapy stuff:
-.scrapy
+# Cython debug symbols
+cython_debug/
 
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# celery beat schedule file
-celerybeat-schedule
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
+#----------------------------------------------------------------------
+# 4. Virtual environments
+#----------------------------------------------------------------------
 .env
 .venv
 env/
@@ -126,6 +113,187 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.python37/
+.python39/
+.python-version
+
+# PDM
+pdm.lock
+.pdm.toml
+.pdm-python
+
+#----------------------------------------------------------------------
+# 5. Package managers and dependencies
+#----------------------------------------------------------------------
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn
+
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+#----------------------------------------------------------------------
+# 6. Docker and container files (avoid recursive copies)
+#----------------------------------------------------------------------
+Dockerfile
+Dockerfile.*
+Containerfile
+Containerfile.*
+docker-compose.yml
+docker-compose.*.yml
+podman-compose*.yaml
+.dockerignore
+
+#----------------------------------------------------------------------
+# 7. IDE and editor files
+#----------------------------------------------------------------------
+# JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+#----------------------------------------------------------------------
+# 8. Build tools and CI/CD configurations
+#----------------------------------------------------------------------
+# Testing configurations
+.coveragerc
+.pylintrc
+.flake8
+pytest.ini
+tox.ini
+.pytest.ini
+
+# Linting and formatting
+.hadolint.yaml
+.pre-commit-config.yaml
+.pycodestyle
+.pyre_configuration
+.pyspelling.yaml
+.ruff.toml
+.shellcheckrc
+
+# Build configurations
+Makefile
+setup.cfg
+pyproject.toml.bak
+MANIFEST.in
+
+# CI/CD
+.travis.*
+.gitlab-ci.yml
+.circleci/
+.github/
+azure-pipelines.yml
+Jenkinsfile
+
+# Code quality
+sonar-code.properties
+sonar-project.properties
+.scannerwork/
+whitesource.config
+.whitesource
+
+# Other tools
+.bumpversion.cfg
+.editorconfig
+mypy.ini
+
+#----------------------------------------------------------------------
+# 9. Application runtime files (should not be in image)
+#----------------------------------------------------------------------
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+mcp.db
+db.sqlite3
+
+# Logs
+*.log
+logs/
+log/
+
+# Certificates and secrets
+certs/
+*.pem
+*.key
+*.crt
+*.csr
+.env
+.env.*
+
+# Generated files
+public/
+static/
+media/
+
+# Application instances
+instance/
+local_settings.py
+
+#----------------------------------------------------------------------
+# 10. Framework-specific files
+#----------------------------------------------------------------------
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+
+# Flask
+instance/
+.webassets-cache
+
+# Scrapy
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+docs/build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IPython
+profile_default/
+ipython_config.py
+
+# celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
 
 # Spyder project settings
 .spyderproject
@@ -137,56 +305,59 @@ venv.bak/
 # mkdocs documentation
 /site
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
+#----------------------------------------------------------------------
+# 11. Backup and temporary files
+#----------------------------------------------------------------------
+*.bak
+*.backup
+*.tmp
+*.temp
+*.orig
+*.rej
+.backup/
+backup/
+tmp/
+temp/
 
-# Mac junk
-.DS_Store
-
-# MYPY cache
-.mypy_cache
-.idea/
-
-# Sonar
-.scannerwork
-
-# vim
-*.swp
-*,cover
-
-# Development folders
-.git/
-attic/
-docs/
-test/
-tests/
-
-# Configuration files
-.bumpversion.cfg
-.coveragerc
-.editorconfig
-.flake8
-.hadolint.yaml
-.pre-commit-config.yaml
-.pycodestyle
-.pylintrc
-.pyre_configuration
-.pyspelling.yaml
-.ruff.toml
-.shellcheckrc
-.spellcheck-en.txt
-.travis.*
-.whitesource
-Makefile
-mypi.ini
-pytest.ini
-sonar-code.properties
-test.sh
-tox.ini
-whitesource.config
-
-# Misc
+#----------------------------------------------------------------------
+# 12. Documentation and miscellaneous
+#----------------------------------------------------------------------
+*.md
+!README.md
+LICENSE
+CHANGELOG
+AUTHORS
+CONTRIBUTORS
+TODO
 TODO.md
 DEVELOPING.md
+CONTRIBUTING.md
+
+# Spelling
+.spellcheck-en.txt
+*.dic
+
+# Shell scripts (if not needed in container)
+test.sh
+scripts/test/
+scripts/dev/
+
+#----------------------------------------------------------------------
+# 13. OS-specific files
+#----------------------------------------------------------------------
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+#----------------------------------------------------------------------
+# End of .dockerignore
+#----------------------------------------------------------------------
