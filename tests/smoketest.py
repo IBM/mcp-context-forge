@@ -32,7 +32,6 @@ import itertools
 import json
 import logging
 import os
-import random
 import shlex
 import signal
 import socket
@@ -41,7 +40,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Tuple
 import uuid
 
 # First-Party
@@ -67,9 +66,11 @@ TRANSLATE_CMD = [
     str(PORT_TIME_SERVER),
 ]
 
+
 # ───────────────────────── Test State Tracking ─────────────────────────
 class TestContext:
     """Track all created entities for proper cleanup"""
+
     def __init__(self):
         self.gateways: List[int] = []
         self.resources: List[str] = []
@@ -105,8 +106,10 @@ class TestContext:
         failed = total - passed
         return f"Tests: {total} | Passed: {passed} | Failed: {failed}"
 
+
 # Global test context
 test_ctx = TestContext()
+
 
 # ─────────────────────── Helper: pretty sections ────────────────────────
 def log_section(title: str, emoji: str = "⚙️"):
@@ -422,13 +425,7 @@ def step_5_start_time_server(restart=False):
         logging.info("📝 Logging mcpgateway.translate output to: %s", log_filename)
 
         # Start the process directly
-        _translate_proc = subprocess.Popen(
-            TRANSLATE_CMD,
-            stdout=_translate_log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
-        )
+        _translate_proc = subprocess.Popen(TRANSLATE_CMD, stdout=_translate_log_file, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
         logging.info("🔍 Started mcpgateway.translate process with PID: %d", _translate_proc.pid)
 
@@ -533,12 +530,7 @@ def step_7_verify_tools():
 
 def step_8_invoke_tool():
     log_section("Invoking remote tool", "🔧")
-    body = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time",
-        "params": {"timezone": "Europe/Dublin"}
-    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time", "params": {"timezone": "Europe/Dublin"}}
     logging.info("📤 RPC request: %s", json.dumps(body, indent=2))
 
     j = request("POST", "/rpc", json_data=body).json()
@@ -599,6 +591,7 @@ def step_10_cleanup_gateway(gid: int | None = None):
 
 # ===== NEW PHASE 1 TEST STEPS =====
 
+
 def step_11_enhanced_tool_testing():
     """Enhanced tool testing with multiple scenarios"""
     log_section("Enhanced Tool Testing", "🔧")
@@ -606,24 +599,14 @@ def step_11_enhanced_tool_testing():
     # Test 1: Multiple tool invocations in sequence
     logging.info("📋 Test: Multiple tool invocations in sequence")
     for tz in ["Europe/London", "America/New_York", "Asia/Tokyo"]:
-        body = {
-            "jsonrpc": "2.0",
-            "id": f"seq-{tz}",
-            "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time",
-            "params": {"timezone": tz}
-        }
+        body = {"jsonrpc": "2.0", "id": f"seq-{tz}", "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time", "params": {"timezone": tz}}
         r = request("POST", "/rpc", json_data=body)
         assert r.status_code == 200, f"Failed to get time for {tz}"
         test_ctx.record_test(f"tool_invoke_{tz}", True)
 
     # Test 2: Tool with invalid parameters
     logging.info("📋 Test: Tool with invalid parameters")
-    body = {
-        "jsonrpc": "2.0",
-        "id": "invalid-params",
-        "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time",
-        "params": {"invalid_param": "test"}
-    }
+    body = {"jsonrpc": "2.0", "id": "invalid-params", "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time", "params": {"invalid_param": "test"}}
     r = request("POST", "/rpc", json_data=body)
     if r.status_code != 200:
         test_ctx.record_test("tool_invalid_params", True)
@@ -665,7 +648,7 @@ def step_12_resource_management():
         "name": "Test README",
         "description": "Test markdown resource",
         "mimeType": "text/markdown",
-        "content": "# Test Resource\n\nThis is a test markdown resource.\n\n## Features\n- Test item 1\n- Test item 2"
+        "content": "# Test Resource\n\nThis is a test markdown resource.\n\n## Features\n- Test item 1\n- Test item 2",
     }
     r = request("POST", "/resources", json_data=md_resource)
     if r.status_code in (200, 201):
@@ -681,7 +664,7 @@ def step_12_resource_management():
         "name": "Test Config",
         "description": "Test JSON configuration",
         "mimeType": "application/json",
-        "content": json.dumps({"version": "1.0.0", "debug": True, "features": ["test1", "test2"]})
+        "content": json.dumps({"version": "1.0.0", "debug": True, "features": ["test1", "test2"]}),
     }
     r = request("POST", "/resources", json_data=json_resource)
     if r.status_code in (200, 201):
@@ -692,13 +675,7 @@ def step_12_resource_management():
 
     # Test 3: Create plain text resource
     logging.info("📋 Test: Create plain text resource")
-    text_resource = {
-        "uri": f"docs/notes_{uuid.uuid4().hex[:8]}",
-        "name": "Test Notes",
-        "description": "Plain text notes",
-        "mimeType": "text/plain",
-        "content": "These are test notes.\nLine 2\nLine 3"
-    }
+    text_resource = {"uri": f"docs/notes_{uuid.uuid4().hex[:8]}", "name": "Test Notes", "description": "Plain text notes", "mimeType": "text/plain", "content": "These are test notes.\nLine 2\nLine 3"}
     r = request("POST", "/resources", json_data=text_resource)
     if r.status_code in (200, 201):
         test_ctx.add_resource(text_resource["uri"])
@@ -727,9 +704,7 @@ def step_12_resource_management():
     # Test 6: Update resource
     if test_ctx.resources:
         logging.info("📋 Test: Update resource")
-        update_data = {
-            "content": "# Updated Content\n\nThis content has been updated."
-        }
+        update_data = {"content": "# Updated Content\n\nThis content has been updated."}
         r = request("PUT", f"/resources/{test_ctx.resources[0]}", json_data=update_data)
         test_ctx.record_test("resource_update", r.status_code in (200, 204))
 
@@ -749,12 +724,7 @@ def step_13_prompt_management():
 
     # Test 1: Create simple prompt without arguments
     logging.info("📋 Test: Create simple prompt")
-    simple_prompt = {
-        "name": f"greeting_{uuid.uuid4().hex[:8]}",
-        "description": "Simple greeting prompt",
-        "template": "Hello! Welcome to the MCP Gateway. How can I help you today?",
-        "arguments": []
-    }
+    simple_prompt = {"name": f"greeting_{uuid.uuid4().hex[:8]}", "description": "Simple greeting prompt", "template": "Hello! Welcome to the MCP Gateway. How can I help you today?", "arguments": []}
     r = request("POST", "/prompts", json_data=simple_prompt)
     if r.status_code in (200, 201):
         test_ctx.add_prompt(simple_prompt["name"])
@@ -771,8 +741,8 @@ def step_13_prompt_management():
         "arguments": [
             {"name": "language", "description": "Programming language", "required": True},
             {"name": "code", "description": "Code to review", "required": True},
-            {"name": "focus_areas", "description": "Areas to focus on", "required": False}
-        ]
+            {"name": "focus_areas", "description": "Areas to focus on", "required": False},
+        ],
     }
     r = request("POST", "/prompts", json_data=template_prompt)
     if r.status_code in (200, 201):
@@ -794,11 +764,7 @@ def step_13_prompt_management():
     if len(test_ctx.prompts) > 1:
         logging.info("📋 Test: Execute prompt with parameters")
         prompt_name = test_ctx.prompts[1]  # Use template prompt
-        params = {
-            "language": "python",
-            "code": "def hello():\n    print('Hello, World!')",
-            "focus_areas": "code style and best practices"
-        }
+        params = {"language": "python", "code": "def hello():\n    print('Hello, World!')", "focus_areas": "code style and best practices"}
         r = request("POST", f"/prompts/{prompt_name}", json_data=params)
         if r.status_code == 200:
             result = r.json()
@@ -829,88 +795,49 @@ def step_14_error_handling_validation():
 
     # Test 1: XSS in tool name
     logging.info("📋 Test: XSS prevention in tool names")
-    xss_tool = {
-        "name": "<script>alert('xss')</script>",
-        "url": "https://example.com/api",
-        "description": "Test XSS",
-        "integrationType": "REST",
-        "requestType": "GET"
-    }
+    xss_tool = {"name": "<script>alert('xss')</script>", "url": "https://example.com/api", "description": "Test XSS", "integrationType": "REST", "requestType": "GET"}
     r = request("POST", "/tools", json_data=xss_tool)
     test_ctx.record_test("validation_xss_tool_name", r.status_code in (400, 422))
 
     # Test 2: SQL injection pattern
     logging.info("📋 Test: SQL injection prevention")
-    sql_inject = {
-        "name": "tool'; DROP TABLE tools; --",
-        "url": "https://example.com",
-        "description": "Test SQL injection",
-        "integrationType": "REST",
-        "requestType": "GET"
-    }
+    sql_inject = {"name": "tool'; DROP TABLE tools; --", "url": "https://example.com", "description": "Test SQL injection", "integrationType": "REST", "requestType": "GET"}
     r = request("POST", "/tools", json_data=sql_inject)
     test_ctx.record_test("validation_sql_injection", r.status_code in (400, 422))
 
     # Test 3: Invalid URL scheme
     logging.info("📋 Test: Invalid URL scheme")
-    invalid_url = {
-        "name": f"test_tool_{uuid.uuid4().hex[:8]}",
-        "url": "javascript:alert(1)",
-        "description": "Test invalid URL",
-        "integrationType": "REST",
-        "requestType": "GET"
-    }
+    invalid_url = {"name": f"test_tool_{uuid.uuid4().hex[:8]}", "url": "javascript:alert(1)", "description": "Test invalid URL", "integrationType": "REST", "requestType": "GET"}
     r = request("POST", "/tools", json_data=invalid_url)
     test_ctx.record_test("validation_invalid_url", r.status_code in (400, 422))
 
     # Test 4: Directory traversal in resource URI
     logging.info("📋 Test: Directory traversal prevention")
-    traversal_resource = {
-        "uri": "../../etc/passwd",
-        "name": "Test traversal",
-        "content": "test"
-    }
+    traversal_resource = {"uri": "../../etc/passwd", "name": "Test traversal", "content": "test"}
     r = request("POST", "/resources", json_data=traversal_resource)
     test_ctx.record_test("validation_directory_traversal", r.status_code in (400, 422, 500))
 
     # Test 5: Name too long (255+ chars)
     logging.info("📋 Test: Name length validation")
-    long_name = {
-        "name": "a" * 300,
-        "url": "https://example.com",
-        "description": "Test long name",
-        "integrationType": "REST",
-        "requestType": "GET"
-    }
+    long_name = {"name": "a" * 300, "url": "https://example.com", "description": "Test long name", "integrationType": "REST", "requestType": "GET"}
     r = request("POST", "/tools", json_data=long_name)
     test_ctx.record_test("validation_name_too_long", r.status_code in (400, 422))
 
     # Test 6: Empty required fields
     logging.info("📋 Test: Empty required fields")
-    empty_fields = {
-        "name": "",
-        "url": "https://example.com"
-    }
+    empty_fields = {"name": "", "url": "https://example.com"}
     r = request("POST", "/tools", json_data=empty_fields)
     test_ctx.record_test("validation_empty_required", r.status_code in (400, 422))
 
     # Test 7: Whitespace only in name
     logging.info("📋 Test: Whitespace-only validation")
-    whitespace_only = {
-        "name": "   ",
-        "url": "https://example.com",
-        "description": "Test whitespace"
-    }
+    whitespace_only = {"name": "   ", "url": "https://example.com", "description": "Test whitespace"}
     r = request("POST", "/tools", json_data=whitespace_only)
     test_ctx.record_test("validation_whitespace_only", r.status_code in (400, 422))
 
     # Test 8: Invalid JSON-RPC request
     logging.info("📋 Test: Malformed JSON-RPC request")
-    malformed_rpc = {
-        "jsonrpc": "1.0",  # Wrong version
-        "method": "test",
-        "id": "test"
-    }
+    malformed_rpc = {"jsonrpc": "1.0", "method": "test", "id": "test"}  # Wrong version
     r = request("POST", "/rpc", json_data=malformed_rpc)
     test_ctx.record_test("validation_invalid_jsonrpc", r.status_code != 200 or "error" in r.json())
 
@@ -947,11 +874,7 @@ def step_15_virtual_server_management():
 
     # Test 1: Create virtual server
     logging.info("📋 Test: Create virtual server")
-    virtual_server = {
-        "name": f"time_utils_{uuid.uuid4().hex[:8]}",
-        "description": "Time utilities virtual server",
-        "associatedTools": tool_ids
-    }
+    virtual_server = {"name": f"time_utils_{uuid.uuid4().hex[:8]}", "description": "Time utilities virtual server", "associatedTools": tool_ids}
     r = request("POST", "/servers", json_data=virtual_server)
     if r.status_code in (200, 201):
         server_data = r.json()
@@ -979,11 +902,11 @@ def step_15_virtual_server_management():
             # Just test that the endpoint exists and responds
             # Third-Party
             import requests
+
             token = generate_jwt()
             url = f"https://localhost:{PORT_GATEWAY}/servers/{server_id}/sse"
             # Use stream=True to test SSE connection
-            with requests.get(url, headers={"Authorization": f"Bearer {token}"},
-                            verify=False, stream=True, timeout=2) as r:
+            with requests.get(url, headers={"Authorization": f"Bearer {token}"}, verify=False, stream=True, timeout=2) as r:
                 test_ctx.record_test("virtual_server_sse", r.status_code == 200)
         except requests.Timeout:
             # Timeout is OK for SSE - it means connection was established
@@ -993,9 +916,7 @@ def step_15_virtual_server_management():
 
         # Test 5: Update virtual server
         logging.info("📋 Test: Update virtual server")
-        update_data = {
-            "description": "Updated time utilities server"
-        }
+        update_data = {"description": "Updated time utilities server"}
         r = request("PUT", f"/servers/{server_id}", json_data=update_data)
         test_ctx.record_test("virtual_server_update", r.status_code in (200, 204))
 
