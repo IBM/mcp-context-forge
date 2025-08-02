@@ -486,6 +486,8 @@ markdownlint:					    ## 📖  Markdown linting
 	@$(VENV_DIR)/bin/markdownlint -c .markdownlint.json .
 
 mypy:                               ## 🏷️  mypy type-checking
+	#python3 -m pip install types-jsonschema types-psutil
+	# mypy --install-types
 	@$(VENV_DIR)/bin/mypy mcpgateway
 
 bandit:                             ## 🛡️  bandit security scan

@@ -1043,7 +1043,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
                             elif current_event.event == "message":
                                 # Forward JSON-RPC responses to stdio
                                 if process.stdin:
-                                    await process.stdin.write((current_event.data + "\n").encode())
+                                    process.stdin.write((current_event.data + "\n").encode())
                                     await process.stdin.drain()
                                     LOGGER.debug(f"→ stdio: {current_event.data}")
 
