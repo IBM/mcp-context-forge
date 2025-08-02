@@ -26,7 +26,7 @@ ARG PYTHON_VERSION=3.11
 ###########################
 # Base image for copying into scratch
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1752500771 AS base
+FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1752751762 AS base
 
 ###########################
 # Builder stage
