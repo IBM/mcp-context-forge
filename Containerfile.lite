@@ -26,7 +26,7 @@ ARG PYTHON_VERSION=3.11
 ###########################
 # Base image for copying into scratch
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1752751762 AS base
+# FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1752751762 AS base
 
 ###########################
 # Builder stage
@@ -132,7 +132,8 @@ RUN set -euo pipefail \
 
 # ----------------------------------------------------------------------------
 # Remove package managers and unnecessary system tools from rootfs
-#  - This keeps the final image size minimal and avoids unnecessary bloat
+# - Keep RPM database for security scanning with Trivy/Dockle
+# - This keeps the final image size minimal while allowing vulnerability scanning
 # ----------------------------------------------------------------------------
 RUN rm -rf ${ROOTFS_PATH}/usr/bin/dnf* \
     ${ROOTFS_PATH}/usr/bin/yum* \
@@ -141,12 +142,8 @@ RUN rm -rf ${ROOTFS_PATH}/usr/bin/dnf* \
     ${ROOTFS_PATH}/usr/lib/rpm \
     ${ROOTFS_PATH}/usr/lib/dnf \
     ${ROOTFS_PATH}/usr/lib/yum* \
-    ${ROOTFS_PATH}/var/lib/rpm* \
-    ${ROOTFS_PATH}/var/lib/dnf* \
-    ${ROOTFS_PATH}/var/lib/yum* \
     ${ROOTFS_PATH}/etc/dnf \
-    ${ROOTFS_PATH}/etc/yum* \
-    ${ROOTFS_PATH}/etc/rpm
+    ${ROOTFS_PATH}/etc/yum*
 
 # ----------------------------------------------------------------------------
 # Strip unneeded symbols from shared libraries
