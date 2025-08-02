@@ -24,15 +24,10 @@ ARG ROOTFS_PATH=/tmp/rootfs
 ARG PYTHON_VERSION=3.11
 
 ###########################
-# Base image for copying into scratch
-###########################
-# FROM registry.access.redhat.com/ubi9/ubi-micro:9.6-1752751762 AS base
-
-###########################
 # Builder stage
 ###########################
 FROM registry.access.redhat.com/ubi9/ubi:9.6-1753978585 AS builder
-SHELL ["/bin/bash", "-c"]
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
 ARG ROOTFS_PATH
@@ -56,8 +51,11 @@ RUN set -euo pipefail \
 
 WORKDIR /app
 
-# Copy project source last so small code changes don't bust earlier caches
-COPY . /app
+# ----------------------------------------------------------------------------
+# Copy only the files needed for dependency installation first
+# This maximizes Docker layer caching - dependencies change less often
+# ----------------------------------------------------------------------------
+COPY pyproject.toml /app/
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment
@@ -75,7 +73,25 @@ RUN set -euo pipefail \
     && find /app/.venv -name "*.dist-info" -type d \
         \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "pdm-*" -o -name "uv-*" \) \
         -exec rm -rf {} + 2>/dev/null || true \
-    && rm -rf /app/.venv/share/python-wheels
+    && rm -rf /app/.venv/share/python-wheels \
+    && rm -rf /app/*.egg-info /app/build /app/dist /app/.eggs
+
+# ----------------------------------------------------------------------------
+# Now copy only the application files needed for runtime
+# This ensures code changes don't invalidate the dependency layer
+# ----------------------------------------------------------------------------
+COPY run-gunicorn.sh /app/
+COPY mcpgateway/ /app/mcpgateway/
+COPY gunicorn.config.py /app/
+COPY plugins/ /app/plugins/
+
+# Optional: Copy run.sh if it's needed in production
+COPY run.sh /app/
+
+# ----------------------------------------------------------------------------
+# Ensure executable permissions for scripts
+# ----------------------------------------------------------------------------
+RUN chmod +x /app/run-gunicorn.sh
 
 # ----------------------------------------------------------------------------
 # Pre-compile Python bytecode with -OO optimization
@@ -83,7 +99,7 @@ RUN set -euo pipefail \
 #  - Improves startup performance
 #  - Must be done before copying to rootfs
 # ----------------------------------------------------------------------------
-RUN python3 -OO -m compileall -q /app/.venv /app
+RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins
 
 # ----------------------------------------------------------------------------
 # Build a minimal, fully-patched rootfs containing only the runtime Python
@@ -146,17 +162,12 @@ RUN rm -rf ${ROOTFS_PATH}/usr/bin/dnf* \
     ${ROOTFS_PATH}/etc/yum*
 
 # ----------------------------------------------------------------------------
-# Strip unneeded symbols from shared libraries
-# - This reduces the final image size by removing debug symbols
-# - Requires binutils to be installed in builder stage
-# - Safe to run on production images as it does not affect functionality
+# Strip unneeded symbols from shared libraries and remove binutils
+# - This reduces the final image size and removes the build tool in one step
 # ----------------------------------------------------------------------------
-RUN find "${ROOTFS_PATH}/usr/lib64" -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true
-
-# ----------------------------------------------------------------------------
-# Remove binutils after stripping is complete
-# ----------------------------------------------------------------------------
-RUN dnf remove -y binutils && dnf clean all
+RUN find "${ROOTFS_PATH}/usr/lib64" -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true \
+    && dnf remove -y binutils \
+    && dnf clean all
 
 # ----------------------------------------------------------------------------
 # Remove setuid/setgid binaries for security
