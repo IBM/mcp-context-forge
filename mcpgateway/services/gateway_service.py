@@ -180,6 +180,9 @@ class GatewayService:
     - Active/inactive status management
     """
 
+
+
+
     def __init__(self) -> None:
         """Initialize the gateway service.
 

@@ -33,7 +33,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import parse
-from sqlalchemy import delete, func, not_, select
+from sqlalchemy import delete, func, not_, select, desc, case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -49,6 +49,7 @@ from mcpgateway.schemas import (
     ResourceRead,
     ResourceSubscription,
     ResourceUpdate,
+    TopPerformer
 )
 from mcpgateway.services.logging_service import LoggingService
 
@@ -117,6 +118,33 @@ class ResourceService:
         # Clear subscriptions
         self._event_subscribers.clear()
         logger.info("Resource service shutdown complete")
+        
+    async def get_top_resources(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+        results = db.query(
+            DbResource.id,
+            DbResource.uri.label('name'),  # Using URI as the name field for TopPerformer
+            func.count(ResourceMetric.id).label('execution_count'),
+            func.avg(ResourceMetric.response_time).label('avg_response_time'),
+            (func.sum(case((ResourceMetric.is_success , 1), else_=0)) / func.count(ResourceMetric.id) * 100).label('success_rate'),
+            func.max(ResourceMetric.timestamp).label('last_execution')
+        ).outerjoin(
+            ResourceMetric
+        ).group_by(
+            DbResource.id, DbResource.uri
+        ).order_by(
+            desc('execution_count')
+        ).limit(limit).all()
+
+        return [
+            TopPerformer(
+                id=result.id,
+                name=result.name,
+                execution_count=result.execution_count or 0,
+                avg_response_time=float(result.avg_response_time) if result.avg_response_time else None,
+                success_rate=float(result.success_rate) if result.success_rate else None,
+                last_execution=result.last_execution
+            ) for result in results
+        ]
 
     def _convert_resource_to_read(self, resource: DbResource) -> ResourceRead:
         """
