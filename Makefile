@@ -224,7 +224,7 @@ clean:
 smoketest:
 	@echo "🚀 Running smoketest..."
 	@bash -c '\
-		./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }; \
+		./tests/smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }; \
 		echo "✅ Smoketest passed!" \
 	'
 
