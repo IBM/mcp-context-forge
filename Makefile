@@ -1225,6 +1225,7 @@ container-build:
 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 		.
 	@echo "✅ Built image: $(call get_image_name)"
+	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
 
 container-run: container-check-image
 	@echo "🚀 Running with $(CONTAINER_RUNTIME)..."
@@ -1269,7 +1270,6 @@ container-run-ssl: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		-u $(id -u):$(id -g) \
 		--env-file=.env \
 		-e SSL=true \
 		-e CERT_FILE=certs/cert.pem \
@@ -1290,7 +1290,6 @@ container-run-ssl-host: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
-		-u $(id -u):$(id -g) \
 		--network=host \
 		--env-file=.env \
 		-e SSL=true \
@@ -1305,9 +1304,6 @@ container-run-ssl-host: certs container-check-image
 		-d $(call get_image_name)
 	@sleep 2
 	@echo "✅ Container started with TLS (host networking)"
-
-
-
 
 container-push: container-check-image
 	@echo "📤 Preparing to push image..."

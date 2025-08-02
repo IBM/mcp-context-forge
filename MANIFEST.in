@@ -5,6 +5,7 @@
 # 1️⃣  Core project files that SDists/Wheels should always carry
 include LICENSE
 include README.md
+include plugins/README.md
 include pyproject.toml
 include gunicorn.config.py
 include Containerfile

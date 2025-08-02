@@ -2078,7 +2078,7 @@ class GatewayRead(BaseModelWithConfigDict):
             - The `auth_value` field is only masked if it exists and its value is different from the masking
             placeholder.
             - Other sensitive fields (`auth_password`, `auth_token`, `auth_header_value`) are masked if present.
-            - Fields not related to authentication remain unchanged.
+            - Fields not related to authentication remain unmodified.
         """
         masked_data = self.model_dump()
 
