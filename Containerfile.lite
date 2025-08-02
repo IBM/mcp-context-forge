@@ -61,14 +61,19 @@ COPY . /app
 # Create and populate virtual environment
 #  - Upgrade pip, setuptools, wheel, pdm, uv
 #  - Install project dependencies and package
-#  - Remove build caches
+#  - Remove build caches and build tools
 # ----------------------------------------------------------------------------
 RUN set -euo pipefail \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
     && /app/.venv/bin/uv pip install ".[redis,postgres]" \
-    && /app/.venv/bin/pip uninstall --yes uv pip setuptools \
-    && rm -rf /root/.cache /var/cache/dnf
+    && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
+    && rm -rf /root/.cache /var/cache/dnf \
+    && find /app/.venv -name "*.dist-info" -type d -exec rm -rf {} + 2>/dev/null || true \
+    && find /app/.venv -name "*.pyc" -delete \
+    && find /app/.venv -name "*.pyo" -delete \
+    && find /app/.venv -type d -name "__pycache__" -delete \
+    && rm -rf /app/.venv/share/python-wheels
 
 # ----------------------------------------------------------------------------
 # Build a minimal, fully-patched rootfs containing only the runtime Python
@@ -79,6 +84,7 @@ RUN set -euo pipefail \
     && dnf --installroot="${ROOTFS_PATH}" --releasever=9 upgrade -y \
     && dnf --installroot="${ROOTFS_PATH}" --releasever=9 install -y \
          --setopt=install_weak_deps=0 \
+         --setopt=tsflags=nodocs \
          python${PYTHON_VERSION} \
     && dnf clean all --installroot="${ROOTFS_PATH}"
 
@@ -88,11 +94,66 @@ RUN set -euo pipefail \
 RUN ln -s /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH}/usr/bin/python3
 
 # ----------------------------------------------------------------------------
+# Clean up unnecessary files from rootfs (if they exist)
+#  - Remove development headers, documentation
+# ----------------------------------------------------------------------------
+RUN set -euo pipefail \
+    && rm -rf ${ROOTFS_PATH}/usr/include/* \
+    ${ROOTFS_PATH}/usr/share/man/* \
+    ${ROOTFS_PATH}/usr/share/doc/* \
+    ${ROOTFS_PATH}/usr/share/info/* \
+    ${ROOTFS_PATH}/usr/share/locale/* \
+    ${ROOTFS_PATH}/var/log/* \
+    ${ROOTFS_PATH}/boot \
+    ${ROOTFS_PATH}/media \
+    ${ROOTFS_PATH}/srv \
+    ${ROOTFS_PATH}/usr/games \
+    && find ${ROOTFS_PATH}/usr/lib*/python*/ -type d -name "test" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH}/usr/lib*/python*/ -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH}/usr/lib*/python*/ -type d -name "idle_test" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH}/usr/lib*/python*/ -name "*.mo" -delete 2>/dev/null || true \
+    && rm -rf ${ROOTFS_PATH}/usr/lib*/python*/ensurepip \
+    ${ROOTFS_PATH}/usr/lib*/python*/idlelib \
+    ${ROOTFS_PATH}/usr/lib*/python*/tkinter \
+    ${ROOTFS_PATH}/usr/lib*/python*/turtle* \
+    ${ROOTFS_PATH}/usr/lib*/python*/distutils/command/*.exe
+
+# ----------------------------------------------------------------------------
+# Remove package managers and unnecessary system tools from rootfs
+#  - This keeps the final image size minimal and avoids unnecessary bloat
+# ----------------------------------------------------------------------------
+RUN rm -rf ${ROOTFS_PATH}/usr/bin/dnf* \
+    ${ROOTFS_PATH}/usr/bin/yum* \
+    ${ROOTFS_PATH}/usr/bin/rpm* \
+    ${ROOTFS_PATH}/usr/bin/microdnf \
+    ${ROOTFS_PATH}/usr/lib/rpm \
+    ${ROOTFS_PATH}/usr/lib/dnf \
+    ${ROOTFS_PATH}/usr/lib/yum* \
+    ${ROOTFS_PATH}/var/lib/rpm* \
+    ${ROOTFS_PATH}/var/lib/dnf* \
+    ${ROOTFS_PATH}/var/lib/yum* \
+    ${ROOTFS_PATH}/etc/dnf \
+    ${ROOTFS_PATH}/etc/yum* \
+    ${ROOTFS_PATH}/etc/rpm
+
+# ----------------------------------------------------------------------------
+# Remove setuid/setgid binaries for security
+# ----------------------------------------------------------------------------
+RUN find ${ROOTFS_PATH} -perm /4000 -o -perm /2000 -type f -delete 2>/dev/null || true
+
+# ----------------------------------------------------------------------------
 # Copy application directory into the rootfs and fix permissions for non-root
 # ----------------------------------------------------------------------------
 RUN cp -r /app ${ROOTFS_PATH}/app \
     && chown -R 1001:0 ${ROOTFS_PATH}/app \
     && chmod -R g=u ${ROOTFS_PATH}/app
+
+# ----------------------------------------------------------------------------
+# Final cleanup of Python cache in the rootfs app directory
+# ----------------------------------------------------------------------------
+RUN find ${ROOTFS_PATH}/app -type f -name "*.pyc" -delete \
+    && find ${ROOTFS_PATH}/app -type d -name "__pycache__" -delete \
+    && find ${ROOTFS_PATH}/app -type f -name "*.pyo" -delete
 
 ###########################
 # Final runtime (squashed)
