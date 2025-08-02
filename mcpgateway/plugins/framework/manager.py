@@ -32,11 +32,12 @@ from mcpgateway.plugins.framework.utils import post_prompt_matches, pre_prompt_m
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class PluginExecutor(Generic[T]):
     """Executes a list of plugins."""
+
     async def execute(
         self,
         plugins: list[PluginRef],
@@ -45,7 +46,7 @@ class PluginExecutor(Generic[T]):
         plugin_run: Callable[[PluginRef, T, PluginContext], Coroutine[Any, Any, PluginResult[T]]],
         compare: Callable[[T, list[PluginCondition], GlobalContext], bool],
         local_contexts: Optional[PluginContextTable] = None,
-    ) -> tuple[PluginResult[T] | None, PluginContextTable | None]:
+    ) -> tuple[PluginResult[T], PluginContextTable | None]:
         """Execute a plugins hook run before a prompt is retrieved and rendered.
 
         Args:
@@ -53,7 +54,7 @@ class PluginExecutor(Generic[T]):
             payload: the payload to be analyzed.
             global_context: contextual information for all plugins.
             plugin_run: async function for executing plugin hook.
-            compare: function for comparing conditional information with context and payload 
+            compare: function for comparing conditional information with context and payload.
             local_contexts: context local to a single plugin.
 
         Returns:
@@ -85,11 +86,11 @@ class PluginExecutor(Generic[T]):
             if not result.continue_processing:
                 # Check execution mode
                 if pluginref.plugin.mode == PluginMode.ENFORCE:
-                    return (PluginResult[T](continue_processing=False, modified_payload=current_payload, error=result.error, metadata=combined_metadata), None)
+                    return (PluginResult[T](continue_processing=False, modified_payload=current_payload, violation=result.violation, metadata=combined_metadata), None)
                 elif pluginref.plugin.mode == PluginMode.PERMISSIVE:
-                    logger.warning(f"Plugin {pluginref.plugin.name} would block (permissive mode): {result.error}")
+                    logger.warning(f"Plugin {pluginref.plugin.name} would block (permissive mode): {result.violation.description if result.violation else ''}")
 
-        return (PluginResult[T](continue_processing=True, modified_payload=current_payload, error=None, metadata=combined_metadata), res_local_contexts)
+        return (PluginResult[T](continue_processing=True, modified_payload=current_payload, violation=None, metadata=combined_metadata), res_local_contexts)
 
 
 async def pre_prompt_fetch(plugin: PluginRef, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
@@ -176,7 +177,7 @@ class PluginManager:
         """
         if self._initialized:
             return
-        
+
         plugins = self._config.plugins if self._config else []
 
         for plugin_config in plugins:
@@ -204,7 +205,7 @@ class PluginManager:
         payload: PromptPrehookPayload,
         global_context: GlobalContext,
         local_contexts: Optional[PluginContextTable] = None,
-    ) -> tuple[PromptPrehookResult | None, PluginContextTable | None]:
+    ) -> tuple[PromptPrehookResult, PluginContextTable | None]:
         """Plugin hook run before a prompt is retrieved and rendered.
 
         Args:
@@ -218,11 +219,9 @@ class PluginManager:
         plugins = self._registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
         return await self._pre_prompt_executor.execute(plugins, payload, global_context, pre_prompt_fetch, pre_prompt_matches, local_contexts)
 
-
-
     async def prompt_post_fetch(
         self, payload: PromptPosthookPayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None
-    ) -> tuple[PromptPosthookResult | None, PluginContextTable | None]:
+    ) -> tuple[PromptPosthookResult, PluginContextTable | None]:
         """Plugin hook run after a prompt is rendered.
 
         Args:

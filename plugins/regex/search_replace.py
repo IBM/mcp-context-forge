@@ -80,5 +80,5 @@ class SearchReplacePlugin(Plugin):
                             pattern[1],
                             message.content.text
                         )
-                  payload.result.messages[index] = value
+                  payload.result.messages[index].content.text = value
         return PromptPosthookResult(modified_payload=payload)

@@ -14,7 +14,7 @@ from typing import Any, Generic, Optional, TypeVar
 
 # First-Party
 from mcpgateway.models import PromptResult
-from mcpgateway.plugins.framework.models import PluginError
+from mcpgateway.plugins.framework.models import PluginViolation
 
 T = TypeVar("T")
 
@@ -50,18 +50,18 @@ class PromptPosthookPayload:
 class PluginResult(Generic[T]):
     """A plugin result."""
 
-    def __init__(self, continue_processing: bool = True, modified_payload: Optional[T] = None, error: Optional[PluginError] = None, metadata: Optional[dict[str, Any]] = None):
+    def __init__(self, continue_processing: bool = True, modified_payload: Optional[T] = None, violation: Optional[PluginViolation] = None, metadata: Optional[dict[str, Any]] = None):
         """Initialize a plugin result object.
 
         Args:
             continue_processing (bool): Whether to stop processing.
             modified_payload (Optional[Any]): The modified payload if the plugin is a transformer.
-            error (Optional[PluginError]): error object.
+            violation (Optional[PluginViolation]): violation object.
             metadata (Optional[dict[str, Any]]): additional metadata.
         """
         self.continue_processing = continue_processing
         self.modified_payload = modified_payload
-        self.error = error
+        self.violation = violation
         self.metadata = metadata or {}
 
 
@@ -72,13 +72,7 @@ PromptPosthookResult = PluginResult[PromptPosthookPayload]
 class GlobalContext:
     """The global context, which shared across all plugins."""
 
-    def __init__(
-        self,
-        request_id: str,
-        user: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-        server_id: Optional[str] = None
-    ) -> None:
+    def __init__(self, request_id: str, user: Optional[str] = None, tenant_id: Optional[str] = None, server_id: Optional[str] = None) -> None:
         """Initialize a global context.
 
         Args:
@@ -91,6 +85,7 @@ class GlobalContext:
         self.user = user
         self.tenant_id = tenant_id
         self.server_id = server_id
+
 
 class PluginContext(GlobalContext):
     """The plugin's context, which lasts a request lifecycle.

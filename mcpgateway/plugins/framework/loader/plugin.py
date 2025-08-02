@@ -28,16 +28,32 @@ class PluginLoader(object):
         self._plugin_types: dict[str, Type[Plugin]] = {}
 
     def __get_plugin_type(self, kind: str) -> Type[Plugin]:
+        """Import a plugin type from a python module.
+
+        Args:
+            kind: The fully-qualified type of the plugin to be registered.
+
+        Raises:
+            Exception: if unable to import a module.
+
+        Returns:
+            A plugin type.
+        """
         try:
             (mod_name, cls_name) = parse_class_name(kind)
             module = import_module(mod_name)
             class_ = getattr(module, cls_name)
             return cast(Type[Plugin], class_)
         except Exception:
-            logger.exception("Unable to instantiate class '%s'", kind)
+            logger.exception("Unable to import plugin type '%s'", kind)
             raise
 
     def __register_plugin_type(self, kind: str) -> None:
+        """Register a plugin type.
+
+        Args:
+            kind: The fully-qualified type of the plugin to be registered.
+        """
         if kind not in self._plugin_types:
             plugin_type = self.__get_plugin_type(kind)
             self._plugin_types[kind] = plugin_type

@@ -106,6 +106,7 @@ class PluginInstanceRegistry:
         """
         return list(self._plugins.values())
 
+    @property
     def plugin_count(self) -> int:
         """Return the number of plugins registered.
 

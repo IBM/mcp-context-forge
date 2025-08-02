@@ -157,19 +157,19 @@ class PluginManifest(BaseModel):
     default_config: dict[str, Any]
 
 
-class PluginError(BaseModel):  # (ErrorResponse):  # Inherits from MCP error format
-    """A plugin error.
+class PluginViolation(BaseModel):
+    """A plugin filter violation.
 
     Attributes:
         plugin_name (str): The name of the plugin.
-        error_description (str): the error in text.
-        error_code (str): an error code.
+        description (str): the violation in text.
+        violation_code (str): a violation code.
         details: (dict[str, Any])
     """
 
     plugin_name: str
-    error_description: str
-    error_code: str
+    description: str
+    violation_code: str
     details: dict[str, Any]
 
 

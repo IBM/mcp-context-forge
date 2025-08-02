@@ -96,6 +96,7 @@ def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCon
             current_result = True
     return current_result
 
+
 def post_prompt_matches(payload: PromptPosthookPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
     """Check for a match on pre-prompt hooks.
 

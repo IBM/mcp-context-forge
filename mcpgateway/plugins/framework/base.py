@@ -123,7 +123,7 @@ class Plugin:
                                     of plugin type {type(self)}
                                    """)
 
-    def shutdown(self) -> None:
+    async def shutdown(self) -> None:
         """Plugin cleanup code."""
 
 
