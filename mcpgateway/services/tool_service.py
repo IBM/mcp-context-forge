@@ -29,7 +29,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import delete, func, not_, select
+from sqlalchemy import delete, func, not_, select, case, desc
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -44,6 +44,7 @@ from mcpgateway.schemas import (
     ToolCreate,
     ToolRead,
     ToolUpdate,
+    TopPerformer
 )
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import decode_auth
@@ -114,6 +115,34 @@ class ToolService:
         """Shutdown the service."""
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
+
+
+    async def get_top_tools(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+        results = db.query(
+            DbTool.id,
+            DbTool.name,
+            func.count(ToolMetric.id).label('execution_count'),
+            func.avg(ToolMetric.response_time).label('avg_response_time'),
+            (func.sum(case((ToolMetric.is_success , 1), else_=0)) / func.count(ToolMetric.id) * 100).label('success_rate'),
+            func.max(ToolMetric.timestamp).label('last_execution')
+        ).outerjoin(
+            ToolMetric
+        ).group_by(
+            DbTool.id, DbTool.name
+        ).order_by(
+            desc('execution_count')
+        ).limit(limit).all()
+
+        return [
+            TopPerformer(
+                id=result.id,
+                name=result.name,
+                execution_count=result.execution_count or 0,
+                avg_response_time=float(result.avg_response_time) if result.avg_response_time else None,
+                success_rate=float(result.success_rate) if result.success_rate else None,
+                last_execution=result.last_execution
+            ) for result in results
+    ]
 
     def _convert_tool_to_read(self, tool: DbTool) -> ToolRead:
         """
@@ -270,7 +299,7 @@ class ToolService:
             raise ToolError(f"Tool already exists: {tool.name}")
         except Exception as e:
             db.rollback()
-            raise ToolError(f"Failed to register tool: {str(e)}")
+            raise ToolError(f"Failed to register tool: {str(e)}")   
 
     async def list_tools(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None) -> List[ToolRead]:
         """

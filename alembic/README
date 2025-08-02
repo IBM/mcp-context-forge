@@ -1,4 +1,4 @@
-# Alembic Migration Guide for `mcpgateway`
+Generic single-database configuration.# Alembic Migration Guide for `mcpgateway`
 
 > Creating, applying, and managing schema migrations with Alembic.
 
