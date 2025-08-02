@@ -2936,3 +2936,12 @@ class TagInfo(BaseModelWithConfigDict):
     name: str = Field(..., description="The tag name")
     stats: TagStats = Field(..., description="Statistics for this tag")
     entities: Optional[List[TaggedEntity]] = Field(default_factory=list, description="Entities that have this tag")
+
+
+class TopPerformer(BaseModelWithConfigDict):
+    id: Union[str, int] = Field(..., description="Entity ID")
+    name: str = Field(..., description="Entity name")
+    execution_count: int = Field(..., description="Number of executions")
+    avg_response_time: Optional[float] = Field(None, description="Average response time in seconds")
+    success_rate: Optional[float] = Field(None, description="Success rate percentage")
+    last_execution: Optional[datetime] = Field(None, description="Timestamp of last execution")

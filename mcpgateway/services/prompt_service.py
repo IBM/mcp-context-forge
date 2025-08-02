@@ -23,7 +23,7 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import delete, func, not_, select
+from sqlalchemy import delete, func, not_, select, desc, case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -33,7 +33,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
-from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
+from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -138,6 +138,34 @@ class PromptService:
         """
         self._event_subscribers.clear()
         logger.info("Prompt service shutdown complete")
+
+
+    async def get_top_prompts(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+        results = db.query(
+            DbPrompt.id,
+            DbPrompt.name,
+            func.count(PromptMetric.id).label('execution_count'),
+            func.avg(PromptMetric.response_time).label('avg_response_time'),
+            (func.sum(case((PromptMetric.is_success, 1), else_=0)) / func.count(PromptMetric.id) * 100).label('success_rate'),
+            func.max(PromptMetric.timestamp).label('last_execution')
+        ).outerjoin(
+            PromptMetric
+        ).group_by(
+            DbPrompt.id, DbPrompt.name
+        ).order_by(
+            desc('execution_count')
+        ).limit(limit).all()
+
+        return [
+            TopPerformer(
+                id=result.id,
+                name=result.name,
+                execution_count=result.execution_count or 0,
+                avg_response_time=float(result.avg_response_time) if result.avg_response_time else None,
+                success_rate=float(result.success_rate) if result.success_rate else None,
+                last_execution=result.last_execution
+            ) for result in results
+        ]
 
     def _convert_db_prompt(self, db_prompt: DbPrompt) -> Dict[str, Any]:
         """
