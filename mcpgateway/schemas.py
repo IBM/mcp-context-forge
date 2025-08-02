@@ -2568,3 +2568,13 @@ class GatewayTestResponse(BaseModelWithConfigDict):
     status_code: int = Field(..., description="HTTP status code returned by the gateway")
     latency_ms: int = Field(..., description="Latency of the request in milliseconds")
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")
+
+
+class TopPerformer(BaseModelWithConfigDict):
+    id: Union[str, int] = Field(..., description="Entity ID")
+    name: str = Field(..., description="Entity name")
+    execution_count: int = Field(..., description="Number of executions")
+    avg_response_time: Optional[float] = Field(None, description="Average response time in seconds")
+    success_rate: Optional[float] = Field(None, description="Success rate percentage")
+    last_execution: Optional[datetime] = Field(None, description="Timestamp of last execution")
+

@@ -219,7 +219,7 @@ class SamplingHandler:
             # TODO: Sample from selected model
             # For now return mock response
             response = self._mock_sample(messages=messages)
-
+    
             # Convert to result
             return CreateMessageResult(
                 content=TextContent(type="text", text=response),
