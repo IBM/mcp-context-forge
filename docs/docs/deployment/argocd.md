@@ -5,7 +5,7 @@ This guide shows how to operate the **MCP Gateway Stack** with a *Git-Ops* workf
 > 🌳 Git source of truth:
 > `https://github.com/IBM/mcp-context-forge`
 >
-> * **App manifests:** `k8s/` (Kustomize-ready)
+> * **App manifests:** `deployment/k8s/` (Kustomize-ready)
 > * **Helm chart (optional):** `charts/mcp-stack`
 
 ---
@@ -76,7 +76,7 @@ Open the web UI → [http://localhost:8083](http://localhost:8083) (credentials 
 
 ## 🚀 Step 3 - Bootstrap the Application
 
-Create an Argo CD *Application* that tracks the **`k8s/`** folder from the main branch:
+Create an Argo CD *Application* that tracks the **`deployment/k8s/`** folder from the main branch:
 
 ```bash
 APP=mcp-gateway

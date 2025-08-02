@@ -41,7 +41,8 @@ FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
 	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
 	.depsorter_cache.json .depupdate.* \
 	grype-results.sarif devskim-results.sarif \
-	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb
+	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb \
+	*.log mcpgateway.sbom.xml
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
@@ -2035,7 +2036,7 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # help: minikube-port-forward   - Run kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
 # help: minikube-dashboard      - Print & (best-effort) open the Kubernetes dashboard URL
 # help: minikube-image-load     - Load $(IMAGE) into Minikube container runtime
-# help: minikube-k8s-apply      - Apply manifests from k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
+# help: minikube-k8s-apply      - Apply manifests from deployment/k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
 # help: minikube-status         - Cluster + addon health overview
 # help: minikube-context        - Switch kubectl context to Minikube
 # help: minikube-ssh            - SSH into the Minikube VM
@@ -2126,7 +2127,7 @@ minikube-image-load:
 
 minikube-k8s-apply:
 	@echo "🧩 Applying k8s manifests in ./k8s ..."
-	@kubectl apply -f k8s/ --recursive
+	@kubectl apply -f deployment/k8s/ --recursive
 
 # -----------------------------------------------------------------------------
 # 🔍  Utility: print the current registry URL (host-port) - works after cluster
