@@ -69,7 +69,6 @@ RUN set -euo pipefail \
     && /app/.venv/bin/uv pip install ".[redis,postgres]" \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
     && rm -rf /root/.cache /var/cache/dnf \
-    && find /app/.venv -name "*.dist-info" -type d -exec rm -rf {} + 2>/dev/null || true \
     && find /app/.venv -name "*.pyc" -delete \
     && find /app/.venv -name "*.pyo" -delete \
     && find /app/.venv -type d -name "__pycache__" -delete \
