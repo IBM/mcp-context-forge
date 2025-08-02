@@ -62,7 +62,7 @@
     redis_conn: "{{ redis_key.resource.connection[0].rediss.composed[0] }}"
 
 # 6️⃣  Fetch kubeconfig (CLI) - simplest universal path
-- name: Grab kubeconfig for subsequent k8s/helm modules
+- name: Grab kubeconfig for subsequent deployment/k8s/helm modules
   command: ibmcloud ks cluster config --cluster {{ cluster.resource.id }} --export --json
   register: kube_json
   changed_when: false

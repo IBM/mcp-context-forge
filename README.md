@@ -1998,7 +1998,7 @@ minikube-start        - Start local Minikube cluster with Ingress + DNS + metric
 minikube-stop         - Stop the Minikube cluster
 minikube-delete       - Delete the Minikube cluster
 minikube-image-load   - Build and load ghcr.io/ibm/mcp-context-forge:latest into Minikube
-minikube-k8s-apply    - Apply Kubernetes manifests from k8s/
+minikube-k8s-apply    - Apply Kubernetes manifests from deployment/k8s/
 minikube-status       - Show status of Minikube and ingress pods
 🛠️ HELM CHART TASKS
 helm-lint            - Lint the Helm chart (static analysis)

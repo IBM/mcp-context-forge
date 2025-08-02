@@ -13,7 +13,7 @@ agent_runtimes/
 charts/
 deployment/
 docs/
-k8s/
+deployment/k8s/
 mcp-servers/
 tests/
 test/
