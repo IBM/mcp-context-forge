@@ -3502,3 +3502,32 @@ snyk-helm-test:                     ## ⎈ Test Helm charts for security issues
 	else \
 		echo "⚠️  No Helm charts found in charts/mcp-stack/"; \
 	fi
+
+
+# ==============================================================================
+# HEADER MANAGEMENT
+# ==============================================================================
+
+.PHONY: check-headers fix-all-headers interactive-fix-headers fix-header
+
+# Check all Python file headers for correctness without making changes.
+check-headers:
+	@echo "Checking Python file headers..."
+	-@python3 .github/tools/fix_file_headers.py --check
+
+# Automatically fix all Python file headers.
+# Use with caution, as it will modify files without confirmation.
+fix-all-headers:
+	@echo "Automatically fixing all Python file headers..."
+	-@python3 .github/tools/fix_file_headers.py --fix-all
+
+# Interactively fix Python file headers.
+# Prompts for confirmation before modifying each file.
+interactive-fix-headers:
+	@echo "Interactively fixing Python file headers..."
+	-@python3 .github/tools/fix_file_headers.py --interactive
+
+# Fix a specific file or directory with custom arguments.
+fix-header:
+	@echo "Fixing headers in $(path) with authors: $(authors)"
+	-@python3 .github/tools/fix_file_headers.py --fix --path $(path) --authors "$(authors)"

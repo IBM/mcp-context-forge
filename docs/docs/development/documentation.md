@@ -119,6 +119,49 @@ make pre-commit           # Run all configured pre-commit hooks
 
 ---
 
+## ✍️ File Header Management
+
+To ensure consistency, all Python source files must include a standardized header containing metadata like copyright, license, and authors. We use a script to automate the checking and fixing of these headers.
+
+The following `make` targets are available from the repository root to manage file headers:
+
+*   **`make check-headers`**:
+    Scans all Python files in `mcpgateway/` and `tests/` and reports any files with missing or incorrect headers. This is a dry run and does not modify any files.
+
+    ```bash
+    make check-headers
+    ```
+
+*   **`make fix-all-headers`**:
+    Automatically finds and fixes all Python files with incorrect headers.
+
+    ```bash
+    make fix-all-headers
+    ```
+
+*   **`make interactive-fix-headers`**:
+    Scans all files and prompts for confirmation before applying a fix to each file.
+
+    ```bash
+    make interactive-fix-headers
+    ```
+
+*   **`make fix-header`**:
+    Applies a fix to a specific file or directory. You can also override the author.
+
+    ```bash
+    # Fix a single file
+    make fix-header path="mcpgateway/main.py"
+
+    # Fix all files in a directory
+    make fix-header path="tests/unit/"
+
+    # Fix a file with a specific author
+    make fix-header path="mcpgateway/models.py" authors="Your Name"
+    ```
+
+---
+
 ## 🧹 Cleaning up
 
 ```bash
