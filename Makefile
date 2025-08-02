@@ -41,7 +41,8 @@ FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
 	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
 	.depsorter_cache.json .depupdate.* \
 	grype-results.sarif devskim-results.sarif \
-	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb
+	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb \
+	*.log mcpgateway.sbom.xml
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
