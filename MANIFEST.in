@@ -5,6 +5,7 @@
 # 1️⃣  Core project files that SDists/Wheels should always carry
 include LICENSE
 include README.md
+include plugins/README.md
 include pyproject.toml
 include gunicorn.config.py
 include Containerfile
@@ -27,6 +28,10 @@ include *.sh
 include *.txt
 
 # 3️⃣  Tooling/lint configuration dot-files (explicit so they're not lost)
+include .env.make
+include .interrogaterc
+include .jshintrc
+include whitesource.config
 include .darglint
 include .dockerignore
 include .flake8
@@ -39,6 +44,7 @@ include .coveragerc
 include .bumpversion.cfg
 include .yamllint
 include .editorconfig
+include .snyk
 
 # 4️⃣  Runtime data that lives *inside* the package at import time
 recursive-include mcpgateway/templates *.html
@@ -48,13 +54,13 @@ recursive-include mcpgateway *.ico
 recursive-include alembic *.mako
 recursive-include alembic *.md
 recursive-include alembic *.py
-recursive-include deployment *
-recursive-include mcp-servers *
+# recursive-include deployment *
+# recursive-include mcp-servers *
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
-graft docs
+# graft docs
 
-# 6️⃣  Never publish caches, compiled or build outputs
+# 6️⃣  Never publish caches, compiled or build outputs, deployment, agent_runtimes, etc.
 global-exclude __pycache__ *.py[cod] *.so *.dylib
 prune build
 prune dist
@@ -63,3 +69,9 @@ prune *.egg-info
 prune charts
 prune k8s
 prune .devcontainer
+
+
+# Exclude deployment, mcp-servers and agent_runtimes
+prune deployment
+prune mcp-servers
+prune agent_runtimes

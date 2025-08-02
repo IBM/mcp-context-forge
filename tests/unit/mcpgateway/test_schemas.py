@@ -52,6 +52,7 @@ from mcpgateway.schemas import (
     AdminToolCreate,
     EventMessage,
     ListFilters,
+    ResourceCreate,
     ServerCreate,
     ServerMetrics,
     ServerRead,
@@ -548,8 +549,8 @@ class TestMCPTypes:
             name="example-tool",
             url="http://localhost:8000/tool",
             description="An example tool",
-            integrationType="MCP",
-            requestType="SSE",
+            integration_type="MCP",
+            request_type="SSE",
             headers={"Content-Type": "application/json"},
             input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
             auth_type="bearer",
@@ -558,8 +559,8 @@ class TestMCPTypes:
         assert tool.name == "example-tool"
         assert str(tool.url) == "http://localhost:8000/tool"
         assert tool.description == "An example tool"
-        assert tool.integrationType == "MCP"
-        assert tool.requestType == "SSE"
+        assert tool.integration_type == "MCP"
+        assert tool.request_type == "SSE"
         assert tool.headers == {"Content-Type": "application/json"}
         assert tool.input_schema == {"type": "object", "properties": {"query": {"type": "string"}}}
         assert tool.auth_type == "bearer"
@@ -573,8 +574,8 @@ class TestMCPTypes:
         assert minimal.name == "minimal-tool"
         assert str(minimal.url) == "http://localhost:8000/minimal"
         assert minimal.description is None
-        assert minimal.integrationType == "MCP"  # Default value
-        assert minimal.requestType == "SSE"  # Default value
+        assert minimal.integration_type == "MCP"  # Default value
+        assert minimal.request_type == "SSE"  # Default value
         assert minimal.headers == {}  # Default value
         assert minimal.input_schema == {"type": "object", "properties": {}}  # Default value
         assert minimal.auth_type is None
@@ -841,3 +842,36 @@ class TestToggleAndListSchemas:
         # Test default value
         default_filters = ListFilters()
         assert default_filters.include_inactive is False
+
+
+DANGEROUS_HTML = "<script>alert('xss')</script>"
+SAFE_STRING = "Hello, this is safe."
+SAFE_BYTES = b"Some binary safe content"
+DANGEROUS_HTML_BYTES = DANGEROUS_HTML.encode("utf-8")
+NON_UTF8_BYTES = b"\x80\x81\x82"
+
+
+# Tests for ResourceCreate
+def test_resource_create_with_safe_string():
+    r = ResourceCreate(uri="some-uri", name="test.txt", content=SAFE_STRING)
+    assert isinstance(r.content, str)
+
+
+def test_resource_create_with_dangerous_html_string():
+    with pytest.raises(ValueError, match="Content contains HTML tags"):
+        ResourceCreate(uri="some-uri", name="dangerous.html", content=DANGEROUS_HTML)
+
+
+def test_resource_create_with_safe_bytes():
+    r = ResourceCreate(uri="some-uri", name="test.bin", content=SAFE_BYTES)
+    assert isinstance(r.content, bytes)
+
+
+def test_resource_create_with_dangerous_html_bytes():
+    with pytest.raises(ValueError, match="Content contains HTML tags"):
+        ResourceCreate(uri="some-uri", name="dangerous.html", content=DANGEROUS_HTML_BYTES)
+
+
+def test_resource_create_with_non_utf8_bytes():
+    with pytest.raises(ValueError, match="Content must be UTF-8 decodable"):
+        ResourceCreate(uri="some-uri", name="nonutf8.bin", content=NON_UTF8_BYTES)

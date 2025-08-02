@@ -72,7 +72,7 @@ def get_key() -> bytes:
     """
     passphrase = settings.auth_encryption_secret
     if not passphrase:
-        raise ValueError("AUTH_ENCRPYPTION_SECRET not set in environment.")
+        raise ValueError("AUTH_ENCRYPTION_SECRET not set in environment.")
     return hashlib.sha256(passphrase.encode()).digest()  # 32-byte key
 
 

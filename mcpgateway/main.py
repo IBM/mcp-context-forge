@@ -31,6 +31,7 @@ from contextlib import asynccontextmanager
 import json
 import logging
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from urllib.parse import urlparse, urlunparse
 
 # Third-Party
 from fastapi import (
@@ -49,10 +50,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import httpx
+from pydantic import ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
 from mcpgateway import __version__
@@ -76,11 +79,13 @@ from mcpgateway.schemas import (
     GatewayUpdate,
     JsonPathModifier,
     PromptCreate,
+    PromptExecuteArgs,
     PromptRead,
     PromptUpdate,
     ResourceCreate,
     ResourceRead,
     ResourceUpdate,
+    RPCRequest,
     ServerCreate,
     ServerRead,
     ServerUpdate,
@@ -89,7 +94,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import (
     PromptError,
@@ -121,11 +126,12 @@ from mcpgateway.transports.streamablehttp_transport import (
     streamable_http_auth,
 )
 from mcpgateway.utils.db_isready import wait_for_db_ready
+from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_auth_override
 from mcpgateway.validation.jsonrpc import (
     JSONRPCError,
-    validate_request,
 )
 
 # Import the admin routes from the new module
@@ -244,6 +250,81 @@ app = FastAPI(
 )
 
 
+# Global exceptions handlers
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(_request: Request, exc: ValidationError):
+    """Handle Pydantic validation errors globally.
+
+    Intercepts ValidationError exceptions raised anywhere in the application
+    and returns a properly formatted JSON error response with detailed
+    validation error information.
+
+    Args:
+        _request: The FastAPI request object that triggered the validation error.
+                  (Unused but required by FastAPI's exception handler interface)
+        exc: The Pydantic ValidationError exception containing validation
+             failure details.
+
+    Returns:
+        JSONResponse: A 422 Unprocessable Entity response with formatted
+                      validation error details.
+
+    Examples:
+        >>> from pydantic import ValidationError, BaseModel
+        >>> from fastapi import Request
+        >>> import asyncio
+        >>>
+        >>> class TestModel(BaseModel):
+        ...     name: str
+        ...     age: int
+        >>>
+        >>> # Create a validation error
+        >>> try:
+        ...     TestModel(name="", age="invalid")
+        ... except ValidationError as e:
+        ...     # Test our handler
+        ...     result = asyncio.run(validation_exception_handler(None, e))
+        ...     result.status_code
+        422
+    """
+    return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
+
+
+@app.exception_handler(IntegrityError)
+async def database_exception_handler(_request: Request, exc: IntegrityError):
+    """Handle SQLAlchemy database integrity constraint violations globally.
+
+    Intercepts IntegrityError exceptions (e.g., unique constraint violations,
+    foreign key constraints) and returns a properly formatted JSON error response.
+    This provides consistent error handling for database constraint violations
+    across the entire application.
+
+    Args:
+        _request: The FastAPI request object that triggered the database error.
+                  (Unused but required by FastAPI's exception handler interface)
+        exc: The SQLAlchemy IntegrityError exception containing constraint
+             violation details.
+
+    Returns:
+        JSONResponse: A 409 Conflict response with formatted database error details.
+
+    Examples:
+        >>> from sqlalchemy.exc import IntegrityError
+        >>> from fastapi import Request
+        >>> import asyncio
+        >>>
+        >>> # Create a mock integrity error
+        >>> mock_error = IntegrityError("statement", {}, Exception("duplicate key"))
+        >>> result = asyncio.run(database_exception_handler(None, mock_error))
+        >>> result.status_code
+        409
+        >>> # Verify ErrorFormatter.format_database_error is called
+        >>> hasattr(result, 'body')
+        True
+    """
+    return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
+
+
 class DocsAuthMiddleware(BaseHTTPMiddleware):
     """
     Middleware to protect FastAPI's auto-generated documentation routes
@@ -264,6 +345,28 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response: Either the standard route response or a 401/403 error response.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import Mock, AsyncMock, patch
+            >>> from fastapi import HTTPException
+            >>> from fastapi.responses import JSONResponse
+            >>>
+            >>> # Test unprotected path - should pass through
+            >>> middleware = DocsAuthMiddleware(None)
+            >>> request = Mock()
+            >>> request.url.path = "/api/tools"
+            >>> request.headers.get.return_value = None
+            >>> call_next = AsyncMock(return_value="response")
+            >>>
+            >>> result = asyncio.run(middleware.dispatch(request, call_next))
+            >>> result
+            'response'
+            >>>
+            >>> # Test that middleware checks protected paths
+            >>> request.url.path = "/docs"
+            >>> isinstance(middleware, DocsAuthMiddleware)
+            True
         """
         protected_paths = ["/docs", "/redoc", "/openapi.json"]
 
@@ -308,6 +411,36 @@ class MCPPathRewriteMiddleware:
             scope (dict): The ASGI connection scope.
             receive (Callable): Awaitable that yields events from the client.
             send (Callable): Awaitable used to send events to the client.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import AsyncMock, patch
+            >>>
+            >>> # Test non-HTTP request passthrough
+            >>> app_mock = AsyncMock()
+            >>> middleware = MCPPathRewriteMiddleware(app_mock)
+            >>> scope = {"type": "websocket", "path": "/ws"}
+            >>> receive = AsyncMock()
+            >>> send = AsyncMock()
+            >>>
+            >>> asyncio.run(middleware(scope, receive, send))
+            >>> app_mock.assert_called_once_with(scope, receive, send)
+            >>>
+            >>> # Test path rewriting for /servers/123/mcp
+            >>> app_mock.reset_mock()
+            >>> scope = {"type": "http", "path": "/servers/123/mcp"}
+            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
+            ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
+            ...         asyncio.run(middleware(scope, receive, send))
+            ...         scope["path"]
+            '/mcp'
+            >>>
+            >>> # Test regular path (no rewrite)
+            >>> scope = {"type": "http", "path": "/tools"}
+            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
+            ...     asyncio.run(middleware(scope, receive, send))
+            ...     scope["path"]
+            '/tools'
         """
         # Only handle HTTP requests, HTTPS uses scope["type"] == "http" in ASGI
         if scope["type"] != "http":
@@ -346,6 +479,9 @@ app.add_middleware(DocsAuthMiddleware)
 # Add streamable HTTP middleware for /mcp routes
 app.add_middleware(MCPPathRewriteMiddleware)
 
+# Trust all proxies (or lock down with a list of host patterns)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -375,6 +511,22 @@ def get_db():
 
     Ensures:
         The database session is closed after the request completes, even in the case of an exception.
+
+    Examples:
+        >>> # Test that get_db returns a generator
+        >>> db_gen = get_db()
+        >>> hasattr(db_gen, '__next__')
+        True
+        >>> # Test cleanup happens
+        >>> try:
+        ...     db = next(db_gen)
+        ...     type(db).__name__
+        ... finally:
+        ...     try:
+        ...         next(db_gen)
+        ...     except StopIteration:
+        ...         pass  # Expected - generator cleanup
+        'Session'
     """
     db = SessionLocal()
     try:
@@ -384,8 +536,7 @@ def get_db():
 
 
 def require_api_key(api_key: str) -> None:
-    """
-    Validates the provided API key.
+    """Validates the provided API key.
 
     This function checks if the provided API key matches the expected one
     based on the settings. If the validation fails, it raises an HTTPException
@@ -396,6 +547,22 @@ def require_api_key(api_key: str) -> None:
 
     Raises:
         HTTPException: If the API key is invalid, a 401 Unauthorized error is raised.
+
+    Examples:
+        >>> from mcpgateway.config import settings
+        >>> settings.auth_required = True
+        >>> settings.basic_auth_user = "admin"
+        >>> settings.basic_auth_password = "secret"
+        >>>
+        >>> # Valid API key
+        >>> require_api_key("admin:secret")  # Should not raise
+        >>>
+        >>> # Invalid API key
+        >>> try:
+        ...     require_api_key("wrong:key")
+        ... except HTTPException as e:
+        ...     e.status_code
+        401
     """
     if settings.auth_required:
         expected = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
@@ -412,6 +579,23 @@ async def invalidate_resource_cache(uri: Optional[str] = None) -> None:
 
     Args:
         uri (Optional[str]): The URI of the resource to invalidate from the cache. If None, the entire cache is cleared.
+
+    Examples:
+        >>> import asyncio
+        >>> # Test clearing specific URI from cache
+        >>> resource_cache.set("/test/resource", {"content": "test data"})
+        >>> resource_cache.get("/test/resource") is not None
+        True
+        >>> asyncio.run(invalidate_resource_cache("/test/resource"))
+        >>> resource_cache.get("/test/resource") is None
+        True
+        >>>
+        >>> # Test clearing entire cache
+        >>> resource_cache.set("/resource1", {"content": "data1"})
+        >>> resource_cache.set("/resource2", {"content": "data2"})
+        >>> asyncio.run(invalidate_resource_cache())
+        >>> resource_cache.get("/resource1") is None and resource_cache.get("/resource2") is None
+        True
     """
     if uri:
         resource_cache.delete(uri)
@@ -419,9 +603,43 @@ async def invalidate_resource_cache(uri: Optional[str] = None) -> None:
         resource_cache.clear()
 
 
-#################
+def get_protocol_from_request(request: Request) -> str:
+    """
+    Return "https" or "http" based on:
+     1) X-Forwarded-Proto (if set by a proxy)
+     2) request.url.scheme  (e.g. when Gunicorn/Uvicorn is terminating TLS)
+
+    Args:
+        request (Request): The FastAPI request object.
+
+    Returns:
+        str: The protocol used for the request, either "http" or "https".
+    """
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        # may be a comma-separated list; take the first
+        return forwarded.split(",")[0].strip()
+    return request.url.scheme
+
+
+def update_url_protocol(request: Request) -> str:
+    """
+    Update the base URL protocol based on the request's scheme or forwarded headers.
+
+    Args:
+        request (Request): The FastAPI request object.
+
+    Returns:
+        str: The base URL with the correct protocol.
+    """
+    parsed = urlparse(str(request.base_url))
+    proto = get_protocol_from_request(request)
+    new_parsed = parsed._replace(scheme=proto)
+    # urlunparse keeps netloc and path intact
+    return urlunparse(new_parsed).rstrip("/")
+
+
 # Protocol APIs #
-#################
 @protocol_router.post("/initialize")
 async def initialize(request: Request, user: str = Depends(require_auth)) -> InitializeResult:
     """
@@ -743,8 +961,9 @@ async def sse_endpoint(request: Request, server_id: str, user: str = Depends(req
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
-        base_url = str(request.base_url).rstrip("/")
+        base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
+
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
@@ -1194,6 +1413,9 @@ async def create_resource(
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        # Handle validation errors from Pydantic
+        return JSONResponse(content=ErrorFormatter.format_validation_error(e), status_code=422)
 
 
 @resource_router.get("/{uri:path}")
@@ -1414,7 +1636,13 @@ async def get_prompt(
         Rendered prompt or metadata.
     """
     logger.debug(f"User: {user} requested prompt: {name} with args={args}")
-    return await prompt_service.get_prompt(db, name, args)
+    try:
+        PromptExecuteArgs(args=args)
+        return await prompt_service.get_prompt(db, name, args)
+    except Exception as ex:
+        logger.error(f"Error retrieving prompt {name}: {ex}")
+        if isinstance(ex, ValueError):
+            return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
 
 
 @prompt_router.get("/{name}")
@@ -1583,8 +1811,14 @@ async def register_gateway(
             return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=502)
         if isinstance(ex, ValueError):
             return JSONResponse(content={"message": "Unable to process input"}, status_code=400)
+        if isinstance(ex, GatewayNameConflictError):
+            return JSONResponse(content={"message": "Gateway name already exists"}, status_code=400)
         if isinstance(ex, RuntimeError):
             return JSONResponse(content={"message": "Error during execution"}, status_code=500)
+        if isinstance(ex, ValidationError):
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
         return JSONResponse(content={"message": "Unexpected error"}, status_code=500)
 
 
@@ -1743,11 +1977,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
     try:
         logger.debug(f"User {user} made an RPC request")
         body = await request.json()
-        validate_request(body)
         method = body["method"]
         # rpc_id = body.get("id")
         params = body.get("params", {})
         cursor = params.get("cursor")  # Extract cursor parameter
+
+        RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         if method == "tools/list":
             tools = await tool_service.list_tools(db, cursor=cursor)
@@ -1803,6 +2038,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
     except JSONRPCError as e:
         return e.to_dict()
     except Exception as e:
+        if isinstance(e, ValueError):
+            return JSONResponse(content={"message": "Method invalid"}, status_code=422)
         logger.error(f"RPC error: {str(e)}")
         return {
             "jsonrpc": "2.0",
@@ -1827,7 +2064,8 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             try:
                 data = await websocket.receive_text()
-                async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
+                client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
+                async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
                         f"http://localhost:{settings.port}/rpc",
                         json=json.loads(data),
@@ -1878,7 +2116,8 @@ async def utility_sse_endpoint(request: Request, user: str = Depends(require_aut
     """
     try:
         logger.debug("User %s requested SSE connection", user)
-        base_url = str(request.base_url).rstrip("/")
+        base_url = update_url_protocol(request)
+
         transport = SSETransport(base_url=base_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)

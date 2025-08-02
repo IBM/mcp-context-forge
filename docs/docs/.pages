@@ -6,6 +6,8 @@ nav:
   - "🛡️ Manage": manage
   - "💻 Develop": development
   - "🧪 Test": testing
-  - "📐 Architecture": architecture
+  - "📐 Design & Roadmap": architecture
   - "📰 Media": media
+  - "📖 Tutorials": tutorials
+  - "⭐ Best Practices": best-practices
   - "❓ FAQ": faq

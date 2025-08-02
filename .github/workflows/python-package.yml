@@ -42,7 +42,24 @@ jobs:
       - name: Build distributions
         run: make dist                 # Uses the Makefile's `dist` rule
 
-      # 5️⃣  Upload built artifacts so they can be downloaded from the run page
+      # 5️⃣  Install package quality tools
+      - name: Install package linters
+        run: |
+          python3 -m pip install twine check-manifest pyroma
+
+      # 6️⃣  Validate wheel/sdist metadata
+      - name: Check distribution metadata (twine)
+        run: twine check dist/*
+
+      # 7️⃣  Verify MANIFEST.in completeness
+      - name: Check manifest (check-manifest)
+        run: check-manifest
+
+      # 8️⃣  Assess package quality
+      - name: Check package quality (pyroma)
+        run: pyroma -d .
+
+      # 9️⃣  Upload built artifacts so they can be downloaded from the run page
       - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:

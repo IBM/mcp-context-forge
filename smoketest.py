@@ -7,7 +7,7 @@
 This script verifies a full install + runtime setup of the MCP Gateway:
 - Creates a virtual environment and installs dependencies.
 - Builds and runs the Docker HTTPS container.
-- Starts the MCP Time Server via npx supergateway.
+- Starts the MCP Time Server via mcpgateway.translate.
 - Verifies /health, /ready, /version before registering the gateway.
 - Federates the time server as a gateway, verifies its tool list.
 - Invokes the remote tool via /rpc and checks the result.
@@ -46,7 +46,7 @@ from mcpgateway.config import settings
 
 # ───────────────────────── Ports / constants ────────────────────────────
 PORT_GATEWAY = 4444  # HTTPS container
-PORT_TIME_SERVER = 8002  # supergateway
+PORT_TIME_SERVER = 8002  # mcpgateway.translate
 DOCKER_CONTAINER = "mcpgateway"
 
 MAKE_VENV_CMD = ["make", "venv", "install", "install-dev"]
@@ -54,12 +54,12 @@ MAKE_DOCKER_BUILD = ["make", "docker"]
 MAKE_DOCKER_RUN = ["make", "docker-run-ssl-host"]
 MAKE_DOCKER_STOP = ["make", "docker-stop"]
 
-SUPERGW_CMD = [
-    "npx",
-    "-y",
-    "supergateway",
+TRANSLATE_CMD = [
+    "python3",
+    "-m",
+    "mcpgateway.translate",
     "--stdio",
-    "uvx mcp_server_time -- --local-timezone=Europe/Dublin",
+    "uvx mcp-server-time --local-timezone=Europe/Dublin",
     "--port",
     str(PORT_TIME_SERVER),
 ]
@@ -222,18 +222,33 @@ def request(method: str, path: str, *, json_data=None, **kw):
 
 
 # ───────────────────────────── Cleanup logic ─────────────────────────────
-_supergw_proc: subprocess.Popen | None = None
+_translate_proc: subprocess.Popen | None = None
+_translate_log_file = None
 
 
 def cleanup():
     log_section("Cleanup", "🧹")
-    global _supergw_proc
-    if _supergw_proc and _supergw_proc.poll() is None:
-        _supergw_proc.terminate()
+    global _translate_proc, _translate_log_file
+
+    # Clean up the translate process
+    if _translate_proc and _translate_proc.poll() is None:
+        logging.info("🔄 Terminating mcpgateway.translate process (PID: %d)", _translate_proc.pid)
+        _translate_proc.terminate()
         try:
-            _supergw_proc.wait(timeout=5)
+            _translate_proc.wait(timeout=5)
+            logging.info("✅ mcpgateway.translate process terminated cleanly")
         except subprocess.TimeoutExpired:
-            _supergw_proc.kill()
+            logging.warning("⚠️  mcpgateway.translate didn't terminate in time, killing it")
+            _translate_proc.kill()
+            _translate_proc.wait()
+
+    # Close log file if open
+    if _translate_log_file:
+        _translate_log_file.close()
+        _translate_log_file = None
+
+    # Stop docker container
+    logging.info("🐋 Stopping Docker container")
     subprocess.run(MAKE_DOCKER_STOP, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     logging.info("✅ Cleanup complete")
 
@@ -270,39 +285,114 @@ def step_4_docker_run():
         full = f"https://localhost:{PORT_GATEWAY}{ep}"
         need_auth = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
         headers = auth_headers if (ep == "/version" or need_auth) else None
+        logging.info("🔍 Waiting for endpoint %s (auth: %s)", ep, bool(headers))
         if not wait_http_ok(full, 45, headers=headers):
             raise RuntimeError(f"Gateway endpoint {ep} not ready")
+        logging.info("✅ Endpoint %s is ready", ep)
 
     logging.info("✅ Gateway /health /ready /version all OK")
 
 
 def step_5_start_time_server(restart=False):
-    global _supergw_proc
+    global _translate_proc, _translate_log_file
+
+    # Check if uvx is available
+    try:
+        uvx_check = subprocess.run(["uvx", "--version"], capture_output=True, text=True)
+        if uvx_check.returncode == 0:
+            logging.info("🔍 Found uvx version: %s", uvx_check.stdout.strip())
+        else:
+            logging.warning("⚠️  uvx not found or not working. This may cause issues.")
+    except FileNotFoundError:
+        logging.warning("⚠️  uvx not found. Please install uv (pip install uv) if the time server fails.")
+
     if port_open(PORT_TIME_SERVER):
         if restart:
             logging.info("🔄 Restarting process on port %d", PORT_TIME_SERVER)
             try:
                 pid = int(subprocess.check_output(["lsof", "-ti", f"TCP:{PORT_TIME_SERVER}"], text=True).strip())
+                logging.info("🔍 Found existing process PID: %d", pid)
                 os.kill(pid, signal.SIGTERM)
                 time.sleep(2)
             except Exception as e:
                 logging.warning("Could not stop existing server: %s", e)
         else:
             logging.info("ℹ️  Re-using MCP-Time-Server on port %d", PORT_TIME_SERVER)
+            return
+
     if not port_open(PORT_TIME_SERVER):
         log_section("Launching MCP-Time-Server", "⏰")
-        _supergw_proc = subprocess.Popen(SUPERGW_CMD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(20):
+        logging.info("🚀 Command: %s", " ".join(shlex.quote(c) for c in TRANSLATE_CMD))
+
+        # Create a log file for the time server output
+        log_filename = f"translate_{int(time.time())}.log"
+        _translate_log_file = open(log_filename, "w")
+        logging.info("📝 Logging mcpgateway.translate output to: %s", log_filename)
+
+        # Start the process directly
+        _translate_proc = subprocess.Popen(
+            TRANSLATE_CMD,
+            stdout=_translate_log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        logging.info("🔍 Started mcpgateway.translate process with PID: %d", _translate_proc.pid)
+
+        # Wait for the server to start
+        start_time = time.time()
+        timeout = 30
+        check_interval = 0.5
+
+        while time.time() - start_time < timeout:
+            # Check if process is still running
+            exit_code = _translate_proc.poll()
+            if exit_code is not None:
+                # Process exited, read the log file
+                _translate_log_file.close()
+                with open(log_filename, "r") as f:
+                    output = f.read()
+                logging.error("❌ Time-Server process exited with code %d", exit_code)
+                logging.error("📋 Process output:\n%s", output)
+                raise RuntimeError(f"Time-Server exited with code {exit_code}. Check the logs above.")
+
+            # Check if port is open
             if port_open(PORT_TIME_SERVER):
-                break
-            if _supergw_proc.poll() is not None:
-                raise RuntimeError("Time-Server exited")
-            time.sleep(1)
+                elapsed = time.time() - start_time
+                logging.info("✅ Time-Server is listening on port %d (took %.1fs)", PORT_TIME_SERVER, elapsed)
+
+                # Give it a moment to fully initialize
+                time.sleep(1)
+
+                # Double-check it's still running
+                if _translate_proc.poll() is None:
+                    return
+                else:
+                    raise RuntimeError("Time-Server started but then immediately exited")
+
+            # Log progress
+            if int(time.time() - start_time) % 5 == 0:
+                logging.info("⏳ Still waiting for Time-Server to start... (%.0fs elapsed)", time.time() - start_time)
+
+            time.sleep(check_interval)
+
+        # Timeout reached
+        if _translate_proc.poll() is None:
+            _translate_proc.terminate()
+            _translate_proc.wait()
+
+        _translate_log_file.close()
+        with open(log_filename, "r") as f:
+            output = f.read()
+        logging.error("📋 Process output:\n%s", output)
+        raise RuntimeError(f"Time-Server failed to start within {timeout}s")
 
 
 def step_6_register_gateway() -> int:
     log_section("Registering gateway", "🛂")
     payload = {"name": "smoketest_time_server", "url": f"http://localhost:{PORT_TIME_SERVER}/sse"}
+    logging.info("📤 Registering gateway with payload: %s", json.dumps(payload, indent=2))
+
     r = request("POST", "/gateways", json_data=payload)
     if r.status_code in (200, 201):
         gid = r.json()["id"]
@@ -310,9 +400,14 @@ def step_6_register_gateway() -> int:
         return gid
     # 409 conflict → find existing
     if r.status_code == 409:
-        gw = next(g for g in request("GET", "/gateways").json() if g["name"] == payload["name"])
-        logging.info("ℹ️  Gateway already present - using ID %s", gw["id"])
-        return gw["id"]
+        logging.info("⚠️  Gateway already exists, fetching existing one")
+        gateways = request("GET", "/gateways").json()
+        gw = next((g for g in gateways if g["name"] == payload["name"]), None)
+        if gw:
+            logging.info("ℹ️  Gateway already present - using ID %s", gw["id"])
+            return gw["id"]
+        else:
+            raise RuntimeError("Gateway conflict but not found in list")
     # other error
     msg = r.text
     try:
@@ -323,42 +418,88 @@ def step_6_register_gateway() -> int:
 
 
 def step_7_verify_tools():
-    names = [t["name"] for t in request("GET", "/tools").json()]
-    assert f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time" in names, f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time absent"
-    logging.info("✅ Tool visible in /tools")
+    logging.info("🔍 Fetching tool list")
+    tools = request("GET", "/tools").json()
+    tool_names = [t["name"] for t in tools]
+
+    expected_tool = f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time"
+    logging.info("📋 Found %d tools total", len(tool_names))
+    logging.debug("📋 All tools: %s", json.dumps(tool_names, indent=2))
+
+    if expected_tool not in tool_names:
+        # Log similar tools to help debug
+        similar = [t for t in tool_names if "time" in t.lower() or "smoketest" in t.lower()]
+        if similar:
+            logging.error("❌ Expected tool not found. Similar tools: %s", similar)
+        raise AssertionError(f"{expected_tool} not found in tools list")
+
+    logging.info("✅ Tool '%s' visible in /tools", expected_tool)
 
 
 def step_8_invoke_tool():
-    body = {"jsonrpc": "2.0", "id": 1, "method": "smoketest-time-server-get-current-time", "params": {"timezone": "Europe/Dublin"}}
+    log_section("Invoking remote tool", "🔧")
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": f"smoketest-time-server{settings.gateway_tool_name_separator}get-current-time",
+        "params": {"timezone": "Europe/Dublin"}
+    }
+    logging.info("📤 RPC request: %s", json.dumps(body, indent=2))
+
     j = request("POST", "/rpc", json_data=body).json()
+    logging.info("📥 RPC response: %s", json.dumps(j, indent=2))
 
     if "error" in j:
-        raise RuntimeError(j["error"])
+        raise RuntimeError(f"RPC error: {j['error']}")
 
     result = j.get("result", j)
     if "content" not in result:
-        raise RuntimeError("Missing 'content' in tool response")
+        raise RuntimeError(f"Missing 'content' in tool response. Got: {result}")
 
-    text = result["content"][0]["text"]
-    assert "datetime" in text, "datetime missing"
-    logging.info("✅ Tool invocation returned time")
+    content = result["content"]
+    if not content or not isinstance(content, list):
+        raise RuntimeError(f"Invalid content format. Expected list, got: {type(content)}")
+
+    text = content[0].get("text", "")
+    if not text:
+        raise RuntimeError(f"No text in content. Content: {content}")
+
+    if "datetime" not in text:
+        raise RuntimeError(f"Expected 'datetime' in response, got: {text}")
+
+    logging.info("✅ Tool invocation returned time: %s", text[:100])
 
 
 def step_9_version_health():
-    health = request("GET", "/health").json()["status"].lower()
+    log_section("Final health check", "🏥")
+
+    health_resp = request("GET", "/health").json()
+    logging.info("📥 Health response: %s", json.dumps(health_resp, indent=2))
+    health = health_resp.get("status", "").lower()
     assert health in ("ok", "healthy"), f"Unexpected health status: {health}"
-    ver = request("GET", "/version").json()["app"]["name"]
+
+    ver_resp = request("GET", "/version").json()
+    logging.info("📥 Version response: %s", json.dumps(ver_resp, indent=2))
+    ver = ver_resp.get("app", {}).get("name", "Unknown")
     logging.info("✅ Health OK - app %s", ver)
 
 
 def step_10_cleanup_gateway(gid: int | None = None):
+    log_section("Cleanup gateway registration", "🧹")
+
     if gid is None:
         logging.warning("🧹  No gateway ID; nothing to delete")
         return
 
+    logging.info("🗑️  Deleting gateway ID: %s", gid)
     request("DELETE", f"/gateways/{gid}")
-    assert all(g["id"] != gid for g in request("GET", "/gateways").json())
-    logging.info("✅ Gateway deleted")
+
+    # Verify it's gone
+    gateways = request("GET", "/gateways").json()
+    if any(g["id"] == gid for g in gateways):
+        raise RuntimeError(f"Gateway {gid} still exists after deletion")
+
+    logging.info("✅ Gateway deleted successfully")
 
 
 # ───────────────────────────── Step registry ─────────────────────────────
@@ -391,7 +532,7 @@ def main():
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s  %(levelname)-7s  %(message)s",
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%H:%M:%S",
     )
 
@@ -414,6 +555,13 @@ def main():
     failed = False
 
     try:
+        logging.info("🚀 Starting MCP Gateway smoke test")
+        logging.info("📋 Environment:")
+        logging.info("  - Gateway port: %d", PORT_GATEWAY)
+        logging.info("  - Time server port: %d", PORT_TIME_SERVER)
+        logging.info("  - Docker container: %s", DOCKER_CONTAINER)
+        logging.info("  - Selected steps: %s", [s[0] for s in sel])
+
         for no, (name, fn) in enumerate(sel, 1):
             logging.info("\n🔸 Step %s/%s - %s", no, len(sel), name)
             if name == "start_time_server":
@@ -431,9 +579,18 @@ def main():
     except Exception as e:
         failed = True
         logging.error("❌  Failure: %s", e, exc_info=args.verbose)
-
-    if not failed:
-        cleanup()
+        logging.error("\n💡 Troubleshooting tips:")
+        logging.error("  - Check if uvx is installed: uvx --version")
+        logging.error("  - Check if port %d is already in use: lsof -i :%d", PORT_TIME_SERVER, PORT_TIME_SERVER)
+        logging.error("  - Look for translate_*.log files for detailed output")
+        logging.error("  - Try running with -v for verbose output")
+    finally:
+        if not failed:
+            cleanup()
+            sys.exit(0)
+        else:
+            logging.warning("⚠️  Skipping cleanup due to failure. Run with --cleanup-only to clean up manually.")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

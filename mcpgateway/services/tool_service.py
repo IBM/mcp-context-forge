@@ -25,7 +25,6 @@ import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
-import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -47,6 +46,7 @@ from mcpgateway.schemas import (
     TopPerformer
 )
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 
 # Local
@@ -56,11 +56,27 @@ logger = logging.getLogger(__name__)
 
 
 class ToolError(Exception):
-    """Base class for tool-related errors."""
+    """Base class for tool-related errors.
+
+    Examples:
+        >>> from mcpgateway.services.tool_service import ToolError
+        >>> err = ToolError("Something went wrong")
+        >>> str(err)
+        'Something went wrong'
+    """
 
 
 class ToolNotFoundError(ToolError):
-    """Raised when a requested tool is not found."""
+    """Raised when a requested tool is not found.
+
+    Examples:
+        >>> from mcpgateway.services.tool_service import ToolNotFoundError
+        >>> err = ToolNotFoundError("Tool xyz not found")
+        >>> str(err)
+        'Tool xyz not found'
+        >>> isinstance(err, ToolError)
+        True
+    """
 
 
 class ToolNameConflictError(ToolError):
@@ -73,6 +89,18 @@ class ToolNameConflictError(ToolError):
             name: The conflicting tool name.
             enabled: Whether the existing tool is enabled or not.
             tool_id: ID of the existing tool if available.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolNameConflictError
+            >>> err = ToolNameConflictError('test_tool', enabled=False, tool_id=123)
+            >>> str(err)
+            'Tool already exists with name: test_tool (currently inactive, ID: 123)'
+            >>> err.name
+            'test_tool'
+            >>> err.enabled
+            False
+            >>> err.tool_id
+            123
         """
         self.name = name
         self.enabled = enabled
@@ -84,11 +112,29 @@ class ToolNameConflictError(ToolError):
 
 
 class ToolValidationError(ToolError):
-    """Raised when tool validation fails."""
+    """Raised when tool validation fails.
+
+    Examples:
+        >>> from mcpgateway.services.tool_service import ToolValidationError
+        >>> err = ToolValidationError("Invalid tool configuration")
+        >>> str(err)
+        'Invalid tool configuration'
+        >>> isinstance(err, ToolError)
+        True
+    """
 
 
 class ToolInvocationError(ToolError):
-    """Raised when tool invocation fails."""
+    """Raised when tool invocation fails.
+
+    Examples:
+        >>> from mcpgateway.services.tool_service import ToolInvocationError
+        >>> err = ToolInvocationError("Failed to invoke tool")
+        >>> str(err)
+        'Failed to invoke tool'
+        >>> isinstance(err, ToolError)
+        True
+    """
 
 
 class ToolService:
@@ -103,16 +149,41 @@ class ToolService:
     """
 
     def __init__(self):
-        """Initialize the tool service."""
+        """Initialize the tool service.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> service = ToolService()
+            >>> isinstance(service._event_subscribers, list)
+            True
+            >>> len(service._event_subscribers)
+            0
+            >>> hasattr(service, '_http_client')
+            True
+        """
         self._event_subscribers: List[asyncio.Queue] = []
-        self._http_client = httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify)
+        self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
 
     async def initialize(self) -> None:
-        """Initialize the service."""
+        """Initialize the service.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> service = ToolService()
+            >>> import asyncio
+            >>> asyncio.run(service.initialize())  # Should log "Initializing tool service"
+        """
         logger.info("Initializing tool service")
 
     async def shutdown(self) -> None:
-        """Shutdown the service."""
+        """Shutdown the service.
+
+        Examples:
+            >>> from mcpgateway.services.tool_service import ToolService
+            >>> service = ToolService()
+            >>> import asyncio
+            >>> asyncio.run(service.shutdown())  # Should log "Tool service shutdown complete"
+        """
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
 
@@ -145,8 +216,7 @@ class ToolService:
     ]
 
     def _convert_tool_to_read(self, tool: DbTool) -> ToolRead:
-        """
-        Converts a DbTool instance into a ToolRead model, including aggregated metrics and
+        """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
 
         Args:
@@ -228,7 +298,7 @@ class ToolService:
             Created tool information.
 
         Raises:
-            ToolNameConflictError: If tool name already exists.
+            IntegrityError: If there is a database integrity error.
             ToolError: For other tool registration errors.
 
         Examples:
@@ -255,17 +325,6 @@ class ToolService:
             'tool_read'
         """
         try:
-            if not tool.gateway_id:
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name)).scalar_one_or_none()
-            else:
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name).where(DbTool.gateway_id == tool.gateway_id)).scalar_one_or_none()
-            if existing_tool:
-                raise ToolNameConflictError(
-                    existing_tool.name,
-                    enabled=existing_tool.enabled,
-                    tool_id=existing_tool.id,
-                )
-
             if tool.auth is None:
                 auth_type = None
                 auth_value = None
@@ -535,6 +594,7 @@ class ToolService:
             >>> isinstance(result, object)
             True
         """
+        # pylint: disable=comparison-with-callable
         tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
         if not tool:
             inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
@@ -677,7 +737,7 @@ class ToolService:
 
         Raises:
             ToolNotFoundError: If the tool is not found.
-            ToolNameConflictError: If a new name conflicts with an existing tool.
+            IntegrityError: If there is a database integrity error.
             ToolError: For other update errors.
 
         Examples:
@@ -702,15 +762,6 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-            if tool_update.name is not None and not (tool_update.name == tool.name and tool_update.gateway_id == tool.gateway_id):
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool_update.name).where(DbTool.gateway_id == tool_update.gateway_id).where(DbTool.id != tool_id)).scalar_one_or_none()
-                if existing_tool:
-                    raise ToolNameConflictError(
-                        tool_update.name,
-                        enabled=existing_tool.enabled,
-                        tool_id=existing_tool.id,
-                    )
-
             if tool_update.name is not None:
                 tool.name = tool_update.name
             if tool_update.url is not None:
@@ -744,9 +795,12 @@ class ToolService:
             await self._notify_tool_updated(tool)
             logger.info(f"Updated tool: {tool.name}")
             return self._convert_tool_to_read(tool)
-        except Exception as e:
+        except IntegrityError as ie:
+            logger.error(f"IntegrityError during tool update: {ie}")
+            raise ie
+        except Exception as ex:
             db.rollback()
-            raise ToolError(f"Failed to update tool: {str(e)}")
+            raise ToolError(f"Failed to update tool: {str(ex)}")
 
     async def _notify_tool_updated(self, tool: DbTool) -> None:
         """

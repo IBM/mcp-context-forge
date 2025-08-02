@@ -22,10 +22,11 @@ gateway-specific extensions for federation support.
 # Standard
 import base64
 from datetime import datetime, timezone
+from enum import Enum
 import json
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Self, Union
 
 # Third-Party
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
@@ -60,6 +61,12 @@ def to_camel_case(s: str) -> str:
         'alreadyCamel'
         >>> to_camel_case("")
         ''
+        >>> to_camel_case("single")
+        'single'
+        >>> to_camel_case("_leading_underscore")
+        'LeadingUnderscore'
+        >>> to_camel_case("trailing_underscore_")
+        'trailingUnderscore'
     """
     return "".join(word.capitalize() if i else word for i, word in enumerate(s.split("_")))
 
@@ -120,9 +127,25 @@ class BaseModelWithConfigDict(BaseModel):
             >>> m = ExampleModel(foo=1, bar='baz')
             >>> m.to_dict()
             {'foo': 1, 'bar': 'baz'}
+
+            >>> # Test with alias
+            >>> m.to_dict(use_alias=True)
+            {'foo': 1, 'bar': 'baz'}
+
+            >>> # Test with nested model
+            >>> class NestedModel(BaseModelWithConfigDict):
+            ...     nested_field: int
+            >>> class ParentModel(BaseModelWithConfigDict):
+            ...     parent_field: str
+            ...     child: NestedModel
+            >>> nested = NestedModel(nested_field=42)
+            >>> parent = ParentModel(parent_field="test", child=nested)
+            >>> result = parent.to_dict()
+            >>> result['child']
+            {'nested_field': 42}
         """
         output = {}
-        for key, value in self.dict(by_alias=use_alias).items():
+        for key, value in self.model_dump(by_alias=use_alias).items():
             output[key] = value if not isinstance(value, BaseModel) else value.to_dict(use_alias)
         return output
 
@@ -280,13 +303,13 @@ class ToolCreate(BaseModel):
         gateway_id (Optional[str]): ID of the gateway for the tool.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
-    request_type: Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
+    request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
     annotations: Optional[Dict[str, Any]] = Field(
@@ -407,6 +430,35 @@ class ToolCreate(BaseModel):
 
         Raises:
             ValueError: When value is unsafe
+
+        Examples:
+            >>> # Test MCP integration types
+            >>> from pydantic import ValidationInfo
+            >>> info = type('obj', (object,), {'data': {'integration_type': 'MCP'}})
+            >>> ToolCreate.validate_request_type('SSE', info)
+            'SSE'
+
+            >>> # Test REST integration types
+            >>> info = type('obj', (object,), {'data': {'integration_type': 'REST'}})
+            >>> ToolCreate.validate_request_type('GET', info)
+            'GET'
+            >>> ToolCreate.validate_request_type('POST', info)
+            'POST'
+
+            >>> # Test invalid REST type
+            >>> try:
+            ...     ToolCreate.validate_request_type('SSE', info)
+            ... except ValueError as e:
+            ...     "not allowed for REST" in str(e)
+            True
+
+            >>> # Test invalid MCP type
+            >>> info = type('obj', (object,), {'data': {'integration_type': 'MCP'}})
+            >>> try:
+            ...     ToolCreate.validate_request_type('GET', info)
+            ... except ValueError as e:
+            ...     "not allowed for MCP" in str(e)
+            True
         """
         data = info.data
         integration_type = data.get("integration_type")
@@ -421,6 +473,7 @@ class ToolCreate(BaseModel):
         return v
 
     @model_validator(mode="before")
+    @classmethod
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -433,6 +486,33 @@ class ToolCreate(BaseModel):
 
         Returns:
             Dict: Reformatedd values dict
+
+        Examples:
+            >>> # Test basic auth
+            >>> values = {'auth_type': 'basic', 'auth_username': 'user', 'auth_password': 'pass'}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> 'auth' in result
+            True
+            >>> result['auth']['auth_type']
+            'basic'
+
+            >>> # Test bearer auth
+            >>> values = {'auth_type': 'bearer', 'auth_token': 'mytoken'}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> result['auth']['auth_type']
+            'bearer'
+
+            >>> # Test authheaders
+            >>> values = {'auth_type': 'authheaders', 'auth_header_key': 'X-API-Key', 'auth_header_value': 'secret'}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> result['auth']['auth_type']
+            'authheaders'
+
+            >>> # Test no auth type
+            >>> values = {'name': 'test'}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> 'auth' in result
+            False
         """
         logger.debug(
             "Assembling auth in ToolCreate with raw values",
@@ -470,8 +550,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     integration_type: Optional[Literal["MCP", "REST"]] = Field(None, description="Tool integration type")
+    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
     annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
@@ -518,6 +598,17 @@ class ToolUpdate(BaseModelWithConfigDict):
 
         Raises:
             ValueError: When value is unsafe
+
+        Examples:
+            >>> from mcpgateway.schemas import ResourceCreate
+            >>> ResourceCreate.validate_description('A safe description')
+            'A safe description'
+            >>> ResourceCreate.validate_description(None)  # Test None case
+
+            >>> ResourceCreate.validate_description('x' * 5000)
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
         """
         if v is None:
             return v
@@ -554,8 +645,8 @@ class ToolUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: When value is unsafe
         """
-        integration_type = values.config.get("integration_type", "MCP")
 
+        integration_type = values.data.get("integration_type", "MCP")
         if integration_type == "MCP":
             allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
         else:  # REST
@@ -566,6 +657,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         return v
 
     @model_validator(mode="before")
+    @classmethod
     def assemble_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
         Assemble authentication information from separate keys if provided.
@@ -646,13 +738,145 @@ class ToolRead(BaseModelWithConfigDict):
 class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
 
+    This schema validates tool invocation requests to ensure they follow MCP
+    (Model Context Protocol) naming conventions and prevent security vulnerabilities
+    such as XSS attacks or deeply nested payloads that could cause DoS.
+
     Captures:
-    - Tool name to invoke
-    - Arguments matching tool's input schema
+    - Tool name to invoke (validated for safety and MCP compliance)
+    - Arguments matching tool's input schema (validated for depth limits)
+
+    Validation Rules:
+    - Tool names must start with a letter and contain only letters, numbers,
+      underscores, and hyphens
+    - Tool names cannot contain HTML special characters (<, >, ", ', /)
+    - Arguments are validated to prevent excessively deep nesting (default max: 10 levels)
+
+    Attributes:
+        name (str): Name of the tool to invoke. Must follow MCP naming conventions.
+        arguments (Dict[str, Any]): Arguments to pass to the tool. Must match the
+                                   tool's input schema and not exceed depth limits.
+
+    Examples:
+        >>> from pydantic import ValidationError
+        >>> # Valid tool invocation
+        >>> tool_inv = ToolInvocation(name="get_weather", arguments={"city": "London"})
+        >>> tool_inv.name
+        'get_weather'
+        >>> tool_inv.arguments
+        {'city': 'London'}
+
+        >>> # Valid tool name with underscores and numbers
+        >>> tool_inv = ToolInvocation(name="tool_v2_beta", arguments={})
+        >>> tool_inv.name
+        'tool_v2_beta'
+
+        >>> # Invalid: Tool name with special characters
+        >>> try:
+        ...     ToolInvocation(name="tool-name!", arguments={})
+        ... except ValidationError as e:
+        ...     print("Validation failed: Special characters not allowed")
+        Validation failed: Special characters not allowed
+
+        >>> # Invalid: XSS attempt in tool name
+        >>> try:
+        ...     ToolInvocation(name="<script>alert('XSS')</script>", arguments={})
+        ... except ValidationError as e:
+        ...     print("Validation failed: HTML tags not allowed")
+        Validation failed: HTML tags not allowed
+
+        >>> # Invalid: Tool name starting with number
+        >>> try:
+        ...     ToolInvocation(name="123_tool", arguments={})
+        ... except ValidationError as e:
+        ...     print("Validation failed: Must start with letter")
+        Validation failed: Must start with letter
+
+        >>> # Valid: Complex but not too deep arguments
+        >>> args = {"level1": {"level2": {"level3": {"data": "value"}}}}
+        >>> tool_inv = ToolInvocation(name="process_data", arguments=args)
+        >>> tool_inv.arguments["level1"]["level2"]["level3"]["data"]
+        'value'
+
+        >>> # Invalid: Arguments too deeply nested (>10 levels)
+        >>> deep_args = {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": {"k": "too deep"}}}}}}}}}}}
+        >>> try:
+        ...     ToolInvocation(name="process_data", arguments=deep_args)
+        ... except ValidationError as e:
+        ...     print("Validation failed: Exceeds maximum depth")
+        Validation failed: Exceeds maximum depth
+
+        >>> # Edge case: Empty tool name
+        >>> try:
+        ...     ToolInvocation(name="", arguments={})
+        ... except ValidationError as e:
+        ...     print("Validation failed: Name cannot be empty")
+        Validation failed: Name cannot be empty
+
+        >>> # Valid: Tool name with hyphen (but not starting/ending)
+        >>> tool_inv = ToolInvocation(name="get_user_info", arguments={"id": 123})
+        >>> tool_inv.name
+        'get_user_info'
+
+        >>> # Arguments with various types
+        >>> args = {
+        ...     "string": "value",
+        ...     "number": 42,
+        ...     "boolean": True,
+        ...     "array": [1, 2, 3],
+        ...     "nested": {"key": "value"}
+        ... }
+        >>> tool_inv = ToolInvocation(name="complex_tool", arguments=args)
+        >>> tool_inv.arguments["number"]
+        42
     """
 
     name: str = Field(..., description="Name of tool to invoke")
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments matching tool's input schema")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Ensure tool names follow MCP naming conventions.
+
+        Validates that the tool name:
+        - Is not empty
+        - Starts with a letter (not a number or special character)
+        - Contains only letters, numbers, underscores, and hyphens
+        - Does not contain HTML special characters that could cause XSS
+        - Does not exceed maximum length (255 characters)
+
+        Args:
+            v (str): Tool name to validate
+
+        Returns:
+            str: The validated tool name if it passes all checks
+
+        Raises:
+            ValueError: If the tool name violates any validation rules
+        """
+        return SecurityValidator.validate_tool_name(v)
+
+    @field_validator("arguments")
+    @classmethod
+    def validate_arguments(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate arguments structure depth to prevent DoS attacks.
+
+        Ensures that the arguments dictionary doesn't have excessive nesting
+        that could cause performance issues or stack overflow. The default
+        maximum depth is 10 levels.
+
+        Args:
+            v (dict): Arguments dictionary to validate
+
+        Returns:
+            dict: The validated arguments if within depth limits
+
+        Raises:
+            ValueError: If the arguments exceed the maximum allowed depth
+        """
+        SecurityValidator.validate_json_depth(v)
+        return v
 
 
 class ToolResult(BaseModelWithConfigDict):
@@ -775,15 +999,13 @@ class ResourceCreate(BaseModel):
 
         if isinstance(v, bytes):
             try:
-                v_str = v.decode("utf-8")
-
-                if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v_str if isinstance(v, bytes) else v, re.IGNORECASE):
-                    raise ValueError("Content contains HTML tags that may cause display issues")
+                text = v.decode("utf-8")
             except UnicodeDecodeError:
                 raise ValueError("Content must be UTF-8 decodable")
         else:
-            if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v if isinstance(v, bytes) else v, re.IGNORECASE):
-                raise ValueError("Content contains HTML tags that may cause display issues")
+            text = v
+        if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
+            raise ValueError("Content contains HTML tags that may cause display issues")
 
         return v
 
@@ -870,15 +1092,13 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
         if isinstance(v, bytes):
             try:
-                v_str = v.decode("utf-8")
-
-                if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v_str if isinstance(v, bytes) else v, re.IGNORECASE):
-                    raise ValueError("Content contains HTML tags that may cause display issues")
+                text = v.decode("utf-8")
             except UnicodeDecodeError:
                 raise ValueError("Content must be UTF-8 decodable")
         else:
-            if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v if isinstance(v, bytes) else v, re.IGNORECASE):
-                raise ValueError("Content contains HTML tags that may cause display issues")
+            text = v
+        if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
+            raise ValueError("Content contains HTML tags that may cause display issues")
 
         return v
 
@@ -909,13 +1129,163 @@ class ResourceRead(BaseModelWithConfigDict):
 class ResourceSubscription(BaseModelWithConfigDict):
     """Schema for resource subscriptions.
 
+    This schema validates resource subscription requests to ensure URIs are safe
+    and subscriber IDs follow proper formatting rules. It prevents various
+    injection attacks and ensures data consistency.
+
     Tracks:
-    - Resource URI being subscribed to
-    - Unique subscriber identifier
+    - Resource URI being subscribed to (validated for safety)
+    - Unique subscriber identifier (validated for proper format)
+
+    Validation Rules:
+    - URIs cannot contain HTML special characters (<, >, ", ', backslash)
+    - URIs cannot contain directory traversal sequences (..)
+    - URIs must contain only safe characters (alphanumeric, _, -, :, /, ?, =, &, %)
+    - Subscriber IDs must contain only alphanumeric characters, underscores, hyphens, and dots
+    - Both fields have maximum length limits (255 characters)
+
+    Attributes:
+        uri (str): URI of the resource to subscribe to. Must be a safe, valid URI.
+        subscriber_id (str): Unique identifier for the subscriber. Must follow
+                            identifier naming conventions.
+
+    Examples:
+        >>> from pydantic import ValidationError
+        >>> # Valid subscription
+        >>> sub = ResourceSubscription(uri="/api/v1/users/123", subscriber_id="client_001")
+        >>> sub.uri
+        '/api/v1/users/123'
+        >>> sub.subscriber_id
+        'client_001'
+
+        >>> # Valid URI with query parameters
+        >>> sub = ResourceSubscription(uri="/data?type=json&limit=10", subscriber_id="app.service.1")
+        >>> sub.uri
+        '/data?type=json&limit=10'
+
+        >>> # Valid subscriber ID with dots (common for service names)
+        >>> sub = ResourceSubscription(uri="/events", subscriber_id="com.example.service")
+        >>> sub.subscriber_id
+        'com.example.service'
+
+        >>> # Invalid: XSS attempt in URI
+        >>> try:
+        ...     ResourceSubscription(uri="<script>alert('XSS')</script>", subscriber_id="sub1")
+        ... except ValidationError as e:
+        ...     print("Validation failed: HTML characters not allowed")
+        Validation failed: HTML characters not allowed
+
+        >>> # Invalid: Directory traversal in URI
+        >>> try:
+        ...     ResourceSubscription(uri="/api/../../../etc/passwd", subscriber_id="sub1")
+        ... except ValidationError as e:
+        ...     print("Validation failed: Directory traversal detected")
+        Validation failed: Directory traversal detected
+
+        >>> # Invalid: SQL injection attempt in URI
+        >>> try:
+        ...     ResourceSubscription(uri="/users'; DROP TABLE users;--", subscriber_id="sub1")
+        ... except ValidationError as e:
+        ...     print("Validation failed: Invalid characters in URI")
+        Validation failed: Invalid characters in URI
+
+        >>> # Invalid: Special characters in subscriber ID
+        >>> try:
+        ...     ResourceSubscription(uri="/api/data", subscriber_id="sub@123!")
+        ... except ValidationError as e:
+        ...     print("Validation failed: Invalid subscriber ID format")
+        Validation failed: Invalid subscriber ID format
+
+        >>> # Invalid: Empty URI
+        >>> try:
+        ...     ResourceSubscription(uri="", subscriber_id="sub1")
+        ... except ValidationError as e:
+        ...     print("Validation failed: URI cannot be empty")
+        Validation failed: URI cannot be empty
+
+        >>> # Invalid: Empty subscriber ID
+        >>> try:
+        ...     ResourceSubscription(uri="/api/data", subscriber_id="")
+        ... except ValidationError as e:
+        ...     print("Validation failed: Subscriber ID cannot be empty")
+        Validation failed: Subscriber ID cannot be empty
+
+        >>> # Valid: Complex but safe URI
+        >>> sub = ResourceSubscription(
+        ...     uri="/api/v2/resources/category:items/filter?status=active&limit=50",
+        ...     subscriber_id="monitor-service-01"
+        ... )
+        >>> sub.uri
+        '/api/v2/resources/category:items/filter?status=active&limit=50'
+
+        >>> # Edge case: Maximum length validation (simulated)
+        >>> long_uri = "/" + "a" * 254  # Just under limit
+        >>> sub = ResourceSubscription(uri=long_uri, subscriber_id="sub1")
+        >>> len(sub.uri)
+        255
+
+        >>> # Invalid: Quotes in URI (could break out of attributes)
+        >>> try:
+        ...     ResourceSubscription(uri='/api/data"onclick="alert(1)', subscriber_id="sub1")
+        ... except ValidationError as e:
+        ...     print("Validation failed: Quotes not allowed in URI")
+        Validation failed: Quotes not allowed in URI
     """
 
     uri: str = Field(..., description="URI of resource to subscribe to")
     subscriber_id: str = Field(..., description="Unique subscriber identifier")
+
+    @field_validator("uri")
+    @classmethod
+    def validate_uri(cls, v: str) -> str:
+        """Validate URI format for safety and correctness.
+
+        Ensures the URI:
+        - Is not empty
+        - Does not contain HTML special characters that could cause XSS
+        - Does not contain directory traversal sequences (..)
+        - Contains only allowed characters for URIs
+        - Does not exceed maximum length (255 characters)
+
+        This prevents various injection attacks including XSS, path traversal,
+        and other URI-based vulnerabilities.
+
+        Args:
+            v (str): URI to validate
+
+        Returns:
+            str: The validated URI if it passes all security checks
+
+        Raises:
+            ValueError: If the URI contains dangerous patterns or invalid characters
+        """
+        return SecurityValidator.validate_uri(v, "Resource URI")
+
+    @field_validator("subscriber_id")
+    @classmethod
+    def validate_subscriber_id(cls, v: str) -> str:
+        """Validate subscriber ID format.
+
+        Ensures the subscriber ID:
+        - Is not empty
+        - Contains only alphanumeric characters, underscores, hyphens, and dots
+        - Does not contain HTML special characters
+        - Follows standard identifier naming conventions
+        - Does not exceed maximum length (255 characters)
+
+        This ensures consistency and prevents injection attacks through
+        subscriber identifiers.
+
+        Args:
+            v (str): Subscriber ID to validate
+
+        Returns:
+            str: The validated subscriber ID if it passes all checks
+
+        Raises:
+            ValueError: If the subscriber ID violates naming conventions
+        """
+        return SecurityValidator.validate_identifier(v, "Subscriber ID")
 
 
 class ResourceNotification(BaseModelWithConfigDict):
@@ -1060,6 +1430,34 @@ class PromptCreate(BaseModel):
         return v
 
 
+class PromptExecuteArgs(BaseModel):
+    """
+    Schema for args executing a prompt
+
+    Attributes:
+        args (Dict[str, str]): Arguments for prompt execution.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    args: Dict[str, str] = Field(default_factory=dict, description="Arguments for prompt execution")
+
+    @field_validator("args")
+    @classmethod
+    def validate_args(cls, v: dict) -> dict:
+        """Ensure prompt arguments pass XSS validation
+
+        Args:
+            v (dict): Value to validate
+
+        Returns:
+            dict: Value if validated as safe
+        """
+        for val in v.values():
+            SecurityValidator.validate_no_xss(val, "Prompt execution arguments")
+        return v
+
+
 class PromptUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing prompt.
 
@@ -1168,6 +1566,24 @@ class PromptInvocation(BaseModelWithConfigDict):
 # --- Gateway Schemas ---
 
 
+# --- Transport Type ---
+class TransportType(str, Enum):
+    """
+    Enumeration of supported transport mechanisms for communication between components.
+
+    Attributes:
+        SSE (str): Server-Sent Events transport.
+        HTTP (str): Standard HTTP-based transport.
+        STDIO (str): Standard input/output transport.
+        STREAMABLEHTTP (str): HTTP transport with streaming.
+    """
+
+    SSE = "SSE"
+    HTTP = "HTTP"
+    STDIO = "STDIO"
+    STREAMABLEHTTP = "STREAMABLEHTTP"
+
+
 class GatewayCreate(BaseModel):
     """
     Schema for creating a new gateway.
@@ -1253,6 +1669,7 @@ class GatewayCreate(BaseModel):
         return SecurityValidator.sanitize_display_text(v, "Description")
 
     @field_validator("auth_value", mode="before")
+    @classmethod
     def create_auth_value(cls, v, info):
         """
         This validator will run before the model is fully instantiated (mode="before")
@@ -1275,6 +1692,31 @@ class GatewayCreate(BaseModel):
         auth_value = cls._process_auth_fields(info)
 
         return auth_value
+
+    @field_validator("transport")
+    @classmethod
+    def validate_transport(cls, v: str) -> str:
+        """
+        Validates that the given transport value is one of the supported TransportType values.
+
+        Args:
+            v (str): The transport value to validate.
+
+        Returns:
+            str: The validated transport value if it is valid.
+
+        Raises:
+            ValueError: If the provided value is not a valid transport type.
+
+        Valid transport types are defined in the TransportType enum:
+            - SSE
+            - HTTP
+            - STDIO
+            - STREAMABLEHTTP
+        """
+        if v not in [t.value for t in TransportType]:
+            raise ValueError(f"Invalid transport type: {v}. Must be one of: {', '.join([t.value for t in TransportType])}")
+        return v
 
     @staticmethod
     def _process_auth_fields(info: ValidationInfo) -> Optional[Dict[str, Any]]:
@@ -1397,6 +1839,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         return SecurityValidator.sanitize_display_text(v, "Description")
 
     @field_validator("auth_value", mode="before")
+    @classmethod
     def create_auth_value(cls, v, info):
         """
         This validator will run before the model is fully instantiated (mode="before")
@@ -1435,13 +1878,13 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If auth type is invalid
         """
-        auth_type = values.get("auth_type")
+
+        auth_type = values.data.get("auth_type")
 
         if auth_type == "basic":
             # For basic authentication, both username and password must be present
-            username = values.get("auth_username")
-            password = values.get("auth_password")
-
+            username = values.data.get("auth_username")
+            password = values.data.get("auth_password")
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
@@ -1450,7 +1893,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         if auth_type == "bearer":
             # For bearer authentication, only token is required
-            token = values.get("auth_token")
+            token = values.data.get("auth_token")
 
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
@@ -1459,8 +1902,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         if auth_type == "authheaders":
             # For headers authentication, both key and value must be present
-            header_key = values.get("auth_header_key")
-            header_value = values.get("auth_header_value")
+            header_key = values.data.get("auth_header_key")
+            header_value = values.data.get("auth_header_value")
 
             if not header_key or not header_value:
                 raise ValueError("For 'headers' auth, both 'auth_header_key' and 'auth_header_value' must be provided.")
@@ -1518,15 +1961,84 @@ class GatewayRead(BaseModelWithConfigDict):
     slug: str = Field(None, description="Slug for gateway endpoint URL")
 
     # This will be the main method to automatically populate fields
-    @classmethod
     @model_validator(mode="after")
-    def _populate_auth(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    @classmethod
+    def _populate_auth(cls, values: Self) -> Dict[str, Any]:
+        """Populate authentication fields based on auth_type and encoded auth_value.
+
+        This post-validation method decodes the stored authentication value and
+        populates the appropriate authentication fields (username/password, token,
+        or custom headers) based on the authentication type. It ensures the
+        authentication data is properly formatted and accessible through individual
+        fields for display purposes.
+
+        The method handles three authentication types:
+        - basic: Extracts username and password from Authorization header
+        - bearer: Extracts token from Bearer Authorization header
+        - authheaders: Extracts custom header key/value pair
+
+        Args:
+            values: The validated model data containing auth_type and auth_value.
+                Expected to have 'auth_type' and 'auth_value' fields.
+
+        Returns:
+            Dict[str, Any]: The updated values dict with populated auth fields:
+                            - For basic: auth_username and auth_password
+                            - For bearer: auth_token
+                            - For authheaders: auth_header_key and auth_header_value
+
+        Raises:
+            ValueError: If the authentication data is malformed:
+                    - Basic auth missing username or password
+                    - Bearer auth missing or improperly formatted Authorization header
+                    - Custom headers not exactly one key/value pair
+
+        Examples:
+            >>> # Basic auth example
+            >>> string_bytes = "admin:secret".encode("utf-8")
+            >>> encoded_auth = base64.urlsafe_b64encode(string_bytes).decode("utf-8")
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type="basic",
+            ...     auth_value=encode_auth({"Authorization": f"Basic {encoded_auth}"})
+            ... )
+            >>> values = GatewayRead._populate_auth(values)
+            >>> values.auth_username
+            'admin'
+            >>> values.auth_password
+            'secret'
+
+            >>> # Bearer auth example
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type="bearer",
+            ...     auth_value=encode_auth({"Authorization": "Bearer mytoken123"})
+            ... )
+            >>> values = GatewayRead._populate_auth(values)
+            >>> values.auth_token
+            'mytoken123'
+
+            >>> # Custom headers example
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type='authheaders',
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ... )
+            >>> values = GatewayRead._populate_auth(values)
+            >>> values.auth_header_key
+            'X-API-Key'
+            >>> values.auth_header_value
+            'abc123'
+        """
         auth_type = values.auth_type
         auth_value_encoded = values.auth_value
+
+        # Skip validation logic if masked value
+        if auth_value_encoded == settings.masked_auth_value:
+            return values
+
         auth_value = decode_auth(auth_value_encoded)
         if auth_type == "basic":
-            u = auth_value.get("username")
-            p = auth_value.get("password")
+            auth = auth_value.get("Authorization")
+            auth = auth.removeprefix("Basic ")
+            u, p = base64.urlsafe_b64decode(auth).decode("utf-8").split(":")
             if not u or not p:
                 raise ValueError("basic auth requires both username and password")
             values.auth_username, values.auth_password = u, p
@@ -1545,6 +2057,40 @@ class GatewayRead(BaseModelWithConfigDict):
             values.auth_header_key, values.auth_header_value = k, v
 
         return values
+
+    def masked(self) -> "GatewayRead":
+        """
+        Return a masked version of the model instance with sensitive authentication fields hidden.
+
+        This method creates a dictionary representation of the model data and replaces sensitive fields
+        such as `auth_value`, `auth_password`, `auth_token`, and `auth_header_value` with a masked
+        placeholder value defined in `settings.masked_auth_value`. Masking is only applied if the fields
+        are present and not already masked.
+
+        Args:
+            None
+
+        Returns:
+            GatewayRead: A new instance of the GatewayRead model with sensitive authentication-related fields
+            masked to prevent exposure of sensitive information.
+
+        Notes:
+            - The `auth_value` field is only masked if it exists and its value is different from the masking
+            placeholder.
+            - Other sensitive fields (`auth_password`, `auth_token`, `auth_header_value`) are masked if present.
+            - Fields not related to authentication remain unmodified.
+        """
+        masked_data = self.model_dump()
+
+        # Only mask if auth_value is present and not already masked
+        if masked_data.get("auth_value") and masked_data["auth_value"] != settings.masked_auth_value:
+            masked_data["auth_value"] = settings.masked_auth_value
+
+        masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
+        masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
+        masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+
+        return GatewayRead.model_validate(masked_data)
 
 
 class FederatedTool(BaseModelWithConfigDict):
@@ -1612,9 +2158,10 @@ class RPCRequest(BaseModel):
         Raises:
             ValueError: When value is not safe
         """
-        if not re.match(r"^[a-zA-Z][a-zA-Z0-9_\.]*$", v):
+        SecurityValidator.validate_no_xss(v, "RPC method name")
+        if not re.match(settings.validation_tool_method_pattern, v):
             raise ValueError("Invalid method name format")
-        if len(v) > 128:  # MCP method name limit
+        if len(v) > settings.validation_max_method_length:
             raise ValueError("Method name too long")
         return v
 
@@ -1709,6 +2256,7 @@ class AdminToolCreate(BaseModelWithConfigDict):
     input_schema: Optional[str] = None  # JSON string
 
     @field_validator("headers", "input_schema")
+    @classmethod
     def validate_json(cls, v: Optional[str]) -> Optional[Dict[str, Any]]:
         """
         Validate and parse JSON string inputs.
@@ -1846,6 +2394,7 @@ class ServerCreate(BaseModel):
         return SecurityValidator.validate_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    @classmethod
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1923,6 +2472,7 @@ class ServerUpdate(BaseModelWithConfigDict):
         return SecurityValidator.validate_url(v, "Icon URL")
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    @classmethod
     def split_comma_separated(cls, v):
         """
         Splits a comma-separated string into a list of strings if needed.
@@ -1962,6 +2512,7 @@ class ServerRead(BaseModelWithConfigDict):
     metrics: ServerMetrics
 
     @model_validator(mode="before")
+    @classmethod
     def populate_associated_ids(cls, values):
         """
         Pre-validation method that converts associated objects to their 'id'.

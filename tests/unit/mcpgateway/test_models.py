@@ -534,8 +534,8 @@ class TestMCPTypes:
             name="example-tool",
             url="http://localhost:8000/tool",
             description="An example tool",
-            integrationType="MCP",
-            requestType="SSE",
+            integration_type="MCP",
+            request_type="SSE",
             headers={"Content-Type": "application/json"},
             input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
             auth_type="bearer",
@@ -544,8 +544,8 @@ class TestMCPTypes:
         assert tool.name == "example-tool"
         assert str(tool.url) == "http://localhost:8000/tool"
         assert tool.description == "An example tool"
-        assert tool.integrationType == "MCP"
-        assert tool.requestType == "SSE"
+        assert tool.integration_type == "MCP"
+        assert tool.request_type == "SSE"
         assert tool.headers == {"Content-Type": "application/json"}
         assert tool.input_schema == {"type": "object", "properties": {"query": {"type": "string"}}}
         assert tool.auth_type == "bearer"
@@ -559,8 +559,8 @@ class TestMCPTypes:
         assert minimal.name == "minimal-tool"
         assert str(minimal.url) == "http://localhost:8000/minimal"
         assert minimal.description is None
-        assert minimal.integrationType == "MCP"  # Default value
-        assert minimal.requestType == "SSE"  # Default value
+        assert minimal.integration_type == "MCP"  # Default value
+        assert minimal.request_type == "SSE"  # Default value
         assert minimal.headers == {}  # Default value
         assert minimal.input_schema == {"type": "object", "properties": {}}  # Default value
         assert minimal.auth_type is None

@@ -11,6 +11,54 @@ It supports multiple discovery mechanisms:
 - Static peer lists
 - Peer exchange protocol
 - Manual registration
+
+The discovery service automatically finds and connects to other MCP gateways
+on the network, maintains a list of active peers, and exchanges peer information
+to build a federation of gateways.
+
+# Run doctests with coverage and show missing lines
+pytest --doctest-modules --cov=mcpgateway.federation.discovery --cov-report=term-missing mcpgateway/federation/discovery.py -v
+
+# For more detailed line-by-line coverage annotation
+pytest --doctest-modules --cov=mcpgateway.federation.discovery --cov-report=annotate mcpgateway/federation/discovery.py -v
+
+
+Examples:
+    Basic usage of the discovery service::
+
+        >>> import asyncio
+        >>> from mcpgateway.federation.discovery import DiscoveryService
+        >>>
+        >>> async def main():
+        ...     discovery = DiscoveryService()
+        ...     await discovery.start()
+        ...
+        ...     # Add a manual peer
+        ...     await discovery.add_peer("http://gateway.example.com:8080", "manual")
+        ...
+        ...     # Get discovered peers
+        ...     peers = discovery.get_discovered_peers()
+        ...     for peer in peers:
+        ...         print(f"Found peer: {peer.url} via {peer.source}")
+        ...
+        ...     await discovery.stop()
+        >>>
+        >>> # asyncio.run(main())
+
+    Testing peer discovery::
+
+        >>> from datetime import datetime, timezone
+        >>> peer = DiscoveredPeer(
+        ...     url="http://localhost:8080",
+        ...     name="test-gateway",
+        ...     protocol_version="2025-03-26",
+        ...     capabilities=None,
+        ...     discovered_at=datetime.now(timezone.utc),
+        ...     last_seen=datetime.now(timezone.utc),
+        ...     source="manual"
+        ... )
+        >>> print(peer.url)
+        http://localhost:8080
 """
 
 # Standard
@@ -40,7 +88,43 @@ PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
 
 @dataclass
 class DiscoveredPeer:
-    """Information about a discovered peer gateway."""
+    """Information about a discovered peer gateway.
+
+    Represents a peer MCP gateway that has been discovered through various
+    discovery mechanisms. Tracks when the peer was discovered, last seen,
+    and its capabilities.
+
+    Attributes:
+        url (str): The base URL of the peer gateway.
+        name (Optional[str]): Human-readable name of the peer gateway.
+        protocol_version (Optional[str]): MCP protocol version supported by the peer.
+        capabilities (Optional[ServerCapabilities]): Server capabilities of the peer.
+        discovered_at (datetime): When the peer was first discovered.
+        last_seen (datetime): When the peer was last successfully contacted.
+        source (str): How the peer was discovered (e.g., "dns-sd", "static", "manual").
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> peer = DiscoveredPeer(
+        ...     url="http://gateway1.local:8080",
+        ...     name="Gateway 1",
+        ...     protocol_version="2025-03-26",
+        ...     capabilities=None,
+        ...     discovered_at=datetime.now(timezone.utc),
+        ...     last_seen=datetime.now(timezone.utc),
+        ...     source="dns-sd"
+        ... )
+        >>> print(f"{peer.name} at {peer.url}")
+        Gateway 1 at http://gateway1.local:8080
+        >>> peer.protocol_version
+        '2025-03-26'
+        >>> peer.source
+        'dns-sd'
+        >>> isinstance(peer.discovered_at, datetime)
+        True
+        >>> isinstance(peer.last_seen, datetime)
+        True
+    """
 
     url: str
     name: Optional[str]
@@ -52,10 +136,40 @@ class DiscoveredPeer:
 
 
 class LocalDiscoveryService:
-    """Super class for DiscoveryService"""
+    """Base class for local network discovery using DNS-SD.
+
+    Provides functionality for advertising the local gateway on the network
+    using DNS Service Discovery (mDNS/Bonjour). This allows other gateways
+    on the same network to automatically discover this gateway.
+
+    Attributes:
+        _service_type (str): The DNS-SD service type for MCP gateways.
+        _service_info (ServiceInfo): Zeroconf service information for advertising.
+
+    Examples:
+        >>> service = LocalDiscoveryService()
+        >>> service._service_type
+        '_mcp._tcp.local.'
+        >>> isinstance(service._service_info, ServiceInfo)
+        True
+        >>> service._service_info.type
+        '_mcp._tcp.local.'
+        >>> service._service_info.port == settings.port
+        True
+        >>> b'name' in service._service_info.properties
+        True
+        >>> b'version' in service._service_info.properties
+        True
+        >>> b'protocol' in service._service_info.properties
+        True
+    """
 
     def __init__(self):
-        """Initialize local discovery service"""
+        """Initialize local discovery service.
+
+        Sets up the service information for DNS-SD advertisement including
+        the service type, name, port, and properties.
+        """
         # Service info for local discovery
         self._service_type = "_mcp._tcp.local."
         self._service_info = ServiceInfo(
@@ -73,8 +187,30 @@ class LocalDiscoveryService:
     def _get_local_addresses(self) -> List[str]:
         """Get list of local network addresses.
 
+        Retrieves all non-localhost IP addresses for the local machine.
+        Falls back to localhost if no other addresses are found or if
+        an error occurs.
+
         Returns:
-            List of IP addresses
+            List[str]: List of IP addresses as strings.
+
+        Examples:
+            >>> service = LocalDiscoveryService()
+            >>> addrs = service._get_local_addresses()
+            >>> isinstance(addrs, list)
+            True
+            >>> all(isinstance(addr, str) for addr in addrs)
+            True
+            >>> len(addrs) >= 1  # At least localhost
+            True
+            >>> # Check IP format
+            >>> all('.' in addr for addr in addrs)  # IPv4 format
+            True
+            >>> # Verify no empty addresses
+            >>> all(addr for addr in addrs)
+            True
+            >>> '' not in addrs
+            True
         """
         addresses = []
         try:
@@ -100,10 +236,42 @@ class DiscoveryService(LocalDiscoveryService):
     - Static peer lists from configuration
     - Peer exchange with known gateways
     - Manual registration via API
+
+    The service maintains a list of discovered peers, periodically refreshes
+    their information, and removes stale peers that haven't been seen recently.
+
+    Attributes:
+        _zeroconf (Optional[AsyncZeroconf]): Zeroconf instance for DNS-SD.
+        _browser (Optional[AsyncServiceBrowser]): Service browser for discovering peers.
+        _http_client (httpx.AsyncClient): HTTP client for communicating with peers.
+        _discovered_peers (Dict[str, DiscoveredPeer]): Map of URL to peer information.
+        _cleanup_task (Optional[asyncio.Task]): Background task for cleaning stale peers.
+        _refresh_task (Optional[asyncio.Task]): Background task for refreshing peer info.
+
+    Examples:
+        >>> import asyncio
+        >>> async def test_discovery():
+        ...     service = DiscoveryService()
+        ...     await service.start()
+        ...
+        ...     # Add a peer manually
+        ...     added = await service.add_peer("http://peer1.local:8080", "manual")
+        ...
+        ...     # Get all discovered peers
+        ...     peers = service.get_discovered_peers()
+        ...
+        ...     await service.stop()
+        ...     return len(peers)
+        >>>
+        >>> # result = asyncio.run(test_discovery())
     """
 
     def __init__(self):
-        """Initialize discovery service."""
+        """Initialize discovery service.
+
+        Sets up the HTTP client, peer tracking dictionary, and prepares
+        for background tasks. Does not start any network operations.
+        """
         super().__init__()
 
         self._zeroconf: Optional[AsyncZeroconf] = None
@@ -118,11 +286,22 @@ class DiscoveryService(LocalDiscoveryService):
         self._refresh_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
-        """
-        Start discovery service.
+        """Start discovery service.
+
+        Initializes DNS-SD if enabled, starts background tasks for peer
+        maintenance, and loads any statically configured peers.
 
         Raises:
-            Exception: If unable to start discovery service
+            Exception: If unable to start discovery service.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_start():
+            ...     service = DiscoveryService()
+            ...     await service.start()
+            ...     # Service is now running
+            ...     await service.stop()
+            >>> # asyncio.run(test_start())
         """
         try:
             # Initialize DNS-SD
@@ -151,7 +330,20 @@ class DiscoveryService(LocalDiscoveryService):
             raise
 
     async def stop(self) -> None:
-        """Stop discovery service."""
+        """Stop discovery service.
+
+        Cancels background tasks, unregisters DNS-SD service, and closes
+        all network connections. Safe to call multiple times.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_stop():
+            ...     service = DiscoveryService()
+            ...     await service.start()
+            ...     await service.stop()
+            ...     # All resources cleaned up
+            >>> # asyncio.run(test_stop())
+        """
         # Cancel background tasks
         if self._cleanup_task:
             self._cleanup_task.cancel()
@@ -185,13 +377,28 @@ class DiscoveryService(LocalDiscoveryService):
     async def add_peer(self, url: str, source: str, name: Optional[str] = None) -> bool:
         """Add a new peer gateway.
 
+        Validates the URL, checks if the peer is already known, and attempts
+        to retrieve the peer's capabilities. If successful, adds the peer to
+        the discovered peers list.
+
         Args:
-            url: Gateway URL
-            source: Discovery source
-            name: Optional gateway name
+            url (str): Gateway URL (e.g., "http://gateway.example.com:8080").
+            source (str): Discovery source (e.g., "static", "dns-sd", "manual").
+            name (Optional[str]): Optional human-readable gateway name.
 
         Returns:
-            True if peer was added
+            bool: True if peer was successfully added, False otherwise.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_add_peer():
+            ...     service = DiscoveryService()
+            ...     # Valid URL
+            ...     result = await service.add_peer("http://localhost:8080", "manual")
+            ...     # Invalid URL
+            ...     invalid = await service.add_peer("not-a-url", "manual")
+            ...     return result, invalid
+            >>> # valid, invalid = asyncio.run(test_add_peer())
         """
         # Validate URL
         try:
@@ -234,19 +441,63 @@ class DiscoveryService(LocalDiscoveryService):
     def get_discovered_peers(self) -> List[DiscoveredPeer]:
         """Get list of discovered peers.
 
+        Returns a snapshot of all currently known peer gateways.
+
         Returns:
-            List of discovered peer information
+            List[DiscoveredPeer]: List of discovered peer information.
+
+        Examples:
+            >>> service = DiscoveryService()
+            >>> peers = service.get_discovered_peers()
+            >>> isinstance(peers, list)
+            True
+            >>> # After adding peers
+            >>> # len(peers) > 0
+            >>> # Initially empty
+            >>> len(peers)
+            0
+            >>> # Add a peer manually (sync example)
+            >>> from datetime import datetime, timezone
+            >>> service._discovered_peers["http://test.com"] = DiscoveredPeer(
+            ...     url="http://test.com",
+            ...     name="Test",
+            ...     protocol_version="2025-03-26",
+            ...     capabilities=None,
+            ...     discovered_at=datetime.now(timezone.utc),
+            ...     last_seen=datetime.now(timezone.utc),
+            ...     source="manual"
+            ... )
+            >>> peers = service.get_discovered_peers()
+            >>> len(peers)
+            1
+            >>> peers[0].url
+            'http://test.com'
         """
         return list(self._discovered_peers.values())
 
     async def refresh_peer(self, url: str) -> bool:
         """Refresh peer gateway information.
 
+        Attempts to update the capabilities and last seen time for a known peer.
+
         Args:
-            url: Gateway URL to refresh
+            url (str): Gateway URL to refresh.
 
         Returns:
-            True if refresh succeeded
+            bool: True if refresh succeeded, False otherwise.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_refresh():
+            ...     service = DiscoveryService()
+            ...     # Add a peer first
+            ...     await service.add_peer("http://localhost:8080", "manual")
+            ...     # Refresh it
+            ...     refreshed = await service.refresh_peer("http://localhost:8080")
+            ...     # Unknown peer
+            ...     unknown = await service.refresh_peer("http://unknown:8080")
+            ...     return refreshed, unknown
+            >>> # refreshed, unknown = asyncio.run(test_refresh())
         """
         if url not in self._discovered_peers:
             return False
@@ -263,8 +514,45 @@ class DiscoveryService(LocalDiscoveryService):
     async def remove_peer(self, url: str) -> None:
         """Remove a peer gateway.
 
+        Removes a peer from the discovered peers list. Safe to call even
+        if the peer doesn't exist.
+
         Args:
-            url: Gateway URL to remove
+            url (str): Gateway URL to remove.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_remove():
+            ...     service = DiscoveryService()
+            ...     await service.add_peer("http://localhost:8080", "manual")
+            ...     await service.remove_peer("http://localhost:8080")
+            ...     peers = service.get_discovered_peers()
+            ...     return len(peers)
+            >>> # count = asyncio.run(test_remove())
+
+            >>> # Sync example
+            >>> from datetime import datetime, timezone
+            >>> service = DiscoveryService()
+            >>> # Add a peer directly
+            >>> service._discovered_peers["http://test.com"] = DiscoveredPeer(
+            ...     url="http://test.com",
+            ...     name="Test",
+            ...     protocol_version="2025-03-26",
+            ...     capabilities=None,
+            ...     discovered_at=datetime.now(timezone.utc),
+            ...     last_seen=datetime.now(timezone.utc),
+            ...     source="manual"
+            ... )
+            >>> len(service._discovered_peers)
+            1
+            >>> # Remove it (sync version for testing)
+            >>> service._discovered_peers.pop("http://test.com", None) is not None
+            True
+            >>> len(service._discovered_peers)
+            0
+            >>> # Safe to remove non-existent
+            >>> service._discovered_peers.pop("http://nonexistent.com", None) is None
+            True
         """
         self._discovered_peers.pop(url, None)
 
@@ -277,11 +565,15 @@ class DiscoveryService(LocalDiscoveryService):
     ) -> None:
         """Handle DNS-SD service changes.
 
+        Called by Zeroconf when services are added or removed from the network.
+        When a new MCP gateway is discovered, extracts its information and adds
+        it as a peer.
+
         Args:
-            zeroconf: Zeroconf instance
-            service_type: Service type
-            name: Service name
-            state_change: Type of state change
+            zeroconf (AsyncZeroconf): Zeroconf instance.
+            service_type (str): Service type that changed.
+            name (str): Service name that changed.
+            state_change (ServiceStateChange): Type of state change (Added/Removed).
         """
         if state_change is ServiceStateChange.Added:
             info = await zeroconf.async_get_service_info(service_type, name)
@@ -301,7 +593,14 @@ class DiscoveryService(LocalDiscoveryService):
                     logger.warning(f"Failed to process discovered service {name}: {e}")
 
     async def _cleanup_loop(self) -> None:
-        """Periodically clean up stale peers."""
+        """Periodically clean up stale peers.
+
+        Runs in the background and removes peers that haven't been seen
+        for more than 10 minutes. Runs every 60 seconds.
+
+        Raises:
+            asyncio.CancelledError: When the task is cancelled during shutdown.
+        """
         while True:
             try:
                 now = datetime.now(timezone.utc)
@@ -316,7 +615,14 @@ class DiscoveryService(LocalDiscoveryService):
             await asyncio.sleep(60)
 
     async def _refresh_loop(self) -> None:
-        """Periodically refresh peer information."""
+        """Periodically refresh peer information.
+
+        Runs in the background and refreshes all peer information and
+        performs peer exchange every 5 minutes.
+
+        Raises:
+            asyncio.CancelledError: When the task is cancelled during shutdown.
+        """
         while True:
             try:
                 # Refresh all peers
@@ -334,14 +640,19 @@ class DiscoveryService(LocalDiscoveryService):
     async def _get_gateway_info(self, url: str) -> ServerCapabilities:
         """Get gateway capabilities.
 
+        Sends an initialize request to the peer gateway to retrieve its
+        capabilities and verify protocol compatibility.
+
         Args:
-            url: Gateway URL
+            url (str): Gateway URL.
 
         Returns:
-            Gateway capabilities
+            ServerCapabilities: Gateway capabilities object.
 
         Raises:
-            ValueError: If protocol version is unsupported
+            ValueError: If protocol version is unsupported.
+            httpx.HTTPStatusError: If the HTTP request fails.
+            httpx.RequestError: If the request cannot be sent.
         """
         # Build initialize request
         request = {
@@ -367,7 +678,12 @@ class DiscoveryService(LocalDiscoveryService):
         return ServerCapabilities.model_validate(result["capabilities"])
 
     async def _exchange_peers(self) -> None:
-        """Exchange peer lists with known gateways."""
+        """Exchange peer lists with known gateways.
+
+        Contacts each known peer to retrieve their list of known peers,
+        potentially discovering new gateways through transitive connections.
+        This enables building a mesh network of federated gateways.
+        """
         for url in list(self._discovered_peers.keys()):
             try:
                 # Get peer's peer list using the persistent HTTP client directly
@@ -384,11 +700,29 @@ class DiscoveryService(LocalDiscoveryService):
                 logger.warning(f"Failed to exchange peers with {url}: {e}")
 
     def _get_auth_headers(self) -> Dict[str, str]:
-        """
-        Get headers for gateway authentication.
+        """Get headers for gateway authentication.
+
+        Constructs authentication headers using the configured credentials
+        for communicating with peer gateways.
 
         Returns:
-            dict: Authorization header dict
+            Dict[str, str]: Dictionary containing Authorization and X-API-Key headers.
+
+        Examples:
+            >>> service = DiscoveryService()
+            >>> headers = service._get_auth_headers()
+            >>> "Authorization" in headers
+            True
+            >>> "X-API-Key" in headers
+            True
+            >>> headers["Authorization"].startswith("Basic ")
+            True
+            >>> headers["X-API-Key"] == f"{settings.basic_auth_user}:{settings.basic_auth_password}"
+            True
+            >>> isinstance(headers, dict)
+            True
+            >>> len(headers)
+            2
         """
         api_key = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
         return {"Authorization": f"Basic {api_key}", "X-API-Key": api_key}

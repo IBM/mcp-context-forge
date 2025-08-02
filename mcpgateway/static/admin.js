@@ -69,10 +69,10 @@ function validateInputName(name, type = "input") {
         return { valid: false, error: `${type} name cannot be empty` };
     }
 
-    if (cleaned.length > 100) {
+    if (cleaned.length > window.MAX_NAME_LENGTH) {
         return {
             valid: false,
-            error: `${type} name must be 100 characters or less`,
+            error: `${type} name must be ${window.MAX_NAME_LENGTH} characters or less`,
         };
     }
 
@@ -89,6 +89,24 @@ function validateInputName(name, type = "input") {
     }
 
     return { valid: true, value: cleaned };
+}
+
+/**
+ * Extracts content from various formats with fallback
+ */
+function extractContent(content, fallback = "") {
+    if (typeof content === "object" && content !== null) {
+        if (content.text !== undefined && content.text !== null) {
+            return content.text;
+        } else if (content.blob !== undefined && content.blob !== null) {
+            return content.blob;
+        } else if (content.content !== undefined && content.content !== null) {
+            return content.content;
+        } else {
+            return JSON.stringify(content, null, 2);
+        }
+    }
+    return String(content || fallback);
 }
 
 /**
@@ -159,7 +177,8 @@ function isInactiveChecked(type) {
 }
 
 // Enhanced fetch with timeout and better error handling
-function fetchWithTimeout(url, options = {}, timeout = 10000) {
+function fetchWithTimeout(url, options = {}, timeout = 30000) {
+    // Increased from 10000
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
         console.warn(`Request to ${url} timed out after ${timeout}ms`);
@@ -178,32 +197,41 @@ function fetchWithTimeout(url, options = {}, timeout = 10000) {
     })
         .then((response) => {
             clearTimeout(timeoutId);
-            if (
-                response.status === 0 ||
-                (response.ok && response.status === 200)
-            ) {
+
+            // FIX: Better handling of empty responses
+            if (response.status === 0) {
+                // Status 0 often indicates a network error or CORS issue
+                throw new Error(
+                    "Network error or server is not responding. Please ensure the server is running and accessible.",
+                );
+            }
+
+            if (response.ok && response.status === 200) {
                 const contentLength = response.headers.get("content-length");
 
                 // Check Content-Length if present
-                if (contentLength !== null) {
-                    if (parseInt(contentLength, 10) === 0) {
-                        throw new Error(
-                            "Server returned an empty response (via header)",
-                        );
-                    }
-                } else {
-                    // Fallback: check actual body
-                    const cloned = response.clone();
-                    return cloned.text().then((text) => {
-                        if (!text.trim()) {
-                            throw new Error(
-                                "Server returned an empty response (via body)",
-                            );
-                        }
-                        return response;
-                    });
+                if (
+                    contentLength !== null &&
+                    parseInt(contentLength, 10) === 0
+                ) {
+                    console.warn(
+                        `Empty response from ${url} (Content-Length: 0)`,
+                    );
+                    // Don't throw error for intentionally empty responses
+                    return response;
                 }
+
+                // For responses without Content-Length, clone and check
+                const cloned = response.clone();
+                return cloned.text().then((text) => {
+                    if (!text || !text.trim()) {
+                        console.warn(`Empty response body from ${url}`);
+                        // Return the original response anyway
+                    }
+                    return response;
+                });
             }
+
             return response;
         })
         .catch((error) => {
@@ -212,15 +240,21 @@ function fetchWithTimeout(url, options = {}, timeout = 10000) {
             // Improve error messages for common issues
             if (error.name === "AbortError") {
                 throw new Error(
-                    `Request timed out after ${timeout / 1000} seconds`,
+                    `Request timed out after ${timeout / 1000} seconds. The server may be slow or unresponsive.`,
                 );
-            } else if (error.message.includes("Failed to fetch")) {
+            } else if (
+                error.message.includes("Failed to fetch") ||
+                error.message.includes("NetworkError")
+            ) {
                 throw new Error(
-                    "Unable to connect to server. Please check if the server is running.",
+                    "Unable to connect to server. Please check if the server is running on the correct port.",
                 );
-            } else if (error.message.includes("empty response")) {
+            } else if (
+                error.message.includes("empty response") ||
+                error.message.includes("ERR_EMPTY_RESPONSE")
+            ) {
                 throw new Error(
-                    "Server returned an empty response. The endpoint may not be implemented.",
+                    "Server returned an empty response. This endpoint may not be implemented yet or the server crashed.",
                 );
             }
 
@@ -229,10 +263,10 @@ function fetchWithTimeout(url, options = {}, timeout = 10000) {
 }
 
 // Safe element getter with logging
-function safeGetElement(id) {
+function safeGetElement(id, suppressWarning = false) {
     try {
         const element = document.getElementById(id);
-        if (!element) {
+        if (!element && !suppressWarning) {
             console.warn(`Element with id "${id}" not found`);
         }
         return element;
@@ -413,7 +447,10 @@ function openModal(modalId) {
         }
 
         // Reset modal state
-        resetModalState(modalId);
+        const resetModelVariable = false;
+        if (resetModelVariable) {
+            resetModalState(modalId);
+        }
 
         modal.classList.remove("hidden");
         AppState.setModalActive(modalId);
@@ -492,13 +529,19 @@ function resetModalState(modalId) {
 // More robust metrics request tracking
 let metricsRequestController = null;
 let metricsRequestPromise = null;
-const MAX_METRICS_RETRIES = 2; // Reduced from 3
-const METRICS_RETRY_DELAY = 1500; // Reduced from 2000ms
+const MAX_METRICS_RETRIES = 3; // Increased from 2
+const METRICS_RETRY_DELAY = 2000; // Increased from 1500ms
 
 /**
  * Enhanced metrics loading with better race condition prevention
  */
 async function loadAggregatedMetrics() {
+    const metricsPanel = safeGetElement("metrics-panel", true);
+    if (!metricsPanel || metricsPanel.closest(".tab-panel.hidden")) {
+        console.log("Metrics panel not visible, skipping load");
+        return;
+    }
+
     // Cancel any existing request
     if (metricsRequestController) {
         console.log("Cancelling existing metrics request...");
@@ -513,10 +556,12 @@ async function loadAggregatedMetrics() {
     }
 
     console.log("Starting new metrics request...");
+    showMetricsLoading();
 
     metricsRequestPromise = loadMetricsInternal().finally(() => {
         metricsRequestPromise = null;
         metricsRequestController = null;
+        hideMetricsLoading();
     });
 
     return metricsRequestPromise;
@@ -530,7 +575,7 @@ async function loadMetricsInternal() {
         const result = await fetchWithTimeoutAndRetry(
             `${window.ROOT_PATH}/admin/metrics`,
             {}, // options
-            20000, // 20 second timeout (reduced from 30)
+            45000, // Increased timeout specifically for metrics (was 20000)
             MAX_METRICS_RETRIES,
         );
 
@@ -540,10 +585,30 @@ async function loadMetricsInternal() {
                 showMetricsPlaceholder();
                 return;
             }
+            // FIX: Handle 500 errors specifically
+            if (result.status >= 500) {
+                throw new Error(
+                    `Server error (${result.status}). The metrics calculation may have failed.`,
+                );
+            }
             throw new Error(`HTTP ${result.status}: ${result.statusText}`);
         }
 
-        const data = await result.json();
+        // FIX: Handle empty or invalid JSON responses
+        let data;
+        try {
+            const text = await result.text();
+            if (!text || !text.trim()) {
+                console.warn("Empty metrics response, using default data");
+                data = {}; // Use empty object as fallback
+            } else {
+                data = JSON.parse(text);
+            }
+        } catch (parseError) {
+            console.error("Failed to parse metrics JSON:", parseError);
+            data = {}; // Use empty object as fallback
+        }
+
         displayMetrics(data);
         console.log("✓ Metrics loaded successfully");
     } catch (error) {
@@ -619,8 +684,13 @@ async function fetchWithTimeoutAndRetry(
  * Show loading state for metrics
  */
 function showMetricsLoading() {
-    const metricsPanel = safeGetElement("metrics-panel");
+    const metricsPanel = safeGetElement("metrics-panel", true); // suppress warning
     if (metricsPanel) {
+        const existingLoading = safeGetElement("metrics-loading", true);
+        if (existingLoading) {
+            return;
+        }
+
         const loadingDiv = document.createElement("div");
         loadingDiv.id = "metrics-loading";
         loadingDiv.className = "flex justify-center items-center p-8";
@@ -640,7 +710,7 @@ function showMetricsLoading() {
  * Hide loading state for metrics
  */
 function hideMetricsLoading() {
-    const loadingDiv = safeGetElement("metrics-loading");
+    const loadingDiv = safeGetElement("metrics-loading", true);
     if (loadingDiv && loadingDiv.parentNode) {
         loadingDiv.parentNode.removeChild(loadingDiv);
     }
@@ -728,6 +798,25 @@ function displayMetrics(data) {
     }
 
     try {
+        // FIX: Handle completely empty data
+        if (!data || Object.keys(data).length === 0) {
+            const emptyStateDiv = document.createElement("div");
+            emptyStateDiv.className = "text-center p-8 text-gray-500";
+            emptyStateDiv.innerHTML = `
+                <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                </svg>
+                <h3 class="text-lg font-medium mb-2">No Metrics Available</h3>
+                <p class="text-sm">Metrics data will appear here once tools, resources, or prompts are executed.</p>
+                <button onclick="retryLoadMetrics()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
+                    Refresh Metrics
+                </button>
+            `;
+            metricsPanel.innerHTML = "";
+            metricsPanel.appendChild(emptyStateDiv);
+            return;
+        }
+
         // Create main container with safe structure
         const mainContainer = document.createElement("div");
         mainContainer.className = "space-y-6";
@@ -1635,6 +1724,7 @@ async function editTool(toolId) {
         );
 
         if (!response.ok) {
+            // If the response is not OK, throw an error
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
@@ -1744,6 +1834,106 @@ async function editTool(toolId) {
             requestTypeField.value = tool.requestType || "SSE";
         }
 
+        // Set auth type field
+        const authTypeField = safeGetElement("edit-auth-type");
+        if (authTypeField) {
+            authTypeField.value = tool.auth?.authType || "";
+        }
+
+        // Auth containers
+        const authBasicSection = safeGetElement("edit-auth-basic-fields");
+        const authBearerSection = safeGetElement("edit-auth-bearer-fields");
+        const authHeadersSection = safeGetElement("edit-auth-headers-fields");
+
+        // Individual fields
+        const authUsernameField = authBasicSection?.querySelector(
+            "input[name='auth_username']",
+        );
+        const authPasswordField = authBasicSection?.querySelector(
+            "input[name='auth_password']",
+        );
+
+        const authTokenField = authBearerSection?.querySelector(
+            "input[name='auth_token']",
+        );
+
+        const authHeaderKeyField = authHeadersSection?.querySelector(
+            "input[name='auth_header_key']",
+        );
+        const authHeaderValueField = authHeadersSection?.querySelector(
+            "input[name='auth_header_value']",
+        );
+
+        // Hide all auth sections first
+        if (authBasicSection) {
+            authBasicSection.style.display = "none";
+        }
+        if (authBearerSection) {
+            authBearerSection.style.display = "none";
+        }
+        if (authHeadersSection) {
+            authHeadersSection.style.display = "none";
+        }
+
+        // Clear old values
+        if (authUsernameField) {
+            authUsernameField.value = "";
+        }
+        if (authPasswordField) {
+            authPasswordField.value = "";
+        }
+        if (authTokenField) {
+            authTokenField.value = "";
+        }
+        if (authHeaderKeyField) {
+            authHeaderKeyField.value = "";
+        }
+        if (authHeaderValueField) {
+            authHeaderValueField.value = "";
+        }
+
+        // Display appropriate auth section and populate values
+        switch (tool.auth?.authType) {
+            case "basic":
+                if (authBasicSection) {
+                    authBasicSection.style.display = "block";
+                    if (authUsernameField) {
+                        authUsernameField.value = tool.auth.username || "";
+                    }
+                    if (authPasswordField) {
+                        authPasswordField.value = "*****"; // masked
+                    }
+                }
+                break;
+
+            case "bearer":
+                if (authBearerSection) {
+                    authBearerSection.style.display = "block";
+                    if (authTokenField) {
+                        authTokenField.value = "*****"; // masked
+                    }
+                }
+                break;
+
+            case "authheaders":
+                if (authHeadersSection) {
+                    authHeadersSection.style.display = "block";
+                    if (authHeaderKeyField) {
+                        authHeaderKeyField.value =
+                            tool.auth.authHeaderKey || "";
+                    }
+                    if (authHeaderValueField) {
+                        authHeaderValueField.value = "*****"; // masked
+                    }
+                }
+                break;
+
+            case "":
+            default:
+                // No auth – keep everything hidden
+                break;
+        }
+
         openModal("tool-edit-modal");
 
         // Ensure editors are refreshed after modal display
@@ -1832,10 +2022,18 @@ async function viewResource(resourceUri) {
             const contentPre = document.createElement("pre");
             contentPre.className =
                 "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100";
-            contentPre.textContent =
-                typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : String(content); // Safe text content
+
+            // Handle content display - extract actual content from object if needed
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
+
+            if (!contentStr.trim()) {
+                contentStr = resource.description || "No content available";
+            }
+
+            contentPre.textContent = contentStr;
             contentDiv.appendChild(contentPre);
             container.appendChild(contentDiv);
 
@@ -1926,7 +2124,6 @@ async function editResource(resourceUri) {
         const data = await response.json();
         const resource = data.resource;
         const content = data.content;
-
         const isInactiveCheckedBool = isInactiveChecked("resources");
         let hiddenField = safeGetElement("edit-resource-show-inactive");
         if (!hiddenField) {
@@ -1970,19 +2167,29 @@ async function editResource(resourceUri) {
             mimeField.value = resource.mimeType || "";
         }
         if (contentField) {
-            const contentStr =
-                typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : String(content);
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
+
+            if (!contentStr.trim()) {
+                contentStr = resource.description || "No content available";
+            }
+
             contentField.value = contentStr;
         }
 
         // Update CodeMirror editor if it exists
         if (window.editResourceContentEditor) {
-            const contentStr =
-                typeof content === "object"
-                    ? JSON.stringify(content, null, 2)
-                    : String(content);
+            let contentStr = extractContent(
+                content,
+                resource.description || "No content available",
+            );
+
+            if (!contentStr.trim()) {
+                contentStr = resource.description || "No content available";
+            }
+
             window.editResourceContentEditor.setValue(contentStr);
             window.editResourceContentEditor.refresh();
         }
@@ -2391,6 +2598,8 @@ async function editGateway(gatewayId) {
         const urlField = safeGetElement("edit-gateway-url");
         const descField = safeGetElement("edit-gateway-description");
 
+        const transportField = safeGetElement("edit-gateway-transport");
+
         if (nameField && nameValidation.valid) {
             nameField.value = nameValidation.value;
         }
@@ -2399,6 +2608,90 @@ async function editGateway(gatewayId) {
         }
         if (descField) {
             descField.value = gateway.description || "";
+        }
+
+        if (transportField) {
+            transportField.value = gateway.transport || "SSE"; // falls back to SSE(default)
+        }
+
+        const authTypeField = safeGetElement("auth-type-gw-edit");
+
+        if (authTypeField) {
+            authTypeField.value = gateway.authType || ""; // falls back to None
+        }
+
+        // Auth containers
+        const authBasicSection = safeGetElement("auth-basic-fields-gw-edit");
+        const authBearerSection = safeGetElement("auth-bearer-fields-gw-edit");
+        const authHeadersSection = safeGetElement(
+            "auth-headers-fields-gw-edit",
+        );
+
+        // Individual fields
+        const authUsernameField = safeGetElement(
+            "auth-basic-fields-gw-edit",
+        )?.querySelector("input[name='auth_username']");
+        const authPasswordField = safeGetElement(
+            "auth-basic-fields-gw-edit",
+        )?.querySelector("input[name='auth_password']");
+
+        const authTokenField = safeGetElement(
+            "auth-bearer-fields-gw-edit",
+        )?.querySelector("input[name='auth_token']");
+
+        const authHeaderKeyField = safeGetElement(
+            "auth-headers-fields-gw-edit",
+        )?.querySelector("input[name='auth_header_key']");
+        const authHeaderValueField = safeGetElement(
+            "auth-headers-fields-gw-edit",
+        )?.querySelector("input[name='auth_header_value']");
+
+        // Hide all auth sections first
+        if (authBasicSection) {
+            authBasicSection.style.display = "none";
+        }
+        if (authBearerSection) {
+            authBearerSection.style.display = "none";
+        }
+        if (authHeadersSection) {
+            authHeadersSection.style.display = "none";
+        }
+
+        switch (gateway.authType) {
+            case "basic":
+                if (authBasicSection) {
+                    authBasicSection.style.display = "block";
+                    if (authUsernameField) {
+                        authUsernameField.value = gateway.authUsername || "";
+                    }
+                    if (authPasswordField) {
+                        authPasswordField.value = "*****"; // mask password
+                    }
+                }
+                break;
+            case "bearer":
+                if (authBearerSection) {
+                    authBearerSection.style.display = "block";
+                    if (authTokenField) {
+                        authTokenField.value = gateway.authValue || ""; // show full token
+                    }
+                }
+                break;
+            case "authheaders":
+                if (authHeadersSection) {
+                    authHeadersSection.style.display = "block";
+                    if (authHeaderKeyField) {
+                        authHeaderKeyField.value = gateway.authHeaderKey || "";
+                    }
+                    if (authHeaderValueField) {
+                        authHeaderValueField.value = "*****"; // mask header value
+                    }
+                }
+                break;
+            case "":
+            default:
+                // No auth – keep everything hidden
+                break;
         }
 
         openModal("gateway-edit-modal");
@@ -2842,7 +3135,7 @@ function createParameterForm(parameterCount) {
     header.className = "flex justify-between items-center";
 
     const title = document.createElement("span");
-    title.className = "font-semibold text-gray-800";
+    title.className = "font-semibold text-gray-800 dark:text-gray-200";
     title.textContent = `Parameter ${parameterCount}`;
 
     const deleteBtn = document.createElement("button");
@@ -2863,7 +3156,8 @@ function createParameterForm(parameterCount) {
     // Parameter name field with validation
     const nameGroup = document.createElement("div");
     const nameLabel = document.createElement("label");
-    nameLabel.className = "block text-sm font-medium text-gray-700";
+    nameLabel.className =
+        "block text-sm font-medium text-gray-700 dark:text-gray-300";
     nameLabel.textContent = "Parameter Name";
 
     const nameInput = document.createElement("input");
@@ -2891,7 +3185,8 @@ function createParameterForm(parameterCount) {
     // Type field
     const typeGroup = document.createElement("div");
     const typeLabel = document.createElement("label");
-    typeLabel.className = "block text-sm font-medium text-gray-700";
+    typeLabel.className =
+        "block text-sm font-medium text-gray-700 dark:text-gray-300";
     typeLabel.textContent = "Type";
 
     const typeSelect = document.createElement("select");
@@ -2926,7 +3221,8 @@ function createParameterForm(parameterCount) {
     descGroup.className = "mt-4";
 
     const descLabel = document.createElement("label");
-    descLabel.className = "block text-sm font-medium text-gray-700";
+    descLabel.className =
+        "block text-sm font-medium text-gray-700 dark:text-gray-300";
     descLabel.textContent = "Description";
 
     const descTextarea = document.createElement("textarea");
@@ -2951,7 +3247,8 @@ function createParameterForm(parameterCount) {
         "h-4 w-4 text-indigo-600 border border-gray-300 rounded";
 
     const requiredLabel = document.createElement("label");
-    requiredLabel.className = "ml-2 text-sm font-medium text-gray-700";
+    requiredLabel.className =
+        "ml-2 text-sm font-medium text-gray-700 dark:text-gray-300";
     requiredLabel.textContent = "Required";
 
     requiredGroup.appendChild(requiredInput);
@@ -2967,7 +3264,7 @@ function createParameterForm(parameterCount) {
 
 const integrationRequestMap = {
     MCP: ["SSE", "STREAMABLE", "STDIO"],
-    REST: ["GET", "POST", "PUT", "DELETE"],
+    REST: ["GET", "POST", "PUT", "PATCH", "DELETE"],
 };
 
 function updateRequestTypeOptions(preselectedValue = null) {
@@ -3030,50 +3327,73 @@ function updateEditToolRequestTypes(selectedMethod = null) {
 // TOOL SELECT FUNCTIONALITY
 // ===================================================================
 
-function initToolSelect(selectId, pillsId, warnId, max = 6) {
-    const select = safeGetElement(selectId);
-    const pillsBox = safeGetElement(pillsId);
-    const warnBox = safeGetElement(warnId);
+function initToolSelect(
+    selectId,
+    pillsId,
+    warnId,
+    max = 6,
+    selectBtnId = null,
+    clearBtnId = null,
+) {
+    const container = document.getElementById(selectId);
+    const pillsBox = document.getElementById(pillsId);
+    const warnBox = document.getElementById(warnId);
+    const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
+    const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
 
-    if (!select || !pillsBox || !warnBox) {
+    if (!container || !pillsBox || !warnBox) {
         console.warn(
             `Tool select elements not found: ${selectId}, ${pillsId}, ${warnId}`,
         );
         return;
     }
 
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     const pillClasses =
-        "inline-block px-2 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded";
+        "inline-block px-3 py-1 text-xs font-semibold text-indigo-700 bg-indigo-100 rounded-full shadow";
 
     function update() {
         try {
-            const chosen = Array.from(select.selectedOptions);
-            const count = chosen.length;
+            const checked = Array.from(checkboxes).filter((cb) => cb.checked);
+            const count = checked.length;
 
             // Rebuild pills safely
             pillsBox.innerHTML = "";
-            chosen.forEach((opt) => {
+            checked.forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
-                span.textContent = opt.text; // Safe text content
+                span.textContent =
+                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                 pillsBox.appendChild(span);
             });
 
             // Warning when > max
             if (count > max) {
                 warnBox.textContent = `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.`;
-                warnBox.className = "text-yellow-600 text-sm mt-2";
             } else {
                 warnBox.textContent = "";
-                warnBox.className = "";
             }
         } catch (error) {
             console.error("Error updating tool select:", error);
         }
     }
 
+    if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = false));
+            update();
+        });
+    }
+
+    if (selectBtn) {
+        selectBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = true));
+            update();
+        });
+    }
+
     update(); // Initial render
-    select.addEventListener("change", update);
+    checkboxes.forEach((cb) => cb.addEventListener("change", update));
 }
 
 // ===================================================================
@@ -3129,9 +3449,11 @@ function handleSubmitWithConfirmation(event, type) {
 const toolTestState = {
     activeRequests: new Map(), // toolId -> AbortController
     lastRequestTime: new Map(), // toolId -> timestamp
-    debounceDelay: 500, // ms
-    requestTimeout: 10000, // Reduced from 15000ms
+    debounceDelay: 1000, // Increased from 500ms
+    requestTimeout: 30000, // Increased from 10000ms
 };
+
+let toolInputSchemaRegistry = null;
 
 /**
  * ENHANCED: Tool testing with improved race condition handling
@@ -3144,7 +3466,7 @@ async function testTool(toolId) {
         const now = Date.now();
         const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
         const timeSinceLastRequest = now - lastRequest;
-        const enhancedDebounceDelay = 1000; // Increased from 500ms
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
 
         if (timeSinceLastRequest < enhancedDebounceDelay) {
             console.log(
@@ -3154,7 +3476,7 @@ async function testTool(toolId) {
                 (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
             );
             showErrorMessage(
-                `Please wait ${waitTime} more seconds before testing again`,
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
             );
             return;
         }
@@ -3194,7 +3516,7 @@ async function testTool(toolId) {
         toolTestState.activeRequests.set(toolId, controller);
         toolTestState.lastRequestTime.set(toolId, now);
 
-        // 6. MAKE REQUEST with increased timeout (was 10 seconds, now 15)
+        // 6. MAKE REQUEST with increased timeout
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/tools/${toolId}`,
             {
@@ -3204,7 +3526,7 @@ async function testTool(toolId) {
                     Pragma: "no-cache",
                 },
             },
-            15000, // Increased timeout
+            toolTestState.requestTimeout, // Use the increased timeout
         );
 
         if (!response.ok) {
@@ -3228,6 +3550,7 @@ async function testTool(toolId) {
         }
 
         const tool = await response.json();
+        toolInputSchemaRegistry = tool;
 
         // 7. CLEAN STATE before proceeding
         toolTestState.activeRequests.delete(toolId);
@@ -3243,8 +3566,14 @@ async function testTool(toolId) {
             titleElement.textContent = "Test Tool: " + (tool.name || "Unknown");
         }
         if (descElement) {
-            descElement.textContent =
-                tool.description || "No description available.";
+            if (tool.description) {
+                descElement.innerHTML = tool.description.replace(
+                    /\n/g,
+                    "<br/>",
+                );
+            } else {
+                descElement.textContent = "No description available.";
+            }
         }
 
         const container = safeGetElement("tool-test-form-fields");
@@ -3283,37 +3612,156 @@ async function testTool(toolId) {
 
                 // Field label - use textContent to avoid double escaping
                 const label = document.createElement("label");
-                label.textContent = keyValidation.value;
-                label.className = "block text-sm font-medium text-gray-700";
+                label.className =
+                    "block text-sm font-medium text-gray-700 dark:text-gray-300";
+
+                // Create span for label text
+                const labelText = document.createElement("span");
+                labelText.textContent = keyValidation.value;
+                label.appendChild(labelText);
+
+                // Add red star if field is required
+                if (schema.required && schema.required.includes(key)) {
+                    const requiredMark = document.createElement("span");
+                    requiredMark.textContent = " *";
+                    requiredMark.className = "text-red-500";
+                    label.appendChild(requiredMark);
+                }
+
                 fieldDiv.appendChild(label);
 
                 // Description help text - use textContent
                 if (prop.description) {
                     const description = document.createElement("small");
-                    description.textContent = prop.description; // NO escapeHtml here
+                    description.textContent = prop.description;
                     description.className = "text-gray-500 block mb-1";
                     fieldDiv.appendChild(description);
                 }
 
-                // Input field with validation
-                const input = document.createElement("input");
-                input.name = keyValidation.value;
-                input.type = "text";
-                input.required =
-                    schema.required && schema.required.includes(key);
-                input.className =
-                    "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                if (prop.type === "array") {
+                    const arrayContainer = document.createElement("div");
+                    arrayContainer.className = "space-y-2";
 
-                // Add validation based on type
-                if (prop.type === "number") {
-                    input.type = "number";
-                } else if (prop.type === "boolean") {
-                    input.type = "checkbox";
-                    input.className =
-                        "mt-1 h-4 w-4 text-indigo-600 border-gray-300 rounded";
+                    function createArrayInput(value = "") {
+                        const wrapper = document.createElement("div");
+                        wrapper.className = "flex items-center space-x-2";
+
+                        const input = document.createElement("input");
+                        input.name = keyValidation.value;
+                        input.required =
+                            schema.required && schema.required.includes(key);
+                        input.className =
+                            "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                        const itemTypes = Array.isArray(prop.items?.anyOf)
+                            ? prop.items.anyOf.map((t) => t.type)
+                            : [prop.items?.type];
+
+                        if (
+                            itemTypes.includes("number") ||
+                            itemTypes.includes("integer")
+                        ) {
+                            input.type = "number";
+                            input.step = itemTypes.includes("integer")
+                                ? "1"
+                                : "any";
+                        } else if (itemTypes.includes("boolean")) {
+                            input.type = "checkbox";
+                            input.value = "true";
+                            input.checked = value === true || value === "true";
+                        } else {
+                            input.type = "text";
+                        }
+
+                        if (
+                            typeof value === "string" ||
+                            typeof value === "number"
+                        ) {
+                            input.value = value;
+                        }
+
+                        const delBtn = document.createElement("button");
+                        delBtn.type = "button";
+                        delBtn.className =
+                            "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
+                        delBtn.title = "Delete";
+                        delBtn.textContent = "×";
+                        delBtn.addEventListener("click", () => {
+                            arrayContainer.removeChild(wrapper);
+                        });
+
+                        wrapper.appendChild(input);
+                        wrapper.appendChild(delBtn);
+                        return wrapper;
+                    }
+
+                    const addBtn = document.createElement("button");
+                    addBtn.type = "button";
+                    addBtn.className =
+                        "mt-2 px-2 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 focus:outline-none";
+                    addBtn.textContent = "Add items";
+                    addBtn.addEventListener("click", () => {
+                        arrayContainer.appendChild(createArrayInput());
+                    });
+
+                    if (Array.isArray(prop.default)) {
+                        if (prop.default.length > 0) {
+                            prop.default.forEach((val) => {
+                                arrayContainer.appendChild(
+                                    createArrayInput(val),
+                                );
+                            });
+                        } else {
+                            // Create one empty input for empty default arrays
+                            arrayContainer.appendChild(createArrayInput());
+                        }
+                    } else {
+                        arrayContainer.appendChild(createArrayInput());
+                    }
+
+                    fieldDiv.appendChild(arrayContainer);
+                    fieldDiv.appendChild(addBtn);
+                } else {
+                    // Input field with validation (with multiline support)
+                    let fieldInput;
+                    const isTextType = prop.type === "text";
+                    if (isTextType) {
+                        fieldInput = document.createElement("textarea");
+                        fieldInput.rows = 4;
+                    } else {
+                        fieldInput = document.createElement("input");
+                        if (prop.type === "number" || prop.type === "integer") {
+                            fieldInput.type = "number";
+                        } else if (prop.type === "boolean") {
+                            fieldInput.type = "checkbox";
+                        } else {
+                            fieldInput = document.createElement("textarea");
+                            fieldInput.rows = 1;
+                        }
+                    }
+
+                    fieldInput.name = keyValidation.value;
+                    fieldInput.required =
+                        schema.required && schema.required.includes(key);
+                    fieldInput.className =
+                        prop.type === "boolean"
+                            ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+                            : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                    // Set default values here
+                    if (prop.default !== undefined) {
+                        if (fieldInput.type === "checkbox") {
+                            fieldInput.checked = prop.default === true;
+                        } else if (isTextType) {
+                            fieldInput.value = prop.default;
+                        } else {
+                            fieldInput.value = prop.default;
+                        }
+                    }
+
+                    fieldDiv.appendChild(fieldInput);
                 }
 
-                fieldDiv.appendChild(input);
                 container.appendChild(fieldDiv);
             }
         }
@@ -3399,27 +3847,110 @@ async function runToolTest() {
         const formData = new FormData(form);
         const params = {};
 
-        for (const [key, value] of formData.entries()) {
-            // Validate each parameter
-            const keyValidation = validateInputName(key, "parameter");
-            if (!keyValidation.valid) {
-                console.warn(`Skipping invalid parameter: ${key}`);
-                continue;
-            }
+        const schema = toolInputSchemaRegistry.inputSchema;
 
-            // Type conversion
-            if (isNaN(value) || value === "") {
-                if (
-                    value.toLowerCase() === "true" ||
-                    value.toLowerCase() === "false"
-                ) {
-                    params[keyValidation.value] =
-                        value.toLowerCase() === "true";
-                } else {
-                    params[keyValidation.value] = value;
+        if (schema && schema.properties) {
+            for (const key in schema.properties) {
+                const prop = schema.properties[key];
+                const keyValidation = validateInputName(key, "parameter");
+                if (!keyValidation.valid) {
+                    console.warn(`Skipping invalid parameter: ${key}`);
+                    continue;
                 }
-            } else {
-                params[keyValidation.value] = Number(value);
+                let value;
+                if (prop.type === "array") {
+                    const inputValues = formData.getAll(key);
+                    try {
+                        // Convert values based on the items schema type
+                        if (prop.items) {
+                            const itemType = Array.isArray(prop.items.anyOf)
+                                ? prop.items.anyOf.map((t) => t.type)
+                                : [prop.items.type];
+
+                            if (
+                                itemType.includes("number") ||
+                                itemType.includes("integer")
+                            ) {
+                                value = inputValues.map((v) => {
+                                    const num = Number(v);
+                                    if (isNaN(num)) {
+                                        throw new Error(`Invalid number: ${v}`);
+                                    }
+                                    return num;
+                                });
+                            } else if (itemType.includes("boolean")) {
+                                value = inputValues.map(
+                                    (v) => v === "true" || v === true,
+                                );
+                            } else if (itemType.includes("object")) {
+                                value = inputValues.map((v) => {
+                                    try {
+                                        const parsed = JSON.parse(v);
+                                        if (
+                                            typeof parsed !== "object" ||
+                                            Array.isArray(parsed)
+                                        ) {
+                                            throw new Error(
+                                                "Value must be an object",
+                                            );
+                                        }
+                                        return parsed;
+                                    } catch {
+                                        throw new Error(
+                                            `Invalid object format for ${key}`,
+                                        );
+                                    }
+                                });
+                            } else {
+                                value = inputValues;
+                            }
+                        }
+
+                        // Handle empty values
+                        if (
+                            value.length === 0 ||
+                            (value.length === 1 && value[0] === "")
+                        ) {
+                            if (
+                                schema.required &&
+                                schema.required.includes(key)
+                            ) {
+                                params[keyValidation.value] = [];
+                            }
+                            continue;
+                        }
+                        params[keyValidation.value] = value;
+                    } catch (error) {
+                        console.error(
+                            `Error parsing array values for ${key}:`,
+                            error,
+                        );
+                        showErrorMessage(
+                            `Invalid input format for ${key}. Please check the values are in correct format.`,
+                        );
+                        throw error;
+                    }
+                } else {
+                    value = formData.get(key);
+                    if (value === null || value === undefined || value === "") {
+                        if (schema.required && schema.required.includes(key)) {
+                            params[keyValidation.value] = "";
+                        }
+                        continue;
+                    }
+                    if (prop.type === "number" || prop.type === "integer") {
+                        params[keyValidation.value] = Number(value);
+                    } else if (prop.type === "boolean") {
+                        params[keyValidation.value] =
+                            value === "true" || value === true;
+                    } else if (prop.enum) {
+                        if (prop.enum.includes(value)) {
+                            params[keyValidation.value] = value;
+                        }
+                    } else {
+                        params[keyValidation.value] = value;
+                    }
+                }
             }
         }
 
@@ -3430,7 +3961,7 @@ async function runToolTest() {
             params,
         };
 
-        // Use shorter timeout for test execution
+        // Use longer timeout for test execution
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/rpc`,
             {
@@ -3441,8 +3972,8 @@ async function runToolTest() {
                 body: JSON.stringify(payload),
                 credentials: "include",
             },
-            8000,
-        ); // 8 second timeout
+            20000, // Increased from 8000
+        );
 
         const result = await response.json();
         const resultStr = JSON.stringify(result, null, 2);
@@ -3900,7 +4431,7 @@ async function viewTool(toolId) {
         // Create annotation badges safely - NO ESCAPING since we're using textContent
         const renderAnnotations = (annotations) => {
             if (!annotations || Object.keys(annotations).length === 0) {
-                return '<p><strong>Annotations:</strong> <span class="text-gray-500">None</span></p>';
+                return '<p><strong>Annotations:</strong> <span class="text-gray-600 dark:text-gray-300">None</span></p>';
             }
 
             const badges = [];
@@ -3950,7 +4481,7 @@ async function viewTool(toolId) {
                 ) {
                     const value = annotations[key];
                     badges.push(
-                        `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mr-1 mb-1 custom-annotation" data-key="${key}" data-value="${value}"></span>`,
+                        `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:text-gray-200 mr-1 mb-1 custom-annotation" data-key="${key}" data-value="${value}"></span>`,
                     );
                 }
             });
@@ -3969,7 +4500,7 @@ async function viewTool(toolId) {
         if (toolDetailsDiv) {
             // Create structure safely without double-escaping
             const safeHTML = `
-        <div class="space-y-2 dark:bg-gray-900 dark:text-gray-100">
+        <div class="space-y-2 dark:bg-gray-800 dark:text-gray-300">
           <p><strong>Name:</strong> <span class="tool-name"></span></p>
           <p><strong>URL:</strong> <span class="tool-url"></span></p>
           <p><strong>Type:</strong> <span class="tool-type"></span></p>
@@ -3979,11 +4510,11 @@ async function viewTool(toolId) {
           ${renderAnnotations(tool.annotations)}
           <div>
             <strong>Headers:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100 tool-headers"></pre>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-200 tool-headers"></pre>
           </div>
           <div>
             <strong>Input Schema:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-100 tool-schema"></pre>
+            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-200 tool-schema"></pre>
           </div>
           <div>
             <strong>Metrics:</strong>
@@ -4190,49 +4721,238 @@ async function handleGatewayFormSubmit(e) {
         }
     }
 }
+async function handleResourceFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    const status = safeGetElement("status-resources");
+    const loading = safeGetElement("add-resource-loading");
+    try {
+        // Validate inputs
+        const name = formData.get("name");
+        const uri = formData.get("uri");
+        const nameValidation = validateInputName(name, "resource");
+        const uriValidation = validateInputName(uri, "resource URI");
 
-function handleResourceFormSubmit(e) {
+        if (!nameValidation.valid) {
+            showErrorMessage(nameValidation.error);
+            return;
+        }
+
+        if (!uriValidation.valid) {
+            showErrorMessage(uriValidation.error);
+            return;
+        }
+
+        if (loading) {
+            loading.style.display = "block";
+        }
+        if (status) {
+            status.textContent = "";
+            status.classList.remove("error-status");
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("resources");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/resources`,
+            {
+                method: "POST",
+                body: formData,
+            },
+        );
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        } else {
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#resources`
+                : `${window.ROOT_PATH}/admin#resources`;
+            window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Error:", error);
+        if (status) {
+            status.textContent = error.message || "An error occurred!";
+            status.classList.add("error-status");
+        }
+        showErrorMessage(error.message);
+    } finally {
+        // location.reload();
+        if (loading) {
+            loading.style.display = "none";
+        }
+    }
+}
+
+async function handlePromptFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    const status = safeGetElement("status-prompts");
+    const loading = safeGetElement("add-prompts-loading");
+    try {
+        // Validate inputs
+        const name = formData.get("name");
+        const nameValidation = validateInputName(name, "prompt");
+
+        if (!nameValidation.valid) {
+            showErrorMessage(nameValidation.error);
+            return;
+        }
+
+        if (loading) {
+            loading.style.display = "block";
+        }
+        if (status) {
+            status.textContent = "";
+            status.classList.remove("error-status");
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("prompts");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/prompts`,
+            {
+                method: "POST",
+                body: formData,
+            },
+        );
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        const redirectUrl = isInactiveCheckedBool
+            ? `${window.ROOT_PATH}/admin?include_inactive=true#prompts`
+            : `${window.ROOT_PATH}/admin#prompts`;
+        window.location.href = redirectUrl;
+    } catch (error) {
+        console.error("Error:", error);
+        if (status) {
+            status.textContent = error.message || "An error occurred!";
+            status.classList.add("error-status");
+        }
+        showErrorMessage(error.message);
+    } finally {
+        // location.reload();
+        if (loading) {
+            loading.style.display = "none";
+        }
+    }
+}
+
+async function handleEditPromptFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
 
-    // Validate inputs
-    const name = formData.get("name");
-    const uri = formData.get("uri");
+    try {
+        // Validate inputs
+        const name = formData.get("name");
+        const nameValidation = validateInputName(name, "prompt");
+        if (!nameValidation.valid) {
+            showErrorMessage(nameValidation.error);
+            return;
+        }
 
-    const nameValidation = validateInputName(name, "resource");
-    const uriValidation = validateInputName(uri, "resource URI");
+        // Save CodeMirror editors' contents if present
+        if (window.promptToolHeadersEditor) {
+            window.promptToolHeadersEditor.save();
+        }
+        if (window.promptToolSchemaEditor) {
+            window.promptToolSchemaEditor.save();
+        }
 
-    if (!nameValidation.valid) {
-        showErrorMessage(nameValidation.error);
-        return;
-    }
+        const isInactiveCheckedBool = isInactiveChecked("prompts");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-    if (!uriValidation.valid) {
-        showErrorMessage(uriValidation.error);
-        return;
-    }
-
-    fetchWithTimeout(`${window.ROOT_PATH}/admin/resources`, {
-        method: "POST",
-        body: formData,
-    })
-        .then((response) => {
-            if (!response.ok) {
-                const status = safeGetElement("status-resources");
-                if (status) {
-                    status.textContent = "Connection failed!";
-                    status.classList.add("error-status");
-                }
-                throw new Error("Network response was not ok");
-            } else {
-                location.reload();
-            }
-        })
-        .catch((error) => {
-            console.error("Error:", error);
-            showErrorMessage("Failed to create resource");
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
         });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        const redirectUrl = isInactiveCheckedBool
+            ? `${window.ROOT_PATH}/admin?include_inactive=true#prompts`
+            : `${window.ROOT_PATH}/admin#prompts`;
+        window.location.href = redirectUrl;
+    } catch (error) {
+        console.error("Error:", error);
+        showErrorMessage(error.message);
+    }
+}
+
+async function handleServerFormSubmit(e) {
+    e.preventDefault();
+
+    const form = e.target;
+    const formData = new FormData(form);
+    const status = safeGetElement("serverFormError");
+    const loading = safeGetElement("add-server-loading"); // Add a loading spinner if needed
+
+    try {
+        const name = formData.get("name");
+
+        // Basic validation
+        const nameValidation = validateInputName(name, "server");
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        if (loading) {
+            loading.style.display = "block";
+        }
+
+        if (status) {
+            status.textContent = "";
+            status.classList.remove("error-status");
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("servers");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/servers`,
+            {
+                method: "POST",
+                body: formData,
+                redirect: "manual",
+            },
+        );
+
+        const result = await response.json();
+        if (!result.success) {
+            console.log(result.message);
+            throw new Error(result.message || "Failed to add server.");
+        } else {
+            // Success redirect
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#catalog`
+                : `${window.ROOT_PATH}/admin#catalog`;
+            window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Add Server Error:", error);
+        if (status) {
+            status.textContent = error.message || "An error occurred.";
+            status.classList.add("error-status");
+        }
+        showErrorMessage(error.message); // Optional if you use global popup/snackbar
+    } finally {
+        if (loading) {
+            loading.style.display = "none";
+        }
+    }
 }
 
 async function handleToolFormSubmit(event) {
@@ -4308,7 +5028,104 @@ async function handleToolFormSubmit(event) {
         showErrorMessage(error.message);
     }
 }
+async function handleEditToolFormSubmit(event) {
+    event.preventDefault();
 
+    const form = event.target;
+
+    try {
+        const formData = new FormData(form);
+
+        // Basic validation (customize as needed)
+        const name = formData.get("name");
+        const url = formData.get("url");
+        const nameValidation = validateInputName(name, "tool");
+        const urlValidation = validateUrl(url);
+
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+        if (!urlValidation.valid) {
+            throw new Error(urlValidation.error);
+        }
+
+        // // Save CodeMirror editors' contents if present
+
+        if (window.editToolHeadersEditor) {
+            window.editToolHeadersEditor.save();
+        }
+        if (window.editToolSchemaEditor) {
+            window.editToolSchemaEditor.save();
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("tools");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+        });
+        console.log("response:", response);
+        const result = await response.json();
+        console.log("result edit tool form:", result);
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        } else {
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#tools`
+                : `${window.ROOT_PATH}/admin#tools`;
+            window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Fetch error:", error);
+        showErrorMessage(error.message);
+    }
+}
+
+async function handleEditGatewayFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    try {
+        // Validate form inputs
+        const name = formData.get("name");
+        const url = formData.get("url");
+
+        const nameValidation = validateInputName(name, "gateway");
+        const urlValidation = validateUrl(url);
+
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        if (!urlValidation.valid) {
+            throw new Error(urlValidation.error);
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("gateways");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        const redirectUrl = isInactiveCheckedBool
+            ? `${window.ROOT_PATH}/admin?include_inactive=true#gateways`
+            : `${window.ROOT_PATH}/admin#gateways`;
+        window.location.href = redirectUrl;
+    } catch (error) {
+        console.error("Error:", error);
+        showErrorMessage(error.message);
+    }
+}
 // ===================================================================
 // ENHANCED FORM VALIDATION for All Forms
 // ===================================================================
@@ -4448,6 +5265,7 @@ function setupTooltipsWithAlpine() {
 
         Alpine.directive("tooltip", (el, { expression }, { evaluate }) => {
             let tooltipEl = null;
+            let animationFrameId = null; // Track animation frame
 
             const moveTooltip = (e) => {
                 if (!tooltipEl) {
@@ -4499,9 +5317,19 @@ function setupTooltipsWithAlpine() {
                     tooltipEl.style.top = `${rect.bottom + scrollY + 10}px`;
                 }
 
-                requestAnimationFrame(() => {
-                    tooltipEl.style.opacity = "1";
+                // FIX: Cancel any pending animation frame before setting a new one
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                }
+
+                animationFrameId = requestAnimationFrame(() => {
+                    // FIX: Check if tooltipEl still exists before accessing its style
+                    if (tooltipEl) {
+                        tooltipEl.style.opacity = "1";
+                    }
+                    animationFrameId = null;
                 });
+
                 window.addEventListener("scroll", hideTooltip, {
                     passive: true,
                 });
@@ -4515,15 +5343,28 @@ function setupTooltipsWithAlpine() {
                     return;
                 }
 
+                // FIX: Cancel any pending animation frame
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+
                 tooltipEl.style.opacity = "0";
                 el.removeEventListener("mousemove", moveTooltip);
                 window.removeEventListener("scroll", hideTooltip);
                 window.removeEventListener("resize", hideTooltip);
-                el.addEventListener("click", hideTooltip);
+                el.removeEventListener("click", hideTooltip);
+
                 const toRemove = tooltipEl;
-                tooltipEl = null;
-                setTimeout(() => toRemove.remove(), 200);
+                tooltipEl = null; // Set to null immediately
+
+                setTimeout(() => {
+                    if (toRemove && toRemove.parentNode) {
+                        toRemove.parentNode.removeChild(toRemove);
+                    }
+                }, 200);
             };
+
             el.addEventListener("mouseenter", showTooltip);
             el.addEventListener("mouseleave", hideTooltip);
             el.addEventListener("focus", showTooltip);
@@ -4556,6 +5397,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 4. Handle initial tab/state
         initializeTabState();
+
+        // // ✅ 4.1 Set up tab button click handlers
+        // document.querySelectorAll('.tab-button').forEach(button => {
+        //     button.addEventListener('click', () => {
+        //         const tabId = button.getAttribute('data-tab');
+
+        //         document.querySelectorAll('.tab-panel').forEach(panel => {
+        //             panel.classList.add('hidden');
+        //         });
+
+        //         document.getElementById(tabId).classList.remove('hidden');
+        //     });
+        // });
 
         // 5. Set up form validation
         setupFormValidation();
@@ -4640,7 +5494,7 @@ function initializeCodeMirrorEditors() {
                     {
                         mode: config.mode,
                         theme: "monokai",
-                        lineNumbers: true,
+                        lineNumbers: false,
                         autoCloseBrackets: true,
                         matchBrackets: true,
                         tabSize: 2,
@@ -4666,12 +5520,16 @@ function initializeToolSelects() {
         "selectedToolsPills",
         "selectedToolsWarning",
         6,
+        "selectAllToolsBtn",
+        "clearAllToolsBtn",
     );
     initToolSelect(
         "edit-server-tools",
         "selectedEditToolsPills",
         "selectedEditToolsWarning",
         6,
+        "selectAllEditToolsBtn",
+        "clearAllEditToolsBtn",
     );
 }
 
@@ -4777,6 +5635,21 @@ function setupFormHandlers() {
         resourceForm.addEventListener("submit", handleResourceFormSubmit);
     }
 
+    const promptForm = safeGetElement("add-prompt-form");
+    if (promptForm) {
+        promptForm.addEventListener("submit", handlePromptFormSubmit);
+    }
+
+    const editPromptForm = safeGetElement("edit-prompt-form");
+    if (editPromptForm) {
+        editPromptForm.addEventListener("submit", handleEditPromptFormSubmit);
+        editPromptForm.addEventListener("click", () => {
+            if (getComputedStyle(editPromptForm).display !== "none") {
+                refreshEditors();
+            }
+        });
+    }
+
     const toolForm = safeGetElement("add-tool-form");
     if (toolForm) {
         toolForm.addEventListener("submit", handleToolFormSubmit);
@@ -4792,11 +5665,35 @@ function setupFormHandlers() {
         paramButton.addEventListener("click", handleAddParameter);
     }
 
+    const serverForm = safeGetElement("add-server-form");
+    if (serverForm) {
+        serverForm.addEventListener("submit", handleServerFormSubmit);
+    }
+
     const editResourceForm = safeGetElement("edit-resource-form");
     if (editResourceForm) {
         editResourceForm.addEventListener("submit", () => {
             if (window.editResourceContentEditor) {
                 window.editResourceContentEditor.save();
+            }
+        });
+    }
+    const editToolForm = safeGetElement("edit-tool-form");
+    if (editToolForm) {
+        editToolForm.addEventListener("submit", handleEditToolFormSubmit);
+        editToolForm.addEventListener("click", () => {
+            if (getComputedStyle(editToolForm).display !== "none") {
+                refreshEditors();
+            }
+        });
+    }
+
+    const editGatewayForm = safeGetElement("edit-gateway-form");
+    if (editGatewayForm) {
+        editGatewayForm.addEventListener("submit", handleEditGatewayFormSubmit);
+        editGatewayForm.addEventListener("click", () => {
+            if (getComputedStyle(editGatewayForm).display !== "none") {
+                refreshEditors();
             }
         });
     }

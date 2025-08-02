@@ -17,6 +17,8 @@ Examples:
     >>> from mcpgateway.db import connect_args
     >>> isinstance(connect_args, dict)
     True
+    >>> 'keepalives' in connect_args or 'check_same_thread' in connect_args or len(connect_args) == 0
+    True
 """
 
 # Standard
@@ -125,6 +127,10 @@ def utc_now() -> datetime:
         >>> from mcpgateway.db import utc_now
         >>> now = utc_now()
         >>> now.tzinfo is not None
+        True
+        >>> str(now.tzinfo)
+        'UTC'
+        >>> isinstance(now, datetime)
         True
     """
     return datetime.now(timezone.utc)
@@ -402,7 +408,8 @@ class Tool(Base):
         self._computed_name = value
 
     @name.expression
-    def name(cls):  # pylint: disable=no-self-argument
+    @classmethod
+    def name(cls):
         """
         SQL expression used when the hybrid appears in a filter/order_by.
         Simply forwards to the ``_computed_name`` column; the Python-side
@@ -425,7 +432,8 @@ class Tool(Base):
         return self.gateway.slug if self.gateway else None
 
     @gateway_slug.expression
-    def gateway_slug(cls):  # pylint: disable=no-self-argument
+    @classmethod
+    def gateway_slug(cls):
         """For database queries - auto-joins to get current slug
 
         Returns:
@@ -445,8 +453,7 @@ class Tool(Base):
         return len(self.metrics)
 
     @execution_count.expression
-    # method is intentionally a class-level expression, so no `self`
-    # pylint: disable=no-self-argument
+    @classmethod
     def execution_count(cls):
         """
         SQL expression to compute the execution count for the tool.
@@ -623,6 +630,28 @@ class Resource(Base):
 
         Raises:
             ValueError: If the resource has no content available.
+
+        Examples:
+            >>> resource = Resource(uri="test://example", name="test")
+            >>> resource.text_content = "Hello, World!"
+            >>> content = resource.content
+            >>> content.text
+            'Hello, World!'
+            >>> content.type
+            'resource'
+
+            >>> binary_resource = Resource(uri="test://binary", name="binary")
+            >>> binary_resource.binary_content = b"\\x00\\x01\\x02"
+            >>> binary_content = binary_resource.content
+            >>> binary_content.blob
+            b'\\x00\\x01\\x02'
+
+            >>> empty_resource = Resource(uri="test://empty", name="empty")
+            >>> try:
+            ...     empty_resource.content
+            ... except ValueError as e:
+            ...     str(e)
+            'Resource has no content'
         """
 
         if self.text_content is not None:
@@ -800,6 +829,24 @@ class Prompt(Base):
         Raises:
             ValueError: If the arguments do not conform to the schema.
 
+        Examples:
+            >>> prompt = Prompt(
+            ...     name="test_prompt",
+            ...     template="Hello {name}",
+            ...     argument_schema={
+            ...         "type": "object",
+            ...         "properties": {
+            ...             "name": {"type": "string"}
+            ...         },
+            ...         "required": ["name"]
+            ...     }
+            ... )
+            >>> prompt.validate_arguments({"name": "Alice"})  # No exception
+            >>> try:
+            ...     prompt.validate_arguments({"age": 25})  # Missing required field
+            ... except ValueError as e:
+            ...     "name" in str(e)
+            True
         """
         try:
             jsonschema.validate(args, self.argument_schema)
@@ -979,6 +1026,18 @@ class Server(Base):
 
         Returns:
             float: The failure rate as a value between 0 and 1.
+
+        Examples:
+            >>> tool = Tool(original_name="test_tool", original_name_slug="test-tool", input_schema={})
+            >>> tool.failure_rate  # No metrics yet
+            0.0
+            >>> tool.metrics = [
+            ...     ToolMetric(tool_id=tool.id, response_time=1.0, is_success=True),
+            ...     ToolMetric(tool_id=tool.id, response_time=2.0, is_success=False),
+            ...     ToolMetric(tool_id=tool.id, response_time=1.5, is_success=True),
+            ... ]
+            >>> tool.failure_rate
+            0.3333333333333333
         """
         total: int = self.execution_count
         if total == 0:
@@ -1224,6 +1283,16 @@ def get_db():
 
     Yields:
         SessionLocal: A SQLAlchemy database session.
+
+    Examples:
+        >>> from mcpgateway.db import get_db
+        >>> gen = get_db()
+        >>> db = next(gen)
+        >>> hasattr(db, 'query')
+        True
+        >>> hasattr(db, 'commit')
+        True
+        >>> gen.close()
     """
     db = SessionLocal()
     try:

@@ -48,6 +48,27 @@ class JSONRPCError(Exception):
 
         Returns:
             Error response dictionary
+
+        Examples:
+            Basic error without data:
+            >>> error = JSONRPCError(-32600, "Invalid Request", request_id=1)
+            >>> error.to_dict()
+            {'jsonrpc': '2.0', 'error': {'code': -32600, 'message': 'Invalid Request'}, 'request_id': 1}
+
+            Error with additional data:
+            >>> error = JSONRPCError(-32602, "Invalid params", data={"param": "value"}, request_id="abc")
+            >>> error.to_dict()
+            {'jsonrpc': '2.0', 'error': {'code': -32602, 'message': 'Invalid params', 'data': {'param': 'value'}}, 'request_id': 'abc'}
+
+            Error without request ID (for parse errors):
+            >>> error = JSONRPCError(-32700, "Parse error", data="Unexpected EOF")
+            >>> error.to_dict()
+            {'jsonrpc': '2.0', 'error': {'code': -32700, 'message': 'Parse error', 'data': 'Unexpected EOF'}, 'request_id': None}
+
+            Error with complex data:
+            >>> error = JSONRPCError(-32603, "Internal error", data={"details": ["error1", "error2"], "timestamp": 123456}, request_id=42)
+            >>> sorted(error.to_dict()['error']['data']['details'])
+            ['error1', 'error2']
         """
         error = {"code": self.code, "message": self.message}
         if self.data is not None:
@@ -146,6 +167,88 @@ def validate_response(response: Dict[str, Any]) -> None:
 
     Raises:
         JSONRPCError: If response is invalid
+
+    Examples:
+        Valid success response:
+        >>> validate_response({"jsonrpc": "2.0", "result": 42, "id": 1})
+
+        Valid error response:
+        >>> validate_response({"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not found"}, "id": 1})
+
+        Valid response with null result:
+        >>> validate_response({"jsonrpc": "2.0", "result": None, "id": 1})
+
+        Valid response with null id (for errors during id parsing):
+        >>> validate_response({"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}, "id": None})
+
+        Invalid version:
+        >>> validate_response({"jsonrpc": "1.0", "result": 42, "id": 1})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Invalid JSON-RPC version
+
+        Missing ID:
+        >>> validate_response({"jsonrpc": "2.0", "result": 42})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Missing response ID
+
+        Invalid ID type (boolean):
+        >>> validate_response({"jsonrpc": "2.0", "result": 42, "id": True})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Invalid response ID type
+
+        Invalid ID type (list):
+        >>> validate_response({"jsonrpc": "2.0", "result": 42, "id": [1, 2]})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Invalid response ID type
+
+        Missing both result and error:
+        >>> validate_response({"jsonrpc": "2.0", "id": 1})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Response must contain either result or error
+
+        Both result and error present:
+        >>> validate_response({"jsonrpc": "2.0", "result": 42, "error": {"code": -1, "message": "Error"}, "id": 1})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Response cannot contain both result and error
+
+        Invalid error object type:
+        >>> validate_response({"jsonrpc": "2.0", "error": "Invalid error", "id": 1})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Invalid error object type
+
+        Error missing code:
+        >>> validate_response({"jsonrpc": "2.0", "error": {"message": "Error"}, "id": 1})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Error must contain code and message
+
+        Error missing message:
+        >>> validate_response({"jsonrpc": "2.0", "error": {"code": -32601}, "id": 1})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Error must contain code and message
+
+        Invalid error code type:
+        >>> validate_response({"jsonrpc": "2.0", "error": {"code": "invalid", "message": "Error"}, "id": 1})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Error code must be integer
+
+        Invalid error message type:
+        >>> validate_response({"jsonrpc": "2.0", "error": {"code": -32601, "message": 123}, "id": 1})  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: Error message must be string
+
+        Valid error with additional data:
+        >>> validate_response({"jsonrpc": "2.0", "error": {"code": -32602, "message": "Invalid params", "data": {"param": "name"}}, "id": 1})
     """
     # Check jsonrpc version
     if response.get("jsonrpc") != "2.0":

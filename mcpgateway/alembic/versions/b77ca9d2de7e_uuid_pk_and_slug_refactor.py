@@ -31,6 +31,23 @@ depends_on: Union[str, Sequence[str], None] = None
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 def _use_batch() -> bool:
+    """Determine if batch operations are required for the current database.
+
+    SQLite requires batch mode for certain ALTER TABLE operations like dropping
+    columns or altering column types. This helper checks the database dialect
+    to determine if batch operations should be used.
+
+    Returns:
+        bool: True if the database is SQLite (requires batch mode), False otherwise.
+
+    Examples:
+        >>> # In a SQLite context
+        >>> _use_batch()  # doctest: +SKIP
+        True
+        >>> # In a PostgreSQL context
+        >>> _use_batch()  # doctest: +SKIP
+        False
+    """
     return op.get_bind().dialect.name == "sqlite"
 
 
@@ -38,6 +55,44 @@ def _use_batch() -> bool:
 # Upgrade
 # ──────────────────────────────────────────────────────────────────────────────
 def upgrade() -> None:
+    """Migrate database schema from integer to UUID primary keys with slugs.
+
+    This migration performs a comprehensive schema transformation in three stages:
+
+    Stage 1 - Add placeholder columns:
+        - Adds UUID columns (id_new) to gateways, tools, and servers
+        - Adds slug columns for human-readable identifiers
+        - Adds columns to preserve original tool names before prefixing
+
+    Stage 2 - Data migration:
+        - Generates UUIDs for all primary keys
+        - Creates slugs from names (e.g., "My Gateway" -> "my-gateway")
+        - Prefixes tool names with gateway slugs (e.g., "my-tool" -> "gateway-slug-my-tool")
+        - Updates all foreign key references to use new UUIDs
+
+    Stage 3 - Schema finalization:
+        - Drops old integer columns
+        - Renames new UUID columns to replace old ones
+        - Recreates primary keys and foreign key constraints
+        - Adds unique constraints on slugs and URLs
+
+    The migration is designed to work with both SQLite (using batch operations)
+    and other databases. It preserves all existing data relationships while
+    transforming the schema.
+
+    Note:
+        - Skips migration if database is fresh (no gateways table)
+        - Uses batch operations for SQLite compatibility
+        - Commits data changes before schema alterations
+
+    Examples:
+        >>> # Running the migration
+        >>> upgrade()  # doctest: +SKIP
+        Fresh database detected. Skipping migration.
+        >>> # Or for existing database
+        >>> upgrade()  # doctest: +SKIP
+        Existing installation detected. Starting data and schema migration...
+    """
     bind = op.get_bind()
     sess = Session(bind=bind)
     inspector = sa.inspect(bind)
@@ -402,6 +457,39 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Revert database schema from UUID primary keys back to integers.
+
+    This downgrade reverses the UUID migration but with significant limitations:
+    - Schema structure is restored but data is NOT preserved
+    - All UUID values and slug fields are lost
+    - Foreign key relationships are broken (columns will be NULL)
+    - Original integer IDs cannot be recovered
+
+    The downgrade operates in reverse order of the upgrade:
+
+    Stage 1 - Revert schema changes:
+        - Drops UUID-based constraints and keys
+        - Renames UUID columns back to temporary names
+        - Re-adds integer columns (empty/NULL)
+
+    Stage 2 - Data migration (skipped):
+        - Original integer IDs cannot be restored from UUIDs
+        - Relationships cannot be reconstructed
+
+    Stage 3 - Remove temporary columns:
+        - Drops all UUID and slug columns
+        - Leaves database with original schema but no data
+
+    Warning:
+        This downgrade is destructive and should only be used if you need
+        to revert the schema structure. All data in affected tables will
+        need to be manually restored from backups.
+
+    Examples:
+        >>> # Running the downgrade
+        >>> downgrade()  # doctest: +SKIP
+        # Schema reverted but data is lost
+    """
     # ── STAGE 1 (REVERSE): Revert Schema to original state ─────────────────
     # This reverses the operations from STAGE 3 of the upgrade.
     # Data from the new columns will be lost, which is expected.

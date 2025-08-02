@@ -60,7 +60,7 @@ from fastapi import HTTPException
 import jq
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logging.basicConfig(
@@ -116,6 +116,8 @@ class Settings(BaseSettings):
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
 
+    require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
+
     #  Encryption key phrase for auth storage
     auth_encryption_secret: str = "my-test-salt"
 
@@ -134,9 +136,44 @@ class Settings(BaseSettings):
         "http://localhost:4444",
     }
 
+    # Max retries for HTTP requests
+    retry_max_attempts: int = 3
+    retry_base_delay: float = 1.0  # seconds
+    retry_max_delay: int = 60  # seconds
+    retry_jitter_max: float = 0.5  # fraction of base delay
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def _parse_allowed_origins(cls, v):
+        """Parse allowed origins from environment variable or config value.
+
+        Handles multiple input formats for the allowed_origins field:
+        - JSON array string: '["http://localhost", "http://example.com"]'
+        - Comma-separated string: "http://localhost, http://example.com"
+        - Already parsed set/list
+
+        Automatically strips whitespace and removes outer quotes if present.
+
+        Args:
+            v: The input value to parse. Can be a string (JSON or CSV), set, list, or other iterable.
+
+        Returns:
+            Set[str]: A set of allowed origin strings.
+
+        Examples:
+            >>> sorted(Settings._parse_allowed_origins('["https://a.com", "https://b.com"]'))
+            ['https://a.com', 'https://b.com']
+            >>> sorted(Settings._parse_allowed_origins("https://x.com , https://y.com"))
+            ['https://x.com', 'https://y.com']
+            >>> Settings._parse_allowed_origins('""')
+            set()
+            >>> Settings._parse_allowed_origins('"https://single.com"')
+            {'https://single.com'}
+            >>> sorted(Settings._parse_allowed_origins(['http://a.com', 'http://b.com']))
+            ['http://a.com', 'http://b.com']
+            >>> Settings._parse_allowed_origins({'http://existing.com'})
+            {'http://existing.com'}
+        """
         if isinstance(v, str):
             v = v.strip()
             if v[:1] in "\"'" and v[-1:] == v[:1]:  # strip 1 outer quote pair
@@ -168,6 +205,36 @@ class Settings(BaseSettings):
     @field_validator("federation_peers", mode="before")
     @classmethod
     def _parse_federation_peers(cls, v):
+        """Parse federation peer URLs from environment variable or config value.
+
+        Handles multiple input formats for the federation_peers field:
+        - JSON array string: '["https://gw1.com", "https://gw2.com"]'
+        - Comma-separated string: "https://gw1.com, https://gw2.com"
+        - Already parsed list
+
+        Automatically strips whitespace and removes outer quotes if present.
+        Order is preserved when parsing.
+
+        Args:
+            v: The input value to parse. Can be a string (JSON or CSV), list, or other iterable.
+
+        Returns:
+            List[str]: A list of federation peer URLs.
+
+        Examples:
+            >>> Settings._parse_federation_peers('["https://gw1", "https://gw2"]')
+            ['https://gw1', 'https://gw2']
+            >>> Settings._parse_federation_peers("https://gw3, https://gw4")
+            ['https://gw3', 'https://gw4']
+            >>> Settings._parse_federation_peers('""')
+            []
+            >>> Settings._parse_federation_peers('"https://single-peer.com"')
+            ['https://single-peer.com']
+            >>> Settings._parse_federation_peers(['http://p1.com', 'http://p2.com'])
+            ['http://p1.com', 'http://p2.com']
+            >>> Settings._parse_federation_peers([])
+            []
+        """
         if isinstance(v, str):
             v = v.strip()
             if v[:1] in "\"'" and v[-1:] == v[:1]:
@@ -212,6 +279,9 @@ class Settings(BaseSettings):
     health_check_interval: int = 60  # seconds
     health_check_timeout: int = 10  # seconds
     unhealthy_threshold: int = 5  # after this many failures, mark as Offline
+
+    # Validation Gateway URL
+    gateway_validation_timeout: int = 5  # seconds
 
     filelock_name: str = "gateway_service_leader.lock"
 
@@ -405,7 +475,8 @@ class Settings(BaseSettings):
             ...     print('error')
             error
         """
-        valid_types = {"http", "ws", "sse", "all"}
+        # valid_types = {"http", "ws", "sse", "all"}
+        valid_types = {"sse", "streamablehttp", "all", "http"}
         if self.transport_type not in valid_types:
             raise ValueError(f"Invalid transport type. Must be one of: {valid_types}")
 
@@ -424,8 +495,12 @@ class Settings(BaseSettings):
                 db_dir.mkdir(parents=True)
 
     # Validation patterns for safe display (configurable)
-    validation_dangerous_html_pattern: str = r"<(script|iframe|object|embed|link|meta|base|form)\b|</*(script|iframe|object|embed|link|meta|base|form)>"
-    validation_dangerous_js_pattern: str = r"javascript:|vbscript:|on\w+\s*=|data:.*script"
+    validation_dangerous_html_pattern: str = (
+        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+    )
+
+    validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
+
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
@@ -434,6 +509,7 @@ class Settings(BaseSettings):
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
     validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # MCP tool naming
+    validation_tool_method_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_\./-]*$"
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255
@@ -443,6 +519,8 @@ class Settings(BaseSettings):
     validation_max_json_depth: int = 10
     validation_max_url_length: int = 2048
     validation_max_rpc_param_size: int = 262144  # 256KB
+
+    validation_max_method_length: int = 128
 
     # Allowed MIME types
     validation_allowed_mime_types: List[str] = [
@@ -463,6 +541,9 @@ class Settings(BaseSettings):
 
     # Rate limiting
     validation_max_requests_per_minute: int = 60
+
+    # Masking value for all sensitive data
+    masked_auth_value: str = "*****"
 
 
 def extract_using_jq(data, jq_filter=""):

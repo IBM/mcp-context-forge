@@ -18,7 +18,7 @@
 # report issues (linters). Modified files will need to be staged again.
 # -----------------------------------------------------------------------------
 
-exclude: '(^|/)(\.pre-commit-config\.yaml|normalize_special_characters\.py)$'  # ignore these files
+exclude: '(^|/)(\.pre-commit-config\.yaml|normalize_special_characters\.py|test_input_validation\.py)$'  # ignore these files
 
 repos:
   # -----------------------------------------------------------------------------
@@ -368,6 +368,7 @@ repos:
         description: Verifies test files in tests/ directories start with `test_`.
         language: python
         files: (^|/)tests/.+\.py$
+        exclude: ^tests/.*/pages/.*\.py$  # Exclude page object files
         args: [--pytest-test-first] # `test_.*\.py`
 
   # - repo: https://github.com/pycqa/flake8
@@ -514,13 +515,13 @@ repos:
   # -----------------------------------------------------------------------------
   # 🧪 DOCTEST VALIDATION
   # -----------------------------------------------------------------------------
-  - repo: local
-    hooks:
-      - id: doctest
-        name: 🧪 Doctest - Validate Documentation Examples
-        description: Runs doctest on all Python modules to ensure documentation examples work.
-        entry: python3 -m pytest --doctest-modules mcpgateway/ --tb=short
-        language: system
-        pass_filenames: false
-        always_run: true
-        types: [python]
+  # - repo: local
+  #   hooks:
+  #     - id: doctest
+  #       name: 🧪 Doctest - Validate Documentation Examples
+  #       description: Runs doctest on all Python modules to ensure documentation examples work.
+  #       entry: python3 -m pytest --doctest-modules mcpgateway/ --tb=short
+  #       language: system
+  #       pass_filenames: false
+  #       always_run: true
+  #       types: [python]

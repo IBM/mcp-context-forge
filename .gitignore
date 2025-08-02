@@ -1,9 +1,11 @@
+*.sarif
+devskim-results.sarif
+debug_login_page.png
 docs/pstats.png
 mcp.prof
 mcp.pstats
 .depsorter_cache.json
 .depupdate.*
-update_dependencies.py
 token.txt
 *.db
 *.bak

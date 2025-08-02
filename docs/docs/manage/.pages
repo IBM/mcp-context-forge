@@ -4,3 +4,4 @@ nav:
   - logging.md
   - upgrade.md
   - tuning.md
+  - securing.md

@@ -1,4 +1,46 @@
 # -*- coding: utf-8 -*-
+"""Alembic environment configuration for database migrations.
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti, Madhav Kandukuri
+
+This module configures the Alembic migration environment for the MCP Gateway
+application. It sets up both offline and online migration modes, configures
+logging, and establishes the database connection parameters.
+
+The module performs the following key functions:
+- Configures Alembic to locate migration scripts in the mcpgateway package
+- Sets up Python logging based on the alembic.ini configuration
+- Imports the SQLAlchemy metadata from the application models
+- Configures the database URL from application settings
+- Provides functions for running migrations in both offline and online modes
+
+Offline mode generates SQL scripts without connecting to the database, while
+online mode executes migrations directly against a live database connection.
+
+Attributes:
+    config (Config): The Alembic configuration object loaded from alembic.ini.
+    target_metadata (MetaData): SQLAlchemy metadata object containing all
+        table definitions from the application models.
+
+Examples:
+    Running migrations in offline mode::
+
+        alembic upgrade head --sql
+
+    Running migrations in online mode::
+
+        alembic upgrade head
+
+    The module is typically not imported directly but is used by Alembic
+    when executing migration commands.
+
+Note:
+    This file is automatically executed by Alembic and should not be
+    imported or run directly by application code.
+"""
+
 # Standard
 from importlib.resources import files
 from logging.config import fileConfig
@@ -20,7 +62,45 @@ from mcpgateway.db import Base
 
 
 # Create config object - this is the standard way in Alembic
-config = Config()
+config = getattr(context, "config", None) or Config()
+
+
+def _inside_alembic() -> bool:
+    """Detect if this module is being executed by the Alembic CLI.
+
+    This function checks whether the current execution context is within
+    an Alembic migration environment. It's used to prevent migration code
+    from running when this module is imported for other purposes (e.g.,
+    during testing or when importing models).
+
+    The detection works by checking for the presence of the '_proxy' attribute
+    on the alembic.context object. This attribute is set internally by Alembic
+    when it loads and executes the env.py file during migration operations.
+
+    Returns:
+        bool: True if running under Alembic CLI (e.g., during 'alembic upgrade',
+            'alembic downgrade', etc.), False if imported normally by Python
+            code or during testing.
+
+    Examples:
+        When running migrations::
+
+            $ alembic upgrade head
+            # _inside_alembic() returns True
+
+        When importing in tests or application code::
+
+            from mcpgateway.alembic.env import target_metadata
+            # _inside_alembic() returns False
+
+    Note:
+        This guard is crucial to prevent the migration execution code at the
+        bottom of this module from running during normal imports. Without it,
+        importing this module would attempt to run migrations every time.
+    """
+    return getattr(context, "_proxy", None) is not None
+
+
 config.set_main_option("script_location", str(files("mcpgateway").joinpath("alembic")))
 
 # Interpret the config file for Python logging.
@@ -80,21 +160,27 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connection = config.attributes.get("connection")
+    if connection is None:
+        connectable = engine_from_config(
+            config.get_section(config.config_ini_section, {}),
+            prefix="sqlalchemy.",
+            poolclass=pool.NullPool,
+        )
 
-    with connectable.connect() as connection:
+        with connectable.connect() as connection:
+            context.configure(connection=connection, target_metadata=target_metadata)
+
+            with context.begin_transaction():
+                context.run_migrations()
+    else:
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()
 
 
-# Only run migrations if executed as a script (not on import)
-if __name__ == "__main__":
+if _inside_alembic():
     if context.is_offline_mode():
         run_migrations_offline()
     else:

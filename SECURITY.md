@@ -2,9 +2,11 @@
 
 **⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
 
-## ⚠️ Beta Software Notice
+**⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle.
 
-**Current Version: 0.3.1 (Beta)**
+## ⚠️ Early Beta Software Notice
+
+**Current Version: 0.4.0 (Beta)**
 
 MCP Gateway is currently in early beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 
@@ -17,9 +19,43 @@ MCP Gateway is currently in early beta and should be treated as such until the 1
 - **Single-user administration** without access controls
 
 For production deployments:
+- **Disable features not used by your application**: use feature flags to disable unused features (ex: roots, resources, prompts) as per [537](https://github.com/IBM/mcp-context-forge/issues/537)
 - **Disable the Admin UI and APIs completely** (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=true` in `.env`)
 - **Use only the REST API** with proper authentication
 - **Build your own production-grade UI** with appropriate security controls
+
+### 🚀 Deployment Recommendations
+
+
+* **Disable unused features** using environment variables and feature flags (`MCPGATEWAY_ENABLE_PROMPTS=false`, etc.) as per [537](https://github.com/IBM/mcp-context-forge/issues/537)
+* **Use the REST API only**, with strict input validation and authentication
+* **Disable Admin UI and Admin API** in production (`MCPGATEWAY_UI_ENABLED=false`, `MCPGATEWAY_ADMIN_API_ENABLED=false`)
+* **Run containers as non-root users**, with read-only filesystems and minimal base images
+* **Harden network access** with firewalls, ingress policies, and internal-only endpoints
+* **Set resource limits** (CPU, memory) to protect against denial-of-service risks
+* **Always deploy the latest version** – there are **no backported security patches or long-term support branches**
+* **Perform a security audit of the codebase yourself**, especially if deploying in regulated, multi-tenant, or production environments
+* **Integrate as part of a comprehensive solution**:
+  MCP Gateway is **not a standalone product**. It is designed to be one layer in a larger, secure system architecture. You should integrate it with complementary components such as:
+
+  * API gateways or reverse proxies (for auth, rate-limiting, and routing)
+  * Secrets and configuration management systems (e.g., Vault, SOPS)
+  * Identity and access management (IAM) platforms
+  * Logging, monitoring, and alerting tools
+  * Runtime security, anomaly detection, and SIEM platforms
+  * Additional UI or orchestration layers that provide tenant or team-level access controls
+
+  Always consider your full deployment context and threat model when using MCP Gateway as part of a broader system.
+
+#### 🔐 Environment Variable Security
+
+* **Avoid storing secrets in environment variables** unless managed via a secure secrets manager
+* **Never log environment variables or sensitive configs**
+* **Restrict container permissions** so only the application process can read environment variables
+* **Use `.env` files cautiously**, and avoid committing them to version control
+* **Limit runtime shell access** to containers to prevent environment leaks
+
+---
 
 ### Multi-Tenancy Considerations
 
@@ -67,9 +103,9 @@ This human-centered approach ensures that security is not just a technical imple
 
 Our security pipeline operates at multiple levels:
 
-**Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include security scanners like Bandit, which identifies common security issues in Python code, along with type checking and code quality enforcement. Developers can run `make pre-commit bandit lint` locally to execute these same security checks before pushing code.
+**Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include multiple security scanners like Bandit for common security issues, Semgrep for semantic pattern matching, and Dodgy for hardcoded secrets detection, along with type checking and code quality enforcement. Developers can run `make security-all` or `make pre-commit bandit semgrep dodgy lint` locally to execute these same security checks before pushing code.
 
-**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **24+ security scans** triggering automatically on every PR, including CodeQL semantic analysis for vulnerability detection, dependency vulnerability scanning, and container security assessment.
+**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **30+ security scans** triggering automatically on every PR, including CodeQL and Semgrep for semantic analysis, Gitleaks for secret detection, comprehensive dependency vulnerability scanning with pip-audit, and container security assessment.
 
 **Code Review Security**: All code changes undergo mandatory peer review with security-focused review criteria, ensuring that security considerations are evaluated by human experts in addition to automated tooling.
 
@@ -81,30 +117,46 @@ Our security pipeline operates at multiple levels:
 
 ### Automated Security Toolchain
 
-Our security toolchain includes **24+ different security and quality tools**, each serving a specific purpose in our defense strategy and executed on every pull request:
+Our security toolchain includes **30+ different security and quality tools**, each serving a specific purpose in our defense strategy and executed on every pull request:
 
-- **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, and multiple type checkers
-- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, Grype, npm audit, and GitHub dependency review
+- **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, Semgrep, and multiple type checkers
+- **Secret Detection**: Gitleaks for git history scanning, Dodgy for hardcoded secrets in code
+- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, Grype, pip-audit, npm audit, and GitHub dependency review
 - **Container Security**: Hadolint for Dockerfile linting, Dockle for container security, and Trivy/Grype for vulnerability scanning
-- **Code Quality & Complexity**: Multiple linters ensuring code maintainability and reducing attack surface
-- **Documentation Security**: Spellcheck and markdown validation to prevent information disclosure
+- **Code Quality & Best Practices**: Prospector comprehensive analysis, dlint for Python best practices, Interrogate for docstring coverage
+- **Code Modernization**: pyupgrade for syntax modernization to latest Python versions
+- **Documentation Security**: Spellcheck and markdown validation and gitleaks to prevent information disclosure
 
 ### Developer Experience & Security
 
 We believe that security should enhance rather than hinder the development process. Our comprehensive `make` targets provide developers with easy access to the full security suite, allowing them to run the same checks locally that will be executed in CI/CD:
 
+**Core Security Commands**:
+- `make security-all` - Run all security tools in one command
+- `make security-report` - Generate comprehensive security report
+- `make security-fix` - Auto-fix security issues where possible
+
+**Individual Security Tools**:
 - `make pre-commit` - Run all pre-commit hooks locally (includes security scanning)
-- `make lint` - Comprehensive linting and security checking (24+ tools)
+- `make lint` - Comprehensive linting and security checking (30+ tools)
 - `make test` - Full test suite with coverage analysis and security validation
 - `make bandit` - Security scanner for Python code vulnerabilities
+- `make semgrep` - Advanced semantic code analysis for security patterns
+- `make dodgy` - Detect hardcoded passwords, API keys, and secrets
+- `make gitleaks` - Scan git history for accidentally committed secrets
+- `make dlint` - Python security best practices enforcement
+- `make interrogate` - Ensure comprehensive docstring coverage
+- `make prospector` - Comprehensive code analysis combining multiple tools
+- `make pyupgrade` - Modernize Python syntax for security improvements
+- `make pip-audit` - Python dependency vulnerability scanning
 - `make trivy` - Container vulnerability scanning
 - `make grype-scan` - Container security audit and vulnerability scanning
 - `make dockle` - Container security and best practices analysis
 - `make hadolint` - Dockerfile linting for security issues
 - `make osv-scan` - Open Source Vulnerability database scanning
-- `make pip-audit` - Python dependency vulnerability scanning
 - `make sbom` - Software Bill of Materials generation and vulnerability assessment
 - `make lint-web` - Frontend security validation (HTML, CSS, JS vulnerability scanning)
+- `make nodejsscan` - Run nodejsscan for JS security vulnerabilities
 
 **Local-First Security**: Developers are encouraged to run `make pre-commit` and `make test` before every commit, ensuring that security issues are caught and resolved locally before code reaches the repository. This "shift-left" approach means security problems are identified early in the development process, reducing the time and cost of remediation.
 
@@ -137,16 +189,19 @@ These validation rules help prevent XSS injection when data from untrusted MCP s
 Starting with v0.3.1, MCP Gateway follows the principle of "secure by default":
 
 - **Admin UI and API are disabled by default** - must be explicitly enabled via environment variables
-- **Authentication is required** for all endpoints when enabled
-- **Admin UI binds to localhost only** preventing external access
-- **Minimal container images** with non-root execution
-- **Read-only filesystems** in container deployments
+
 
 To enable admin features for development:
 ```bash
 MCPGATEWAY_UI_ENABLED=true        # Default: false
 MCPGATEWAY_ADMIN_API_ENABLED=true # Default: false
 ```
+
+Starting with 0.1.0:
+- **Authentication is required** for all endpoints when enabled
+- **Admin UI binds to localhost only** preventing external access
+- **Minimal container images** with non-root execution
+- **Read-only filesystems** in container deployments
 
 **Important**: The Admin UI is provided for developer convenience only and should **never be enabled in production deployments**.
 
@@ -192,8 +247,9 @@ Applications consuming data from MCP Gateway should:
 
 When deploying MCP Gateway in production:
 
+- [ ] Disable features you are not using in production (`FEATURES_ROOTS_ENABLED=false`, `FEATURES_PROMPTS_ENABLED=false`, `FEATURES_RESOURCES_ENABLED=false`)
 - [ ] Disable Admin UI and API in production (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=false`)
-- [ ] Enable authentication for all endpoints
+- [ ] Enable authentication for all endpoints using strong passwords / keys and a custom username.
 - [ ] Configure TLS/HTTPS with valid certificates (never run HTTP in production)
 - [ ] Validate and vet all connected MCP servers
 - [ ] Implement network-level access controls and firewall rules
@@ -238,12 +294,16 @@ flowchart TD
     B --> E[isort - Import Sorter]
     B --> F[mypy - Type Checking]
     B --> G[Bandit - Security Scanner]
+    B --> G1[Semgrep - Semantic Security]
+    B --> G2[Dodgy - Secret Detection]
 
     C --> H[Pre-commit Success?]
     D --> H
     E --> H
     F --> H
     G --> H
+    G1 --> H
+    G2 --> H
 
     H -->|No| I[Fix Issues & Retry]
     I --> B
@@ -254,7 +314,7 @@ flowchart TD
 
     K --> L[Python Package Build]
     K --> M[CodeQL Analysis]
-    K --> N[Bandit Security Scan]
+    K --> N[Python Security Suite]
     K --> O[Dependency Review]
     K --> P[Tests & Coverage]
     K --> Q[Lint & Static Analysis]
@@ -268,13 +328,18 @@ flowchart TD
     M --> M2[Security Vulnerability Detection]
     M --> M3[Data Flow Analysis]
 
-    N --> N1[Security Issue Detection]
-    N --> N2[Common Security Patterns]
-    N --> N3[Hardcoded Secrets Check]
+    N --> N1[Bandit - Security Issues]
+    N --> N2[Semgrep - Semantic Patterns]
+    N --> N3[Dodgy - Hardcoded Secrets]
+    N --> N4[Gitleaks - Git History Secrets]
+    N --> N5[dlint - Best Practices]
+    N --> N6[Prospector - Comprehensive Analysis]
+    N --> N7[Interrogate - Docstring Coverage]
 
     O --> O1[Dependency Vulnerability Check]
     O --> O2[License Compliance]
     O --> O3[Supply Chain Security]
+    O --> O4[pip-audit - Python CVEs]
 
     P --> P1[pytest Unit Tests]
     P --> P2[Coverage Analysis]
@@ -300,6 +365,7 @@ flowchart TD
     Q2 --> Q2F[importchecker - Import Analysis]
     Q2 --> Q2G[fawltydeps - Dependency Analysis]
     Q2 --> Q2H[check-manifest - Package Completeness]
+    Q2 --> Q2I[pyupgrade - Syntax Modernization]
 
     R --> R1[Docker Build]
     R --> R2[Multi-stage Build Process]
@@ -314,7 +380,7 @@ flowchart TD
     T[Local Development] --> U[Make Targets]
 
     U --> V[make lint - Full Lint Suite]
-    U --> W[Individual Security Tools]
+    U --> W[Security Make Targets]
     U --> X[make sbom - Software Bill of Materials]
     U --> Y[make lint-web - Frontend Security]
 
@@ -322,13 +388,23 @@ flowchart TD
     V --> V2[Code Quality Checks]
     V --> V3[Style Enforcement]
 
-    W --> W1[make bandit - Security Scanner]
-    W --> W2[make osv-scan - Vulnerability Check]
-    W --> W3[make trivy - Container Security]
-    W --> W4[make grype-scan - Container Vulnerability Scan]
-    W --> W5[make dockle - Image Analysis]
-    W --> W6[make hadolint - Dockerfile Linting]
-    W --> W7[make pip-audit - Dependency Scanning]
+    W --> W1[make security-all - Run All Security Tools]
+    W --> W2[make security-report - Generate Report]
+    W --> W3[make security-fix - Auto-fix Issues]
+    W --> W4[make bandit - Security Scanner]
+    W --> W5[make semgrep - Semantic Analysis]
+    W --> W6[make dodgy - Secret Detection]
+    W --> W7[make gitleaks - Git History Scan]
+    W --> W8[make dlint - Best Practices]
+    W --> W9[make interrogate - Docstring Coverage]
+    W --> W10[make prospector - Comprehensive Analysis]
+    W --> W11[make pyupgrade - Modernize Syntax]
+    W --> W12[make pip-audit - Dependency Scanning]
+    W --> W13[make osv-scan - Vulnerability Check]
+    W --> W14[make trivy - Container Security]
+    W --> W15[make grype-scan - Container Vulnerability]
+    W --> W16[make dockle - Image Analysis]
+    W --> W17[make hadolint - Dockerfile Linting]
 
     X --> X1[CycloneDX SBOM Generation]
     X --> X2[Dependency Inventory]
@@ -373,11 +449,11 @@ flowchart TD
     classDef process fill:#fdcb6e,stroke:#e17055,stroke-width:2px
     classDef success fill:#55a3ff,stroke:#2d3436,stroke-width:2px
 
-    class G,M,N,O,W,W1,W2,W3,W4,Z1,Z2,AA security
-    class C,D,E,F,Q,Q1,Q1A,Q1B,Q1C,Q1D,Q1E,Q1F,Q1G,Q1H,V linting
-    class R,S,S1,S2,S3,S4,AA,AA1,AA2,AA3,AA4 container
+    class G,G1,G2,M,N,O,W,W1,W2,W3,W4,W5,W6,W7,W8,W12,W13,Z1,Z2,AA,N1,N2,N3,N4,N5,N6,N7,O4 security
+    class C,D,E,F,Q,Q1,Q1A,Q1B,Q1C,Q1D,Q1E,Q1F,Q1G,Q1H,V,W9,W10,W11,Q2I linting
+    class R,S,S1,S2,S3,S4,S5,AA,AA1,AA2,AA3,AA4,W14,W15,W16,W17 container
     class B,H,K,L,P,T,U,V,W,X,Y,Z process
-    class L1,L2,M1,M2,M3,N1,N2,N3,P1,P2,P3 success
+    class L1,L2,M1,M2,M3,P1,P2,P3 success
 ```
 
 </details>
@@ -386,19 +462,22 @@ flowchart TD
 
 ## 📦 Supported Versions and Security Updates
 
-**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
+**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project contributors.
 
 ### Version Support Policy
 
-- We support **only the latest version** of this project
-- Support is provided **only through the REST API** (not the Admin UI)
-- Admin UI/APIs are provided for developer convenience and **must be disabled in production**
-- **No backports**: Older versions are not maintained or patched
-- **No SLAs**: Security updates are provided on a best-effort basis by the community
+* The **Admin UI** is intended for **localhost-only use** with trusted upstream MCP servers and is **disabled by default** (`MCPGATEWAY_UI_ENABLED=false`)
+* Deployments should use **only the REST APIs**, with proper authentication, **strict input validation and sanitization**, and **downstream output sanitization** as appropriate
+* The REST API is designed to be **accessed by internal services in a trusted environment**, not directly exposed to untrusted end-users
+* Fixes and security improvements are applied **only to the latest `main` branch** - **no backports** are provided
+* The Admin UI and Admin API are intended solely as development conveniences and **must be disabled in production**
+* Bug fixes and security patches are provided on a **best-effort basis**, without SLAs
+* Security hardening efforts prioritize the **REST API**; the Admin UI remains **unsupported**
+* Currently, roots, resources and prompts are considered alpha, and require additional security hardening and resource limits. They should be disabled through feature flags as per [537](https://github.com/IBM/mcp-context-forge/issues/537)
 
 ### Security Update Process
 
-All Container Images and Python dependencies are updated with every release (major or minor) or on CRITICAL/HIGH security vulnerabilities (triggering a minor release), subject to maintainer availability.
+All Container Images and Python dependencies are updated with every release (major or minor) or on CRITICAL/HIGH security vulnerabilities (triggering a minor release), subject to maintainer availability. However, since MCP Gateway is provided as-is, you are strongly encouraged to perform your own vulnerability scanning and apply security patches to your deployments, especially if you are customizing or extending base images or dependencies. Relying solely on upstream updates may not be sufficient for your production security posture.
 
 ### Community Support
 
@@ -409,42 +488,27 @@ All Container Images and Python dependencies are updated with every release (maj
 
 ### 🚨 Security Patching Policy
 
-Our security patching strategy prioritizes rapid response to vulnerabilities while maintaining system stability:
+> **⚠️ Disclaimer**: All patching and response timelines below are provided on a **best-effort basis** with **no service-level agreements (SLAs), guarantees, or commercial support**. MCP Gateway is an open-source project maintained by the community without official backing from IBM or its affiliates.
 
-**Critical and High-Severity Vulnerabilities**: Patches are released within 24 hours of discovery or vendor disclosure. These patches trigger immediate minor version releases and are deployed to all supported environments.
+Our security patching strategy prioritizes meaningful updates while maintaining overall system stability:
 
-**Medium-Severity Vulnerabilities**: Patches are released within 5-7 days unless the vulnerability affects core security functions, in which case expedited patching procedures are triggered within 48 hours.
+* **Critical and High-Severity Vulnerabilities**: Best-effort patches are typically released within **1 week** of discovery or disclosure. These updates usually result in a **minor version bump** (e.g., `0.3.1`).
 
-**Low-Severity Vulnerabilities**: Patches are included in regular maintenance releases and dependency updates, typically within 2 weeks.
+* **Medium-Severity Vulnerabilities**: Addressed in the **next scheduled release**, usually within **2 weeks** of identification.
 
-**Zero-Day Vulnerabilities**: Emergency patching procedures are activated immediately upon discovery, with hotfixes deployed within 12 hours where possible.
+* **Low-Severity Vulnerabilities**: Included in **regular maintenance updates**, typically resolved across **1–2 upcoming releases** (~**2–4 weeks**), depending on impact and availability.
 
-### 🤖 Automated Patch Management
-
-Our automated systems continuously monitor for:
-- Security advisories from Python Package Index (PyPI)
-- Container base image security updates
-- GitHub Security Advisories
-- CVE database updates
-- Dependency vulnerability disclosures
-
-When vulnerabilities are detected, our CI/CD pipeline automatically:
-1. Assesses the impact and severity
-2. Generates updated dependency lockfiles
-3. Triggers security testing and validation
-4. Initiates the release process for critical/high-severity issues
-5. Notifies maintainers and security team
+There are **no formal zero-day patch guarantees**; users are expected to evaluate risks and apply any necessary mitigations on their own infrastructure.
 
 ### ✅ Patch Verification Process
 
-All security patches undergo rigorous verification within compressed timelines:
+All security patches undergo best-effort verification:
 - Automated security scanning to verify vulnerability remediation
 - Regression testing to ensure no functionality is broken
 - Container security scanning for image-based updates
 - Integration testing with dependent services
-- Performance impact assessment
 
-This process ensures that security patches not only address vulnerabilities but maintain the reliability and performance characteristics of the MCP Gateway service, even under accelerated release schedules.
+This process ensures that security patches not only address vulnerabilities but maintain the reliability and performance characteristics of the MCP Gateway service.
 
 ---
 

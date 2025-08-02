@@ -8,20 +8,44 @@ Authors: Mihai Criveti
 This module provides a registry for SSE sessions with support for distributed deployment
 using Redis or SQLAlchemy as optional backends for shared state between workers.
 
-Doctest examples (memory backend only)
---------------------------------------
->>> from mcpgateway.cache.session_registry import SessionRegistry
->>> class DummyTransport:
-...     pass
->>> reg = SessionRegistry(backend='memory')
->>> import asyncio
->>> asyncio.run(reg.add_session('sid', DummyTransport()))
->>> t = asyncio.run(reg.get_session('sid'))
->>> isinstance(t, DummyTransport)
-True
->>> asyncio.run(reg.remove_session('sid'))
->>> asyncio.run(reg.get_session('sid')) is None
-True
+The SessionRegistry class manages server-sent event (SSE) sessions across multiple
+worker processes, enabling horizontal scaling of MCP gateway deployments. It supports
+three backend modes:
+
+- **memory**: In-memory storage for single-process deployments (default)
+- **redis**: Redis-backed shared storage for multi-worker deployments
+- **database**: SQLAlchemy-backed shared storage using any supported database
+
+In distributed mode (redis/database), session existence is tracked in the shared
+backend while transport objects remain local to each worker process. This allows
+workers to know about sessions on other workers and route messages appropriately.
+
+Examples:
+    Basic usage with memory backend:
+
+    >>> from mcpgateway.cache.session_registry import SessionRegistry
+    >>> class DummyTransport:
+    ...     async def disconnect(self):
+    ...         pass
+    ...     async def is_connected(self):
+    ...         return True
+    >>> import asyncio
+    >>> reg = SessionRegistry(backend='memory')
+    >>> transport = DummyTransport()
+    >>> asyncio.run(reg.add_session('sid123', transport))
+    >>> found = asyncio.run(reg.get_session('sid123'))
+    >>> isinstance(found, DummyTransport)
+    True
+    >>> asyncio.run(reg.remove_session('sid123'))
+    >>> asyncio.run(reg.get_session('sid123')) is None
+    True
+
+    Broadcasting messages:
+
+    >>> reg = SessionRegistry(backend='memory')
+    >>> asyncio.run(reg.broadcast('sid123', {'method': 'ping', 'id': 1}))
+    >>> reg._session_message is not None
+    True
 """
 
 # Standard
@@ -33,7 +57,6 @@ from typing import Any, Dict, Optional
 
 # Third-Party
 from fastapi import HTTPException, status
-import httpx
 
 # First-Party
 from mcpgateway import __version__
@@ -42,6 +65,7 @@ from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
 from mcpgateway.models import Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.transports import SSETransport
+from mcpgateway.utils.retry_manager import ResilientHttpClient
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +91,33 @@ except ImportError:
 
 
 class SessionBackend:
-    """Session backend related fields"""
+    """Base class for session registry backend configuration.
+
+    This class handles the initialization and configuration of different backend
+    types for session storage. It validates backend requirements and sets up
+    necessary connections for Redis or database backends.
+
+    Attributes:
+        _backend: The backend type ('memory', 'redis', 'database', or 'none')
+        _session_ttl: Time-to-live for sessions in seconds
+        _message_ttl: Time-to-live for messages in seconds
+        _redis: Redis connection instance (redis backend only)
+        _pubsub: Redis pubsub instance (redis backend only)
+        _session_message: Temporary message storage (memory backend only)
+
+    Examples:
+        >>> backend = SessionBackend(backend='memory')
+        >>> backend._backend
+        'memory'
+        >>> backend._session_ttl
+        3600
+
+        >>> try:
+        ...     backend = SessionBackend(backend='redis')
+        ... except ValueError as e:
+        ...     str(e)
+        'Redis backend requires redis_url'
+    """
 
     def __init__(
         self,
@@ -77,17 +127,45 @@ class SessionBackend:
         session_ttl: int = 3600,  # 1 hour
         message_ttl: int = 600,  # 10 min
     ):
-        """Initialize session registry.
+        """Initialize session backend configuration.
 
         Args:
-            backend: "memory", "redis", "database", or "none"
-            redis_url: Redis connection URL (required for redis backend)
-            database_url: Database connection URL (required for database backend)
-            session_ttl: Session time-to-live in seconds
-            message_ttl: Message time-to-live in seconds
+            backend: Backend type. Must be one of 'memory', 'redis', 'database', or 'none'.
+                - 'memory': In-memory storage, suitable for single-process deployments
+                - 'redis': Redis-backed storage for multi-worker deployments
+                - 'database': SQLAlchemy-backed storage for multi-worker deployments
+                - 'none': No session tracking (dummy registry)
+            redis_url: Redis connection URL. Required when backend='redis'.
+                Format: 'redis://[:password]@host:port/db'
+            database_url: Database connection URL. Required when backend='database'.
+                Format depends on database type (e.g., 'postgresql://user:pass@host/db')
+            session_ttl: Session time-to-live in seconds. Sessions are automatically
+                cleaned up after this duration of inactivity. Default: 3600 (1 hour).
+            message_ttl: Message time-to-live in seconds. Undelivered messages are
+                removed after this duration. Default: 600 (10 minutes).
 
         Raises:
-            ValueError: If backend is invalid or required URL is missing
+            ValueError: If backend is invalid, required URL is missing, or required packages are not installed.
+
+        Examples:
+            >>> # Memory backend (default)
+            >>> backend = SessionBackend()
+            >>> backend._backend
+            'memory'
+
+            >>> # Redis backend requires URL
+            >>> try:
+            ...     backend = SessionBackend(backend='redis')
+            ... except ValueError as e:
+            ...     'redis_url' in str(e)
+            True
+
+            >>> # Invalid backend
+            >>> try:
+            ...     backend = SessionBackend(backend='invalid')
+            ... except ValueError as e:
+            ...     'Invalid backend' in str(e)
+            True
         """
 
         self._backend = backend.lower()
@@ -122,30 +200,52 @@ class SessionBackend:
 
 
 class SessionRegistry(SessionBackend):
-    """
-    Registry for SSE sessions with optional distributed state.
+    """Registry for SSE sessions with optional distributed state.
 
-    Supports three backend modes:
-    - memory: In-memory storage (default, no dependencies)
-    - redis: Redis-backed shared storage
-    - database: SQLAlchemy-backed shared storage
+    This class manages server-sent event (SSE) sessions, providing methods to add,
+    remove, and query sessions. It supports multiple backend types for different
+    deployment scenarios:
 
-    In distributed mode (redis/database), session existence is tracked in the shared
-    backend while transports themselves remain local to each worker process.
+    - **Single-process deployments**: Use 'memory' backend (default)
+    - **Multi-worker deployments**: Use 'redis' or 'database' backend
+    - **Testing/development**: Use 'none' backend to disable session tracking
 
-    Doctest (memory backend only):
-    >>> from mcpgateway.cache.session_registry import SessionRegistry
-    >>> class DummyTransport:
-    ...     pass
-    >>> reg = SessionRegistry(backend='memory')
-    >>> import asyncio
-    >>> asyncio.run(reg.add_session('sid', DummyTransport()))
-    >>> t = asyncio.run(reg.get_session('sid'))
-    >>> isinstance(t, DummyTransport)
-    True
-    >>> asyncio.run(reg.remove_session('sid'))
-    >>> asyncio.run(reg.get_session('sid')) is None
-    True
+    The registry maintains a local cache of transport objects while using the
+    shared backend to track session existence across workers. This enables
+    horizontal scaling while keeping transport objects process-local.
+
+    Attributes:
+        _sessions: Local dictionary mapping session IDs to transport objects
+        _lock: Asyncio lock for thread-safe access to _sessions
+        _cleanup_task: Background task for cleaning up expired sessions
+
+    Examples:
+        >>> import asyncio
+        >>> from mcpgateway.cache.session_registry import SessionRegistry
+        >>>
+        >>> class MockTransport:
+        ...     async def disconnect(self):
+        ...         print("Disconnected")
+        ...     async def is_connected(self):
+        ...         return True
+        ...     async def send_message(self, msg):
+        ...         print(f"Sent: {msg}")
+        >>>
+        >>> # Create registry and add session
+        >>> reg = SessionRegistry(backend='memory')
+        >>> transport = MockTransport()
+        >>> asyncio.run(reg.add_session('test123', transport))
+        >>>
+        >>> # Retrieve session
+        >>> found = asyncio.run(reg.get_session('test123'))
+        >>> found is transport
+        True
+        >>>
+        >>> # Remove session
+        >>> asyncio.run(reg.remove_session('test123'))
+        Disconnected
+        >>> asyncio.run(reg.get_session('test123')) is None
+        True
     """
 
     def __init__(
@@ -156,14 +256,32 @@ class SessionRegistry(SessionBackend):
         session_ttl: int = 3600,  # 1 hour
         message_ttl: int = 600,  # 10 min
     ):
-        """Initialize session registry.
+        """Initialize session registry with specified backend.
 
         Args:
-            backend: "memory", "redis", "database", or "none"
-            redis_url: Redis connection URL (required for redis backend)
-            database_url: Database connection URL (required for database backend)
-            session_ttl: Session time-to-live in seconds
-            message_ttl: Message time-to-live in seconds
+            backend: Backend type. Must be one of 'memory', 'redis', 'database', or 'none'.
+            redis_url: Redis connection URL. Required when backend='redis'.
+            database_url: Database connection URL. Required when backend='database'.
+            session_ttl: Session time-to-live in seconds. Default: 3600.
+            message_ttl: Message time-to-live in seconds. Default: 600.
+
+        Examples:
+            >>> # Default memory backend
+            >>> reg = SessionRegistry()
+            >>> reg._backend
+            'memory'
+            >>> isinstance(reg._sessions, dict)
+            True
+
+            >>> # Redis backend with custom TTL
+            >>> try:
+            ...     reg = SessionRegistry(
+            ...         backend='redis',
+            ...         redis_url='redis://localhost:6379',
+            ...         session_ttl=7200
+            ...     )
+            ... except ValueError:
+            ...     pass  # Redis may not be available
         """
         super().__init__(backend=backend, redis_url=redis_url, database_url=database_url, session_ttl=session_ttl, message_ttl=message_ttl)
         self._sessions: Dict[str, Any] = {}  # Local transport cache
@@ -173,7 +291,21 @@ class SessionRegistry(SessionBackend):
     async def initialize(self) -> None:
         """Initialize the registry with async setup.
 
-        Call this during application startup.
+        This method performs asynchronous initialization tasks that cannot be done
+        in __init__. It starts background cleanup tasks and sets up pubsub
+        subscriptions for distributed backends.
+
+        Call this during application startup after creating the registry instance.
+
+        Examples:
+            >>> import asyncio
+            >>> reg = SessionRegistry(backend='memory')
+            >>> asyncio.run(reg.initialize())
+            >>> reg._cleanup_task is not None
+            True
+            >>>
+            >>> # Cleanup
+            >>> asyncio.run(reg.shutdown())
         """
         logger.info(f"Initializing session registry with backend: {self._backend}")
 
@@ -195,9 +327,20 @@ class SessionRegistry(SessionBackend):
             logger.info("Memory cleanup task started")
 
     async def shutdown(self) -> None:
-        """Shutdown the registry.
+        """Shutdown the registry and clean up resources.
 
-        Call this during application shutdown.
+        This method cancels background tasks and closes connections to external
+        services. Call this during application shutdown to ensure clean termination.
+
+        Examples:
+            >>> import asyncio
+            >>> reg = SessionRegistry()
+            >>> asyncio.run(reg.initialize())
+            >>> task_was_created = reg._cleanup_task is not None
+            >>> asyncio.run(reg.shutdown())
+            >>> # After shutdown, cleanup task should be handled (cancelled or done)
+            >>> task_was_created and (reg._cleanup_task.cancelled() or reg._cleanup_task.done())
+            True
         """
         logger.info("Shutting down session registry")
 
@@ -220,9 +363,38 @@ class SessionRegistry(SessionBackend):
     async def add_session(self, session_id: str, transport: SSETransport) -> None:
         """Add a session to the registry.
 
+        Stores the session in both the local cache and the distributed backend
+        (if configured). For distributed backends, this notifies other workers
+        about the new session.
+
         Args:
-            session_id: Unique session identifier
-            transport: Transport session
+            session_id: Unique session identifier. Should be a UUID or similar
+                unique string to avoid collisions.
+            transport: SSE transport object for this session. Must implement
+                the SSETransport interface.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.session_registry import SessionRegistry
+            >>>
+            >>> class MockTransport:
+            ...     async def disconnect(self):
+            ...         print(f"Transport disconnected")
+            ...     async def is_connected(self):
+            ...         return True
+            >>>
+            >>> reg = SessionRegistry()
+            >>> transport = MockTransport()
+            >>> asyncio.run(reg.add_session('test-456', transport))
+            >>>
+            >>> # Found in local cache
+            >>> found = asyncio.run(reg.get_session('test-456'))
+            >>> found is transport
+            True
+            >>>
+            >>> # Remove session
+            >>> asyncio.run(reg.remove_session('test-456'))
+            Transport disconnected
         """
         # Skip for none backend
         if self._backend == "none":
@@ -245,6 +417,25 @@ class SessionRegistry(SessionBackend):
             try:
 
                 def _db_add():
+                    """Store session record in the database.
+
+                    Creates a new SessionRecord entry in the database for tracking
+                    distributed session state. Uses a fresh database connection from
+                    the connection pool.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during database I/O.
+
+                    Raises:
+                        Exception: Any database error is re-raised after rollback.
+                            Common errors include duplicate session_id (unique constraint)
+                            or database connection issues.
+
+                    Examples:
+                        >>> # This function is called internally by add_session()
+                        >>> # When executed, it creates a database record:
+                        >>> # SessionRecord(session_id='abc123', created_at=now())
+                    """
                     db_session = next(get_db())
                     try:
                         session_record = SessionRecord(session_id=session_id)
@@ -263,13 +454,38 @@ class SessionRegistry(SessionBackend):
         logger.info(f"Added session: {session_id}")
 
     async def get_session(self, session_id: str) -> Any:
-        """Get session by ID.
+        """Get session transport by ID.
+
+        First checks the local cache for the transport object. If not found locally
+        but using a distributed backend, checks if the session exists on another
+        worker.
 
         Args:
-            session_id: Session identifier
+            session_id: Session identifier to look up.
 
         Returns:
-            Transport object or None if not found
+            SSETransport object if found locally, None if not found or exists
+            on another worker.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.session_registry import SessionRegistry
+            >>>
+            >>> class MockTransport:
+            ...     pass
+            >>>
+            >>> reg = SessionRegistry()
+            >>> transport = MockTransport()
+            >>> asyncio.run(reg.add_session('test-456', transport))
+            >>>
+            >>> # Found in local cache
+            >>> found = asyncio.run(reg.get_session('test-456'))
+            >>> found is transport
+            True
+            >>>
+            >>> # Not found
+            >>> asyncio.run(reg.get_session('nonexistent')) is None
+            True
         """
         # Skip for none backend
         if self._backend == "none":
@@ -298,6 +514,23 @@ class SessionRegistry(SessionBackend):
             try:
 
                 def _db_check():
+                    """Check if a session exists in the database.
+
+                    Queries the SessionRecord table to determine if a session with
+                    the given session_id exists. This is used when the session is not
+                    found in the local cache to check if it exists on another worker.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during database queries.
+
+                    Returns:
+                        bool: True if the session exists in the database, False otherwise.
+
+                    Examples:
+                        >>> # This function is called internally by get_session()
+                        >>> # Returns True if SessionRecord with session_id exists
+                        >>> # Returns False if no matching record found
+                    """
                     db_session = next(get_db())
                     try:
                         record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
@@ -318,8 +551,32 @@ class SessionRegistry(SessionBackend):
     async def remove_session(self, session_id: str) -> None:
         """Remove a session from the registry.
 
+        Removes the session from both local cache and distributed backend.
+        If a transport is found locally, it will be disconnected before removal.
+        For distributed backends, notifies other workers about the removal.
+
         Args:
-            session_id: Session identifier
+            session_id: Session identifier to remove.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.session_registry import SessionRegistry
+            >>>
+            >>> class MockTransport:
+            ...     async def disconnect(self):
+            ...         print(f"Transport disconnected")
+            ...     async def is_connected(self):
+            ...         return True
+            >>>
+            >>> reg = SessionRegistry()
+            >>> transport = MockTransport()
+            >>> asyncio.run(reg.add_session('remove-test', transport))
+            >>> asyncio.run(reg.remove_session('remove-test'))
+            Transport disconnected
+            >>>
+            >>> # Session no longer exists
+            >>> asyncio.run(reg.get_session('remove-test')) is None
+            True
         """
         # Skip for none backend
         if self._backend == "none":
@@ -351,6 +608,24 @@ class SessionRegistry(SessionBackend):
             try:
 
                 def _db_remove():
+                    """Delete session record from the database.
+
+                    Removes the SessionRecord entry with the specified session_id
+                    from the database. This is called when a session is being
+                    terminated or has expired.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during database operations.
+
+                    Raises:
+                        Exception: Any database error is re-raised after rollback.
+                            This includes connection errors or constraint violations.
+
+                    Examples:
+                        >>> # This function is called internally by remove_session()
+                        >>> # Deletes the SessionRecord where session_id matches
+                        >>> # No error if session_id doesn't exist (idempotent)
+                    """
                     db_session = next(get_db())
                     try:
                         db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).delete()
@@ -368,13 +643,38 @@ class SessionRegistry(SessionBackend):
         logger.info(f"Removed session: {session_id}")
 
     async def broadcast(self, session_id: str, message: dict) -> None:
-        """Broadcast a session_id and message to a channel.
+        """Broadcast a message to a session.
+
+        Sends a message to the specified session. The behavior depends on the backend:
+
+        - **memory**: Stores message temporarily for local delivery
+        - **redis**: Publishes message to Redis channel for the session
+        - **database**: Stores message in database for polling by worker with session
+        - **none**: No operation
+
+        This method is used for inter-process communication in distributed deployments.
 
         Args:
-            session_id: Session ID
-            message: Message to broadcast
+            session_id: Target session identifier.
+            message: Message to broadcast. Can be a dict, list, or any JSON-serializable object.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.session_registry import SessionRegistry
+            >>>
+            >>> reg = SessionRegistry(backend='memory')
+            >>> message = {'method': 'tools/list', 'id': 1}
+            >>> asyncio.run(reg.broadcast('session-789', message))
+            >>>
+            >>> # Message stored for memory backend
+            >>> reg._session_message is not None
+            True
+            >>> reg._session_message['session_id']
+            'session-789'
+            >>> json.loads(reg._session_message['message']) == message
+            True
         """
-        # Skip for none and memory backend
+        # Skip for none backend only
         if self._backend == "none":
             return
 
@@ -404,6 +704,29 @@ class SessionRegistry(SessionBackend):
                     msg_json = json.dumps(str(message))
 
                 def _db_add():
+                    """Store message in the database for inter-process communication.
+
+                    Creates a new SessionMessageRecord entry containing the session_id
+                    and serialized message. This enables message passing between
+                    different worker processes through the shared database.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during database writes.
+
+                    Raises:
+                        Exception: Any database error is re-raised after rollback.
+                            Common errors include database connection issues or
+                            constraints violations.
+
+                    Examples:
+                        >>> # This function is called internally by broadcast()
+                        >>> # Creates a record like:
+                        >>> # SessionMessageRecord(
+                        >>> #     session_id='abc123',
+                        >>> #     message='{"method": "ping", "id": 1}',
+                        >>> #     created_at=now()
+                        >>> # )
+                    """
                     db_session = next(get_db())
                     try:
                         message_record = SessionMessageRecord(session_id=session_id, message=msg_json)
@@ -420,16 +743,37 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"Database error during broadcast: {e}")
 
     def get_session_sync(self, session_id: str) -> Any:
-        """Get session synchronously (not checking shared backend).
+        """Get session synchronously from local cache only.
 
-        This is a non-blocking method for handlers that need quick access.
-        It only checks the local cache, not the shared backend.
+        This is a non-blocking method that only checks the local cache,
+        not the distributed backend. Use this when you need quick access
+        and know the session should be local.
 
         Args:
-            session_id: Session identifier
+            session_id: Session identifier to look up.
 
         Returns:
-            Transport object or None if not found
+            SSETransport object if found in local cache, None otherwise.
+
+        Examples:
+            >>> from mcpgateway.cache.session_registry import SessionRegistry
+            >>> import asyncio
+            >>>
+            >>> class MockTransport:
+            ...     pass
+            >>>
+            >>> reg = SessionRegistry()
+            >>> transport = MockTransport()
+            >>> asyncio.run(reg.add_session('sync-test', transport))
+            >>>
+            >>> # Synchronous lookup
+            >>> found = reg.get_session_sync('sync-test')
+            >>> found is transport
+            True
+            >>>
+            >>> # Not found
+            >>> reg.get_session_sync('nonexistent') is None
+            True
         """
         # Skip for none backend
         if self._backend == "none":
@@ -444,14 +788,32 @@ class SessionRegistry(SessionBackend):
         session_id: str,
         base_url: str,
     ) -> None:
-        """Respond to broadcast message is transport relevant to session_id is found locally
+        """Process and respond to broadcast messages for a session.
+
+        This method listens for messages directed to the specified session and
+        generates appropriate responses. The listening mechanism depends on the backend:
+
+        - **memory**: Checks the temporary message storage
+        - **redis**: Subscribes to Redis pubsub channel
+        - **database**: Polls database for new messages
+
+        When a message is received and the transport exists locally, it processes
+        the message and sends the response through the transport.
 
         Args:
-            server_id: Server ID
-            session_id: Session ID
-            user: User information
-            base_url: Base URL for the FastAPI request
+            server_id: Optional server identifier for scoped operations.
+            user: User information including authentication token.
+            session_id: Session identifier to respond for.
+            base_url: Base URL for API calls (used for RPC endpoints).
 
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.session_registry import SessionRegistry
+            >>>
+            >>> # This method is typically called internally by the SSE handler
+            >>> reg = SessionRegistry()
+            >>> user = {'token': 'test-token'}
+            >>> # asyncio.run(reg.respond(None, user, 'session-id', 'http://localhost'))
         """
 
         if self._backend == "none":
@@ -465,10 +827,11 @@ class SessionRegistry(SessionBackend):
                 await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
         elif self._backend == "redis":
-            await self._pubsub.subscribe(session_id)
+            pubsub = self._redis.pubsub()
+            await pubsub.subscribe(session_id)
 
             try:
-                async for msg in self._pubsub.listen():
+                async for msg in pubsub.listen():
                     if msg["type"] != "message":
                         continue
                     data = json.loads(msg["data"])
@@ -481,12 +844,36 @@ class SessionRegistry(SessionBackend):
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
             finally:
-                await self._pubsub.unsubscribe(session_id)
+                await pubsub.unsubscribe(session_id)
+                await pubsub.close()
                 logger.info(f"Cleaned up pubsub for session {session_id}")
 
         elif self._backend == "database":
 
             def _db_read_session(session_id):
+                """Check if session still exists in the database.
+
+                Queries the SessionRecord table to verify that the session
+                is still active. Used in the message polling loop to determine
+                when to stop checking for messages.
+
+                This inner function is designed to be run in a thread executor
+                to avoid blocking the async event loop during database reads.
+
+                Args:
+                    session_id: The session identifier to look up.
+
+                Returns:
+                    SessionRecord: The session record if found, None otherwise.
+
+                Raises:
+                    Exception: Any database error is re-raised after rollback.
+
+                Examples:
+                    >>> # This function is called internally by message_check_loop()
+                    >>> # Returns SessionRecord object if session exists
+                    >>> # Returns None if session has been removed
+                """
                 db_session = next(get_db())
                 try:
                     # Delete sessions that haven't been accessed for TTL seconds
@@ -499,6 +886,29 @@ class SessionRegistry(SessionBackend):
                     db_session.close()
 
             def _db_read(session_id):
+                """Read pending message for a session from the database.
+
+                Retrieves the first (oldest) unprocessed message for the given
+                session_id from the SessionMessageRecord table. Messages are
+                processed in FIFO order.
+
+                This inner function is designed to be run in a thread executor
+                to avoid blocking the async event loop during database queries.
+
+                Args:
+                    session_id: The session identifier to read messages for.
+
+                Returns:
+                    SessionMessageRecord: The oldest message record if found, None otherwise.
+
+                Raises:
+                    Exception: Any database error is re-raised after rollback.
+
+                Examples:
+                    >>> # This function is called internally by message_check_loop()
+                    >>> # Returns SessionMessageRecord with message data
+                    >>> # Returns None if no pending messages
+                """
                 db_session = next(get_db())
                 try:
                     # Delete sessions that haven't been accessed for TTL seconds
@@ -511,6 +921,27 @@ class SessionRegistry(SessionBackend):
                     db_session.close()
 
             def _db_remove(session_id, message):
+                """Remove processed message from the database.
+
+                Deletes a specific message record after it has been successfully
+                processed and sent to the transport. This prevents duplicate
+                message delivery.
+
+                This inner function is designed to be run in a thread executor
+                to avoid blocking the async event loop during database deletes.
+
+                Args:
+                    session_id: The session identifier the message belongs to.
+                    message: The exact message content to remove (must match exactly).
+
+                Raises:
+                    Exception: Any database error is re-raised after rollback.
+
+                Examples:
+                    >>> # This function is called internally after message processing
+                    >>> # Deletes the specific SessionMessageRecord entry
+                    >>> # Log: "Removed message from mcp_messages table"
+                """
                 db_session = next(get_db())
                 try:
                     db_session.query(SessionMessageRecord).filter(SessionMessageRecord.session_id == session_id).filter(SessionMessageRecord.message == message).delete()
@@ -523,6 +954,26 @@ class SessionRegistry(SessionBackend):
                     db_session.close()
 
             async def message_check_loop(session_id):
+                """Poll database for messages and deliver to local transport.
+
+                Continuously checks the database for new messages directed to
+                the specified session_id. When messages are found and the
+                transport exists locally, delivers the message and removes it
+                from the database. Exits when the session no longer exists.
+
+                This coroutine runs as a background task for each active session
+                using database backend, enabling message delivery across worker
+                processes.
+
+                Args:
+                    session_id: The session identifier to monitor for messages.
+
+                Examples:
+                    >>> # This function is called as a task by respond()
+                    >>> # asyncio.create_task(message_check_loop('abc123'))
+                    >>> # Polls every 0.1 seconds until session is removed
+                    >>> # Delivers messages to transport and cleans up database
+                """
                 while True:
                     record = await asyncio.to_thread(_db_read, session_id)
 
@@ -544,7 +995,12 @@ class SessionRegistry(SessionBackend):
             asyncio.create_task(message_check_loop(session_id))
 
     async def _refresh_redis_sessions(self) -> None:
-        """Refresh TTLs for Redis sessions and clean up disconnected sessions."""
+        """Refresh TTLs for Redis sessions and clean up disconnected sessions.
+
+        This internal method is used by the Redis backend to maintain session state.
+        It checks all local sessions, refreshes TTLs for connected sessions, and
+        removes disconnected ones.
+        """
         try:
             # Check all local sessions
             local_transports = {}
@@ -566,12 +1022,41 @@ class SessionRegistry(SessionBackend):
             logger.error(f"Error in Redis session refresh: {e}")
 
     async def _db_cleanup_task(self) -> None:
-        """Periodically clean up expired database sessions."""
+        """Background task to clean up expired database sessions.
+
+        Runs periodically (every 5 minutes) to remove expired sessions from the
+        database and refresh timestamps for active sessions. This prevents the
+        database from accumulating stale session records.
+
+        The task also verifies that local sessions still exist in the database
+        and removes them locally if they've been deleted elsewhere.
+        """
         logger.info("Starting database cleanup task")
         while True:
             try:
                 # Clean up expired sessions every 5 minutes
                 def _db_cleanup():
+                    """Remove expired sessions from the database.
+
+                    Deletes all SessionRecord entries that haven't been accessed
+                    within the session TTL period. Uses database-specific date
+                    arithmetic to calculate expiry time.
+
+                    This inner function is designed to be run in a thread executor
+                    to avoid blocking the async event loop during bulk deletes.
+
+                    Returns:
+                        int: Number of expired session records deleted.
+
+                    Raises:
+                        Exception: Any database error is re-raised after rollback.
+
+                    Examples:
+                        >>> # This function is called periodically by _db_cleanup_task()
+                        >>> # Deletes sessions older than session_ttl seconds
+                        >>> # Returns count of deleted records for logging
+                        >>> # Log: "Cleaned up 5 expired database sessions"
+                    """
                     db_session = next(get_db())
                     try:
                         # Delete sessions that haven't been accessed for TTL seconds
@@ -602,6 +1087,30 @@ class SessionRegistry(SessionBackend):
 
                         # Refresh session in database
                         def _refresh_session(session_id=session_id):
+                            """Update session's last accessed timestamp in the database.
+
+                            Refreshes the last_accessed field for an active session to
+                            prevent it from being cleaned up as expired. This is called
+                            periodically for all local sessions with active transports.
+
+                            This inner function is designed to be run in a thread executor
+                            to avoid blocking the async event loop during database updates.
+
+                            Args:
+                                session_id: The session identifier to refresh (default from closure).
+
+                            Returns:
+                                bool: True if the session was found and updated, False if not found.
+
+                            Raises:
+                                Exception: Any database error is re-raised after rollback.
+
+                            Examples:
+                                >>> # This function is called for each active local session
+                                >>> # Updates SessionRecord.last_accessed to current time
+                                >>> # Returns True if session exists and was refreshed
+                                >>> # Returns False if session no longer exists in database
+                            """
                             db_session = next(get_db())
                             try:
                                 session = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
@@ -636,7 +1145,12 @@ class SessionRegistry(SessionBackend):
                 await asyncio.sleep(600)  # Sleep longer on error
 
     async def _memory_cleanup_task(self) -> None:
-        """Periodically clean up disconnected sessions."""
+        """Background task to clean up disconnected sessions in memory backend.
+
+        Runs periodically (every minute) to check all local sessions and remove
+        those that are no longer connected. This prevents memory leaks from
+        accumulating disconnected transport objects.
+        """
         logger.info("Starting memory cleanup task")
         while True:
             try:
@@ -664,17 +1178,39 @@ class SessionRegistry(SessionBackend):
 
     # Handle initialize logic
     async def handle_initialize_logic(self, body: dict) -> InitializeResult:
-        """
-        Validates the protocol version from the request body and returns an InitializeResult with server capabilities and info.
+        """Process MCP protocol initialization request.
+
+        Validates the protocol version and returns server capabilities and information.
+        This method implements the MCP (Model Context Protocol) initialization handshake.
 
         Args:
-            body (dict): The incoming request body.
-
-        Raises:
-            HTTPException: If the protocol version is missing or unsupported.
+            body: Request body containing protocol_version and optional client_info.
+                Expected keys: 'protocol_version' or 'protocolVersion'.
 
         Returns:
-            InitializeResult: Initialization result with protocol version, capabilities, and server info.
+            InitializeResult containing protocol version, server capabilities, and server info.
+
+        Raises:
+            HTTPException: If protocol_version is missing (400 Bad Request with MCP error code -32002).
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.session_registry import SessionRegistry
+            >>>
+            >>> reg = SessionRegistry()
+            >>> body = {'protocol_version': '2025-03-26'}
+            >>> result = asyncio.run(reg.handle_initialize_logic(body))
+            >>> result.protocol_version
+            '2025-03-26'
+            >>> result.server_info.name
+            'MCP_Gateway'
+            >>>
+            >>> # Missing protocol version
+            >>> try:
+            ...     asyncio.run(reg.handle_initialize_logic({}))
+            ... except HTTPException as e:
+            ...     e.status_code
+            400
         """
         protocol_version = body.get("protocol_version") or body.get("protocolVersion")
         # body.get("capabilities", {})
@@ -705,16 +1241,33 @@ class SessionRegistry(SessionBackend):
         )
 
     async def generate_response(self, message: json, transport: SSETransport, server_id: Optional[str], user: dict, base_url: str):
-        """
-        Generates response according to SSE specifications
+        """Generate and send response for incoming MCP protocol message.
+
+        Processes MCP protocol messages and generates appropriate responses based on
+        the method. Supports various MCP methods including initialization, tool/resource/prompt
+        listing, tool invocation, and ping.
 
         Args:
-            message: Message JSON
-            transport: Transport where message should be responded in
-            server_id: Server ID
-            user: User information
-            base_url: Base URL for the FastAPI request
+            message: Incoming MCP message as JSON. Must contain 'method' and 'id' fields.
+            transport: SSE transport to send responses through.
+            server_id: Optional server ID for scoped operations.
+            user: User information containing authentication token.
+            base_url: Base URL for constructing RPC endpoints.
 
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.session_registry import SessionRegistry
+            >>>
+            >>> class MockTransport:
+            ...     async def send_message(self, msg):
+            ...         print(f"Response: {msg['method'] if 'method' in msg else msg.get('result', {})}")
+            >>>
+            >>> reg = SessionRegistry()
+            >>> transport = MockTransport()
+            >>> message = {"method": "ping", "id": 1}
+            >>> user = {"token": "test-token"}
+            >>> # asyncio.run(reg.generate_response(message, transport, None, user, "http://localhost"))
+            >>> # Response: {}
         """
         result = {}
 
@@ -780,7 +1333,7 @@ class SessionRegistry(SessionBackend):
                 }
                 headers = {"Authorization": f"Bearer {user['token']}", "Content-Type": "application/json"}
                 rpc_url = base_url + "/rpc"
-                async with httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify) as client:
+                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
                     rpc_response = await client.post(
                         url=rpc_url,
                         json=rpc_input,

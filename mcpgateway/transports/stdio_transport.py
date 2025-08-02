@@ -5,8 +5,27 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-This module implements stdio transport for MCP, handling
-communication over standard input/output streams.
+This module implements standard input/output (stdio) transport for MCP Gateway, enabling
+communication over stdin/stdout streams. This transport is particularly useful
+for command-line tools, subprocess communication, and scenarios where processes
+need to communicate via standard I/O channels.
+
+The StdioTransport class provides asynchronous message handling with proper
+JSON encoding/decoding and stream management. It follows the MCP transport
+protocol for bidirectional communication between MCP clients and servers.
+
+Key Features:
+- Asynchronous stream handling with asyncio
+- JSON message encoding/decoding
+- Line-based message protocol
+- Proper connection state management
+- Error handling and logging
+- Clean resource cleanup
+
+Note:
+    This transport requires access to sys.stdin and sys.stdout. In testing
+    environments or when these streams are not available, the transport
+    will raise RuntimeError during connection attempts.
 """
 
 # Standard

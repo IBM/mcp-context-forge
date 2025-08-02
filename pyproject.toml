@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "0.3.1"
+version = "0.4.0"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -48,23 +48,23 @@ maintainers = [
 dependencies = [
     "alembic>=1.16.4",
     "cryptography>=45.0.5",
-    "fastapi>=0.116.0",
+    "fastapi>=0.116.1",
     "filelock>=3.18.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
-    "jq>=1.9.1",
+    "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",
-    "jsonschema>=4.24.0",
-    "mcp>=1.11.0",
+    "jsonschema>=4.25.0",
+    "mcp>=1.12.3",
     "parse>=1.20.2",
     "psutil>=7.0.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "pyjwt>=2.10.1",
-    "sqlalchemy>=2.0.41",
-    "sse-starlette>=2.4.1",
-    "starlette>=0.46.2",
+    "sqlalchemy>=2.0.42",
+    "sse-starlette>=3.0.2",
+    "starlette>=0.47.2",
     "uvicorn>=0.35.0",
     "zeroconf>=0.147.0",
 ]
@@ -107,59 +107,74 @@ dev = [
     "check-manifest>=0.50",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
-    "coverage>=7.9.2",
+    "coverage>=7.10.1",
     "coverage-badge>=1.1.2",
     "darglint>=1.8.1",
+    "dlint>=0.16.0",
+    "dodgy>=0.2.1",
     "fawltydeps>=0.20.0",
     "flake8>=7.3.0",
     "gprof2dot>=2025.4.14",
     "importchecker>=3.0",
+    "interrogate>=1.7.0",
     "isort>=6.0.1",
-    "mypy>=1.16.1",
+    "mypy>=1.17.1",
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",
     "pip_audit>=2.9.0",
     "pre-commit>=4.2.0",
+    "prospector[with_everything]>=1.17.2",
     "pydocstyle>=6.3.0",
     "pylint>=3.3.7",
     "pylint-pydantic>=0.3.5",
     "pyre-check>=0.9.25",
-    "pyrefly>=0.23.1",
+    "pyrefly>=0.26.1",
     "pyright>=1.1.403",
-    "pyroma>=4.3.3",
+    "pyroma>=5.0",
     "pyspelling>=2.10",
     "pytest>=8.4.1",
-    "pytest-asyncio>=1.0.0",
+    "pytest-asyncio>=1.1.0",
     "pytest-cov>=6.2.1",
     "pytest-env>=1.1.5",
     "pytest-examples>=0.0.18",
     "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=15.1",
+    "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
     "pytype>=2024.10.11",
+    "pyupgrade>=3.20.0",
     "radon>=6.0.1",
     "redis>=6.2.0",
-    "ruff>=0.12.2",
+    "ruff>=0.12.7",
+    "semgrep>=1.131.0",
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "tomlcheck>=0.2.3",
-    "tox>=4.27.0",
-    "tox-uv>=1.26.1",
+    "tox>=4.28.4",
+    "tox-uv>=1.26.2",
     "twine>=6.1.0",
-    "ty>=0.0.1a14",
+    "ty>=0.0.1a16",
     "types-tabulate>=0.9.0.20241207",
-    "uv>=0.7.20",
     "unimport>=1.2.1",
+    "uv>=0.8.4",
     "vulture>=2.14",
     "yamllint>=1.37.1",
 ]
 
+# UI Testing
+playwright = [
+    "playwright>=1.54.0",
+    "pytest-html>=4.1.1",
+    "pytest-playwright>=0.7.0",
+    "pytest-timeout>=2.4.0",
+]
+
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=0.3.1",
+    "mcp-contextforge-gateway[redis]>=0.4.0",
 ]
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.3.1",
+    "mcp-contextforge-gateway[redis,dev]>=0.4.0",
 ]
 
 # --------------------------------------------------------------------
@@ -257,6 +272,7 @@ import_heading_localfolder = "Local"        # header for ad-hoc scripts / tests
 ###############################################################################
 known_first_party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
 known_local_folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
+known_third_party          = ["alembic"] # treat "alembic" as THIRDPARTY
 # src_paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
 
 ###############################################################################
@@ -317,7 +333,7 @@ exclude = [
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --cov=mcpgateway"
+addopts = "-ra -q --cov=mcpgateway --ignore=tests/playwright"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [
@@ -329,6 +345,31 @@ env = [
     "MCPGATEWAY_ADMIN_API_ENABLED=true",
     "MCPGATEWAY_UI_ENABLED=true"
 ]
+
+# ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====
+# Playwright test markers
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "ui: marks tests as UI tests",
+    "api: marks tests as API tests",
+    "smoke: marks tests as smoke tests for quick validation",
+    "e2e: marks tests as end-to-end tests",
+]
+
+# Playwright-specific test discovery patterns
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Playwright browser configuration (can be overridden via CLI)
+# These are custom options that your conftest.py can read
+# playwright_browser = "chromium"  # default browser
+# playwright_headed = false        # run headless by default
+# playwright_slow_mo = 0          # milliseconds delay between actions
+# playwright_screenshot = "only-on-failure"
+# playwright_video = "retain-on-failure"
+# playwright_trace = "retain-on-failure"
+
 # ── fawltydeps ─────────────────────────────────────────────────────
 [tool.fawltydeps]
 # only parse main pyproject.toml
