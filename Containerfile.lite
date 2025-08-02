@@ -40,8 +40,9 @@ ARG ROOTFS_PATH
 # ----------------------------------------------------------------------------
 # 1) Patch the OS
 # 2) Install Python + headers for building wheels
-# 3) Register python3 alternative
-# 4) Clean caches to reduce layer size
+# 3) Install binutils for strip command
+# 4) Register python3 alternative
+# 5) Clean caches to reduce layer size
 # ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
 RUN set -euo pipefail \
@@ -49,6 +50,7 @@ RUN set -euo pipefail \
     && dnf install -y \
          python${PYTHON_VERSION} \
          python${PYTHON_VERSION}-devel \
+         binutils \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && dnf clean all
 
@@ -61,7 +63,8 @@ COPY . /app
 # Create and populate virtual environment
 #  - Upgrade pip, setuptools, wheel, pdm, uv
 #  - Install project dependencies and package
-#  - Remove build caches and build tools
+#  - Remove build tools but keep runtime dist-info
+#  - Remove build caches
 # ----------------------------------------------------------------------------
 RUN set -euo pipefail \
     && python3 -m venv /app/.venv \
@@ -69,13 +72,22 @@ RUN set -euo pipefail \
     && /app/.venv/bin/uv pip install ".[redis,postgres]" \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
     && rm -rf /root/.cache /var/cache/dnf \
-    && find /app/.venv -name "*.pyc" -delete \
-    && find /app/.venv -name "*.pyo" -delete \
-    && find /app/.venv -type d -name "__pycache__" -delete \
+    && find /app/.venv -name "*.dist-info" -type d \
+        \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "pdm-*" -o -name "uv-*" \) \
+        -exec rm -rf {} + 2>/dev/null || true \
     && rm -rf /app/.venv/share/python-wheels
 
 # ----------------------------------------------------------------------------
+# Pre-compile Python bytecode with -OO optimization
+#  - Strips docstrings and assertions
+#  - Improves startup performance
+#  - Must be done before copying to rootfs
+# ----------------------------------------------------------------------------
+RUN python3 -OO -m compileall -q /app/.venv /app
+
+# ----------------------------------------------------------------------------
 # Build a minimal, fully-patched rootfs containing only the runtime Python
+# Include ca-certificates for HTTPS connections
 # ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
 RUN set -euo pipefail \
@@ -85,6 +97,7 @@ RUN set -euo pipefail \
          --setopt=install_weak_deps=0 \
          --setopt=tsflags=nodocs \
          python${PYTHON_VERSION} \
+         ca-certificates \
     && dnf clean all --installroot="${ROOTFS_PATH}"
 
 # ----------------------------------------------------------------------------
@@ -138,9 +151,15 @@ RUN rm -rf ${ROOTFS_PATH}/usr/bin/dnf* \
 # ----------------------------------------------------------------------------
 # Strip unneeded symbols from shared libraries
 # - This reduces the final image size by removing debug symbols
-# - It is safe to run on production images as it does not affect functionality
+# - Requires binutils to be installed in builder stage
+# - Safe to run on production images as it does not affect functionality
 # ----------------------------------------------------------------------------
-RUN find ${ROOTFS_PATH}/usr/lib64 -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true
+RUN find "${ROOTFS_PATH}/usr/lib64" -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true
+
+# ----------------------------------------------------------------------------
+# Remove binutils after stripping is complete
+# ----------------------------------------------------------------------------
+RUN dnf remove -y binutils && dnf clean all
 
 # ----------------------------------------------------------------------------
 # Remove setuid/setgid binaries for security
@@ -149,29 +168,27 @@ RUN find ${ROOTFS_PATH} -perm /4000 -o -perm /2000 -type f -delete 2>/dev/null |
 
 # ----------------------------------------------------------------------------
 # Create minimal passwd/group files for user 1001
+# - Using GID 1001 to match UID for consistency
+# - OpenShift compatible (accepts any UID in group 1001)
 # ----------------------------------------------------------------------------
-RUN echo "app:x:1001:0:app:/app:/sbin/nologin" > ${ROOTFS_PATH}/etc/passwd \
-    && echo "app:x:0:" > ${ROOTFS_PATH}/etc/group
+RUN printf 'app:x:1001:1001:app:/app:/sbin/nologin\n' > "${ROOTFS_PATH}/etc/passwd" && \
+    printf 'app:x:1001:\n' > "${ROOTFS_PATH}/etc/group"
 
 # ----------------------------------------------------------------------------
 # Create necessary directories in the rootfs
 #  - /tmp and /var/tmp with sticky bit for security
 # ----------------------------------------------------------------------------
 RUN chmod 1777 ${ROOTFS_PATH}/tmp ${ROOTFS_PATH}/var/tmp 2>/dev/null || true \
-    && chown 1001:0 ${ROOTFS_PATH}/tmp ${ROOTFS_PATH}/var/tmp
-# ----------------------------------------------------------------------------
-# Copy application directory into the rootfs and fix permissions for non-root
-# ----------------------------------------------------------------------------
-RUN cp -r /app ${ROOTFS_PATH}/app \
-    && chown -R 1001:0 ${ROOTFS_PATH}/app \
-    && chmod -R g=u ${ROOTFS_PATH}/app
+    && chown 1001:1001 ${ROOTFS_PATH}/tmp ${ROOTFS_PATH}/var/tmp
 
 # ----------------------------------------------------------------------------
-# Final cleanup of Python cache in the rootfs app directory
+# Copy application directory into the rootfs and fix permissions for non-root
+# - Set ownership to 1001:1001 (matching passwd/group)
+# - Allow group write permissions for OpenShift compatibility
 # ----------------------------------------------------------------------------
-RUN find ${ROOTFS_PATH}/app -type f -name "*.pyc" -delete \
-    && find ${ROOTFS_PATH}/app -type d -name "__pycache__" -delete \
-    && find ${ROOTFS_PATH}/app -type f -name "*.pyo" -delete
+RUN cp -r /app ${ROOTFS_PATH}/app \
+    && chown -R 1001:1001 ${ROOTFS_PATH}/app \
+    && chmod -R g=u ${ROOTFS_PATH}/app
 
 ###########################
 # Final runtime (squashed)
@@ -197,9 +214,9 @@ COPY --from=builder ${ROOTFS_PATH}/ /
 
 # ----------------------------------------------------------------------------
 # Ensure our virtual environment binaries have priority in PATH
-# - Don't write bytecode files
+# - Don't write bytecode files (we pre-compiled with -OO)
 # - Unbuffered output for better logging
-# - Random hash seed for reproducibility
+# - Random hash seed for security
 # - Disable pip cache to save space
 # - Disable pip version check to reduce startup time
 # ----------------------------------------------------------------------------
