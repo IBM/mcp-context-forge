@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #----------------------------------------------------------------------
 # Docker Build Context Optimization
-# 
+#
 # This .dockerignore file excludes unnecessary files from the Docker
 # build context to improve build performance and security.
 #----------------------------------------------------------------------
