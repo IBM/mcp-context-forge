@@ -96,7 +96,7 @@ The header format is as follows:
 Location: ./path/to/your/file.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Your Name
+Authors: Configurable, default to "Mihai Criveti"
 
 Your detailed module documentation begins here...
 """
