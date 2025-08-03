@@ -409,6 +409,14 @@ images:
 # 🔍 LINTING & STATIC ANALYSIS
 # =============================================================================
 # help: 🔍 LINTING & STATIC ANALYSIS
+# help: TARGET=<path>        - Override default target (mcpgateway tests)
+# help: Usage Examples:
+# help:   make lint                    - Run all linters on default targets (mcpgateway tests)
+# help:   make lint TARGET=myfile.py   - Run file-aware linters on specific file
+# help:   make lint myfile.py          - Run file-aware linters on a file (shortcut)
+# help:   make lint-quick myfile.py    - Fast linters only (ruff, black, isort)
+# help:   make lint-fix myfile.py      - Auto-fix formatting issues
+# help:   make lint-changed            - Lint only git-changed files
 # help: lint                 - Run the full linting suite (see targets below)
 # help: black                - Reformat code with black
 # help: autoflake            - Remove unused imports / variables with autoflake
@@ -443,59 +451,239 @@ images:
 # help: unimport             - Unused import detection
 # help: vulture              - Dead code detection
 
-# List of individual lint targets; lint loops over these
-LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
-	ruff pyright radon pyroma pyrefly spellcheck importchecker \
-		   pytype check-manifest markdownlint vulture unimport
+# Allow specific file/directory targeting
+DEFAULT_TARGETS := mcpgateway tests
+TARGET ?= $(DEFAULT_TARGETS)
 
-.PHONY: lint $(LINTERS) black fawltydeps wily depend snakeviz pstats \
-	spellcheck-sort tox pytype sbom
+# Add dummy targets for file arguments passed to lint commands only
+# This prevents make from trying to build file targets when they're used as arguments
+ifneq ($(filter lint lint-quick lint-fix lint-smart,$(MAKECMDGOALS)),)
+  # Get all arguments after the first goal
+  LINT_FILE_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  # Create dummy targets for each file argument
+  $(LINT_FILE_ARGS):
+	@:
+endif
+
+# List of individual lint targets
+LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
+	ruff ty pyright radon pyroma pyrefly spellcheck importchecker \
+		pytype check-manifest markdownlint vulture unimport
+
+# Linters that work well with individual files/directories
+FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
+	pycodestyle ruff pyright vulture unimport markdownlint
+
+.PHONY: lint $(LINTERS) black autoflake lint-py lint-yaml lint-json lint-md lint-strict \
+	lint-count-errors lint-report lint-changed lint-staged lint-commit \
+	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
+	lint-complexity lint-watch lint-watch-quick \
+	lint-install-hooks lint-quick lint-fix lint-smart lint-target lint-all
 
 
 ## --------------------------------------------------------------------------- ##
-##  Master target
+##  Main target with smart file/directory detection
 ## --------------------------------------------------------------------------- ##
 lint:
-	@echo "🔍  Running full lint suite..."
+	@# Handle multiple file arguments
+	@file_args="$(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))"; \
+	if [ -n "$$file_args" ]; then \
+		echo "🎯 Running linters on specified files: $$file_args"; \
+		for file in $$file_args; do \
+			if [ ! -e "$$file" ]; then \
+				echo "❌ File/directory not found: $$file"; \
+				exit 1; \
+			fi; \
+			echo "🔍 Linting: $$file"; \
+			$(MAKE) --no-print-directory lint-smart "$$file"; \
+		done; \
+	else \
+		echo "🔍 Running full lint suite on: $(TARGET)"; \
+		$(MAKE) --no-print-directory lint-all TARGET="$(TARGET)"; \
+	fi
+
+
+.PHONY: lint-target
+lint-target:
+	@# Check if target exists
+	@if [ ! -e "$(TARGET)" ]; then \
+		echo "❌ File/directory not found: $(TARGET)"; \
+		exit 1; \
+	fi
+	@# Run only file-aware linters
+	@echo "🔍 Running file-aware linters on: $(TARGET)"
+	@set -e; for t in $(FILE_AWARE_LINTERS); do \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "- $$t on $(TARGET)"; \
+		$(MAKE) --no-print-directory $$t TARGET="$(TARGET)" || true; \
+	done
+
+.PHONY: lint-all
+lint-all:
 	@set -e; for t in $(LINTERS); do \
-	    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	    echo "- $$t"; \
-	    $(MAKE) $$t || true; \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "- $$t"; \
+		$(MAKE) --no-print-directory $$t TARGET="$(TARGET)" || true; \
 	done
 
 ## --------------------------------------------------------------------------- ##
-##  Individual targets (alphabetical)
+##  Convenience targets
+## --------------------------------------------------------------------------- ##
+
+# Quick lint - only fast linters (ruff, black, isort)
+.PHONY: lint-quick
+lint-quick:
+	@# Handle file arguments
+	@target_file="$(word 2,$(MAKECMDGOALS))"; \
+	if [ -n "$$target_file" ] && [ "$$target_file" != "" ]; then \
+		actual_target="$$target_file"; \
+	else \
+		actual_target="$(TARGET)"; \
+	fi; \
+	echo "⚡ Quick lint of $$actual_target (ruff + black + isort)..."; \
+	$(MAKE) --no-print-directory ruff-check TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory black-check TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory isort-check TARGET="$$actual_target"
+
+# Fix formatting issues
+.PHONY: lint-fix
+lint-fix:
+	@# Handle file arguments
+	@target_file="$(word 2,$(MAKECMDGOALS))"; \
+	if [ -n "$$target_file" ] && [ "$$target_file" != "" ]; then \
+		actual_target="$$target_file"; \
+	else \
+		actual_target="$(TARGET)"; \
+	fi; \
+	for target in $$(echo $$actual_target); do \
+		if [ ! -e "$$target" ]; then \
+			echo "❌ File/directory not found: $$target"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "🔧 Fixing lint issues in $$actual_target..."; \
+	$(MAKE) --no-print-directory black TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory isort TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory ruff-fix TARGET="$$actual_target"
+
+# Smart linting based on file extension
+.PHONY: lint-smart
+lint-smart:
+	@# Handle arguments passed to this target - FIXED VERSION
+	@target_file="$(word 2,$(MAKECMDGOALS))"; \
+	if [ -n "$$target_file" ] && [ "$$target_file" != "" ]; then \
+		actual_target="$$target_file"; \
+	else \
+		actual_target="mcpgateway"; \
+	fi; \
+	if [ ! -e "$$actual_target" ]; then \
+		echo "❌ File/directory not found: $$actual_target"; \
+		exit 1; \
+	fi; \
+	case "$$actual_target" in \
+		*.py) \
+			echo "🐍 Python file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory lint-target TARGET="$$actual_target" ;; \
+		*.yaml|*.yml) \
+			echo "📄 YAML file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory yamllint TARGET="$$actual_target" ;; \
+		*.json) \
+			echo "📄 JSON file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory jsonlint TARGET="$$actual_target" ;; \
+		*.md) \
+			echo "📝 Markdown file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory markdownlint TARGET="$$actual_target" ;; \
+		*.toml) \
+			echo "📄 TOML file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory tomllint TARGET="$$actual_target" ;; \
+		*.sh) \
+			echo "🐚 Shell script detected: $$actual_target"; \
+			$(MAKE) --no-print-directory shell-lint TARGET="$$actual_target" ;; \
+		Makefile|*.mk) \
+			echo "🔨 Makefile detected: $$actual_target"; \
+			echo "ℹ️  Makefile linting not supported, skipping Python linters"; \
+			echo "💡 Consider using shellcheck for shell portions if needed" ;; \
+		*) \
+			if [ -d "$$actual_target" ]; then \
+				echo "📁 Directory detected: $$actual_target"; \
+				$(MAKE) --no-print-directory lint-target TARGET="$$actual_target"; \
+			else \
+				echo "❓ Unknown file type, running Python linters"; \
+				$(MAKE) --no-print-directory lint-target TARGET="$$actual_target"; \
+			fi ;; \
+	esac
+
+	fi
+
+## --------------------------------------------------------------------------- ##
+##  Individual targets (alphabetical, updated to use TARGET)
 ## --------------------------------------------------------------------------- ##
 autoflake:                          ## 🧹  Strip unused imports / vars
+	@echo "🧹 autoflake $(TARGET)..."
 	@$(VENV_DIR)/bin/autoflake --in-place --remove-all-unused-imports \
-	          --remove-unused-variables -r mcpgateway tests
+		--remove-unused-variables -r $(TARGET)
 
 black:                              ## 🎨  Reformat code with black
-	@echo "🎨  black ..." && $(VENV_DIR)/bin/black -l 200 mcpgateway tests
+	@echo "🎨  black $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 $(TARGET)
+
+# Black check mode (separate target)
+black-check:
+	@echo "🎨  black --check $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 --check --diff $(TARGET)
 
 isort:                              ## 🔀  Sort imports
-	@echo "🔀  isort ..." && $(VENV_DIR)/bin/isort .
+	@echo "🔀  isort $(TARGET)..." && $(VENV_DIR)/bin/isort $(TARGET)
+
+# Isort check mode (separate target)
+isort-check:
+	@echo "🔀  isort --check $(TARGET)..." && $(VENV_DIR)/bin/isort --check-only --diff $(TARGET)
 
 flake8:                             ## 🐍  flake8 checks
-	@$(VENV_DIR)/bin/flake8 mcpgateway
+	@echo "🐍 flake8 $(TARGET)..." && $(VENV_DIR)/bin/flake8 $(TARGET)
 
 pylint:                             ## 🐛  pylint checks
-	@$(VENV_DIR)/bin/pylint mcpgateway
+	@echo "🐛 pylint $(TARGET)..." && $(VENV_DIR)/bin/pylint $(TARGET)
 
 markdownlint:					    ## 📖  Markdown linting
-	@$(VENV_DIR)/bin/markdownlint -c .markdownlint.json .
+	@# Install markdownlint-cli2 if not present
+	@if ! command -v markdownlint-cli2 >/dev/null 2>&1; then \
+		echo "📦 Installing markdownlint-cli2..."; \
+		if command -v npm >/dev/null 2>&1; then \
+			npm install -g markdownlint-cli2; \
+		else \
+			echo "❌ npm not found. Please install Node.js/npm first."; \
+			echo "💡 Install with:"; \
+			echo "   • macOS: brew install node"; \
+			echo "   • Linux: sudo apt-get install nodejs npm"; \
+			exit 1; \
+		fi; \
+	fi
+	@if [ -f "$(TARGET)" ] && echo "$(TARGET)" | grep -qE '\.(md|markdown)$$'; then \
+		echo "📖 markdownlint $(TARGET)..."; \
+		markdownlint-cli2 "$(TARGET)" || true; \
+	elif [ -d "$(TARGET)" ]; then \
+		echo "📖 markdownlint $(TARGET)..."; \
+		markdownlint-cli2 "$(TARGET)/**/*.md" || true; \
+	else \
+		echo "📖 markdownlint (default)..."; \
+		markdownlint-cli2 "**/*.md" || true; \
+	fi
 
 mypy:                               ## 🏷️  mypy type-checking
-	@$(VENV_DIR)/bin/mypy mcpgateway
+	@echo "🏷️ mypy $(TARGET)..." && $(VENV_DIR)/bin/mypy $(TARGET)
 
 bandit:                             ## 🛡️  bandit security scan
-	@$(VENV_DIR)/bin/bandit -r mcpgateway
+	@echo "🛡️ bandit $(TARGET)..."
+	@if [ -d "$(TARGET)" ]; then \
+		$(VENV_DIR)/bin/bandit -r $(TARGET); \
+	else \
+		$(VENV_DIR)/bin/bandit $(TARGET); \
+	fi
 
 pydocstyle:                         ## 📚  Docstring style
-	@$(VENV_DIR)/bin/pydocstyle mcpgateway
+	@echo "📚 pydocstyle $(TARGET)..." && $(VENV_DIR)/bin/pydocstyle $(TARGET)
 
 pycodestyle:                        ## 📝  Simple PEP-8 checker
-	@$(VENV_DIR)/bin/pycodestyle mcpgateway --max-line-length=200
+	@echo "📝 pycodestyle $(TARGET)..." && $(VENV_DIR)/bin/pycodestyle $(TARGET) --max-line-length=200
 
 pre-commit:                         ## 🪄  Run pre-commit hooks
 	@echo "🪄  Running pre-commit hooks..."
@@ -507,19 +695,29 @@ pre-commit:                         ## 🪄  Run pre-commit hooks
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pre-commit run --all-files --show-diff-on-failure"
 
 ruff:                               ## ⚡  Ruff lint + format
-	@$(VENV_DIR)/bin/ruff check mcpgateway && $(VENV_DIR)/bin/ruff format mcpgateway tests
+	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET) && $(VENV_DIR)/bin/ruff format $(TARGET)
+
+# Separate ruff targets for different modes
+ruff-check:
+	@echo "⚡ ruff check $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
+
+ruff-fix:
+	@echo "⚡ ruff check --fix $(TARGET)..." && $(VENV_DIR)/bin/ruff check --fix $(TARGET)
+
+ruff-format:
+	@echo "⚡ ruff format $(TARGET)..." && $(VENV_DIR)/bin/ruff format $(TARGET)
 
 ty:                                 ## ⚡  Ty type checker
-	@$(VENV_DIR)/bin/ty check mcpgateway tests
+	@echo "⚡ ty $(TARGET)..." && $(VENV_DIR)/bin/ty check $(TARGET)
 
 pyright:                            ## 🏷️  Pyright type-checking
-	@$(VENV_DIR)/bin/pyright mcpgateway tests
+	@echo "🏷️ pyright $(TARGET)..." && $(VENV_DIR)/bin/pyright $(TARGET)
 
 radon:                              ## 📈  Complexity / MI metrics
-	@$(VENV_DIR)/bin/radon mi -s mcpgateway tests && \
-	$(VENV_DIR)/bin/radon cc -s mcpgateway tests && \
-	$(VENV_DIR)/bin/radon hal mcpgateway tests && \
-	$(VENV_DIR)/bin/radon raw -s mcpgateway tests
+	@$(VENV_DIR)/bin/radon mi -s $(TARGET) && \
+	$(VENV_DIR)/bin/radon cc -s $(TARGET) && \
+	$(VENV_DIR)/bin/radon hal $(TARGET) && \
+	$(VENV_DIR)/bin/radon raw -s $(TARGET)
 
 pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
@@ -547,7 +745,7 @@ pyre:                               ## 🧠  Facebook Pyre analysis
 	@$(VENV_DIR)/bin/pyre
 
 pyrefly:                            ## 🧠  Facebook Pyrefly analysis (faster, rust)
-	@$(VENV_DIR)/bin/pyrefly check mcpgateway
+	@echo "🧠 pyrefly $(TARGET)..." && $(VENV_DIR)/bin/pyrefly check $(TARGET)
 
 depend:                             ## 📦  List dependencies
 	@echo "📦  List dependencies"
@@ -621,17 +819,388 @@ sbom:								## 🛡️  Generate SBOM & security report
 
 pytype:								## 🧠  Pytype static type analysis
 	@echo "🧠  Pytype analysis..."
-	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto mcpgateway tests
+	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto $(TARGET)
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
 
 unimport:                           ## 📦  Unused import detection
-	@echo "📦  unimport …" && $(VENV_DIR)/bin/unimport --check --diff mcpgateway
+	@echo "📦  unimport $(TARGET)…" && $(VENV_DIR)/bin/unimport --check --diff $(TARGET)
 
 vulture:                            ## 🧹  Dead code detection
-	@echo "🧹  vulture …" && $(VENV_DIR)/bin/vulture mcpgateway --min-confidence 80
+	@echo "🧹  vulture $(TARGET) …" && $(VENV_DIR)/bin/vulture $(TARGET) --min-confidence 80
+
+# Shell script linting for individual files
+shell-lint-file:                    ## 🐚  Lint shell script
+	@if [ -f "$(TARGET)" ]; then \
+		echo "🐚 Linting shell script: $(TARGET)"; \
+		if command -v shellcheck >/dev/null 2>&1; then \
+			shellcheck "$(TARGET)" || true; \
+		else \
+			echo "⚠️  shellcheck not installed - skipping"; \
+		fi; \
+		if command -v shfmt >/dev/null 2>&1; then \
+			shfmt -d -i 4 -ci "$(TARGET)" || true; \
+		elif [ -f "$(HOME)/go/bin/shfmt" ]; then \
+			$(HOME)/go/bin/shfmt -d -i 4 -ci "$(TARGET)" || true; \
+		else \
+			echo "⚠️  shfmt not installed - skipping"; \
+		fi; \
+	else \
+		echo "❌ $(TARGET) is not a file"; \
+	fi
+
+# -----------------------------------------------------------------------------
+# 🔍 LINT CHANGED FILES (GIT INTEGRATION)
+# -----------------------------------------------------------------------------
+# help: lint-changed         - Lint only git-changed files
+# help: lint-staged          - Lint only git-staged files
+# help: lint-commit          - Lint files in specific commit (use COMMIT=hash)
+.PHONY: lint-changed lint-staged lint-commit
+
+lint-changed:							## 🔍 Lint only changed files (git)
+	@echo "🔍 Linting changed files..."
+	@changed_files=$$(git diff --name-only --diff-filter=ACM HEAD 2>/dev/null || true); \
+	if [ -z "$$changed_files" ]; then \
+		echo "ℹ️  No changed files to lint"; \
+	else \
+		echo "Changed files:"; \
+		echo "$$changed_files" | sed 's/^/  - /'; \
+		echo ""; \
+		for file in $$changed_files; do \
+			if [ -e "$$file" ]; then \
+				echo "🎯 Linting: $$file"; \
+				$(MAKE) --no-print-directory lint-smart "$$file"; \
+			fi; \
+		done; \
+	fi
+
+lint-staged:							## 🔍 Lint only staged files (git)
+	@echo "🔍 Linting staged files..."
+	@staged_files=$$(git diff --name-only --cached --diff-filter=ACM 2>/dev/null || true); \
+	if [ -z "$$staged_files" ]; then \
+		echo "ℹ️  No staged files to lint"; \
+	else \
+		echo "Staged files:"; \
+		echo "$$staged_files" | sed 's/^/  - /'; \
+		echo ""; \
+		for file in $$staged_files; do \
+			if [ -e "$$file" ]; then \
+				echo "🎯 Linting: $$file"; \
+				$(MAKE) --no-print-directory lint-smart "$$file"; \
+			fi; \
+		done; \
+	fi
+
+# Lint files in specific commit (use COMMIT=hash)
+COMMIT ?= HEAD
+lint-commit:							## 🔍 Lint files changed in commit
+	@echo "🔍 Linting files changed in commit $(COMMIT)..."
+	@commit_files=$$(git diff-tree --no-commit-id --name-only -r $(COMMIT) 2>/dev/null || true); \
+	if [ -z "$$commit_files" ]; then \
+		echo "ℹ️  No files found in commit $(COMMIT)"; \
+	else \
+		echo "Files in commit $(COMMIT):"; \
+		echo "$$commit_files" | sed 's/^/  - /'; \
+		echo ""; \
+		for file in $$commit_files; do \
+			if [ -e "$$file" ]; then \
+				echo "🎯 Linting: $$file"; \
+				$(MAKE) --no-print-directory lint-smart "$$file"; \
+			fi; \
+		done; \
+	fi
+
+# -----------------------------------------------------------------------------
+# 👁️ WATCH MODE - LINT ON FILE CHANGES
+# -----------------------------------------------------------------------------
+# help: lint-watch           - Watch files for changes and auto-lint
+# help: lint-watch-quick     - Watch files with quick linting only
+.PHONY: lint-watch lint-watch-quick install-watchdog
+
+install-watchdog:						## 📦 Install watchdog for file watching
+	@echo "📦 Installing watchdog for file watching..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q watchdog"
+
+# Watch mode - lint on file changes
+lint-watch: install-watchdog			## 👁️ Watch for changes and auto-lint
+	@echo "👁️ Watching $(TARGET) for changes (Ctrl+C to stop)..."
+	@echo "💡 Will run 'make lint-smart' on changed Python files"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/watchmedo shell-command \
+			--patterns='*.py;*.yaml;*.yml;*.json;*.md;*.toml' \
+			--recursive \
+			--command='echo \"📝 File changed: \$${watch_src_path}\" && make --no-print-directory lint-smart \"\$${watch_src_path}\"' \
+			$(TARGET)"
+
+# Watch mode with quick linting only
+lint-watch-quick: install-watchdog		## 👁️ Watch for changes and quick-lint
+	@echo "👁️ Quick-watching $(TARGET) for changes (Ctrl+C to stop)..."
+	@echo "💡 Will run 'make lint-quick' on changed Python files"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/watchmedo shell-command \
+			--patterns='*.py' \
+			--recursive \
+			--command='echo \"⚡ File changed: \$${watch_src_path}\" && make --no-print-directory lint-quick \"\$${watch_src_path}\"' \
+			$(TARGET)"
+
+# -----------------------------------------------------------------------------
+# 🚨 STRICT LINTING WITH ERROR THRESHOLDS
+# -----------------------------------------------------------------------------
+# help: lint-strict          - Lint with error threshold (fail on errors)
+# help: lint-count-errors    - Count and report linting errors
+# help: lint-report          - Generate detailed linting report
+.PHONY: lint-strict lint-count-errors lint-report
+
+# Lint with error threshold
+lint-strict:							## 🚨 Lint with strict error checking
+	@echo "🚨 Running strict linting on $(TARGET)..."
+	@mkdir -p $(DOCS_DIR)/reports
+	@$(MAKE) lint TARGET="$(TARGET)" 2>&1 | tee $(DOCS_DIR)/reports/lint-report.txt
+	@errors=$$(grep -ic "error\|failed\|❌" $(DOCS_DIR)/reports/lint-report.txt 2>/dev/null || echo 0); \
+	warnings=$$(grep -ic "warning\|warn\|⚠️" $(DOCS_DIR)/reports/lint-report.txt 2>/dev/null || echo 0); \
+	echo ""; \
+	echo "📊 Linting Summary:"; \
+	echo "   ❌ Errors: $$errors"; \
+	echo "   ⚠️  Warnings: $$warnings"; \
+	if [ $$errors -gt 0 ]; then \
+		echo ""; \
+		echo "❌ Linting failed with $$errors errors"; \
+		echo "📄 Full report: $(DOCS_DIR)/reports/lint-report.txt"; \
+		exit 1; \
+	else \
+		echo "✅ All linting checks passed!"; \
+	fi
+
+# Count errors from different linters
+lint-count-errors:						## 📊 Count linting errors by tool
+	@echo "📊 Counting linting errors by tool..."
+	@mkdir -p $(DOCS_DIR)/reports
+	@echo "# Linting Error Report - $$(date)" > $(DOCS_DIR)/reports/error-count.md
+	@echo "" >> $(DOCS_DIR)/reports/error-count.md
+	@echo "| Tool | Errors | Warnings |" >> $(DOCS_DIR)/reports/error-count.md
+	@echo "|------|--------|----------|" >> $(DOCS_DIR)/reports/error-count.md
+	@for tool in flake8 pylint mypy bandit ruff; do \
+		echo "🔍 Checking $$tool errors..."; \
+		errors=0; warnings=0; \
+		if $(MAKE) --no-print-directory $$tool TARGET="$(TARGET)" 2>&1 | tee /tmp/$$tool.log >/dev/null; then \
+			errors=$$(grep -c "error:" /tmp/$$tool.log 2>/dev/null || echo 0); \
+			warnings=$$(grep -c "warning:" /tmp/$$tool.log 2>/dev/null || echo 0); \
+		fi; \
+		echo "| $$tool | $$errors | $$warnings |" >> $(DOCS_DIR)/reports/error-count.md; \
+		rm -f /tmp/$$tool.log; \
+	done
+	@echo "" >> $(DOCS_DIR)/reports/error-count.md
+	@echo "Generated: $$(date)" >> $(DOCS_DIR)/reports/error-count.md
+	@cat $(DOCS_DIR)/reports/error-count.md
+	@echo "📄 Report saved: $(DOCS_DIR)/reports/error-count.md"
+
+# Generate comprehensive linting report
+lint-report:							## 📋 Generate comprehensive linting report
+	@echo "📋 Generating comprehensive linting report..."
+	@mkdir -p $(DOCS_DIR)/reports
+	@echo "# Comprehensive Linting Report" > $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "Generated: $$(date)" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "## Target: $(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "## Quick Summary" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@$(MAKE) --no-print-directory lint-quick TARGET="$(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md 2>&1 || true
+	@echo "" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "## Detailed Analysis" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@$(MAKE) --no-print-directory lint TARGET="$(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md 2>&1 || true
+	@echo "" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "## Error Count by Tool" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@$(MAKE) --no-print-directory lint-count-errors TARGET="$(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md 2>&1 || true
+	@echo "📄 Report generated: $(DOCS_DIR)/reports/full-lint-report.md"
+
+# -----------------------------------------------------------------------------
+# 🔧 PRE-COMMIT INTEGRATION
+# -----------------------------------------------------------------------------
+# help: lint-install-hooks   - Install git pre-commit hooks for linting
+# help: lint-pre-commit      - Run linting as pre-commit check
+# help: lint-pre-push        - Run linting as pre-push check
+.PHONY: lint-install-hooks lint-pre-commit lint-pre-push
+
+# Install git hooks for linting
+lint-install-hooks:						## 🔧 Install git hooks for auto-linting
+	@echo "🔧 Installing git pre-commit hooks for linting..."
+	@if [ ! -d ".git" ]; then \
+		echo "❌ Not a git repository"; \
+		exit 1; \
+	fi
+	@echo '#!/bin/bash' > .git/hooks/pre-commit
+	@echo '# Auto-generated pre-commit hook for linting' >> .git/hooks/pre-commit
+	@echo 'echo "🔍 Running pre-commit linting..."' >> .git/hooks/pre-commit
+	@echo 'make lint-pre-commit' >> .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo '#!/bin/bash' > .git/hooks/pre-push
+	@echo '# Auto-generated pre-push hook for linting' >> .git/hooks/pre-push
+	@echo 'echo "🔍 Running pre-push linting..."' >> .git/hooks/pre-push
+	@echo 'make lint-pre-push' >> .git/hooks/pre-push
+	@chmod +x .git/hooks/pre-push
+	@echo "✅ Git hooks installed:"
+	@echo "   📝 pre-commit: .git/hooks/pre-commit"
+	@echo "   📤 pre-push: .git/hooks/pre-push"
+	@echo "💡 To disable: rm .git/hooks/pre-commit .git/hooks/pre-push"
+
+# Pre-commit hook (lint staged files)
+lint-pre-commit:						## 🔍 Pre-commit linting check
+	@echo "🔍 Pre-commit linting check..."
+	@$(MAKE) --no-print-directory lint-staged
+	@echo "✅ Pre-commit linting passed!"
+
+# Pre-push hook (lint all changed files)
+lint-pre-push:							## 🔍 Pre-push linting check
+	@echo "🔍 Pre-push linting check..."
+	@$(MAKE) --no-print-directory lint-changed
+	@echo "✅ Pre-push linting passed!"
+
+# -----------------------------------------------------------------------------
+# 🎯 FILE TYPE SPECIFIC LINTING
+# -----------------------------------------------------------------------------
+# Lint only Python files in target
+lint-py:								## 🐍 Lint only Python files
+	@echo "🐍 Linting Python files in $(TARGET)..."
+	@for target in $(DEFAULT_TARGETS); do \
+		if [ -f "$$target" ] && echo "$$target" | grep -qE '\.py$$'; then \
+			echo "🎯 Linting Python file: $$target"; \
+			$(MAKE) --no-print-directory lint-target TARGET="$$target"; \
+		elif [ -d "$$target" ]; then \
+			echo "🔍 Finding Python files in: $$target"; \
+			find "$$target" -name "*.py" -type f | while read f; do \
+				echo "🎯 Linting: $$f"; \
+				$(MAKE) --no-print-directory lint-target TARGET="$$f"; \
+			done; \
+		else \
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+		exit 1; \
+	fi
+
+# Lint only YAML files
+lint-yaml:								## 📄 Lint only YAML files
+	@echo "📄 Linting YAML files in $(TARGET)..."
+	@for target in $(DEFAULT_TARGETS); do \
+		if [ -f "$$target" ] && echo "$$target" | grep -qE '\.(yaml|yml)$$'; then \
+			$(MAKE) --no-print-directory yamllint TARGET="$$target"; \
+		elif [ -d "$$target" ]; then \
+			find "$$target" -name "*.yaml" -o -name "*.yml" | while read f; do \
+				echo "🎯 Linting: $$f"; \
+				$(MAKE) --no-print-directory yamllint TARGET="$$f"; \
+			done; \
+		else \
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+	fi
+
+# Lint only JSON files
+lint-json:								## 📄 Lint only JSON files
+	@echo "📄 Linting JSON files in $(TARGET)..."
+	@for target in $(DEFAULT_TARGETS); do \
+		if [ -f "$$target" ] && echo "$$target" | grep -qE '\.json$$'; then \
+			$(MAKE) --no-print-directory jsonlint TARGET="$$target"; \
+		elif [ -d "$$target" ]; then \
+			find "$$target" -name "*.json" | while read f; do \
+				echo "🎯 Linting: $$f"; \
+				$(MAKE) --no-print-directory jsonlint TARGET="$$f"; \
+			done; \
+		else \
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+	fi
+
+# Lint only Markdown files
+lint-md:								## 📝 Lint only Markdown files
+	@echo "📝 Linting Markdown files in $(TARGET)..."
+	@for target in $(DEFAULT_TARGETS); do \
+		if [ -f "$$target" ] && echo "$$target" | grep -qE '\.(md|markdown)$$'; then \
+			$(MAKE) --no-print-directory markdownlint TARGET="$$target"; \
+		elif [ -d "$$target" ]; then \
+			find "$$target" -name "*.md" -o -name "*.markdown" | while read f; do \
+				echo "🎯 Linting: $$f"; \
+				$(MAKE) --no-print-directory markdownlint TARGET="$$f"; \
+			done; \
+		else \
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+	fi
+
+# -----------------------------------------------------------------------------
+# 🚀 PERFORMANCE OPTIMIZATION
+# -----------------------------------------------------------------------------
+# help: lint-parallel        - Run linters in parallel for speed
+# help: lint-cache-clear     - Clear linting caches
+.PHONY: lint-parallel lint-cache-clear
+
+# Parallel linting for better performance
+lint-parallel:							## 🚀 Run linters in parallel
+	@echo "🚀 Running linters in parallel on $(TARGET)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pytest-xdist"
+	@# Run fast linters in parallel
+	@$(MAKE) --no-print-directory ruff-check TARGET="$(TARGET)" & \
+	$(MAKE) --no-print-directory black-check TARGET="$(TARGET)" & \
+	$(MAKE) --no-print-directory isort-check TARGET="$(TARGET)" & \
+	wait
+	@echo "✅ Parallel linting completed!"
+
+# Clear linting caches
+lint-cache-clear:						## 🧹 Clear linting caches
+	@echo "🧹 Clearing linting caches..."
+	@rm -rf .mypy_cache .ruff_cache .pytest_cache __pycache__
+	@find . -name "*.pyc" -delete
+	@find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+	@echo "✅ Linting caches cleared!"
+
+# -----------------------------------------------------------------------------
+# 📊 LINTING STATISTICS AND METRICS
+# -----------------------------------------------------------------------------
+# help: lint-stats           - Show linting statistics
+# help: lint-complexity      - Analyze code complexity
+.PHONY: lint-stats lint-complexity
+
+# Show linting statistics
+lint-stats:								## 📊 Show linting statistics
+	@echo "📊 Linting statistics for $(TARGET)..."
+	@echo ""
+	@echo "📁 File counts:"
+	@if [ -d "$(TARGET)" ]; then \
+		echo "   🐍 Python files: $$(find $(TARGET) -name '*.py' | wc -l)"; \
+		echo "   📄 YAML files: $$(find $(TARGET) -name '*.yaml' -o -name '*.yml' | wc -l)"; \
+		echo "   📄 JSON files: $$(find $(TARGET) -name '*.json' | wc -l)"; \
+		echo "   📝 Markdown files: $$(find $(TARGET) -name '*.md' | wc -l)"; \
+	elif [ -f "$(TARGET)" ]; then \
+		echo "   📄 Single file: $(TARGET)"; \
+	fi
+	@echo ""
+	@echo "🔍 Running quick analysis..."
+	@$(MAKE) --no-print-directory lint-count-errors TARGET="$(TARGET)" 2>/dev/null || true
+
+# Analyze code complexity
+lint-complexity:						## 📈 Analyze code complexity
+	@echo "📈 Analyzing code complexity for $(TARGET)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q radon && \
+		echo '📊 Cyclomatic Complexity:' && \
+		$(VENV_DIR)/bin/radon cc $(TARGET) -s && \
+		echo '' && \
+		echo '📊 Maintainability Index:' && \
+		$(VENV_DIR)/bin/radon mi $(TARGET) -s"
 
 # -----------------------------------------------------------------------------
 # 📑 GRYPE SECURITY/VULNERABILITY SCANNING
