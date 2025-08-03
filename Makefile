@@ -409,9 +409,9 @@ images:
 # 🔍 LINTING & STATIC ANALYSIS
 # =============================================================================
 # help: 🔍 LINTING & STATIC ANALYSIS
-# help: TARGET=<path>        - Override default target (mcpgateway tests)
+# help: TARGET=<path>        - Override default target (mcpgateway)
 # help: Usage Examples:
-# help:   make lint                    - Run all linters on default targets (mcpgateway tests)
+# help:   make lint                    - Run all linters on default targets (mcpgateway)
 # help:   make lint TARGET=myfile.py   - Run file-aware linters on specific file
 # help:   make lint myfile.py          - Run file-aware linters on a file (shortcut)
 # help:   make lint-quick myfile.py    - Fast linters only (ruff, black, isort)
@@ -452,7 +452,7 @@ images:
 # help: vulture              - Dead code detection
 
 # Allow specific file/directory targeting
-DEFAULT_TARGETS := mcpgateway tests
+DEFAULT_TARGETS := mcpgateway
 TARGET ?= $(DEFAULT_TARGETS)
 
 # Add dummy targets for file arguments passed to lint commands only
@@ -3660,14 +3660,14 @@ semgrep:                            ## 🔍 Security patterns & anti-patterns
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q semgrep && \
-		$(VENV_DIR)/bin/semgrep --config=auto mcpgateway tests --exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 || true"
+		$(VENV_DIR)/bin/semgrep --config=auto $(TARGET) --exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 || true"
 
 dodgy:                              ## 🔐 Suspicious code patterns
 	@echo "🔐  dodgy - scanning for hardcoded secrets..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q dodgy && \
-		$(VENV_DIR)/bin/dodgy mcpgateway tests || true"
+		$(VENV_DIR)/bin/dodgy $(TARGET) || true"
 
 dlint:                              ## 📏 Python best practices
 	@echo "📏  dlint - checking Python best practices..."
@@ -3681,8 +3681,8 @@ pyupgrade:                          ## ⬆️  Upgrade Python syntax
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q pyupgrade && \
-		find mcpgateway tests -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus --diff {} + || true"
-	@echo "💡  To apply changes, run: find mcpgateway tests -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
+		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus --diff {} + || true"
+	@echo "💡  To apply changes, run: find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 
 interrogate:                        ## 📝 Docstring coverage
 	@echo "📝  interrogate - checking docstring coverage..."
@@ -3804,12 +3804,12 @@ security-report:                    ## 📊 Generate comprehensive security repo
 	@echo "## Code Security Patterns (semgrep)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q semgrep && \
-		$(VENV_DIR)/bin/semgrep --config=auto mcpgateway tests --quiet || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
+		$(VENV_DIR)/bin/semgrep --config=auto $(TARGET) --quiet || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## Suspicious Code Patterns (dodgy)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q dodgy && \
-		$(VENV_DIR)/bin/dodgy mcpgateway tests || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
+		$(VENV_DIR)/bin/dodgy $(TARGET) || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## DevSkim Security Anti-patterns" >> $(DOCS_DIR)/docs/security/report.md
 	@if command -v devskim >/dev/null 2>&1 || [ -f "$$HOME/.dotnet/tools/devskim" ]; then \
@@ -3825,7 +3825,7 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "➤ Upgrading Python syntax with pyupgrade..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q pyupgrade && \
-		find mcpgateway tests -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
+		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 	@echo "➤ Updating dependencies to latest secure versions..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install --upgrade pip setuptools && \
