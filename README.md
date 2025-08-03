@@ -58,7 +58,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 * 7. [Quick Start (manual install)](#quick-start-manual-install)
     * 7.1. [Prerequisites](#prerequisites)
     * 7.2. [One-liner (dev)](#one-liner-dev)
-    * 7.3. [Containerised (self-signed TLS)](#containerised-self-signed-tls)
+    * 7.3. [Containerized (self-signed TLS)](#containerized-self-signed-tls)
     * 7.4. [Smoke-test the API](#smoke-test-the-api)
 * 8. [Installation](#installation)
     * 8.1. [Via Make](#via-make)
@@ -829,7 +829,7 @@ No local Docker? Use Codespaces:
 
 * **Python ≥ 3.10**
 * **GNU Make** (optional, but all common workflows are available as Make targets)
-* Optional: **Docker / Podman** for containerised runs
+* Optional: **Docker / Podman** for containerized runs
 
 ### One-liner (dev)
 
@@ -850,7 +850,7 @@ make install-dev # Install development dependencies, ex: linters and test harnes
 make lint          # optional: run style checks (ruff, mypy, etc.)
 ```
 
-### Containerised (self-signed TLS)
+### Containerized (self-signed TLS)
 
 ## Container Runtime Support
 
@@ -1922,8 +1922,8 @@ sonar-deps-podman    - Install podman-compose + supporting tools
 sonar-deps-docker    - Install docker-compose + supporting tools
 sonar-up-podman      - Launch SonarQube with podman-compose
 sonar-up-docker      - Launch SonarQube with docker-compose
-sonar-submit-docker  - Run containerised Sonar Scanner CLI with Docker
-sonar-submit-podman  - Run containerised Sonar Scanner CLI with Podman
+sonar-submit-docker  - Run containerized Sonar Scanner CLI with Docker
+sonar-submit-podman  - Run containerized Sonar Scanner CLI with Podman
 pysonar-scanner      - Run scan with Python wrapper (pysonar-scanner)
 sonar-info           - How to create a token & which env vars to export
 🛡️ SECURITY & PACKAGE SCANNING

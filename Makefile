@@ -1413,8 +1413,8 @@ osv-scan: osv-scan-source osv-scan-image
 # help: sonar-deps-docker    - Install docker-compose + supporting tools
 # help: sonar-up-podman      - Launch SonarQube with podman-compose
 # help: sonar-up-docker      - Launch SonarQube with docker-compose
-# help: sonar-submit-docker  - Run containerised Sonar Scanner CLI with Docker
-# help: sonar-submit-podman  - Run containerised Sonar Scanner CLI with Podman
+# help: sonar-submit-docker  - Run containerized Sonar Scanner CLI with Docker
+# help: sonar-submit-podman  - Run containerized Sonar Scanner CLI with Podman
 # help: pysonar-scanner      - Run scan with Python wrapper (pysonar-scanner)
 # help: sonar-info           - How to create a token & which env vars to export
 
@@ -1460,9 +1460,9 @@ sonar-up-docker:
 	@sleep 30 && $(COMPOSE_CMD) ps | grep sonarqube || \
 	  echo "⚠️  Server may still be starting."
 
-## ─────────── Containerised Scanner CLI (Docker / Podman) ───────────────
+## ─────────── Containerized Scanner CLI (Docker / Podman) ───────────────
 sonar-submit-docker:
-	@echo "📡 Scanning code with containerised Sonar Scanner CLI (Docker) ..."
+	@echo "📡 Scanning code with containerized Sonar Scanner CLI (Docker) ..."
 	docker run --rm \
 		-e SONAR_HOST_URL="$(SONAR_HOST_URL)" \
 		$(if $(SONAR_TOKEN),-e SONAR_TOKEN="$(SONAR_TOKEN)",) \
@@ -1471,7 +1471,7 @@ sonar-submit-docker:
 		-Dproject.settings=$(SONAR_PROPS)
 
 sonar-submit-podman:
-	@echo "📡 Scanning code with containerised Sonar Scanner CLI (Podman) ..."
+	@echo "📡 Scanning code with containerized Sonar Scanner CLI (Podman) ..."
 	podman run --rm \
 		--network $(SONAR_NETWORK) \
 		-e SONAR_HOST_URL="$(SONAR_HOST_URL)" \
