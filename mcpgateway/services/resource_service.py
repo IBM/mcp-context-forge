@@ -143,10 +143,10 @@ class ResourceService:
             db.query(
                 DbResource.id,
                 DbResource.uri.label("name"),  # Using URI as the name field for TopPerformer
-                func.count(ResourceMetric.id).label("execution_count"),# pylint: disable=not-callable
-                func.avg(ResourceMetric.response_time).label("avg_response_time"),
-                (func.sum(case((ResourceMetric.is_success, 1), else_=0)) / func.count(ResourceMetric.id) * 100).label("success_rate"),
-                func.max(ResourceMetric.timestamp).label("last_execution"),
+                func.count(ResourceMetric.id).label("execution_count"),  # pylint: disable=not-callable
+                func.avg(ResourceMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                (func.sum(case((ResourceMetric.is_success, 1), else_=0)) / func.count(ResourceMetric.id) * 100).label("success_rate"),  # pylint: disable=not-callable
+                func.max(ResourceMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(ResourceMetric)
             .group_by(DbResource.id, DbResource.uri)

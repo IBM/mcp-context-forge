@@ -218,10 +218,10 @@ class ToolService:
             db.query(
                 DbTool.id,
                 DbTool.name,
-                func.count(ToolMetric.id).label("execution_count"),# pylint: disable=not-callable
-                func.avg(ToolMetric.response_time).label("avg_response_time"),
-                (func.sum(case((ToolMetric.is_success, 1), else_=0)) / func.count(ToolMetric.id) * 100).label("success_rate"),
-                func.max(ToolMetric.timestamp).label("last_execution"),
+                func.count(ToolMetric.id).label("execution_count"),  # pylint: disable=not-callable
+                func.avg(ToolMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                (func.sum(case((ToolMetric.is_success, 1), else_=0)) / func.count(ToolMetric.id) * 100).label("success_rate"),  # pylint: disable=not-callable
+                func.max(ToolMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(ToolMetric)
             .group_by(DbTool.id, DbTool.name)

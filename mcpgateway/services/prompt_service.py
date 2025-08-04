@@ -163,10 +163,10 @@ class PromptService:
             db.query(
                 DbPrompt.id,
                 DbPrompt.name,
-                func.count(PromptMetric.id).label("execution_count"),# pylint: disable=not-callable
-                func.avg(PromptMetric.response_time).label("avg_response_time"),
-                (func.sum(case((PromptMetric.is_success, 1), else_=0)) / func.count(PromptMetric.id) * 100).label("success_rate"),
-                func.max(PromptMetric.timestamp).label("last_execution"),
+                func.count(PromptMetric.id).label("execution_count"),  # pylint: disable=not-callable
+                func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                (func.sum(case((PromptMetric.is_success, 1), else_=0)) / func.count(PromptMetric.id) * 100).label("success_rate"),  # pylint: disable=not-callable
+                func.max(PromptMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(PromptMetric)
             .group_by(DbPrompt.id, DbPrompt.name)
