@@ -41,7 +41,8 @@ from mcpgateway.admin import (
     admin_edit_server,
     admin_edit_tool,
     admin_get_gateway,
-    admin_get_metrics,
+    # admin_get_metrics,
+    get_aggregated_metrics,
     admin_get_prompt,
     admin_get_resource,
     admin_get_server,
@@ -1025,7 +1026,10 @@ class TestAdminMetricsRoutes:
         mock_server_metrics.return_value = None  # No metrics available
         mock_prompt_metrics.return_value = None
 
-        result = await admin_get_metrics(mock_db, "test-user")
+        # result = await admin_get_metrics(mock_db, "test-user")
+        result = await get_aggregated_metrics(mock_db, "test-user")
+
+
 
         assert result["tools"].total_executions == 0
         assert result["resources"].total_executions == 100

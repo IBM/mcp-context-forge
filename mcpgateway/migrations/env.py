@@ -1,3 +1,8 @@
+"""Alembic environment configuration for database migrations.
+
+This module sets up the Alembic migration environment, configuring the database connection
+and metadata for running migrations in both online and offline modes.
+"""
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -73,6 +78,7 @@ def run_migrations_online() -> None:
 
 
 if context.is_offline_mode():
+
     run_migrations_offline()
 else:
     run_migrations_online()

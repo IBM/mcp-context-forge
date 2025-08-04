@@ -118,22 +118,42 @@ class ResourceService:
         # Clear subscriptions
         self._event_subscribers.clear()
         logger.info("Resource service shutdown complete")
-        
+
     async def get_top_resources(self, db: Session, limit: int = 5) -> List[TopPerformer]:
-        results = db.query(
-            DbResource.id,
-            DbResource.uri.label('name'),  # Using URI as the name field for TopPerformer
-            func.count(ResourceMetric.id).label('execution_count'),
-            func.avg(ResourceMetric.response_time).label('avg_response_time'),
-            (func.sum(case((ResourceMetric.is_success , 1), else_=0)) / func.count(ResourceMetric.id) * 100).label('success_rate'),
-            func.max(ResourceMetric.timestamp).label('last_execution')
-        ).outerjoin(
-            ResourceMetric
-        ).group_by(
-            DbResource.id, DbResource.uri
-        ).order_by(
-            desc('execution_count')
-        ).limit(limit).all()
+        """Retrieve the top-performing resources based on execution count.
+
+    Queries the database to get resources with their metrics, ordered by the number of executions
+    in descending order. Uses the resource URI as the name field for TopPerformer objects.
+    Returns a list of TopPerformer objects containing resource details and performance metrics.
+
+    Args:
+        db (Session): Database session for querying resource metrics.
+        limit (int, optional): Maximum number of resources to return. Defaults to 5.
+
+    Returns:
+        List[TopPerformer]: A list of TopPerformer objects, each containing:
+            - id: Resource ID.
+            - name: Resource URI (used as the name field).
+            - execution_count: Total number of executions.
+            - avg_response_time: Average response time in seconds, or None if no metrics.
+            - success_rate: Success rate percentage, or None if no metrics.
+            - last_execution: Timestamp of the last execution, or None if no metrics.
+    """
+        results = (
+            db.query(
+                DbResource.id,
+                DbResource.uri.label("name"),  # Using URI as the name field for TopPerformer
+                func.count(ResourceMetric.id).label("execution_count"),# pylint: disable=not-callable
+                func.avg(ResourceMetric.response_time).label("avg_response_time"),
+                (func.sum(case((ResourceMetric.is_success, 1), else_=0)) / func.count(ResourceMetric.id) * 100).label("success_rate"),
+                func.max(ResourceMetric.timestamp).label("last_execution"),
+            )
+            .outerjoin(ResourceMetric)
+            .group_by(DbResource.id, DbResource.uri)
+            .order_by(desc("execution_count"))
+            .limit(limit)
+            .all()
+        )
 
         return [
             TopPerformer(
@@ -142,8 +162,9 @@ class ResourceService:
                 execution_count=result.execution_count or 0,
                 avg_response_time=float(result.avg_response_time) if result.avg_response_time else None,
                 success_rate=float(result.success_rate) if result.success_rate else None,
-                last_execution=result.last_execution
-            ) for result in results
+                last_execution=result.last_execution,
+            )
+            for result in results
         ]
 
     def _convert_resource_to_read(self, resource: DbResource) -> ResourceRead:

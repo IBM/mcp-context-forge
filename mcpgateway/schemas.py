@@ -2939,6 +2939,19 @@ class TagInfo(BaseModelWithConfigDict):
 
 
 class TopPerformer(BaseModelWithConfigDict):
+    """Schema for representing top-performing entities with performance metrics.
+
+    Used to encapsulate metrics for entities such as prompts, resources, servers, or tools,
+    including execution count, average response time, success rate, and last execution timestamp.
+
+    Attributes:
+        id (Union[str, int]): Unique identifier for the entity.
+        name (str): Name of the entity (e.g., prompt name, resource URI, server name, or tool name).
+        execution_count (int): Total number of executions for the entity.
+        avg_response_time (Optional[float]): Average response time in seconds, or None if no metrics.
+        success_rate (Optional[float]): Success rate percentage, or None if no metrics.
+        last_execution (Optional[datetime]): Timestamp of the last execution, or None if no metrics.
+    """
     id: Union[str, int] = Field(..., description="Entity ID")
     name: str = Field(..., description="Entity name")
     execution_count: int = Field(..., description="Number of executions")
