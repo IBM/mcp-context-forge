@@ -2848,13 +2848,48 @@ async def admin_edit_resource(
         >>> original_update_resource = resource_service.update_resource
         >>> resource_service.update_resource = AsyncMock()
         >>>
+        >>> # Test successful update
         >>> async def test_admin_edit_resource():
         ...     response = await admin_edit_resource("test://resource1", mock_request, mock_db, mock_user)
         ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body == b'{"message":"Resource update successfully!","success":true}'
         >>>
-        >>> import asyncio; asyncio.run(test_admin_edit_resource())
+        >>> asyncio.run(test_admin_edit_resource())
         True
         >>>
+        >>> # Test validation error
+        >>> from pydantic import ValidationError
+        >>> validation_error = ValidationError.from_exception_data("Resource validation error", [
+        ...     {"loc": ("name",), "msg": "Field required", "type": "missing"}
+        ... ])
+        >>> resource_service.update_resource = AsyncMock(side_effect=validation_error)
+        >>> async def test_admin_edit_resource_validation():
+        ...     response = await admin_edit_resource("test://resource1", mock_request, mock_db, mock_user)
+        ...     return isinstance(response, JSONResponse) and response.status_code == 422
+        >>>
+        >>> asyncio.run(test_admin_edit_resource_validation())
+        True
+        >>>
+        >>> # Test integrity error (e.g., duplicate resource)
+        >>> from sqlalchemy.exc import IntegrityError
+        >>> integrity_error = IntegrityError("Duplicate entry", None, None)
+        >>> resource_service.update_resource = AsyncMock(side_effect=integrity_error)
+        >>> async def test_admin_edit_resource_integrity():
+        ...     response = await admin_edit_resource("test://resource1", mock_request, mock_db, mock_user)
+        ...     return isinstance(response, JSONResponse) and response.status_code == 409
+        >>>
+        >>> asyncio.run(test_admin_edit_resource_integrity())
+        True
+        >>>
+        >>> # Test unknown error
+        >>> resource_service.update_resource = AsyncMock(side_effect=Exception("Unknown error"))
+        >>> async def test_admin_edit_resource_unknown():
+        ...     response = await admin_edit_resource("test://resource1", mock_request, mock_db, mock_user)
+        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and b'Unknown error' in response.body
+        >>>
+        >>> asyncio.run(test_admin_edit_resource_unknown())
+        True
+        >>>
+        >>> # Reset mock
         >>> resource_service.update_resource = original_update_resource
     """
     logger.debug(f"User {user} is editing resource URI {uri}")
