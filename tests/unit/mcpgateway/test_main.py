@@ -589,6 +589,43 @@ class TestResourceEndpoints:
 # Prompt Management Tests                               #
 # ----------------------------------------------------- #
 class TestPromptEndpoints:
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    def test_get_prompt_no_args(self, mock_get, test_client, auth_headers):
+        """Test getting a prompt without arguments."""
+        mock_get.return_value = {"name": "test", "template": "Hello"}
+        response = test_client.get("/prompts/test", headers=auth_headers)
+        assert response.status_code == 200
+        mock_get.assert_called_once_with(ANY, "test", {})
+
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
+        """Test updating an existing prompt."""
+        updated = {**MOCK_PROMPT_READ, "description": "Updated description"}
+        mock_update.return_value = PromptRead(**updated)
+        req = {"description": "Updated description"}
+        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_update.assert_called_once()
+
+    @patch("mcpgateway.main.prompt_service.delete_prompt")
+    def test_delete_prompt_endpoint(self, mock_delete, test_client, auth_headers):
+        """Test deleting a prompt."""
+        mock_delete.return_value = None
+        response = test_client.delete("/prompts/test_prompt", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_delete.assert_called_once()
+
+    @patch("mcpgateway.main.prompt_service.toggle_prompt_status")
+    def test_toggle_prompt_status(self, mock_toggle, test_client, auth_headers):
+        """Test toggling prompt active/inactive status."""
+        mock_prompt = MagicMock()
+        mock_prompt.model_dump.return_value = {"id": 1, "is_active": False}
+        mock_toggle.return_value = mock_prompt
+        response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_toggle.assert_called_once()
     """Tests for prompt template management: creation, rendering, arguments, etc."""
 
     @patch("mcpgateway.main.prompt_service.list_prompts")
@@ -670,6 +707,62 @@ class TestPromptEndpoints:
 # Gateway Federation Tests                              #
 # ----------------------------------------------------- #
 class TestGatewayEndpoints:
+    @patch("mcpgateway.main.gateway_service.list_gateways")
+    def test_list_gateways_endpoint(self, mock_list, test_client, auth_headers):
+        """Test listing all registered gateways."""
+        mock_list.return_value = [MOCK_GATEWAY_READ]
+        response = test_client.get("/gateways/", headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        mock_list.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_endpoint(self, mock_create, test_client, auth_headers):
+        """Test registering a new gateway."""
+        mock_create.return_value = MOCK_GATEWAY_READ
+        req = {"name": "test_gateway", "url": "http://example.com"}
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_create.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_get_gateway_endpoint(self, mock_get, test_client, auth_headers):
+        """Test retrieving a specific gateway."""
+        mock_get.return_value = MOCK_GATEWAY_READ
+        response = test_client.get("/gateways/1", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["name"] == "test_gateway"
+        mock_get.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.update_gateway")
+    def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):
+        """Test updating an existing gateway."""
+        mock_update.return_value = MOCK_GATEWAY_READ
+        req = {"description": "Updated description"}
+        response = test_client.put("/gateways/1", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_update.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.delete_gateway")
+    def test_delete_gateway_endpoint(self, mock_delete, test_client, auth_headers):
+        """Test deleting a gateway."""
+        mock_delete.return_value = None
+        response = test_client.delete("/gateways/1", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_delete.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.toggle_gateway_status")
+    def test_toggle_gateway_status(self, mock_toggle, test_client, auth_headers):
+        """Test toggling gateway active/inactive status."""
+        mock_gateway = MagicMock()
+        mock_gateway.model_dump.return_value = {"id": "1", "is_active": False}
+        mock_toggle.return_value = mock_gateway
+        response = test_client.post("/gateways/1/toggle?activate=false", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_toggle.assert_called_once()
     """Tests for gateway federation: registration, discovery, forwarding, etc."""
 
     @patch("mcpgateway.main.gateway_service.list_gateways")
