@@ -4774,6 +4774,53 @@ async function handleEditToolFormSubmit(event) {
     }
 }
 
+async function handleEditServerFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+
+    try {
+        // Validate inputs
+        const name = formData.get("name");
+        const nameValidation = validateInputName(name, "server");
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        // Save CodeMirror editors' contents if present
+        if (window.promptToolHeadersEditor) {
+            window.promptToolHeadersEditor.save();
+        }
+        if (window.promptToolSchemaEditor) {
+            window.promptToolSchemaEditor.save();
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("servers");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        else {
+            // Redirect to the appropriate page based on inactivity checkbox
+            const redirectUrl = isInactiveCheckedBool
+                    ? `${window.ROOT_PATH}/admin?include_inactive=true#catalog`
+                    : `${window.ROOT_PATH}/admin#catalog`;
+                window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Error:", error);
+        showErrorMessage(error.message);
+    }
+}
 // ===================================================================
 // ENHANCED FORM VALIDATION for All Forms
 // ===================================================================
@@ -5316,6 +5363,16 @@ function setupFormHandlers() {
     const serverForm = safeGetElement("add-server-form");
     if (serverForm) {
         serverForm.addEventListener("submit", handleServerFormSubmit);
+    }
+
+    const editServerForm = safeGetElement("edit-server-form");
+    if (editServerForm) {
+        editServerForm.addEventListener("submit", handleEditServerFormSubmit);
+        editServerForm.addEventListener("click", () => {
+            if (getComputedStyle(editServerForm).display !== "none") {
+                refreshEditors();
+            }
+        });
     }
 
     const editResourceForm = safeGetElement("edit-resource-form");
