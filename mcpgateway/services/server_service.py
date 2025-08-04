@@ -506,7 +506,7 @@ class ServerService:
         except ServerNameConflictError as snce:
             db.rollback()
             logger.error(f"Server name conflict: {snce}")
-            raise snce    
+            raise snce
         except Exception as e:
             db.rollback()
             raise ServerError(f"Failed to update server: {str(e)}")
