@@ -495,7 +495,7 @@ async def admin_edit_server(
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
         >>> from fastapi import Request
-        >>> from fastapi.responses import RedirectResponse
+        >>> from fastapi.responses import JSONResponse
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
@@ -511,21 +511,9 @@ async def admin_edit_server(
         >>>
         >>> async def test_admin_edit_server_success():
         ...     result = await admin_edit_server(server_id, mock_request_edit, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#catalog" in result.headers["location"]
+        ...     return isinstance(result, JSONResponse) and result.status_code == 200 and result.body == b'{"message":"Server updated successfully!","success":true}'
         >>>
         >>> asyncio.run(test_admin_edit_server_success())
-        True
-        >>>
-        >>> # Edge case: Edit server and include inactive checkbox
-        >>> form_data_inactive = FormData([("name", "Inactive Server Edit"), ("is_inactive_checked", "true")])
-        >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": "/api"})
-        >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
-        >>>
-        >>> async def test_admin_edit_server_inactive_checked():
-        ...     result = await admin_edit_server(server_id, mock_request_inactive, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin/?include_inactive=true#catalog" in result.headers["location"]
-        >>>
-        >>> asyncio.run(test_admin_edit_server_inactive_checked())
         True
         >>>
         >>> # Error path: Simulate an exception during update
@@ -534,13 +522,56 @@ async def admin_edit_server(
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
         >>> server_service.update_server = AsyncMock(side_effect=Exception("Update failed"))
         >>>
-        >>> async def test_admin_edit_server_exception():
+        >>> # Restore original method
+        >>> server_service.update_server = original_update_server
+        >>> # 409 Conflict: ServerNameConflictError
+        >>> server_service.update_server = AsyncMock(side_effect=ServerNameConflictError("Name conflict"))
+        >>> async def test_admin_edit_server_conflict():
         ...     result = await admin_edit_server(server_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#catalog" in result.headers["location"]
-        >>>
-        >>> asyncio.run(test_admin_edit_server_exception())
+        ...     return isinstance(result, JSONResponse) and result.status_code == 409 and b'Name conflict' in result.body
+        >>> asyncio.run(test_admin_edit_server_conflict())
         True
-        >>>
+        >>> # 409 Conflict: IntegrityError
+        >>> from sqlalchemy.exc import IntegrityError
+        >>> server_service.update_server = AsyncMock(side_effect=IntegrityError("Integrity error", None, None))
+        >>> async def test_admin_edit_server_integrity():
+        ...     result = await admin_edit_server(server_id, mock_request_error, mock_db, mock_user)
+        ...     return isinstance(result, JSONResponse) and result.status_code == 409
+        >>> asyncio.run(test_admin_edit_server_integrity())
+        True
+        >>> # 422 Unprocessable Entity: ValidationError
+        >>> from pydantic import ValidationError, BaseModel
+        >>> from mcpgateway.schemas import ServerUpdate
+        >>> validation_error = ValidationError.from_exception_data("ServerUpdate validation error", [
+        ...     {"loc": ("name",), "msg": "Field required", "type": "missing"}
+        ... ])
+        >>> server_service.update_server = AsyncMock(side_effect=validation_error)
+        >>> async def test_admin_edit_server_validation():
+        ...     result = await admin_edit_server(server_id, mock_request_error, mock_db, mock_user)
+        ...     return isinstance(result, JSONResponse) and result.status_code == 422
+        >>> asyncio.run(test_admin_edit_server_validation())
+        True
+        >>> # 400 Bad Request: ValueError
+        >>> server_service.update_server = AsyncMock(side_effect=ValueError("Bad value"))
+        >>> async def test_admin_edit_server_valueerror():
+        ...     result = await admin_edit_server(server_id, mock_request_error, mock_db, mock_user)
+        ...     return isinstance(result, JSONResponse) and result.status_code == 400 and b'Bad value' in result.body
+        >>> asyncio.run(test_admin_edit_server_valueerror())
+        True
+        >>> # 500 Internal Server Error: ServerError
+        >>> server_service.update_server = AsyncMock(side_effect=ServerError("Server error"))
+        >>> async def test_admin_edit_server_servererror():
+        ...     result = await admin_edit_server(server_id, mock_request_error, mock_db, mock_user)
+        ...     return isinstance(result, JSONResponse) and result.status_code == 500 and b'Server error' in result.body
+        >>> asyncio.run(test_admin_edit_server_servererror())
+        True
+        >>> # 500 Internal Server Error: RuntimeError
+        >>> server_service.update_server = AsyncMock(side_effect=RuntimeError("Runtime error"))
+        >>> async def test_admin_edit_server_runtimeerror():
+        ...     result = await admin_edit_server(server_id, mock_request_error, mock_db, mock_user)
+        ...     return isinstance(result, JSONResponse) and result.status_code == 500 and b'Runtime error' in result.body
+        >>> asyncio.run(test_admin_edit_server_runtimeerror())
+        True
         >>> # Restore original method
         >>> server_service.update_server = original_update_server
     """
@@ -558,35 +589,23 @@ async def admin_edit_server(
         await server_service.update_server(db, server_id, server)
 
         return JSONResponse(
-            content={"message": "Server update successfully!", "success": True},
+            content={"message": "Server updated successfully!", "success": True},
             status_code=200,
         )
+    except (ValidationError, CoreValidationError) as ex:
+        # Catch both Pydantic and pydantic_core validation errors
+        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    except ServerNameConflictError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except ServerError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    except ValueError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+    except RuntimeError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    except IntegrityError as ex:
+        return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
-        if isinstance(ex, ServerNameConflictError):
-            # Custom server name conflict error — 409 Conflict is appropriate
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-
-        if isinstance(ex, ServerError):
-            # Custom server logic error — 500 Internal Server Error makes sense
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-
-        if isinstance(ex, ValueError):
-            # Invalid input — 400 Bad Request is appropriate
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-
-        if isinstance(ex, RuntimeError):
-            # Unexpected error during runtime — 500 is suitable
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-
-        if isinstance(ex, ValidationError):
-            # Pydantic or input validation failure — 422 Unprocessable Entity is correct
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-
-        if isinstance(ex, IntegrityError):
-            # DB constraint violation — 409 Conflict is appropriate
-            return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
-
-        # For any other unhandled error, default to 500
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -2831,27 +2850,11 @@ async def admin_edit_resource(
         >>>
         >>> async def test_admin_edit_resource():
         ...     response = await admin_edit_resource("test://resource1", mock_request, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and response.status_code == 303
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body == b'{"message":"Resource update successfully!","success":true}'
         >>>
         >>> import asyncio; asyncio.run(test_admin_edit_resource())
         True
         >>>
-        >>> # Test with inactive checkbox checked
-        >>> form_data_inactive = FormData([
-        ...     ("name", "Updated Resource"),
-        ...     ("description", "Updated description"),
-        ...     ("mimeType", "text/plain"),
-        ...     ("content", "Updated content"),
-        ...     ("is_inactive_checked", "true")
-        ... ])
-        >>> mock_request.form = AsyncMock(return_value=form_data_inactive)
-        >>>
-        >>> async def test_admin_edit_resource_inactive():
-        ...     response = await admin_edit_resource("test://resource1", mock_request, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and "include_inactive=true" in response.headers["location"]
-        >>>
-        >>> asyncio.run(test_admin_edit_resource_inactive())
-        True
         >>> resource_service.update_resource = original_update_resource
     """
     logger.debug(f"User {user} is editing resource URI {uri}")
@@ -2865,7 +2868,7 @@ async def admin_edit_resource(
         )
         await resource_service.update_resource(db, uri, resource)
         return JSONResponse(
-            content={"message": "Resource updated successfully!", "success": True},
+            content={"message": "Resource update successfully!", "success": True},
             status_code=200,
         )
     except Exception as ex:
@@ -3254,7 +3257,7 @@ async def admin_edit_prompt(
         user: Authenticated user.
 
     Returns:
-        A redirect response to the admin dashboard.
+         JSONResponse: A JSON response indicating success or failure of the server update operation.
 
     Examples:
         >>> import asyncio
