@@ -45,6 +45,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.exceptions import RequestValidationError
 from fastapi.background import BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
@@ -286,6 +287,24 @@ async def validation_exception_handler(_request: Request, exc: ValidationError):
         ...     result = asyncio.run(validation_exception_handler(None, e))
         ...     result.status_code
         422
+    """
+    return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):
+    """Handle FastAPI request validation errors globally.
+
+    Intercepts RequestValidationError exceptions raised by FastAPI's automatic
+    request validation and returns a properly formatted JSON error response.
+    This ensures that user input is not reflected back in error messages.
+
+    Args:
+        _request: The FastAPI request object that triggered the validation error.
+        exc: The FastAPI RequestValidationError exception.
+
+    Returns:
+        JSONResponse: A 422 Unprocessable Entity response with sanitized error details.
     """
     return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
