@@ -4859,9 +4859,9 @@ async function handleEditServerFormSubmit(e) {
         else {
             // Redirect to the appropriate page based on inactivity checkbox
             const redirectUrl = isInactiveCheckedBool
-                    ? `${window.ROOT_PATH}/admin?include_inactive=true#catalog`
-                    : `${window.ROOT_PATH}/admin#catalog`;
-                window.location.href = redirectUrl;
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#catalog`
+                : `${window.ROOT_PATH}/admin#catalog`;
+            window.location.href = redirectUrl;
         }
     } catch (error) {
         console.error("Error:", error);
