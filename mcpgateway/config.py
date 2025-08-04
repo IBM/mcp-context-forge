@@ -20,6 +20,7 @@ Environment variables:
 - AUTH_REQUIRED: Require authentication (default: True)
 - TRANSPORT_TYPE: Transport mechanisms (default: "all")
 - FEDERATION_ENABLED: Enable gateway federation (default: True)
+- DOCS_ALLOW_BASIC_AUTH: Allow basic auth for docs (default: False)
 - FEDERATION_DISCOVERY: Enable auto-discovery (default: False)
 - FEDERATION_PEERS: List of peer gateway URLs (default: [])
 - RESOURCE_CACHE_SIZE: Max cached resources (default: 1000)
@@ -98,6 +99,7 @@ class Settings(BaseSettings):
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
     port: int = 4444
+    docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
     templates_dir: Path = Path("mcpgateway/templates")
     # Absolute paths resolved at import-time (still override-able via env vars)

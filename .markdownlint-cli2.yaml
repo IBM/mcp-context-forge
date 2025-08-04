@@ -1,0 +1,53 @@
+# .markdownlint-cli2.yaml
+# Configuration for markdownlint-cli2
+
+# Ignore certain paths
+ignores:
+  - "node_modules/**"
+  - ".venv/**"
+  - "venv/**"
+  - "dist/**"
+  - "build/**"
+  - ".git/**"
+  - "htmlcov/**"
+  - "docs/coverage/**"
+  - "site/**"
+  - ".tox/**"
+  - "*.min.md"
+
+# markdownlint configuration
+config:
+  # Enable all rules by default
+  default: true
+
+  # MD003/heading-style - Heading style
+  MD003:
+    style: "atx"  # Require ATX style (e.g., ## Heading)
+
+  # MD007/ul-indent - Unordered list indentation
+  MD007:
+    indent: 4  # Use 4 spaces for list indentation
+
+  # MD009/no-trailing-spaces - Trailing spaces
+  MD009: true  # Flag trailing spaces as errors (default behavior)
+
+  # MD010/no-hard-tabs - Hard tabs
+  MD010: true  # Flag hard tabs as errors (default behavior)
+
+  # MD013/line-length - Line length
+  MD013: false  # Disable line length rule completely
+
+  # Optional: Other commonly configured rules
+  # MD024: false  # Multiple headings with the same content
+  # MD026: false  # Trailing punctuation in heading
+  # MD033: false  # Inline HTML
+  # MD041: false  # First line in file should be a heading
+
+# Show progress while linting
+showProgress: true
+
+# Don't show banner (optional - set to true to suppress version info)
+# noBanner: false
+
+# Fix errors automatically where possible (can be overridden with --fix CLI flag)
+# fix: false

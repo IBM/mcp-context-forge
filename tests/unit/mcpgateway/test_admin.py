@@ -895,9 +895,10 @@ class TestAdminGatewayRoutes:
 
         # Should handle validation in GatewayUpdate
         result = await admin_edit_gateway("gateway-1", mock_request, mock_db, "test-user")
-
-        # Even with invalid URL, should return redirect (validation happens in service)
-        assert isinstance(result, RedirectResponse)
+        body = json.loads(result.body.decode())
+        assert isinstance(result, JSONResponse)
+        assert result.status_code in (400, 422)
+        assert body["success"] is False
 
     @patch.object(GatewayService, "toggle_gateway_status")
     async def test_admin_toggle_gateway_concurrent_calls(self, mock_toggle_status, mock_request, mock_db):

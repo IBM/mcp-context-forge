@@ -999,15 +999,13 @@ class ResourceCreate(BaseModel):
 
         if isinstance(v, bytes):
             try:
-                v_str = v.decode("utf-8")
-
-                if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v_str if isinstance(v, bytes) else v, re.IGNORECASE):
-                    raise ValueError("Content contains HTML tags that may cause display issues")
+                text = v.decode("utf-8")
             except UnicodeDecodeError:
                 raise ValueError("Content must be UTF-8 decodable")
         else:
-            if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v if isinstance(v, bytes) else v, re.IGNORECASE):
-                raise ValueError("Content contains HTML tags that may cause display issues")
+            text = v
+        if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
+            raise ValueError("Content contains HTML tags that may cause display issues")
 
         return v
 
@@ -1094,15 +1092,13 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
         if isinstance(v, bytes):
             try:
-                v_str = v.decode("utf-8")
-
-                if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v_str if isinstance(v, bytes) else v, re.IGNORECASE):
-                    raise ValueError("Content contains HTML tags that may cause display issues")
+                text = v.decode("utf-8")
             except UnicodeDecodeError:
                 raise ValueError("Content must be UTF-8 decodable")
         else:
-            if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v if isinstance(v, bytes) else v, re.IGNORECASE):
-                raise ValueError("Content contains HTML tags that may cause display issues")
+            text = v
+        if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
+            raise ValueError("Content contains HTML tags that may cause display issues")
 
         return v
 
@@ -2082,7 +2078,7 @@ class GatewayRead(BaseModelWithConfigDict):
             - The `auth_value` field is only masked if it exists and its value is different from the masking
             placeholder.
             - Other sensitive fields (`auth_password`, `auth_token`, `auth_header_value`) are masked if present.
-            - Fields not related to authentication remain unchanged.
+            - Fields not related to authentication remain unmodified.
         """
         masked_data = self.model_dump()
 

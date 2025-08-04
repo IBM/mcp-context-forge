@@ -69,10 +69,10 @@ function validateInputName(name, type = "input") {
         return { valid: false, error: `${type} name cannot be empty` };
     }
 
-    if (cleaned.length > 100) {
+    if (cleaned.length > window.MAX_NAME_LENGTH) {
         return {
             valid: false,
-            error: `${type} name must be 100 characters or less`,
+            error: `${type} name must be ${window.MAX_NAME_LENGTH} characters or less`,
         };
     }
 
@@ -3417,39 +3417,44 @@ async function testTool(toolId) {
                     fieldDiv.appendChild(arrayContainer);
                     fieldDiv.appendChild(addBtn);
                 } else {
-                    // Input field with validation
-                    const input = document.createElement("input");
-                    input.name = keyValidation.value;
-                    input.required =
-                        schema.required && schema.required.includes(key);
-                    input.className =
-                        "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-                    // Add validation based on type
-                    if (prop.type === "text") {
-                        input.type = "text";
-                    } else if (
-                        prop.type === "number" ||
-                        prop.type === "integer"
-                    ) {
-                        input.type = "number";
-                    } else if (prop.type === "boolean") {
-                        input.type = "checkbox";
-                        input.className =
-                            "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded";
+                    // Input field with validation (with multiline support)
+                    let fieldInput;
+                    const isTextType = prop.type === "text";
+                    if (isTextType) {
+                        fieldInput = document.createElement("textarea");
+                        fieldInput.rows = 4;
                     } else {
-                        input.type = "text";
-                    }
-
-                    // Set default values here
-                    if (prop.default !== undefined) {
-                        if (input.type === "checkbox") {
-                            input.checked = prop.default === true;
+                        fieldInput = document.createElement("input");
+                        if (prop.type === "number" || prop.type === "integer") {
+                            fieldInput.type = "number";
+                        } else if (prop.type === "boolean") {
+                            fieldInput.type = "checkbox";
                         } else {
-                            input.value = prop.default;
+                            fieldInput = document.createElement("textarea");
+                            fieldInput.rows = 1;
                         }
                     }
 
-                    fieldDiv.appendChild(input);
+                    fieldInput.name = keyValidation.value;
+                    fieldInput.required =
+                        schema.required && schema.required.includes(key);
+                    fieldInput.className =
+                        prop.type === "boolean"
+                            ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+                            : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                    // Set default values here
+                    if (prop.default !== undefined) {
+                        if (fieldInput.type === "checkbox") {
+                            fieldInput.checked = prop.default === true;
+                        } else if (isTextType) {
+                            fieldInput.value = prop.default;
+                        } else {
+                            fieldInput.value = prop.default;
+                        }
+                    }
+
+                    fieldDiv.appendChild(fieldInput);
                 }
 
                 container.appendChild(fieldDiv);
@@ -4773,6 +4778,48 @@ async function handleEditToolFormSubmit(event) {
         showErrorMessage(error.message);
     }
 }
+async function handleEditGatewayFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    try {
+        // Validate form inputs
+        const name = formData.get("name");
+        const url = formData.get("url");
+
+        const nameValidation = validateInputName(name, "gateway");
+        const urlValidation = validateUrl(url);
+
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        if (!urlValidation.valid) {
+            throw new Error(urlValidation.error);
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("gateways");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        const redirectUrl = isInactiveCheckedBool
+            ? `${window.ROOT_PATH}/admin?include_inactive=true#gateways`
+            : `${window.ROOT_PATH}/admin#gateways`;
+        window.location.href = redirectUrl;
+    } catch (error) {
+        console.error("Error:", error);
+        showErrorMessage(error.message);
+    }
+}
 
 async function handleEditServerFormSubmit(e) {
     e.preventDefault();
@@ -4821,6 +4868,7 @@ async function handleEditServerFormSubmit(e) {
         showErrorMessage(error.message);
     }
 }
+
 // ===================================================================
 // ENHANCED FORM VALIDATION for All Forms
 // ===================================================================
@@ -5388,6 +5436,16 @@ function setupFormHandlers() {
         editToolForm.addEventListener("submit", handleEditToolFormSubmit);
         editToolForm.addEventListener("click", () => {
             if (getComputedStyle(editToolForm).display !== "none") {
+                refreshEditors();
+            }
+        });
+    }
+
+    const editGatewayForm = safeGetElement("edit-gateway-form");
+    if (editGatewayForm) {
+        editGatewayForm.addEventListener("submit", handleEditGatewayFormSubmit);
+        editGatewayForm.addEventListener("click", () => {
+            if (getComputedStyle(editGatewayForm).display !== "none") {
                 refreshEditors();
             }
         });

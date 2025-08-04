@@ -38,9 +38,11 @@
   border-radius: 0.5rem; /* Increased rounded corners */
   padding: 0.75rem 1rem; /* More padding */
   pointer-events: none;
-  transition: transform 0.2s ease, opacity 0.3s ease; /* Added smooth transition */
   opacity: 0;
   transform: scale(0.8); /* Tooltip starts slightly smaller */
+  transition:
+    transform 0.2s ease,
+    opacity 0.3s ease; /* Added smooth transition */
 }
 
 .tooltip.show {
@@ -61,7 +63,6 @@
 .feedback:blank {
   display: none;
 }
-
 
 /* .hidden {
   display: none;
