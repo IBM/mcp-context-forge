@@ -503,6 +503,10 @@ class ServerService:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
+        except ServerNameConflictError as snce:
+            db.rollback()
+            logger.error(f"Server name conflict: {snce}")
+            raise snce    
         except Exception as e:
             db.rollback()
             raise ServerError(f"Failed to update server: {str(e)}")

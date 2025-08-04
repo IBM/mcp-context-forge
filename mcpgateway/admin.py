@@ -545,7 +545,6 @@ async def admin_edit_server(
         >>> server_service.update_server = original_update_server
     """
     form = await request.form()
-    # is_inactive_checked = form.get("is_inactive_checked", "false")
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
@@ -558,11 +557,6 @@ async def admin_edit_server(
         )
         await server_service.update_server(db, server_id, server)
 
-        # root_path = request.scope.get("root_path", "")
-
-        # if is_inactive_checked.lower() == "true":
-        #     return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-        # return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
         return JSONResponse(
             content={"message": "Server update successfully!", "success": True},
             status_code=200,
