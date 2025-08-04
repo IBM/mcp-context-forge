@@ -530,6 +530,8 @@ class GatewayService:
             GatewayNotFoundError: If gateway not found
             GatewayError: For other update errors
             GatewayNameConflictError: If gateway name conflict occurs
+            IntegrityError: If there is a database integrity error
+            ValidationError: If validation fails
         """
         try:
             # Find gateway
@@ -602,7 +604,6 @@ class GatewayService:
                                         auth_value=gateway.auth_value,
                                     )
                                 )
-
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                         gateway.last_seen = datetime.now(timezone.utc)
@@ -621,8 +622,14 @@ class GatewayService:
                 await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {gateway.name}")
-                return GatewayRead.model_validate(gateway).masked()
 
+                return GatewayRead.model_validate(gateway)
+        except GatewayNameConflictError as ge:
+            logger.error(f"GatewayNameConflictError in group: {ge}")
+            raise ge
+        except IntegrityError as ie:
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie
         except Exception as e:
             db.rollback()
             raise GatewayError(f"Failed to update gateway: {str(e)}")

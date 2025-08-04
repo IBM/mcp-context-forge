@@ -278,7 +278,6 @@ class TestGatewayService:
         Test case logic to verify settings.skip_ssl_verify
 
         """
-        pass
 
     # ────────────────────────────────────────────────────────────────────
     # Validate Gateway URL Auth Failure - 401
@@ -433,7 +432,7 @@ class TestGatewayService:
         resilient_client_mock.client = mock_client
         resilient_client_mock.aclose = AsyncMock()
 
-        # Patch ResilientHttpClient where it’s used in your module
+        # Patch ResilientHttpClient where it's used in your module
         monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_client_mock))
 
         # Run the validations concurrently

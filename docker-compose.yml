@@ -373,37 +373,26 @@ services:
           exit 1
         fi
 
-###############################################################################
-#  OTHER MCP SERVERS - drop-in helpers the Gateway can call (not implemented yet)
-# ###############################################################################
-#   mcp_time:
-#     image: mcp/time:latest
-#     networks: [mcpnet]
-
-#   mcp_playwright:
-#     image: mcp/playwright:latest
-#     networks: [mcpnet]
-
-#   mcp_postgres:
-#     image: mcp/postgres:latest
-#     networks: [mcpnet]
-
-#   mcp_github:
-#     image: mcp/github:latest
-#     networks: [mcpnet]
-
-#   mcp_filesystem:
-#     image: mcp/filesystem:latest
-#     networks: [mcpnet]
-
-#   mcp_perplexity_ask:
-#     image: mcp/perplexity-ask:latest
-#     networks: [mcpnet]
-
-#   mcp_memory:
-#     image: mcp/memory:latest
-#     networks: [mcpnet]
-
-#   mcp_fetch:
-#     image: mcp/fetch:latest
-#     networks: [mcpnet]
+  ###############################################################################
+  # Hashicorp Terraform MCP Server
+  # https://hub.docker.com/r/hashicorp/terraform-mcp-server
+  # https://github.com/hashicorp/terraform-mcp-server/blob/main/README.md
+  ###############################################################################
+  # terraform-mcp-server:
+  #   image: docker.io/hashicorp/terraform-mcp-server:dev
+  #   container_name: terraform-mcp-server
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "8001:8080"    # Map host port 8888 to container port 8080
+  #   restart: unless-stopped
+  #   environment:
+  #     - TRANSPORT_MODE=streamable-http
+  #     - TRANSPORT_HOST=0.0.0.0
+  #     - TRANSPORT_PORT=8080
+  #     - MCP_CORS_MODE=disabled
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 20s

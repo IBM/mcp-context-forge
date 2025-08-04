@@ -58,7 +58,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 * 7. [Quick Start (manual install)](#quick-start-manual-install)
     * 7.1. [Prerequisites](#prerequisites)
     * 7.2. [One-liner (dev)](#one-liner-dev)
-    * 7.3. [Containerised (self-signed TLS)](#containerised-self-signed-tls)
+    * 7.3. [Containerized (self-signed TLS)](#containerized-self-signed-tls)
     * 7.4. [Smoke-test the API](#smoke-test-the-api)
 * 8. [Installation](#installation)
     * 8.1. [Via Make](#via-make)
@@ -829,7 +829,7 @@ No local Docker? Use Codespaces:
 
 * **Python ≥ 3.10**
 * **GNU Make** (optional, but all common workflows are available as Make targets)
-* Optional: **Docker / Podman** for containerised runs
+* Optional: **Docker / Podman** for containerized runs
 
 ### One-liner (dev)
 
@@ -850,7 +850,7 @@ make install-dev # Install development dependencies, ex: linters and test harnes
 make lint          # optional: run style checks (ruff, mypy, etc.)
 ```
 
-### Containerised (self-signed TLS)
+### Containerized (self-signed TLS)
 
 ## Container Runtime Support
 
@@ -1000,13 +1000,19 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 ### Security
 
-| Setting           | Description                    | Default                                        | Options    |
-| ----------------- | ------------------------------ | ---------------------------------------------- | ---------- |
-| `SKIP_SSL_VERIFY` | Skip upstream TLS verification | `false`                                        | bool       |
-| `ALLOWED_ORIGINS` | CORS allow-list                | `["http://localhost","http://localhost:4444"]` | JSON array |
-| `CORS_ENABLED`    | Enable CORS                    | `true`                                         | bool       |
+| Setting                   | Description                    | Default                                        | Options    |
+| ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
+| `SKIP_SSL_VERIFY`         | Skip upstream TLS verification | `false`                                        | bool       |
+| `ALLOWED_ORIGINS`         | CORS allow-list                | `["http://localhost","http://localhost:4444"]` | JSON array |
+| `CORS_ENABLED`            | Enable CORS                    | `true`                                         | bool       |
+| `DOCS_ALLOW_BASIC_AUTH`   | Allow Basic Auth for docs (in addition to JWT)         | `false`                                        | bool       |
 
-> Note: do not quote the ALLOWED_ORIGINS values, this needs to be valid JSON, such as: `ALLOWED_ORIGINS=["http://localhost", "http://localhost:4444"]`
+> Note: do not quote the ALLOWED_ORIGINS values, this needs to be valid JSON, such as:
+> ALLOWED_ORIGINS=["http://localhost", "http://localhost:4444"]
+>
+> Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are always protected by authentication.
+> By default, they require Bearer token authentication. Setting `DOCS_ALLOW_BASIC_AUTH=true` enables HTTP Basic Authentication as an additional method using the same credentials as `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`.
+
 
 ### Logging
 
@@ -1922,8 +1928,8 @@ sonar-deps-podman    - Install podman-compose + supporting tools
 sonar-deps-docker    - Install docker-compose + supporting tools
 sonar-up-podman      - Launch SonarQube with podman-compose
 sonar-up-docker      - Launch SonarQube with docker-compose
-sonar-submit-docker  - Run containerised Sonar Scanner CLI with Docker
-sonar-submit-podman  - Run containerised Sonar Scanner CLI with Podman
+sonar-submit-docker  - Run containerized Sonar Scanner CLI with Docker
+sonar-submit-podman  - Run containerized Sonar Scanner CLI with Podman
 pysonar-scanner      - Run scan with Python wrapper (pysonar-scanner)
 sonar-info           - How to create a token & which env vars to export
 🛡️ SECURITY & PACKAGE SCANNING
@@ -1998,7 +2004,7 @@ minikube-start        - Start local Minikube cluster with Ingress + DNS + metric
 minikube-stop         - Stop the Minikube cluster
 minikube-delete       - Delete the Minikube cluster
 minikube-image-load   - Build and load ghcr.io/ibm/mcp-context-forge:latest into Minikube
-minikube-k8s-apply    - Apply Kubernetes manifests from k8s/
+minikube-k8s-apply    - Apply Kubernetes manifests from deployment/k8s/
 minikube-status       - Show status of Minikube and ingress pods
 🛠️ HELM CHART TASKS
 helm-lint            - Lint the Helm chart (static analysis)
