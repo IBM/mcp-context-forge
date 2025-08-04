@@ -151,10 +151,10 @@ class ServerService:
             db.query(
                 DbServer.id,
                 DbServer.name,
-                func.count(ServerMetric.id).label("execution_count"),# pylint: disable=not-callable
-                func.avg(ServerMetric.response_time).label("avg_response_time"),
-                (func.sum(case((ServerMetric.is_success, 1), else_=0)) / func.count(ServerMetric.id) * 100).label("success_rate"),
-                func.max(ServerMetric.timestamp).label("last_execution"),  # Using timestamp instead of created_at
+                func.count(ServerMetric.id).label("execution_count"),  # pylint: disable=not-callable
+                func.avg(ServerMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                (func.sum(case((ServerMetric.is_success, 1), else_=0)) / func.count(ServerMetric.id) * 100).label("success_rate"),  # pylint: disable=not-callable
+                func.max(ServerMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(ServerMetric)
             .group_by(DbServer.id, DbServer.name)
