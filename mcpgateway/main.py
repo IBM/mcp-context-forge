@@ -332,6 +332,10 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
     If a request to one of these paths is made without a valid token,
     the request is rejected with a 401 or 403 error.
+
+    Note:
+        When DOCS_ALLOW_BASIC_AUTH is enabled, Basic Authentication
+        is also accepted using BASIC_AUTH_USER and BASIC_AUTH_PASSWORD credentials.
     """
 
     async def dispatch(self, request: Request, call_next):

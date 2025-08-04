@@ -23,16 +23,24 @@ and detail.
 from __future__ import annotations
 
 # Standard
+import base64
 from datetime import datetime, timedelta, timezone
 
 # Third-Party
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
+from fastapi.testclient import TestClient
 import jwt
 import pytest
 
 # First-Party
 from mcpgateway.utils import verify_credentials as vc  # module under test
+
+try:
+    # First-Party
+    from mcpgateway.main import app
+except ImportError:
+    app = None
 
 # ---------------------------------------------------------------------------
 # Shared constants / helpers
@@ -212,3 +220,125 @@ async def test_require_auth_override_non_bearer(monkeypatch):
 
     # Assert
     assert result == await vc.require_auth(credentials=None, jwt_token=None)
+
+
+@pytest.mark.asyncio
+async def test_require_auth_override_basic_auth_enabled_success(monkeypatch):
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "alice", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
+    basic_auth_header = f"Basic {base64.b64encode(f'alice:secret'.encode()).decode()}"
+    result = await vc.require_auth_override(auth_header=basic_auth_header)
+    assert result == vc.settings.basic_auth_user
+    assert result == "alice"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_override_basic_auth_enabled_failure(monkeypatch):
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "alice", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
+
+    # case1. format is wrong
+    header = "Basic fakeAuth"
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_override(auth_header=header)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Invalid basic auth credentials"
+
+    # case2. username or password is wrong
+    header = "Basic dGVzdDp0ZXN0"
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_override(auth_header=header)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Invalid credentials"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_override_basic_auth_disabled(monkeypatch):
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    header = "Basic dGVzdDp0ZXN0"
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_override(auth_header=header)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Not authenticated"
+
+
+@pytest.fixture
+def test_client():
+    if app is None:
+        pytest.skip("FastAPI app not importable")
+    return TestClient(app)
+
+
+def create_test_jwt_token():
+    """Create a valid JWT token for integration tests."""
+    return jwt.encode({"sub": "integration-user"}, SECRET, algorithm=ALGO)
+
+
+@pytest.mark.asyncio
+async def test_docs_auth_with_basic_auth_enabled_bearer_still_works(monkeypatch):
+    """CRITICAL: Verify Bearer auth still works when Basic Auth is enabled."""
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    # Create a valid JWT token
+    token = jwt.encode({"sub": "testuser"}, SECRET, algorithm=ALGO)
+    bearer_header = f"Bearer {token}"
+    # Bearer auth should STILL work
+    result = await vc.require_auth_override(auth_header=bearer_header)
+    assert result["sub"] == "testuser"
+
+
+@pytest.mark.asyncio
+async def test_docs_both_auth_methods_work_simultaneously(monkeypatch):
+    """Test that both auth methods work when Basic Auth is enabled."""
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    # Test 1: Basic Auth works
+    basic_header = f"Basic {base64.b64encode(b'admin:secret').decode()}"
+    result1 = await vc.require_auth_override(auth_header=basic_header)
+    assert result1 == "admin"
+    # Test 2: Bearer Auth still works
+    token = jwt.encode({"sub": "jwtuser"}, SECRET, algorithm=ALGO)
+    bearer_header = f"Bearer {token}"
+    result2 = await vc.require_auth_override(auth_header=bearer_header)
+    assert result2["sub"] == "jwtuser"
+
+
+@pytest.mark.asyncio
+async def test_docs_invalid_basic_auth_fails(monkeypatch):
+    """Test that invalid Basic Auth returns 401 and does not fall back to Bearer."""
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", "correct", raising=False)
+    # Send wrong Basic Auth
+    wrong_basic = f"Basic {base64.b64encode(b'admin:wrong').decode()}"
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_override(auth_header=wrong_basic)
+    assert exc.value.status_code == 401
+
+
+# Integration test for /docs endpoint (requires test_client fixture and create_test_jwt_token helper)
+@pytest.mark.asyncio
+async def test_integration_docs_endpoint_both_auth_methods(test_client, monkeypatch):
+    """Integration test: /docs accepts both auth methods when enabled."""
+    monkeypatch.setattr("mcpgateway.config.settings.docs_allow_basic_auth", True)
+    monkeypatch.setattr("mcpgateway.config.settings.jwt_secret_key", SECRET)
+    monkeypatch.setattr("mcpgateway.config.settings.jwt_algorithm", ALGO)
+    # Test with Basic Auth
+    basic_creds = base64.b64encode(b"admin:changeme").decode()
+    response1 = test_client.get("/docs", headers={"Authorization": f"Basic {basic_creds}"})
+    assert response1.status_code == 200
+    # Test with Bearer token
+    token = create_test_jwt_token()
+    response2 = test_client.get("/docs", headers={"Authorization": f"Bearer {token}"})
+    assert response2.status_code == 200
