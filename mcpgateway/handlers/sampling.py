@@ -221,7 +221,7 @@ class SamplingHandler:
             # FIXME: Implement actual model sampling - currently returns mock response
             # For now return mock response
             response = self._mock_sample(messages=messages)
-    
+
             # Convert to result
             return CreateMessageResult(
                 content=TextContent(type="text", text=response),

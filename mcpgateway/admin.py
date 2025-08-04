@@ -4012,8 +4012,28 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 #         "prompts": prompt_metrics,
 #     }
 
+
 @admin_router.get("/metrics")
 async def get_aggregated_metrics(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """Retrieve aggregated metrics and top performers for all entity types.
+
+    This endpoint collects usage metrics and top-performing entities for tools,
+    resources, prompts, and servers by calling the respective service methods.
+    The results are compiled into a dictionary for administrative monitoring.
+
+    Args:
+        db (Session): Database session dependency for querying metrics.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing aggregated metrics and top performers
+            for tools, resources, prompts, and servers. The structure includes:
+            - 'tools': Metrics for tools.
+            - 'resources': Metrics for resources.
+            - 'prompts': Metrics for prompts.
+            - 'servers': Metrics for servers.
+            - 'topPerformers': A nested dictionary with top 5 tools, resources, prompts,
+              and servers.
+    """
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
@@ -4023,8 +4043,8 @@ async def get_aggregated_metrics(db: Session = Depends(get_db)) -> Dict[str, Any
             "tools": await tool_service.get_top_tools(db, limit=5),
             "resources": await resource_service.get_top_resources(db, limit=5),
             "prompts": await prompt_service.get_top_prompts(db, limit=5),
-            "servers": await server_service.get_top_servers(db, limit=5)
-        }
+            "servers": await server_service.get_top_servers(db, limit=5),
+        },
     }
     }
     return metrics
