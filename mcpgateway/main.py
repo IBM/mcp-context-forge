@@ -1426,10 +1426,10 @@ async def create_resource(
     except ResourceError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValidationError as e:
-        logger.error(f"Validation error while creating resource {uri}: {e}")
+        logger.error(f"Validation error while creating resource: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
     except IntegrityError as e:
-        logger.error(f"Integrity error while creating resource {uri}: {e}")
+        logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))    
   
 @resource_router.get("/{uri:path}")
