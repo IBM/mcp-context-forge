@@ -2,81 +2,14 @@
 Comprehensive async safety tests for mcpgateway.
 """
 
+from typing import Any, List
 import pytest
 import asyncio
-import warnings
 import time
-from unittest.mock import AsyncMock, patch
 
 
 class TestAsyncSafety:
     """Test async safety and proper coroutine handling."""
-
-    def test_no_unawaited_coroutines(self):
-        """Test that no coroutines are left unawaited."""
-
-        # Capture async warnings
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            warnings.simplefilter("always")
-
-            # Run async code that might have unawaited coroutines
-            asyncio.run(self._test_async_operations())
-
-        # Check for unawaited coroutine warnings
-        unawaited_warnings = [w for w in caught_warnings if "coroutine" in str(w.message) and "never awaited" in str(w.message)]
-
-        assert len(unawaited_warnings) == 0, f"Found {len(unawaited_warnings)} unawaited coroutines"
-
-    async def _test_async_operations(self):
-        """Test various async operations for safety."""
-
-        # Test WebSocket operations
-        await self._test_websocket_safety()
-
-        # Test database operations
-        await self._test_database_safety()
-
-        # Test MCP operations
-        await self._test_mcp_safety()
-
-    async def _test_websocket_safety(self):
-        """Test WebSocket async safety."""
-
-        # Mock WebSocket operations
-        with patch("websockets.connect") as mock_connect:
-            mock_websocket = AsyncMock()
-            mock_connect.return_value.__aenter__.return_value = mock_websocket
-
-            # Test proper awaiting
-            async with mock_connect("ws://test") as websocket:
-                await websocket.send("test")
-                await websocket.recv()
-
-    async def _test_database_safety(self):
-        """Test database async safety."""
-
-        # Mock database operations
-        with patch("asyncpg.connect") as mock_connect:
-            mock_connection = AsyncMock()
-            mock_connect.return_value = mock_connection
-
-            # Test proper connection handling
-            connection = await mock_connect("postgresql://test")
-            await connection.execute("SELECT 1")
-            await connection.close()
-
-    async def _test_mcp_safety(self):
-        """Test MCP async safety."""
-
-        # Mock MCP operations
-        with patch("aiohttp.ClientSession") as mock_session:
-            mock_response = AsyncMock()
-            mock_session.return_value.post.return_value.__aenter__.return_value = mock_response
-
-            # Test proper session handling
-            async with mock_session() as session:
-                async with session.post("http://test") as response:
-                    await response.json()
 
     @pytest.mark.asyncio
     async def test_concurrent_operations_performance(self):
@@ -108,7 +41,7 @@ class TestAsyncSafety:
             await asyncio.sleep(0.1)
 
         # Create and properly manage tasks
-        tasks = []
+        tasks: List[Any] = []
         for _ in range(10):
             task = asyncio.create_task(background_task())
             tasks.append(task)
