@@ -896,7 +896,7 @@ async def update_server(
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while updating server {server_id}: {e}")
-        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))            
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
 @server_router.post("/{server_id}/toggle", response_model=ServerRead)
@@ -1435,8 +1435,10 @@ async def create_resource(
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
-        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))    
- @resource_router.get("/{uri:path}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+
+
+@resource_router.get("/{uri:path}")
 async def read_resource(uri: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ResourceContent:
     """
     Read a resource by its URI.
