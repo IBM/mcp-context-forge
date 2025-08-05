@@ -1,0 +1,226 @@
+# ===============================================================
+# 🔍 MCP Gateway ▸ Python File Header Validation
+# ===============================================================
+#
+# This workflow:
+#   - Checks all Python files for proper headers             🔍
+#   - Validates copyright, license, and author information   📋
+#   - Shows diff preview of what needs to be fixed          📝
+#   - Fails if any files have incorrect headers             ❌
+#
+# ---------------------------------------------------------------
+# When it runs:
+# ---------------------------------------------------------------
+#   - On every pull request (to catch issues early)
+#   - On pushes to main/master (to ensure compliance)
+#   - Manual trigger available (workflow_dispatch)
+#
+# ---------------------------------------------------------------
+# What it checks:
+# ---------------------------------------------------------------
+#   ✓ Shebang line (for executable files)
+#   ✓ Encoding declaration
+#   ✓ Module docstring with:
+#     - Location path
+#     - Copyright year
+#     - SPDX license identifier
+#     - Authors field
+#
+# ---------------------------------------------------------------
+
+name: 🔍 Check Python Headers
+
+on:
+  pull_request:
+    paths:
+      - '**.py'
+      - '.github/workflows/check-headers.yml'
+      - '.github/tools/fix_file_headers.py'
+  
+  push:
+    branches: 
+      - main
+      - master
+    paths:
+      - '**.py'
+  
+  workflow_dispatch:
+    inputs:
+      debug_mode:
+        description: 'Enable debug mode'
+        required: false
+        type: boolean
+        default: false
+      show_diff:
+        description: 'Show diff preview'
+        required: false
+        type: boolean
+        default: true
+
+# -----------------------------------------------------------------
+# Minimal permissions (Principle of Least Privilege)
+# -----------------------------------------------------------------
+permissions:
+  contents: read
+  pull-requests: write  # For PR comments
+
+# -----------------------------------------------------------------
+# Cancel in-progress runs when new commits are pushed
+# -----------------------------------------------------------------
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-headers:
+    name: 🔍 Validate Python Headers
+    runs-on: ubuntu-latest
+    
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout repository
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better path resolution
+
+      # -----------------------------------------------------------
+      # 1️⃣  Set up Python
+      # -----------------------------------------------------------
+      - name: 🐍  Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # -----------------------------------------------------------
+      # 2️⃣  Display Python version & path info
+      # -----------------------------------------------------------
+      - name: 📍  Display Python info
+        run: |
+          echo "🐍 Python version:"
+          python --version
+          echo "📂 Python path:"
+          which python
+          echo "📁 Working directory:"
+          pwd
+          echo "📊 Python files to check:"
+          find . -name "*.py" -not -path "./.venv/*" -not -path "./.git/*" | wc -l
+
+      # -----------------------------------------------------------
+      # 3️⃣  Run header check (with optional debug/diff)
+      # -----------------------------------------------------------
+      - name: 🔍  Check Python file headers
+        id: check
+        run: |
+          echo "🔍 Checking Python file headers..."
+          
+          # Build command based on inputs
+          CHECK_CMD="python3 .github/tools/fix_file_headers.py"
+          
+          # Add flags based on workflow inputs
+          if [[ "${{ inputs.show_diff }}" == "true" ]] || [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            CHECK_CMD="$CHECK_CMD --show-diff"
+          fi
+          
+          if [[ "${{ inputs.debug_mode }}" == "true" ]]; then
+            CHECK_CMD="$CHECK_CMD --debug"
+          fi
+          
+          echo "🏃 Running: $CHECK_CMD"
+          
+          # Run check and capture output
+          if $CHECK_CMD > header-check-output.txt 2>&1; then
+            echo "✅ All Python file headers are correct!"
+            echo "check_passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Some files have incorrect headers"
+            echo "check_passed=false" >> $GITHUB_OUTPUT
+            
+            # Show the output
+            cat header-check-output.txt
+            
+            # Save summary for PR comment
+            echo '```' > header-check-summary.md
+            cat header-check-output.txt >> header-check-summary.md
+            echo '```' >> header-check-summary.md
+          fi
+
+      # -----------------------------------------------------------
+      # 4️⃣  Comment on PR (if applicable)
+      # -----------------------------------------------------------
+      - name: 💬  Comment on PR
+        if: github.event_name == 'pull_request' && steps.check.outputs.check_passed == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('header-check-summary.md', 'utf8');
+            
+            const body = `## ❌ Python Header Check Failed
+            
+            Some Python files have incorrect or missing headers. Please fix them before merging.
+            
+            ### 🔧 How to fix:
+            
+            1. **Fix all files automatically:**
+               \`\`\`bash
+               make fix-all-headers
+               \`\`\`
+            
+            2. **Fix specific files:**
+               \`\`\`bash
+               make fix-header path=path/to/file.py
+               \`\`\`
+            
+            3. **Review changes interactively:**
+               \`\`\`bash
+               make interactive-fix-headers
+               \`\`\`
+            
+            ### 📋 Check Results:
+            
+            ${summary}
+            
+            ---
+            🤖 *This check ensures all Python files have proper copyright, license, and author information.*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      # -----------------------------------------------------------
+      # 5️⃣  Upload check results as artifact
+      # -----------------------------------------------------------
+      - name: 📤  Upload check results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: header-check-results
+          path: |
+            header-check-output.txt
+            header-check-summary.md
+          retention-days: 7
+
+      # -----------------------------------------------------------
+      # 6️⃣  Fail the workflow if headers are incorrect
+      # -----------------------------------------------------------
+      - name: 🚨  Fail if headers incorrect
+        if: steps.check.outputs.check_passed == 'false'
+        run: |
+          echo "❌ Header check failed!"
+          echo "Please run 'make fix-all-headers' locally and commit the changes."
+          exit 1
+
+      # -----------------------------------------------------------
+      # 7️⃣  Success message
+      # -----------------------------------------------------------
+      - name: ✅  Success
+        if: steps.check.outputs.check_passed == 'true'
+        run: |
+          echo "✅ All Python file headers are properly formatted!"
+          echo "🎉 No action needed."
