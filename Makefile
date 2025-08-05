@@ -4072,3 +4072,118 @@ snyk-helm-test:                     ## ⎈ Test Helm charts for security issues
 	else \
 		echo "⚠️  No Helm charts found in charts/mcp-stack/"; \
 	fi
+
+# ==============================================================================
+# 🔍 HEADER MANAGEMENT - Check and fix Python file headers
+# ==============================================================================
+# help: 🔍 HEADER MANAGEMENT - Check and fix Python file headers
+# help: check-headers          - Check all Python file headers (dry run - default)
+# help: check-headers-diff     - Check headers and show diff preview
+# help: check-headers-debug    - Check headers with debug information
+# help: check-header           - Check specific file/directory (use: path=...)
+# help: fix-all-headers        - Fix ALL files with incorrect headers (modifies files!)
+# help: fix-all-headers-no-encoding - Fix headers without encoding line requirement
+# help: fix-all-headers-custom - Fix with custom config (year=YYYY license=... shebang=...)
+# help: interactive-fix-headers - Fix headers with prompts before each change
+# help: fix-header             - Fix specific file/directory (use: path=... authors=...)
+# help: pre-commit-check-headers - Check headers for pre-commit hooks
+# help: pre-commit-fix-headers - Fix headers for pre-commit hooks
+
+.PHONY: check-headers fix-all-headers interactive-fix-headers fix-header check-headers-diff check-header \
+        check-headers-debug fix-all-headers-no-encoding fix-all-headers-custom \
+        pre-commit-check-headers pre-commit-fix-headers
+
+## --------------------------------------------------------------------------- ##
+##  Check modes (no modifications)
+## --------------------------------------------------------------------------- ##
+check-headers:                      ## 🔍 Check all Python file headers (dry run - default)
+	@echo "🔍 Checking Python file headers (dry run - no files will be modified)..."
+	@python3 .github/tools/fix_file_headers.py
+
+check-headers-diff:                 ## 🔍 Check headers and show diff preview
+	@echo "🔍 Checking Python file headers with diff preview..."
+	@python3 .github/tools/fix_file_headers.py --show-diff
+
+check-headers-debug:                ## 🔍 Check headers with debug information
+	@echo "🔍 Checking Python file headers with debug info..."
+	@python3 .github/tools/fix_file_headers.py --debug
+
+check-header:                       ## 🔍 Check specific file/directory (use: path=... debug=1 diff=1)
+	@if [ -z "$(path)" ]; then \
+		echo "❌ Error: 'path' parameter is required"; \
+		echo "💡 Usage: make check-header path=<file_or_directory> [debug=1] [diff=1]"; \
+		exit 1; \
+	fi
+	@echo "🔍 Checking headers in $(path) (dry run)..."
+	@extra_args=""; \
+	if [ "$(debug)" = "1" ]; then \
+		extra_args="$$extra_args --debug"; \
+	fi; \
+	if [ "$(diff)" = "1" ]; then \
+		extra_args="$$extra_args --show-diff"; \
+	fi; \
+	python3 .github/tools/fix_file_headers.py --check --path "$(path)" $$extra_args
+
+## --------------------------------------------------------------------------- ##
+##  Fix modes (will modify files)
+## --------------------------------------------------------------------------- ##
+fix-all-headers:                    ## 🔧 Fix ALL files with incorrect headers (⚠️ modifies files!)
+	@echo "⚠️  WARNING: This will modify all Python files with incorrect headers!"
+	@echo "🔧 Automatically fixing all Python file headers..."
+	@python3 .github/tools/fix_file_headers.py --fix-all
+
+fix-all-headers-no-encoding:        ## 🔧 Fix headers without encoding line requirement
+	@echo "🔧 Fixing headers without encoding line requirement..."
+	@python3 .github/tools/fix_file_headers.py --fix-all --no-encoding
+
+fix-all-headers-custom:             ## 🔧 Fix with custom config (year=YYYY license=... shebang=...)
+	@echo "🔧 Fixing headers with custom configuration..."
+	@if [ -n "$(year)" ]; then \
+		extra_args="$$extra_args --copyright-year $(year)"; \
+	fi; \
+	if [ -n "$(license)" ]; then \
+		extra_args="$$extra_args --license $(license)"; \
+	fi; \
+	if [ -n "$(shebang)" ]; then \
+		extra_args="$$extra_args --require-shebang $(shebang)"; \
+	fi; \
+	python3 .github/tools/fix_file_headers.py --fix-all $$extra_args
+
+interactive-fix-headers:            ## 💬 Fix headers with prompts before each change
+	@echo "💬 Interactively fixing Python file headers..."
+	@echo "You will be prompted before each change."
+	@python3 .github/tools/fix_file_headers.py --interactive
+
+fix-header:                         ## 🔧 Fix specific file/directory (use: path=... authors=... shebang=... encoding=no)
+	@if [ -z "$(path)" ]; then \
+		echo "❌ Error: 'path' parameter is required"; \
+		echo "💡 Usage: make fix-header path=<file_or_directory> [authors=\"Name1, Name2\"] [shebang=auto|always|never] [encoding=no]"; \
+		exit 1; \
+	fi
+	@echo "🔧 Fixing headers in $(path)"
+	@echo "⚠️  This will modify the file(s)!"
+	@extra_args=""; \
+	if [ -n "$(authors)" ]; then \
+		echo "   Authors: $(authors)"; \
+		extra_args="$$extra_args --authors \"$(authors)\""; \
+	fi; \
+	if [ -n "$(shebang)" ]; then \
+		echo "   Shebang requirement: $(shebang)"; \
+		extra_args="$$extra_args --require-shebang $(shebang)"; \
+	fi; \
+	if [ "$(encoding)" = "no" ]; then \
+		echo "   Encoding line: not required"; \
+		extra_args="$$extra_args --no-encoding"; \
+	fi; \
+	eval python3 .github/tools/fix_file_headers.py --fix --path "$(path)" $$extra_args
+
+## --------------------------------------------------------------------------- ##
+##  Pre-commit integration
+## --------------------------------------------------------------------------- ##
+pre-commit-check-headers:           ## 🪝 Check headers for pre-commit hooks
+	@echo "🪝 Checking headers for pre-commit..."
+	@python3 .github/tools/fix_file_headers.py --check
+
+pre-commit-fix-headers:             ## 🪝 Fix headers for pre-commit hooks
+	@echo "🪝 Fixing headers for pre-commit..."
+	@python3 .github/tools/fix_file_headers.py --fix-all
