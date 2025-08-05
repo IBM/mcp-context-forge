@@ -4869,6 +4869,62 @@ async function handleEditServerFormSubmit(e) {
     }
 }
 
+async function handleEditResourceFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+
+    try {
+        // Validate inputs
+        const name = formData.get("name");
+        const uri = formData.get("uri");
+        const nameValidation = validateInputName(name, "resource");
+        const uriValidation = validateInputName(uri, "resource URI");
+
+        if (!nameValidation.valid) {
+            showErrorMessage(nameValidation.error);
+            return;
+        }
+
+        if (!uriValidation.valid) {
+            showErrorMessage(uriValidation.error);
+            return;
+        }
+
+        // Save CodeMirror editors' contents if present
+        if (window.promptToolHeadersEditor) {
+            window.promptToolHeadersEditor.save();
+        }
+        if (window.promptToolSchemaEditor) {
+            window.promptToolSchemaEditor.save();
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("resources");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        else {
+            // Redirect to the appropriate page based on inactivity checkbox
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#resources`
+                : `${window.ROOT_PATH}/admin#resources`;
+            window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Error:", error);
+        showErrorMessage(error.message);
+    }
+}
+
 // ===================================================================
 // ENHANCED FORM VALIDATION for All Forms
 // ===================================================================
@@ -5425,12 +5481,17 @@ function setupFormHandlers() {
 
     const editResourceForm = safeGetElement("edit-resource-form");
     if (editResourceForm) {
-        editResourceForm.addEventListener("submit", () => {
-            if (window.editResourceContentEditor) {
-                window.editResourceContentEditor.save();
+        editResourceForm.addEventListener(
+            "submit",
+            handleEditResourceFormSubmit,
+        );
+        editResourceForm.addEventListener("click", () => {
+            if (getComputedStyle(editResourceForm).display !== "none") {
+                refreshEditors();
             }
         });
     }
+
     const editToolForm = safeGetElement("edit-tool-form");
     if (editToolForm) {
         editToolForm.addEventListener("submit", handleEditToolFormSubmit);
