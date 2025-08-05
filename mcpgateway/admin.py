@@ -2543,7 +2543,7 @@ async def admin_edit_gateway(
         )
         await gateway_service.update_gateway(db, gateway_id, gateway)
         return JSONResponse(
-            content={"message": "Gateway update successfully!", "success": True},
+            content={"message": "Gateway updated successfully!", "success": True},
             status_code=200,
         )
     except Exception as ex:
@@ -2872,7 +2872,7 @@ async def admin_edit_resource(
         >>> # Test successful update
         >>> async def test_admin_edit_resource():
         ...     response = await admin_edit_resource("test://resource1", mock_request, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body == b'{"message":"Resource update successfully!","success":true}'
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body == b'{"message":"Resource updated successfully!","success":true}'
         >>>
         >>> asyncio.run(test_admin_edit_resource())
         True
@@ -2924,7 +2924,7 @@ async def admin_edit_resource(
         )
         await resource_service.update_resource(db, uri, resource)
         return JSONResponse(
-            content={"message": "Resource update successfully!", "success": True},
+            content={"message": "Resource updated successfully!", "success": True},
             status_code=200,
         )
     except Exception as ex:
@@ -3341,7 +3341,7 @@ async def admin_edit_prompt(
         >>>
         >>> async def test_admin_edit_prompt():
         ...     response = await admin_edit_prompt(prompt_name, mock_request, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body == b'{"message":"Prompt update successfully!","success":true}'
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and response.body == b'{"message":"Prompt updated successfully!","success":true}'
         >>>
         >>> asyncio.run(test_admin_edit_prompt())
         True
@@ -3383,7 +3383,7 @@ async def admin_edit_prompt(
             return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
         # return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
         return JSONResponse(
-            content={"message": "Prompt update successfully!", "success": True},
+            content={"message": "Prompt updated successfully!", "success": True},
             status_code=200,
         )
     except Exception as ex:

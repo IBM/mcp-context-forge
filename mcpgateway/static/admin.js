@@ -4627,7 +4627,6 @@ async function handleServerFormSubmit(e) {
 
         const result = await response.json();
         if (!result.success) {
-            console.log(result.message);
             throw new Error(result.message || "Failed to add server.");
         } else {
             // Success redirect
