@@ -46,6 +46,8 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.background import BackgroundTasks
+from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -288,6 +290,41 @@ async def validation_exception_handler(_request: Request, exc: ValidationError):
         422
     """
     return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):
+    """Handle FastAPI request validation errors (automatic request parsing).
+
+    This handles ValidationErrors that occur during FastAPI's automatic request
+    parsing before the request reaches your endpoint.
+
+    Args:
+        _request: The FastAPI request object that triggered validation error.
+        exc: The RequestValidationError exception containing failure details.
+
+    Returns:
+        JSONResponse: A 422 Unprocessable Entity response with error details.
+    """
+    if _request.url.path.startswith("/tools"):
+        error_details = []
+
+        for error in exc.errors():
+            loc = error.get("loc", [])
+            msg = error.get("msg", "Unknown error")
+            ctx = error.get("ctx", {"error": {}})
+            type_ = error.get("type", "value_error")
+            # Ensure ctx is JSON serializable
+            if isinstance(ctx, dict):
+                ctx_serializable = {k: (str(v) if isinstance(v, Exception) else v) for k, v in ctx.items()}
+            else:
+                ctx_serializable = str(ctx)
+            error_detail = {"type": type_, "loc": loc, "msg": msg, "ctx": ctx_serializable}
+            error_details.append(error_detail)
+
+        response_content = {"detail": error_details}
+        return JSONResponse(status_code=422, content=response_content)
+    return await fastapi_default_validation_handler(_request, exc)
 
 
 @app.exception_handler(IntegrityError)
