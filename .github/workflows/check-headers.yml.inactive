@@ -36,14 +36,14 @@ on:
       - '**.py'
       - '.github/workflows/check-headers.yml'
       - '.github/tools/fix_file_headers.py'
-  
+
   push:
-    branches: 
+    branches:
       - main
       - master
     paths:
       - '**.py'
-  
+
   workflow_dispatch:
     inputs:
       debug_mode:
@@ -75,7 +75,7 @@ jobs:
   check-headers:
     name: 🔍 Validate Python Headers
     runs-on: ubuntu-latest
-    
+
     steps:
       # -----------------------------------------------------------
       # 0️⃣  Checkout repository
@@ -115,21 +115,21 @@ jobs:
         id: check
         run: |
           echo "🔍 Checking Python file headers..."
-          
+
           # Build command based on inputs
           CHECK_CMD="python3 .github/tools/fix_file_headers.py"
-          
+
           # Add flags based on workflow inputs
           if [[ "${{ inputs.show_diff }}" == "true" ]] || [[ "${{ github.event_name }}" == "pull_request" ]]; then
             CHECK_CMD="$CHECK_CMD --show-diff"
           fi
-          
+
           if [[ "${{ inputs.debug_mode }}" == "true" ]]; then
             CHECK_CMD="$CHECK_CMD --debug"
           fi
-          
+
           echo "🏃 Running: $CHECK_CMD"
-          
+
           # Run check and capture output
           if $CHECK_CMD > header-check-output.txt 2>&1; then
             echo "✅ All Python file headers are correct!"
@@ -137,10 +137,10 @@ jobs:
           else
             echo "❌ Some files have incorrect headers"
             echo "check_passed=false" >> $GITHUB_OUTPUT
-            
+
             # Show the output
             cat header-check-output.txt
-            
+
             # Save summary for PR comment
             echo '```' > header-check-summary.md
             cat header-check-output.txt >> header-check-summary.md
@@ -157,35 +157,35 @@ jobs:
           script: |
             const fs = require('fs');
             const summary = fs.readFileSync('header-check-summary.md', 'utf8');
-            
+
             const body = `## ❌ Python Header Check Failed
-            
+
             Some Python files have incorrect or missing headers. Please fix them before merging.
-            
+
             ### 🔧 How to fix:
-            
+
             1. **Fix all files automatically:**
                \`\`\`bash
                make fix-all-headers
                \`\`\`
-            
+
             2. **Fix specific files:**
                \`\`\`bash
                make fix-header path=path/to/file.py
                \`\`\`
-            
+
             3. **Review changes interactively:**
                \`\`\`bash
                make interactive-fix-headers
                \`\`\`
-            
+
             ### 📋 Check Results:
-            
+
             ${summary}
-            
+
             ---
             🤖 *This check ensures all Python files have proper copyright, license, and author information.*`;
-            
+
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,

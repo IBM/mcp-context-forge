@@ -445,7 +445,7 @@ class TestGatewayService:
     async def test_register_gateway_integrity_error(self, gateway_service, test_db):
         """Test IntegrityError during gateway registration."""
         from sqlalchemy.exc import IntegrityError as SQLIntegrityError
-        
+
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
         test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", "orig"))
@@ -1100,10 +1100,10 @@ class TestGatewayService:
 
         gateway_update = GatewayUpdate(description="New description")
 
-        # When gateway is inactive and include_inactive=False, 
+        # When gateway is inactive and include_inactive=False,
         # the method skips the update logic and returns None implicitly
         result = await gateway_service.update_gateway(test_db, 1, gateway_update, include_inactive=False)
-        
+
         # The method should return None when the condition fails
         assert result is None
         # Verify that description was NOT updated (since update was skipped)
@@ -1163,7 +1163,7 @@ class TestGatewayService:
     async def test_update_gateway_integrity_error(self, gateway_service, mock_gateway, test_db):
         """Test IntegrityError during gateway update."""
         from sqlalchemy.exc import IntegrityError as SQLIntegrityError
-        
+
         test_db.get = Mock(return_value=mock_gateway)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", "orig"))
@@ -1208,7 +1208,7 @@ class TestGatewayService:
         mock_gateway_no_auth.name = "test_gateway"
         mock_gateway_no_auth.enabled = True
         # Don't set auth_type attribute to test the getattr fallback
-        
+
         test_db.get = Mock(return_value=mock_gateway_no_auth)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.commit = Mock()
