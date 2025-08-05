@@ -1262,26 +1262,23 @@ class GatewayService:
                     authentication = {}
                 # Store the context managers so they stay alive
                 decoded_auth = decode_auth(authentication)
-                if await self._validate_gateway_url(url=server_url, headers=decoded_auth, transport_type="STREAMABLEHTTP"):
-                    # Use async with for both streamablehttp_client and ClientSession
-                    async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, _get_session_id):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            # Initialize the session
-                            response = await session.initialize()
-                            # if get_session_id:
-                            #     session_id = get_session_id()
-                            #     if session_id:
-                            #         print(f"Session ID: {session_id}")
-                            capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                            response = await session.list_tools()
-                            tools = response.tools
-                            tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
-                            tools = [ToolCreate.model_validate(tool) for tool in tools]
-                            for tool in tools:
-                                tool.request_type = "STREAMABLEHTTP"
+                # The _validate_gateway_url logic is flawed for streamablehttp, so we bypass it
+                # and go straight to the client connection. The outer try/except in
+                # _initialize_gateway will handle any connection errors.
+                async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, _get_session_id):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        # Initialize the session
+                        response = await session.initialize()
+                        capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
 
-                    return capabilities, tools
-                raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
+                        response = await session.list_tools()
+                        tools = response.tools
+                        tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+
+                        tools = [ToolCreate.model_validate(tool) for tool in tools]
+                        for tool in tools:
+                            tool.request_type = "STREAMABLEHTTP"
+                return capabilities, tools
 
             capabilities = {}
             tools = []
