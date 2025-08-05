@@ -498,6 +498,7 @@ class ResourceService:
         Raises:
             ResourceNotFoundError: If the resource is not found
             ResourceError: For other update errors
+            IntegrityError: If a database integrity error occurs.
             Exception: For unexpected errors
 
         Examples:
@@ -560,7 +561,10 @@ class ResourceService:
 
             logger.info(f"Updated resource: {uri}")
             return self._convert_resource_to_read(resource)
-
+        except IntegrityError as ie:
+            db.rollback()
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie
         except Exception as e:
             db.rollback()
             if isinstance(e, ResourceNotFoundError):
