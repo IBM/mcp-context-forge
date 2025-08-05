@@ -4869,7 +4869,7 @@ async function handleEditServerFormSubmit(e) {
     }
 }
 
-async function handleEditResourceFormSubmit(e) {
+async function handleEditResFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
@@ -5481,10 +5481,7 @@ function setupFormHandlers() {
 
     const editResourceForm = safeGetElement("edit-resource-form");
     if (editResourceForm) {
-        editResourceForm.addEventListener(
-            "submit",
-            handleEditResourceFormSubmit,
-        );
+        editResourceForm.addEventListener("submit", handleEditResFormSubmit);
         editResourceForm.addEventListener("click", () => {
             if (getComputedStyle(editResourceForm).display !== "none") {
                 refreshEditors();
