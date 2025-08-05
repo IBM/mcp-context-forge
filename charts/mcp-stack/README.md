@@ -1,6 +1,6 @@
 # mcp-stack
 
-![Version: 0.4.0](https://img.shields.io/badge/Version-0.4.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.4.0](https://img.shields.io/badge/AppVersion-0.4.0-informational?style=flat-square)
+![Version: 0.5.0](https://img.shields.io/badge/Version-0.5.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.5.0](https://img.shields.io/badge/AppVersion-0.5.0-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
@@ -147,7 +147,7 @@ Kubernetes: `>=1.21.0`
 | mcpFastTimeServer.enabled | bool | `true` |  |
 | mcpFastTimeServer.image.pullPolicy | string | `"IfNotPresent"` |  |
 | mcpFastTimeServer.image.repository | string | `"ghcr.io/ibm/fast-time-server"` |  |
-| mcpFastTimeServer.image.tag | string | `"0.4.0"` |  |
+| mcpFastTimeServer.image.tag | string | `"0.5.0"` |  |
 | mcpFastTimeServer.ingress.enabled | bool | `true` |  |
 | mcpFastTimeServer.ingress.path | string | `"/fast-time"` |  |
 | mcpFastTimeServer.ingress.pathType | string | `"Prefix"` |  |

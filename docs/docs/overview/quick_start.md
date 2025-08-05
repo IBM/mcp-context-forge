@@ -75,7 +75,7 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e JWT_SECRET_KEY=my-test-key \
           -e BASIC_AUTH_USER=admin \
           -e BASIC_AUTH_PASSWORD=changeme \
-          ghcr.io/ibm/mcp-context-forge:0.4.0
+          ghcr.io/ibm/mcp-context-forge:0.5.0
         ```
 
     2. **(Optional) persist the DB**
@@ -89,7 +89,7 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e JWT_SECRET_KEY=my-test-key \
           -e BASIC_AUTH_USER=admin \
           -e BASIC_AUTH_PASSWORD=changeme \
-          ghcr.io/ibm/mcp-context-forge:0.4.0
+          ghcr.io/ibm/mcp-context-forge:0.5.0
         ```
 
     3. **Generate a token inside the container**
@@ -126,7 +126,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     2. **Pull the published image**
 
         ```bash
-        docker pull ghcr.io/ibm/mcp-context-forge:0.4.0
+        docker pull ghcr.io/ibm/mcp-context-forge:0.5.0
         ```
 
     3. **Start the stack**
