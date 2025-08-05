@@ -30,13 +30,14 @@ Usage:
   python3 .github/tools/fix_file_headers.py --fix --path ./mcpgateway/main.py --authors "First Author, Second Author"
 """
 
+# Standard
 import argparse
 import ast
-import re
-import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+import re
+import sys
+from typing import Any, Dict, List, Optional
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 INCLUDE_DIRS = ["mcpgateway", "tests"]
