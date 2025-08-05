@@ -639,7 +639,7 @@ class TestResourceAPIs:
             assert "already exists" in resp_json["message"]
         else:
             # Accept any error format as long as status is correct
-            assert response.status_code == 409 
+            assert response.status_code == 409
 
     """Test resource management endpoints."""
 

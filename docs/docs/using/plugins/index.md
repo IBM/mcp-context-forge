@@ -9,7 +9,7 @@ The MCP Gateway Plugin Framework provides a standardized way to extend gateway f
 
 - **Content Filtering** - PII detection and masking
 - **AI Safety** - Integration with LLMGuard, OpenAI Moderation
-- **Security** - Input validation and output sanitization  
+- **Security** - Input validation and output sanitization
 - **Policy Enforcement** - Business rules and compliance
 - **Transformation** - Request/response modification
 - **Auditing** - Logging and monitoring
@@ -97,13 +97,13 @@ Plugins execute in priority order (ascending):
 plugins:
   - name: "Authentication"
     priority: 10      # Runs first
-    
-  - name: "RateLimiter"  
+
+  - name: "RateLimiter"
     priority: 50      # Runs second
-    
+
   - name: "ContentFilter"
     priority: 100     # Runs third
-    
+
   - name: "Logger"
     priority: 200     # Runs last
 ```
@@ -144,23 +144,23 @@ from mcpgateway.plugins.framework.types import (
 
 class MyPlugin(Plugin):
     """Example plugin implementation."""
-    
+
     def __init__(self, config: PluginConfig):
         super().__init__(config)
         # Initialize plugin-specific configuration
         self.my_setting = config.config.get("my_setting", "default")
-    
+
     async def prompt_pre_fetch(
-        self, 
-        payload: PromptPrehookPayload, 
+        self,
+        payload: PromptPrehookPayload,
         context: PluginContext
     ) -> PromptPrehookResult:
         """Process prompt before retrieval."""
-        
+
         # Access prompt name and arguments
         prompt_name = payload.name
         args = payload.args
-        
+
         # Example: Block requests with forbidden words
         if "forbidden" in str(args.values()).lower():
             return PromptPrehookResult(
@@ -172,40 +172,40 @@ class MyPlugin(Plugin):
                     details={"found_in": "arguments"}
                 )
             )
-        
+
         # Example: Modify arguments
         if "transform_me" in args:
             args["transform_me"] = args["transform_me"].upper()
             return PromptPrehookResult(
                 modified_payload=PromptPrehookPayload(prompt_name, args)
             )
-        
+
         # Allow request to continue unchanged
         return PromptPrehookResult()
-    
+
     async def prompt_post_fetch(
         self,
         payload: PromptPosthookPayload,
         context: PluginContext
     ) -> PromptPosthookResult:
         """Process prompt after rendering."""
-        
+
         # Access rendered prompt
         prompt_result = payload.result
-        
+
         # Example: Add metadata to context
         context.metadata["processed_by"] = self.name
-        
+
         # Example: Modify response
         for message in prompt_result.messages:
             message.content.text = message.content.text.replace(
                 "old_text", "new_text"
             )
-        
+
         return PromptPosthookResult(
             modified_payload=payload
         )
-    
+
     async def shutdown(self):
         """Cleanup when plugin shuts down."""
         # Close connections, save state, etc.
@@ -221,17 +221,17 @@ async def prompt_pre_fetch(self, payload, context):
     # Store state for later use
     context.set_state("request_time", time.time())
     context.set_state("original_args", payload.args.copy())
-    
+
     return PromptPrehookResult()
 
 async def prompt_post_fetch(self, payload, context):
     # Retrieve state from pre-hook
     elapsed = time.time() - context.get_state("request_time", 0)
     original = context.get_state("original_args", {})
-    
+
     # Add timing metadata
     context.metadata["processing_time_ms"] = elapsed * 1000
-    
+
     return PromptPosthookResult()
 ```
 
@@ -240,13 +240,13 @@ async def prompt_post_fetch(self, payload, context):
 ```python
 class LLMGuardPlugin(Plugin):
     """Example external service integration."""
-    
+
     def __init__(self, config: PluginConfig):
         super().__init__(config)
         self.service_url = config.config.get("service_url")
         self.api_key = config.config.get("api_key")
         self.timeout = config.config.get("timeout", 30)
-    
+
     async def prompt_pre_fetch(self, payload, context):
         # Call external service
         async with httpx.AsyncClient() as client:
@@ -262,9 +262,9 @@ class LLMGuardPlugin(Plugin):
                     },
                     timeout=self.timeout
                 )
-                
+
                 result = response.json()
-                
+
                 if result.get("blocked", False):
                     return PromptPrehookResult(
                         continue_processing=False,
@@ -275,7 +275,7 @@ class LLMGuardPlugin(Plugin):
                             details=result
                         )
                     )
-                    
+
             except Exception as e:
                 # Handle errors based on plugin settings
                 if self.config.mode == PluginMode.ENFORCE:
@@ -288,7 +288,7 @@ class LLMGuardPlugin(Plugin):
                             details={"error": str(e)}
                         )
                     )
-        
+
         return PromptPrehookResult()
 ```
 
@@ -357,9 +357,9 @@ async def test_my_plugin():
         hooks=["prompt_pre_fetch"],
         config={"setting_one": "test_value"}
     )
-    
+
     plugin = MyPlugin(config)
-    
+
     # Test your plugin logic
     result = await plugin.prompt_pre_fetch(payload, context)
     assert result.continue_processing
@@ -378,11 +378,11 @@ async def prompt_pre_fetch(self, payload, context):
         pass
     except Exception as e:
         logger.error(f"Plugin {self.name} error: {e}")
-        
+
         # In permissive mode, log and continue
         if self.mode == PluginMode.PERMISSIVE:
             return PromptPrehookResult()
-        
+
         # In enforce mode, block the request
         return PromptPrehookResult(
             continue_processing=False,
@@ -408,17 +408,17 @@ class CachedPlugin(Plugin):
         super().__init__(config)
         self._cache = {}
         self._cache_ttl = config.config.get("cache_ttl", 300)
-    
+
     async def expensive_operation(self, key):
         # Check cache first
         if key in self._cache:
             cached_value, timestamp = self._cache[key]
             if time.time() - timestamp < self._cache_ttl:
                 return cached_value
-        
+
         # Perform expensive operation
         result = await self._do_expensive_work(key)
-        
+
         # Cache result
         self._cache[key] = (result, time.time())
         return result
