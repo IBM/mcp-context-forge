@@ -57,10 +57,6 @@ from sqlalchemy import engine_from_config, pool
 from mcpgateway.config import settings
 from mcpgateway.db import Base
 
-# from mcpgateway.db import get_metadata
-# target_metadata = get_metadata()
-
-
 # Create config object - this is the standard way in Alembic
 config = getattr(context, "config", None) or Config()
 
@@ -111,17 +107,8 @@ if config.config_file_name is not None:
         disable_existing_loggers=False,
     )
 
-# First-Party
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
 
 target_metadata = Base.metadata
-
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
 
 config.set_main_option(
     "sqlalchemy.url",
