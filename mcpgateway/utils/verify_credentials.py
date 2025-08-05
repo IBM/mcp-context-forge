@@ -471,7 +471,6 @@ async def require_docs_basic_auth(auth_header: str) -> str:
     """
     scheme, param = get_authorization_scheme_param(auth_header)
     if scheme.lower() == "basic" and param and settings.docs_allow_basic_auth:
-
         try:
             data = b64decode(param).decode("ascii")
             username, separator, password = data.partition(":")

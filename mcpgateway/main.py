@@ -852,6 +852,12 @@ async def create_server(
         raise HTTPException(status_code=409, detail=str(e))
     except ServerError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        logger.error(f"Validation error while creating server: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while creating server: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
 @server_router.put("/{server_id}", response_model=ServerRead)
@@ -885,6 +891,12 @@ async def update_server(
         raise HTTPException(status_code=409, detail=str(e))
     except ServerError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        logger.error(f"Validation error while updating server {server_id}: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while updating server {server_id}: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
 @server_router.post("/{server_id}/toggle", response_model=ServerRead)
@@ -1407,7 +1419,7 @@ async def create_resource(
         ResourceRead: The created resource.
 
     Raises:
-        HTTPException: On conflict or validation errors.
+        HTTPException: On conflict or validation errors or IntegrityError.
     """
     logger.debug(f"User {user} is creating a new resource")
     try:
@@ -1419,7 +1431,11 @@ async def create_resource(
         raise HTTPException(status_code=400, detail=str(e))
     except ValidationError as e:
         # Handle validation errors from Pydantic
-        return JSONResponse(content=ErrorFormatter.format_validation_error(e), status_code=422)
+        logger.error(f"Validation error while creating resource: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while creating resource: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
 @resource_router.get("/{uri:path}")
@@ -1477,6 +1493,12 @@ async def update_resource(
         result = await resource_service.update_resource(db, uri, resource)
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        logger.error(f"Validation error while updating resource {uri}: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while updating resource {uri}: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     await invalidate_resource_cache(uri)
     return result
 

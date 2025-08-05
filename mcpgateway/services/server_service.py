@@ -409,6 +409,7 @@ class ServerService:
             ServerNotFoundError: If the server is not found.
             ServerNameConflictError: If a new name conflicts with an existing server.
             ServerError: For other update errors.
+            IntegrityError: If a database integrity error occurs.
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
@@ -498,6 +499,14 @@ class ServerService:
             }
             logger.debug(f"Server Data: {server_data}")
             return self._convert_server_to_read(server)
+        except IntegrityError as ie:
+            db.rollback()
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie
+        except ServerNameConflictError as snce:
+            db.rollback()
+            logger.error(f"Server name conflict: {snce}")
+            raise snce
         except Exception as e:
             db.rollback()
             raise ServerError(f"Failed to update server: {str(e)}")
