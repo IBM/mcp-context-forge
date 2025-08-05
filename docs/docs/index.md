@@ -401,7 +401,7 @@ MCP Gateway serves:
 
 > **PyPI Package**: [`mcp-contextforge-gateway`](https://pypi.org/project/mcp-contextforge-gateway/)
 
-> **OCI Image**: [`ghcr.io/ibm/mcp-context-forge:0.4.0`](https://github.com/IBM/mcp-context-forge/pkgs/container/mcp-context-forge)
+> **OCI Image**: [`ghcr.io/ibm/mcp-context-forge:0.5.0`](https://github.com/IBM/mcp-context-forge/pkgs/container/mcp-context-forge)
 
 ---
 

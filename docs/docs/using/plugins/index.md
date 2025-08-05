@@ -180,7 +180,7 @@ class MyPlugin(Plugin):
                 modified_payload=PromptPrehookPayload(prompt_name, args)
             )
 
-        # Allow request to continue unchanged
+        # Allow request to continue unmodified
         return PromptPrehookResult()
 
     async def prompt_post_fetch(

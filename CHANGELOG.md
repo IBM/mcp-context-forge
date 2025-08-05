@@ -6,6 +6,179 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [0.5.0] - 2025-08-06 - Enterprise Operability, Auth, Configuration & Observability
+
+### Overview
+
+This release focuses on enterprise-grade operability with **42 issues resolved**, bringing major improvements to authentication, configuration management, error handling, and developer experience. Key achievements include:
+
+- **Enhanced JWT token security** with mandatory expiration when configured
+- **Improved UI/UX** with better error messages, validation, and test tool enhancements
+- **Stronger input validation** across all endpoints with XSS prevention
+- **Developer productivity** improvements including file-specific linting and enhanced Makefile
+- **Better observability** with masked sensitive data and improved status reporting
+
+### Added
+
+#### **Security & Authentication**
+* **JWT Token Expiration Enforcement** (#425) - Made JWT token expiration mandatory when `REQUIRE_TOKEN_EXPIRATION=true`
+* **Masked Authentication Values** (#601, #602) - Auth credentials now properly masked in API responses for gateways
+* **API Docs Basic Auth Support** (#663) - Added basic authentication support for API documentation endpoints with `DOCS_BASIC_AUTH_ENABLED` flag
+* **Enhanced XSS Prevention** (#576) - Added validation for RPC methods to prevent XSS attacks
+* **SPDX License Headers** (#315, #317, #656) - Added script to verify and fix file headers with SPDX compliance
+
+#### **Developer Experience**
+* **File-Specific Linting** (#410, #660) - Added `make lint filename|dirname` target for targeted linting
+* **MCP Server Name Column** (#506, #624) - New "MCP Server Name" column in Global tools/resources for better visibility
+* **Export Connection Strings** (#154) - Enhanced connection string export for various clients from UI and API
+* **Time Server Integration** (#403, #637) - Added time server to docker-compose.yaml for testing
+* **Enhanced Makefile** (#365, #397, #507, #597, #608, #611, #612) - Major Makefile improvements:
+  - Fixed database migration commands
+  - Added comprehensive file-specific linting support
+  - Improved formatting and readability
+  - Consolidated run-gunicorn scripts
+  - Added `.PHONY` declarations where missing
+  - Fixed multiple server startup prevention (#430)
+
+#### **UI/UX Improvements**
+* **Test Tool Enhancements**:
+  - Display default values from input_schema (#623, #644)
+  - Fixed boolean inputs passing as on/off instead of true/false (#622)
+  - Fixed array inputs being passed as strings (#620, #641)
+  - Support for multiline text input (#650)
+  - Improved parameter type conversion logic (#628)
+* **Checkbox Selection** (#392, #619) - Added checkbox selection for servers, tools, and resources in UI
+* **Improved Error Messages** (#357, #363, #569, #607, #629, #633, #648) - Comprehensive error message improvements:
+  - More user-friendly error messages throughout
+  - Better validation feedback for gateways, tools, prompts
+  - Fixed "Unexpected error when registering gateway with same name" (#603)
+  - Enhanced error handling for add/edit operations
+
+#### **Code Quality & Testing**
+* **Security Scanners**:
+  - Added Snyk security scanning (#638, #639)
+  - Integrated DevSkim static analysis tool (#590, #592)
+  - Added nodejsscan for JavaScript security (#499)
+* **Web Linting** (#390, #614) - Added lint-web to CI/CD with additional linters (jshint, jscpd, markuplint)
+* **Package Linters** (#615, #616) - Added pypi package linters: check-manifest and pyroma
+
+### Fixed
+
+#### **Critical Bugs**
+* **Gateway Issues**:
+  - Fixed gateway ID returned as null by Create API (#521)
+  - Fixed duplicate gateway registration bypassing uniqueness check (#603, #649)
+  - Gateway update no longer fails silently in UI (#630)
+  - Fixed validation for invalid gateway URLs (#578)
+  - Improved STREAMABLEHTTP transport validation (#662)
+  - Fixed unexpected error when registering gateway with same name (#603)
+* **Tool & Resource Handling**:
+  - Fixed edit tool update failures with integration_type="REST" (#579)
+  - Fixed inconsistent acceptable length of tool names (#631, #651)
+  - Fixed long input names being reflected in error messages (#598)
+  - Fixed edit tool sending invalid "STREAMABLE" value (#610)
+  - Fixed GitHub MCP Server registration flow (#584)
+* **Authentication & Security**:
+  - Fixed auth_username and auth_password not being set correctly (#472)
+  - Fixed _populate_auth functionality (#471)
+  - Properly masked auth values in gateway APIs (#601)
+
+#### **UI/UX Fixes**
+* **Edit Functionality**:
+  - Fixed edit prompt failing when template field is empty (#591)
+  - Fixed edit screens for servers and resources (#633, #648)
+  - Improved consistency in displaying error messages (#357)
+* **Version Panel & Status**:
+  - Clarified difference between "Reachable" and "Available" status (#373, #621)
+  - Fixed service status display in version panel
+* **Input Validation**:
+  - Fixed array input parsing in test tool UI (#620, #641)
+  - Fixed boolean input handling (#622)
+  - Added support for multiline text input (#650)
+
+#### **Infrastructure & Build**
+* **Docker & Deployment**:
+  - Fixed database migration commands in Makefile (#365)
+  - Resolved Docker container issues (#560)
+  - Fixed internal server errors during CRUD operations (#85)
+* **Documentation & API**:
+  - Fixed OpenAPI title from "MCP_Gateway" to "MCP Gateway" (#522)
+  - Added mcp-cli documentation (#46)
+  - Fixed invalid HTTP request logs (#434)
+* **Code Quality**:
+  - Fixed redundant conditional expressions (#423, #653)
+  - Fixed lint-web issues in admin.js (#613)
+  - Updated default .env examples to enable UI (#498)
+
+### Changed
+
+#### **Configuration & Defaults**
+* **UI Enabled by Default** - Updated .env.example to set `MCPGATEWAY_UI_ENABLED=true` and `MCPGATEWAY_ADMIN_API_ENABLED=true`
+* **Enhanced Validation** - Stricter validation rules for gateway URLs, tool names, and input parameters
+* **Improved Error Handling** - More descriptive and actionable error messages across all operations
+
+#### **Performance & Reliability**
+* **Connection Handling** - Better retry mechanisms and timeout configurations
+* **Session Management** - Improved stateful session handling for Streamable HTTP
+* **Resource Management** - Enhanced cleanup and resource disposal
+
+#### **Developer Workflow**
+* **Simplified Scripts** - Consolidated run-gunicorn scripts into single improved version
+* **Better Testing** - Enhanced test coverage with additional security and validation tests
+* **Improved Tooling** - Comprehensive linting and security scanning integration
+
+### Security
+
+* Mandatory JWT token expiration when configured
+* Masked sensitive authentication data in API responses
+* Enhanced XSS prevention in RPC methods
+* Comprehensive security scanning with Snyk, DevSkim, and nodejsscan
+* SPDX-compliant file headers for license compliance
+
+### Infrastructure
+
+* Improved Makefile with better target organization and documentation
+* Enhanced Docker compose with integrated time server
+* Better CI/CD with comprehensive linting and security checks
+* Simplified deployment with consolidated scripts
+
+---
+
+### 🌟 Release Contributors
+
+This release represents a major step forward in enterprise readiness with contributions from developers worldwide focusing on security, usability, and operational excellence.
+
+#### 🏆 Top Contributors in 0.5.0
+- **Mihai Criveti** (@crivetimihai) - Release coordinator, infrastructure improvements, security enhancements
+- **Madhav Kandukuri** (@madhav165) - XSS prevention, validation improvements, security fixes
+- **Keval Mahajan** (@kevalmahajan) - UI enhancements, test tool improvements, checkbox implementation
+- **Manav Gupta** - File-specific linting support and Makefile improvements
+- **Rakhi Dutta** (@rakdutta) - Comprehensive error message improvements across add/edit operations
+- **Shoumi Mukherjee** (@shoummu1) - Array input parsing, tool creation fixes, UI improvements
+
+#### 🎉 New Contributors
+Welcome to our first-time contributors who joined us in 0.5.0:
+
+- **JimmyLiao** (@jimmyliao) - Fixed STREAMABLEHTTP transport validation
+- **Arnav Bhattacharya** (@arnav264) - Added file header verification script
+- **Guoqiang Ding** (@dgq8211) - Fixed tool parameter type conversion and API docs auth
+- **Pascal Roessner** (@roessner) - Added MCP Gateway Name to tools overview
+- **Kumar Tiger** (@kumar-tiger) - Fixed duplicate gateway name registration
+- **Shamsul Arefin** (@shams) - Improved JavaScript validation patterns and UUID support
+- **Emmanuel Ferdman** (@emmanuelferdman) - Fixed prompt service test cases
+- **Tomas Pilar** (@thomas7pilar) - Fixed missing ID in gateway response and auth flag issues
+
+#### 💪 Returning Contributors
+Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+
+- **Nayana R Gowda** - Fixed redundant conditional expressions and Makefile formatting
+- **Mohan Lakshmaiah** - Improved tool name consistency validation
+- **Abdul Samad** - Continued UI polish and improvements
+- **Satya** (@TS0713) - Gateway URL validation improvements
+- **ChrisPC-39** - Updated default .env to enable UI and added tool search functionality
+
+---
+
 ## [0.4.0] - 2025-07-22 - Security, Bugfixes, Resilience & Code Quality
 
 ### Security Notice
