@@ -96,10 +96,10 @@ The header format is as follows:
 Location: ./path/to/your/file.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Configurable, default to "Mihai Criveti"
+Authors: "Author One, Author Two"
 
 Your detailed module documentation begins here...
 """
 ```
 
-You can automatically check and fix file headers using the provided `make` targets. For detailed usage and examples, please see the [File Header Management section](../docs/docs/development/documentation.md#️-file-header-management) in our development documentation.
+You can automatically check and fix file headers using the provided `make` targets. For detailed usage and examples, please see the [File Header Management section](../docs/docs/development/module-documentation.md) in our development documentation.
