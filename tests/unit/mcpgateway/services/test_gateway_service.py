@@ -1087,7 +1087,7 @@ class TestGatewayService:
 
         # Only description should be updated
         assert mock_gateway.description == "New description only"
-        # Name and URL should remain unchanged
+        # Name and URL should remain unmodified
         assert mock_gateway.name == "test_gateway"
         assert mock_gateway.url == "http://example.com/gateway"
         test_db.commit.assert_called_once()
@@ -1155,7 +1155,7 @@ class TestGatewayService:
             with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
                 result = await gateway_service.update_gateway(test_db, 1, gateway_update)
 
-            # Auth value should remain unchanged since all values were masked
+            # Auth value should remain unmodified since all values were masked
             assert mock_gateway.auth_value == "existing-token"
             test_db.commit.assert_called_once()
 

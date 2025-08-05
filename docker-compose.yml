@@ -24,7 +24,7 @@ services:
   # MCP Gateway - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
-    #image: ghcr.io/ibm/mcp-context-forge:0.4.0 # Use the release MCP Context Forge image
+    #image: ghcr.io/ibm/mcp-context-forge:0.5.0 # Use the release MCP Context Forge image
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
     build:
       context: .
@@ -124,7 +124,7 @@ services:
   #   networks: [mcpnet]
 
   # migration:
-  #   #image: ghcr.io/ibm/mcp-context-forge:0.4.0 # Use the release MCP Context Forge image
+  #   #image: ghcr.io/ibm/mcp-context-forge:0.5.0 # Use the release MCP Context Forge image
   #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
   #   build:
   #     context: .
