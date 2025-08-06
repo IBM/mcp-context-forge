@@ -1,0 +1,57 @@
+plugins:
+  # Self-contained Deny List Plugin
+  - name: "DenyListPlugin"
+    kind: "plugins.deny_filter.deny.DenyListPlugin"
+    description: "A plugin that implements a deny list filter."
+    version: "0.1"
+    author: "MCP Context Forge Team"
+    hooks: ["prompt_pre_fetch"]
+    tags: ["plugin", "filter", "denylist", "pre-post"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 100
+    conditions:
+      # Apply to specific tools/servers
+      - prompts: ["test_prompt"]
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      words:
+        - innovative
+        - groundbreaking
+        - revolutionary
+  # Self-contained Search Replace Plugin
+  - name: "ReplaceBadWordsPlugin"
+    kind: "plugins.regex_filter.search_replace.SearchReplacePlugin"
+    description: "A plugin for finding and replacing words."
+    version: "0.1"
+    author: "MCP Context Forge Team"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
+    tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 150
+    conditions:
+      # Apply to specific tools/servers
+      - prompts: ["test_prompt"]
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      words:
+        - search: crap
+          replace: crud
+        - search: crud
+          replace: yikes
+
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"      # Built-in plugins
+  - "plugins/custom"      # Custom organization plugins
+  - "/etc/mcpgateway/plugins"  # System-wide plugins
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

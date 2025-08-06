@@ -75,6 +75,7 @@ from mcpgateway.models import (
     ResourceContent,
     Root,
 )
+from mcpgateway.plugins import PluginManager, PluginViolationError
 from mcpgateway.schemas import (
     GatewayCreate,
     GatewayRead,
@@ -160,6 +161,8 @@ except RuntimeError:
 else:
     loop.create_task(bootstrap_db())
 
+# Initialize plugin manager as a singleton.
+plugin_manager: PluginManager | None = PluginManager(settings.plugin_config_file) if settings.plugins_enabled else None
 
 # Initialize services
 tool_service = ToolService()
@@ -214,6 +217,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     logger.info("Starting MCP Gateway services")
     try:
+        if plugin_manager:
+            await plugin_manager.initialize()
+            logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
         await tool_service.initialize()
         await resource_service.initialize()
         await prompt_service.initialize()
@@ -232,6 +238,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.error(f"Error during startup: {str(e)}")
         raise
     finally:
+        # Shutdown plugin manager
+        if plugin_manager:
+            try:
+                await plugin_manager.shutdown()
+                logger.info("Plugin manager shutdown complete")
+            except Exception as e:
+                logger.error(f"Error shutting down plugin manager: {str(e)}")
         logger.info("Shutting down MCP Gateway services")
         # await stop_streamablehttp()
         for service in [resource_cache, sampling_handler, logging_service, completion_service, root_service, gateway_service, prompt_service, resource_service, tool_service, streamable_http_session]:
@@ -1703,9 +1716,11 @@ async def get_prompt(
         PromptExecuteArgs(args=args)
         return await prompt_service.get_prompt(db, name, args)
     except Exception as ex:
-        logger.error(f"Error retrieving prompt {name}: {ex}")
-        if isinstance(ex, ValueError):
+        logger.error(f"Could not retrieve prompt {name}: {ex}")
+        if isinstance(ex, ValueError) or isinstance(ex, PromptError):
             return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
+        if isinstance(ex, PluginViolationError):
+            return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues", "details": ex.message}, status_code=422)
 
 
 @prompt_router.get("/{name}")
