@@ -1709,7 +1709,6 @@ async def create_prompt(
                 by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
-    logger.debug(f"Prompt tags received: {prompt.tags}")
     try:
         return await prompt_service.register_prompt(db, prompt)
     except PromptNameConflictError as e:

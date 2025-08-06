@@ -178,6 +178,32 @@
             </div>
           </div>
         </div>
+
+        <!-- Tag Filtering for Servers -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex items-center space-x-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Filter by Tags:</label>
+            <input
+              type="text"
+              id="servers-tag-filter"
+              placeholder="Enter tags (comma-separated)"
+              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+              onkeyup="filterByTags('servers')"
+            />
+            <button
+              onclick="clearTagFilter('servers')"
+              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+            >
+              Clear
+            </button>
+          </div>
+          <div class="mt-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400">Available tags:</span>
+            <div id="servers-available-tags" class="mt-1 flex flex-wrap gap-1">
+              <!-- Tag suggestions will be populated here by JavaScript -->
+            </div>
+          </div>
+        </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
@@ -582,7 +608,7 @@
               >
             </div>
           </div>
-          <div class="flex items-center">
+          <div class="flex items-center space-x-4">
             <input
               type="checkbox"
               id="show-inactive-tools"
@@ -594,6 +620,32 @@
               class="text-sm font-medium text-gray-700 dark:text-gray-300"
               >Show Inactive</label
             >
+          </div>
+        </div>
+
+        <!-- Tag Filtering for Tools -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex items-center space-x-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Filter by Tags:</label>
+            <input
+              type="text"
+              id="tools-tag-filter"
+              placeholder="Enter tags (comma-separated)"
+              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+              onkeyup="filterByTags('tools')"
+            />
+            <button
+              onclick="clearTagFilter('tools')"
+              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+            >
+              Clear
+            </button>
+          </div>
+          <div class="mt-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400">Available tags:</span>
+            <div id="tools-available-tags" class="mt-1 flex flex-wrap gap-1">
+              <!-- Tag suggestions will be populated here by JavaScript -->
+            </div>
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
@@ -1129,6 +1181,32 @@
             >
           </div>
         </div>
+
+        <!-- Tag Filtering for Resources -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex items-center space-x-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Filter by Tags:</label>
+            <input
+              type="text"
+              id="resources-tag-filter"
+              placeholder="Enter tags (comma-separated)"
+              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+              onkeyup="filterByTags('resources')"
+            />
+            <button
+              onclick="clearTagFilter('resources')"
+              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+            >
+              Clear
+            </button>
+          </div>
+          <div class="mt-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400">Available tags:</span>
+            <div id="resources-available-tags" class="mt-1 flex flex-wrap gap-1">
+              <!-- Tag suggestions will be populated here by JavaScript -->
+            </div>
+          </div>
+        </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
@@ -1404,6 +1482,32 @@
               class="text-sm font-medium text-gray-700 dark:text-gray-300"
               >Show Inactive</label
             >
+          </div>
+        </div>
+
+        <!-- Tag Filtering for Prompts -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex items-center space-x-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Filter by Tags:</label>
+            <input
+              type="text"
+              id="prompts-tag-filter"
+              placeholder="Enter tags (comma-separated)"
+              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+              onkeyup="filterByTags('prompts')"
+            />
+            <button
+              onclick="clearTagFilter('prompts')"
+              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+            >
+              Clear
+            </button>
+          </div>
+          <div class="mt-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400">Available tags:</span>
+            <div id="prompts-available-tags" class="mt-1 flex flex-wrap gap-1">
+              <!-- Tag suggestions will be populated here by JavaScript -->
+            </div>
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
@@ -3422,6 +3526,102 @@
       window.ROOT_PATH = {{ root_path | tojson }};
       window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
       window.MAX_NAME_LENGTH = {{ max_name_length | tojson }};
+
+      // Tag filtering functionality
+      function filterByTags(entityType) {
+        const input = document.getElementById(entityType + '-tag-filter');
+        const filterTags = input.value.toLowerCase().split(',').map(tag => tag.trim()).filter(tag => tag.length > 0);
+
+        // Get all rows in the entity table
+        const table = document.querySelector('#' + entityType + '-panel table tbody');
+        if (!table) return;
+
+        const rows = table.querySelectorAll('tr');
+
+        rows.forEach(row => {
+          if (filterTags.length === 0) {
+            // No filter, show all rows
+            row.style.display = '';
+          } else {
+            // Get tags from the row's tags cell
+            const tagsCell = row.querySelector('td:nth-last-child(2)'); // Tags are second to last column
+            if (!tagsCell) {
+              row.style.display = 'none';
+              return;
+            }
+
+            const entityTags = Array.from(tagsCell.querySelectorAll('span')).map(span => span.textContent.toLowerCase());
+
+            // Check if any of the filter tags match the entity tags
+            const hasMatchingTag = filterTags.some(filterTag =>
+              entityTags.some(entityTag => entityTag.includes(filterTag))
+            );
+
+            row.style.display = hasMatchingTag ? '' : 'none';
+          }
+        });
+
+        updateAvailableTags(entityType);
+      }
+
+      function clearTagFilter(entityType) {
+        const input = document.getElementById(entityType + '-tag-filter');
+        input.value = '';
+        filterByTags(entityType);
+      }
+
+      function updateAvailableTags(entityType) {
+        const container = document.getElementById(entityType + '-available-tags');
+        const table = document.querySelector('#' + entityType + '-panel table tbody');
+        if (!table || !container) return;
+
+        // Collect all unique tags from visible rows
+        const allTags = new Set();
+        const rows = table.querySelectorAll('tr');
+
+        rows.forEach(row => {
+          if (row.style.display !== 'none') {
+            const tagsCell = row.querySelector('td:nth-last-child(2)');
+            if (tagsCell) {
+              const tags = Array.from(tagsCell.querySelectorAll('span')).map(span => span.textContent);
+              tags.forEach(tag => allTags.add(tag));
+            }
+          }
+        });
+
+        // Create clickable tag buttons
+        container.innerHTML = '';
+        if (allTags.size === 0) {
+          container.innerHTML = '<span class="text-xs text-gray-400">No tags available</span>';
+          return;
+        }
+
+        Array.from(allTags).sort().forEach(tag => {
+          const tagButton = document.createElement('button');
+          tagButton.className = 'px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-200 dark:hover:bg-blue-800';
+          tagButton.textContent = tag;
+          tagButton.onclick = () => addTagToFilter(entityType, tag);
+          container.appendChild(tagButton);
+        });
+      }
+
+      function addTagToFilter(entityType, tag) {
+        const input = document.getElementById(entityType + '-tag-filter');
+        const currentTags = input.value.split(',').map(t => t.trim()).filter(t => t.length > 0);
+
+        if (!currentTags.includes(tag)) {
+          currentTags.push(tag);
+          input.value = currentTags.join(', ');
+          filterByTags(entityType);
+        }
+      }
+
+      // Initialize tag suggestions when page loads
+      document.addEventListener('DOMContentLoaded', function() {
+        ['tools', 'resources', 'prompts', 'servers'].forEach(entityType => {
+          updateAvailableTags(entityType);
+        });
+      });
 
       // Add search functionality for filtering tools
       document.addEventListener('DOMContentLoaded', function() {
