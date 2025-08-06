@@ -1,6 +1,6 @@
 # Search Replace Plugin for MCP Gateway
 
-> Author: Teryl Taylor  
+> Author: Teryl Taylor
 > Version: 0.1.0
 
 A native plugin for MCP Gateway that performs regex-based search and replace operations on prompt arguments and responses.
@@ -88,11 +88,11 @@ config:
     # Replace email addresses with placeholder
     - search: "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"
       replace: "[email]"
-    
+
     # Replace phone numbers
     - search: "\\b\\d{3}-\\d{3}-\\d{4}\\b"
       replace: "[phone]"
-    
+
     # Case-insensitive replacement
     - search: "(?i)microsoft"
       replace: "MS"
@@ -173,13 +173,13 @@ async def test_search_replace():
             ]
         }
     )
-    
+
     plugin = SearchReplacePlugin(config)
     payload = PromptPrehookPayload(
         name="test",
         args={"message": "foo is foo"}
     )
-    
+
     result = await plugin.prompt_pre_fetch(payload, context)
     assert result.modified_payload.args["message"] == "bar is bar"
 ```

@@ -151,6 +151,7 @@ class ResourceService:
             "avg_response_time": avg_rt,
             "last_execution_time": last_time,
         }
+        resource_dict["tags"] = resource.tags or []
         return ResourceRead.model_validate(resource_dict)
 
     async def register_resource(self, db: Session, resource: ResourceCreate) -> ResourceRead:
@@ -204,6 +205,7 @@ class ResourceService:
                 text_content=resource.content if is_text else None,
                 binary_content=(resource.content.encode() if is_text and isinstance(resource.content, str) else resource.content if isinstance(resource.content, bytes) else None),
                 size=len(resource.content) if resource.content else 0,
+                tags=resource.tags or [],
             )
 
             # Add to DB
@@ -552,6 +554,9 @@ class ResourceService:
                 )
                 resource.size = len(resource_update.content)
 
+            # Update tags if provided
+            if resource_update.tags is not None:
+                resource.tags = resource_update.tags
             resource.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(resource)

@@ -845,7 +845,8 @@ async def admin_list_resources(
         ...         total_executions=5, successful_executions=5, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.1, max_response_time=0.5,
         ...         avg_response_time=0.3, last_execution_time=datetime.now(timezone.utc)
-        ...     )
+        ...     ),
+        ...     tags=[]
         ... )
         >>>
         >>> # Mock the resource_service.list_resources method
@@ -868,8 +869,8 @@ async def admin_list_resources(
         ...     is_active=False, metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
-        ...         avg_response_time=0.0, last_execution_time=None
-        ...     )
+        ...         avg_response_time=0.0, last_execution_time=None),
+        ...     tags=[]
         ... )
         >>> resource_service.list_resources = AsyncMock(return_value=[mock_resource, mock_inactive_resource])
         >>> async def test_admin_list_resources_all():
@@ -952,7 +953,8 @@ async def admin_list_prompts(
         ...         total_executions=10, successful_executions=10, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.01, max_response_time=0.1,
         ...         avg_response_time=0.05, last_execution_time=datetime.now(timezone.utc)
-        ...     )
+        ...     ),
+        ...     tags=[]
         ... )
         >>>
         >>> # Mock the prompt_service.list_prompts method
@@ -975,7 +977,8 @@ async def admin_list_prompts(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None
-        ...     )
+        ...     ),
+        ...     tags=[]
         ... )
         >>> prompt_service.list_prompts = AsyncMock(return_value=[mock_prompt, mock_inactive_prompt])
         >>> async def test_admin_list_prompts_all():
@@ -1317,7 +1320,8 @@ async def admin_ui(
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None
         ...     ),
-        ...     gateway_id=None
+        ...     gateway_id=None,
+        ...     tags=[]
         ... )
         >>> server_service.list_servers = AsyncMock(return_value=[mock_server])
         >>> tool_service.list_tools = AsyncMock(return_value=[mock_tool])
@@ -1441,7 +1445,8 @@ async def admin_list_tools(
         ...         avg_response_time=0.3, last_execution_time=datetime.now(timezone.utc)
         ...     ),
         ...     gateway_slug="default",
-        ...     original_name_slug="test-tool"
+        ...     original_name_slug="test-tool",
+        ...     tags=[]
         ... )  #  Added gateway_id=None
         >>>
         >>> # Mock the tool_service.list_tools method
@@ -1468,7 +1473,8 @@ async def admin_list_tools(
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None
         ...     ),
-        ...     gateway_slug="default", original_name_slug="inactive-tool"
+        ...     gateway_slug="default", original_name_slug="inactive-tool",
+        ...     tags=[]
         ... )
         >>> tool_service.list_tools = AsyncMock(return_value=[mock_tool, mock_inactive_tool])
         >>> async def test_admin_list_tools_all():
@@ -1553,7 +1559,8 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str 
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0,
         ...         last_execution_time=None
         ...     ),
-        ...     gateway_slug="default", original_name_slug="get-tool"
+        ...     gateway_slug="default", original_name_slug="get-tool",
+        ...     tags=[]
         ... )
         >>>
         >>> # Mock the tool_service.get_tool method
@@ -2683,7 +2690,8 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user: str 
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0,
         ...         last_execution_time=None
-        ...     )
+        ...     ),
+        ...     tags=[]
         ... )
         >>> mock_content = ResourceContent(type="resource", uri=resource_uri, mime_type="text/plain", text="Hello content")
         >>>
@@ -3163,7 +3171,8 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user: str =
         ...     "created_at": datetime.now(timezone.utc),
         ...     "updated_at": datetime.now(timezone.utc),
         ...     "is_active": True,
-        ...     "metrics": mock_metrics
+        ...     "metrics": mock_metrics,
+        ...     "tags": []
         ... }
         >>>
         >>> original_get_prompt_details = prompt_service.get_prompt_details

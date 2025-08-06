@@ -90,6 +90,7 @@ MOCK_TOOL = ToolRead(
     metrics=ToolMetrics(**MOCK_METRICS),
     gateway_slug="default",
     original_name_slug="test-tool",
+        tags=[],
 )
 
 MOCK_SERVER = ServerRead(
@@ -104,6 +105,7 @@ MOCK_SERVER = ServerRead(
     associated_resources=[],
     associated_prompts=[],
     metrics=MOCK_METRICS,
+    tags=[],
 )
 
 MOCK_RESOURCE = ResourceRead(
@@ -117,6 +119,7 @@ MOCK_RESOURCE = ResourceRead(
     updated_at=datetime(2025, 1, 1),
     is_active=True,
     metrics=MOCK_METRICS,
+    tags=[],
 )
 
 # URL-escaped version of the resource URI (used in path parameters)

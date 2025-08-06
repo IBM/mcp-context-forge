@@ -614,6 +614,10 @@ class GatewayService:
                     except Exception as e:
                         logger.warning(f"Failed to initialize updated gateway: {e}")
 
+                # Update tags if provided
+                if gateway_update.tags is not None:
+                    gateway.tags = gateway_update.tags
+
                 gateway.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(gateway)

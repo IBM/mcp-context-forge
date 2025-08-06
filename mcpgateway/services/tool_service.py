@@ -229,6 +229,7 @@ class ToolService:
         tool_dict["name"] = tool.name
         tool_dict["gateway_slug"] = tool.gateway_slug if tool.gateway_slug else ""
         tool_dict["original_name_slug"] = tool.original_name_slug
+        tool_dict["tags"] = tool.tags or []
 
         return ToolRead.model_validate(tool_dict)
 
@@ -317,6 +318,7 @@ class ToolService:
                 auth_type=auth_type,
                 auth_value=auth_value,
                 gateway_id=tool.gateway_id,
+                tags=tool.tags or [],
             )
             db.add(db_tool)
             db.commit()
@@ -758,6 +760,10 @@ class ToolService:
                     tool.auth_value = tool_update.auth.auth_value
             else:
                 tool.auth_type = None
+
+            # Update tags if provided
+            if tool_update.tags is not None:
+                tool.tags = tool_update.tags
 
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()

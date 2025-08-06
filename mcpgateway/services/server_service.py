@@ -160,6 +160,7 @@ class ServerService:
         server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
+        server_dict["tags"] = server.tags or []
         return ServerRead.model_validate(server_dict)
 
     def _assemble_associated_items(
@@ -474,6 +475,10 @@ class ServerService:
                     prompt_obj = db.get(DbPrompt, int(prompt_id))
                     if prompt_obj:
                         server.prompts.append(prompt_obj)
+
+            # Update tags if provided
+            if server_update.tags is not None:
+                server.tags = server_update.tags
 
             server.updated_at = datetime.now(timezone.utc)
             db.commit()

@@ -188,6 +188,7 @@ class PromptService:
                 "avgResponseTime": avg_rt,
                 "lastExecutionTime": last_time,
             },
+            "tags": db_prompt.tags or [],
         }
 
     async def register_prompt(self, db: Session, prompt: PromptCreate) -> PromptRead:
@@ -539,6 +540,10 @@ class PromptService:
                         schema["description"] = arg.description
                     argument_schema["properties"][arg.name] = schema
                 prompt.argument_schema = argument_schema
+
+            # Update tags if provided
+            if prompt_update.tags is not None:
+                prompt.tags = prompt_update.tags
 
             prompt.updated_at = datetime.now(timezone.utc)
             db.commit()
