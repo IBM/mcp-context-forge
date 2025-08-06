@@ -411,6 +411,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     form = await request.form()
     # root_path = request.scope.get("root_path", "")
     # is_inactive_checked = form.get("is_inactive_checked", "false")
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
         server = ServerCreate(
@@ -420,6 +425,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             associated_tools=",".join(form.getlist("associatedTools")),
             associated_resources=form.get("associatedResources"),
             associated_prompts=form.get("associatedPrompts"),
+            tags=tags,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -576,6 +582,11 @@ async def admin_edit_server(
         >>> server_service.update_server = original_update_server
     """
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
@@ -585,6 +596,7 @@ async def admin_edit_server(
             associated_tools=",".join(form.getlist("associatedTools")),
             associated_resources=form.get("associatedResources"),
             associated_prompts=form.get("associatedPrompts"),
+            tags=tags,
         )
         await server_service.update_server(db, server_id, server)
 
@@ -1745,6 +1757,10 @@ async def admin_add_tool(
     form = await request.form()
     logger.debug(f"Received form data: {dict(form)}")
 
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     tool_data = {
         "name": form.get("name"),
         "url": form.get("url"),
@@ -1760,6 +1776,7 @@ async def admin_add_tool(
         "auth_token": form.get("auth_token", ""),
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
+        "tags": tags,
     }
     logger.debug(f"Tool data built: {tool_data}")
     try:
@@ -1957,6 +1974,11 @@ async def admin_edit_tool(
     """
     logger.debug(f"User {user} is editing tool ID {tool_id}")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     tool_data = {
         "name": form.get("name"),
         "url": form.get("url"),
@@ -1972,6 +1994,7 @@ async def admin_edit_tool(
         "auth_token": form.get("auth_token", ""),
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
+        "tags": tags,
     }
     logger.debug(f"Tool update data built: {tool_data}")
     try:
@@ -2803,6 +2826,11 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     """
     logger.debug(f"User {user} is adding a new resource")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         resource = ResourceCreate(
             uri=form["uri"],
@@ -2811,6 +2839,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             mime_type=form.get("mimeType"),
             template=form.get("template"),  # defaults to None if not provided
             content=form["content"],
+            tags=tags,
         )
         await resource_service.register_resource(db, resource)
         return JSONResponse(
@@ -2923,12 +2952,18 @@ async def admin_edit_resource(
     """
     logger.debug(f"User {user} is editing resource URI {uri}")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         resource = ResourceUpdate(
             name=form["name"],
             description=form.get("description"),
             mime_type=form.get("mimeType"),
             content=form["content"],
+            tags=tags,
         )
         await resource_service.update_resource(db, uri, resource)
         return JSONResponse(
@@ -3274,6 +3309,11 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     """
     logger.debug(f"User {user} is adding a new prompt")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         args_json = form.get("arguments") or "[]"
         arguments = json.loads(args_json)
@@ -3282,6 +3322,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             description=form.get("description"),
             template=form["template"],
             arguments=arguments,
+            tags=tags,
         )
         await prompt_service.register_prompt(db, prompt)
         return JSONResponse(
@@ -3374,6 +3415,11 @@ async def admin_edit_prompt(
     """
     logger.debug(f"User {user} is editing prompt name {name}")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     args_json = form.get("arguments") or "[]"
     arguments = json.loads(args_json)
     try:
@@ -3382,6 +3428,7 @@ async def admin_edit_prompt(
             description=form.get("description"),
             template=form["template"],
             arguments=arguments,
+            tags=tags,
         )
         await prompt_service.update_prompt(db, name, prompt)
 

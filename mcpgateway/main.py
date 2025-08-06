@@ -833,6 +833,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user:
 @server_router.get("/", response_model=List[ServerRead])
 async def list_servers(
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[ServerRead]:
@@ -841,14 +842,20 @@ async def list_servers(
 
     Args:
         include_inactive (bool): Whether to include inactive servers in the response.
+        tags (Optional[str]): Comma-separated list of tags to filter by.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
         List[ServerRead]: A list of server objects.
     """
-    logger.debug(f"User {user} requested server list")
-    return await server_service.list_servers(db, include_inactive=include_inactive)
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User {user} requested server list with tags={tags_list}")
+    return await server_service.list_servers(db, include_inactive=include_inactive, tags=tags_list)
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
@@ -1180,6 +1187,7 @@ async def server_get_prompts(
 async def list_tools(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
     _: str = Depends(require_auth),
@@ -1189,6 +1197,7 @@ async def list_tools(
     Args:
         cursor: Pagination cursor for fetching the next set of results
         include_inactive: Whether to include inactive tools in the results
+        tags: Comma-separated list of tags to filter by (e.g., "api,data")
         db: Database session
         apijsonpath: JSON path modifier to filter or transform the response
         _: Authenticated user
@@ -1197,8 +1206,13 @@ async def list_tools(
         List of tools or modified result based on jsonpath
     """
 
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
     # For now just pass the cursor parameter even if not used
-    data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive)
+    data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
 
     if apijsonpath is None:
         return data
@@ -1426,6 +1440,7 @@ async def toggle_resource_status(
 async def list_resources(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[ResourceRead]:
@@ -1435,17 +1450,23 @@ async def list_resources(
     Args:
         cursor (Optional[str]): Optional cursor for pagination.
         include_inactive (bool): Whether to include inactive resources.
+        tags (Optional[str]): Comma-separated list of tags to filter by.
         db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
         List[ResourceRead]: List of resources.
     """
-    logger.debug(f"User {user} requested resource list with cursor {cursor} and include_inactive={include_inactive}")
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User {user} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
     if cached := resource_cache.get("resource_list"):
         return cached
     # Pass the cursor parameter
-    resources = await resource_service.list_resources(db, include_inactive=include_inactive)
+    resources = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
     resource_cache.set("resource_list", resources)
     return resources
 
@@ -1638,6 +1659,7 @@ async def toggle_prompt_status(
 async def list_prompts(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[PromptRead]:
@@ -1647,14 +1669,20 @@ async def list_prompts(
     Args:
         cursor: Cursor for pagination.
         include_inactive: Include inactive prompts.
+        tags: Comma-separated list of tags to filter by.
         db: Database session.
         user: Authenticated user.
 
     Returns:
         List of prompt records.
     """
-    logger.debug(f"User: {user} requested prompt list with include_inactive={include_inactive}, cursor={cursor}")
-    return await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive)
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User: {user} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
+    return await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
 
 
 @prompt_router.post("", response_model=PromptRead)
@@ -1681,6 +1709,7 @@ async def create_prompt(
                 by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
+    logger.debug(f"Prompt tags received: {prompt.tags}")
     try:
         return await prompt_service.register_prompt(db, prompt)
     except PromptNameConflictError as e:

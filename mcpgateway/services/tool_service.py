@@ -332,7 +332,7 @@ class ToolService:
         except Exception as ex:
             raise ToolError(f"Failed to register tool: {str(ex)}")
 
-    async def list_tools(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None) -> List[ToolRead]:
+    async def list_tools(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
 
@@ -342,6 +342,7 @@ class ToolService:
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
+            tags (Optional[List[str]]): Filter tools by tags. If provided, only tools with at least one matching tag will be returned.
 
         Returns:
             List[ToolRead]: A list of registered tools represented as ToolRead objects.
@@ -361,9 +362,22 @@ class ToolService:
         """
         query = select(DbTool)
         cursor = None  # Placeholder for pagination; ignore for now
-        logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}")
+        logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}, tags={tags}")
         if not include_inactive:
             query = query.where(DbTool.enabled)
+
+        # Add tag filtering if tags are provided
+        if tags:
+            # Third-Party
+            from sqlalchemy import func
+
+            # Filter tools that have any of the specified tags
+            tag_conditions = []
+            for tag in tags:
+                tag_conditions.append(func.json_contains(DbTool.tags, f'"{tag}"'))
+            if tag_conditions:
+                query = query.where(func.or_(*tag_conditions))
+
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 

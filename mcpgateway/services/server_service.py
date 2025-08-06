@@ -259,6 +259,7 @@ class ServerService:
                 description=server_in.description,
                 icon=server_in.icon,
                 is_active=True,
+                tags=server_in.tags or [],
             )
             db.add(db_server)
 
@@ -323,12 +324,13 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to register server: {str(ex)}")
 
-    async def list_servers(self, db: Session, include_inactive: bool = False) -> List[ServerRead]:
+    async def list_servers(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ServerRead]:
         """List all registered servers.
 
         Args:
             db: Database session.
             include_inactive: Whether to include inactive servers.
+            tags: Filter servers by tags. If provided, only servers with at least one matching tag will be returned.
 
         Returns:
             A list of ServerRead objects.
@@ -349,6 +351,19 @@ class ServerService:
         query = select(DbServer)
         if not include_inactive:
             query = query.where(DbServer.is_active)
+
+        # Add tag filtering if tags are provided
+        if tags:
+            # Third-Party
+            from sqlalchemy import func
+
+            # Filter servers that have any of the specified tags
+            tag_conditions = []
+            for tag in tags:
+                tag_conditions.append(func.json_contains(DbServer.tags, f'"{tag}"'))
+            if tag_conditions:
+                query = query.where(func.or_(*tag_conditions))
+
         servers = db.execute(query).scalars().all()
         return [self._convert_server_to_read(s) for s in servers]
 

@@ -225,7 +225,7 @@ class ResourceService:
             db.rollback()
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
-    async def list_resources(self, db: Session, include_inactive: bool = False) -> List[ResourceRead]:
+    async def list_resources(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ResourceRead]:
         """
         Retrieve a list of registered resources from the database.
 
@@ -238,6 +238,7 @@ class ResourceService:
             db (Session): The SQLAlchemy database session.
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
+            tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
 
         Returns:
             List[ResourceRead]: A list of resources represented as ResourceRead objects.
@@ -258,6 +259,19 @@ class ResourceService:
         query = select(DbResource)
         if not include_inactive:
             query = query.where(DbResource.is_active)
+
+        # Add tag filtering if tags are provided
+        if tags:
+            # Third-Party
+            from sqlalchemy import func
+
+            # Filter resources that have any of the specified tags
+            tag_conditions = []
+            for tag in tags:
+                tag_conditions.append(func.json_contains(DbResource.tags, f'"{tag}"'))
+            if tag_conditions:
+                query = query.where(func.or_(*tag_conditions))
+
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
         return [self._convert_resource_to_read(r) for r in resources]

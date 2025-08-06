@@ -248,6 +248,7 @@ class PromptService:
                 description=prompt.description,
                 template=prompt.template,
                 argument_schema=argument_schema,
+                tags=prompt.tags,
             )
 
             # Add to DB
@@ -269,7 +270,7 @@ class PromptService:
             db.rollback()
             raise PromptError(f"Failed to register prompt: {str(e)}")
 
-    async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
+    async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> List[PromptRead]:
         """
         Retrieve a list of prompt templates from the database.
 
@@ -284,6 +285,7 @@ class PromptService:
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
+            tags (Optional[List[str]]): Filter prompts by tags. If provided, only prompts with at least one matching tag will be returned.
 
         Returns:
             List[PromptRead]: A list of prompt templates represented as PromptRead objects.
@@ -306,6 +308,19 @@ class PromptService:
         query = select(DbPrompt)
         if not include_inactive:
             query = query.where(DbPrompt.is_active)
+
+        # Add tag filtering if tags are provided
+        if tags:
+            # Third-Party
+            from sqlalchemy import func
+
+            # Filter prompts that have any of the specified tags
+            tag_conditions = []
+            for tag in tags:
+                tag_conditions.append(func.json_contains(DbPrompt.tags, f'"{tag}"'))
+            if tag_conditions:
+                query = query.where(func.or_(*tag_conditions))
+
         # Cursor-based pagination logic can be implemented here in the future.
         logger.debug(cursor)
         prompts = db.execute(query).scalars().all()

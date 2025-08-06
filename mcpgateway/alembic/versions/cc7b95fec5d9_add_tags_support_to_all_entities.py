@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """add_tags_support_to_all_entities
 
 Revision ID: cc7b95fec5d9
