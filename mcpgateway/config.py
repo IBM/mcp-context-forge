@@ -311,6 +311,10 @@ class Settings(BaseSettings):
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
 
+    # Core plugin settings
+    plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
+    plugin_config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file")
+
     # Development
     dev_mode: bool = False
     reload: bool = False

@@ -46,6 +46,10 @@ PLUGIN_CONFIG_FILE=plugins/config.yaml
 
 ### 2. Plugin Configuration
 
+The plugin configuration file is used to configure a set of plugins to run a
+set of hook points throughout the MCP Context Forge.  An example configuration
+is below.  It contains two main sections: `plugins` and `plugin_settings`.
+
 Create or modify `plugins/config.yaml`:
 
 ```yaml
@@ -78,6 +82,35 @@ plugin_settings:
   plugin_health_check_interval: 60
 ```
 
+The `plugins` section lists the set of configured plugins that will be loaded
+by the Context Forge at startup.  Each plugin contains a set of standard configurations,
+and then a `config` section designed for plugin specific configurations. The attributes
+are defined as follows:
+
+| Attribute | Description | Example Value |
+|-----------|-------------|---------------|
+| **name**  | A unique name for the plugin. | MyFirstPlugin |
+| **kind**  | A fully qualified string representing the plugin python object. | plugins.native.content_filter.ContentFilterPlugin |
+| **description** | The description of the plugin configuration. | A plugin for replacing bad words. |
+| **version** | The version of the plugin configuration. | 0.1 |
+| **author** | The team that wrote the plugin. | MCP Context Forge |
+| **hooks** | A list of hooks for which the plugin will be executed. **Note**: currently supports two hooks: "prompt_pre_fetch", "prompt_post_fetch"  | ["prompt_pre_fetch", "prompt_post_fetch"] |
+| **tags** | Descriptive keywords that make the configuration searchable. | ["security", "filter"] |
+| **mode** | Mode of operation of the plugin. - enforce (stops during a violation), permissive (audits a violation but doesn't stop), disabled (disabled) | permissive |
+| **priority** | The priority in which the plugin will run - 0 is higher priority | 100 |
+| **conditions** | A list of conditions under which a plugin is run. See section on conditions.|  |
+| **config** | Plugin specific configuration.  This is a dictionary and is passed to the plugin on initialization. |   |
+
+The `plugin_settings` are as follows:
+
+| Attribute | Description | Example Value |
+|-----------|-------------|---------------|
+| **parallel_execution_within_band** | Plugins in the same band are run in parallel (currently not implemented). | true or false |
+| **plugin_timeout** | The time in seconds before stopping plugin execution (not implemented). | 30 |
+| **fail_on_plugin_error** | Cause the execution of the task to fail if the plugin errors. | true or false |
+| **plugin_health_check_interval** | Health check interval in seconds (not implemented). | 60 |
+
+
 ### 3. Execution Modes
 
 Each plugin can operate in one of three modes:
@@ -109,6 +142,18 @@ plugins:
 ```
 
 Plugins with the same priority may execute in parallel if `parallel_execution_within_band` is enabled.
+
+### 5. Conditions of Execution
+
+Users may only want plugins to be invoked on specific servers, tools, and prompts. To address this, a set of conditionals can be applied to a plugin. The attributes in a conditional combine together in as a set of `and` operations, while each attribute list item is `ored` with other items in the list.  The attributes are defined as follows:
+
+| Attribute | Description
+|-----------|------------|
+| **server_ids** | The list of MCP servers on which the plugin will trigger |
+| **tools** | The list of tools on which the plugin will be applied. |
+| **prompts** | The list of prompts on which the plugin will be applied. |
+| **user_patterns** | The list of users on which the plugin will be applied. |
+| **content_types** | The list of content types on which the plugin will trigger. |
 
 ## Available Hooks
 

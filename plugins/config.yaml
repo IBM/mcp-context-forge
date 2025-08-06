@@ -1,0 +1,91 @@
+# plugins/config.yaml - Main plugin configuration file
+
+plugins:
+  # PII Filter Plugin - Run first with highest priority for security
+  - name: "PIIFilterPlugin"
+    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    description: "Detects and masks Personally Identifiable Information"
+    version: "0.1.0"
+    author: "Mihai Criveti"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
+    tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
+    mode: "permissive"  # enforce | permissive | disabled
+    priority: 50  # Lower number = higher priority (runs first)
+    conditions:
+      - prompts: []  # Empty list = apply to all prompts
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      # PII Detection Settings
+      detect_ssn: true
+      detect_credit_card: true
+      detect_email: true
+      detect_phone: true
+      detect_ip_address: false  # Disabled for development
+      detect_aws_keys: true
+      detect_api_keys: true
+      # Masking Settings
+      default_mask_strategy: "partial"  # redact | partial | hash | tokenize | remove
+      redaction_text: "[PII_REDACTED]"
+      # Behavior Settings
+      block_on_detection: false  # Set to true for strict compliance
+      log_detections: true
+      include_detection_details: true
+      # Whitelist common test values
+      whitelist_patterns:
+        - "test@example.com"
+        - "555-555-5555"
+  # Self-contained Search Replace Plugin
+  - name: "ReplaceBadWordsPlugin"
+    kind: "plugins.regex_filter.search_replace.SearchReplacePlugin"
+    description: "A plugin for finding and replacing words."
+    version: "0.1.0"
+    author: "MCP Context Forge Team"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
+    tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 150
+    conditions:
+      # Apply to specific tools/servers
+      - prompts: ["test_prompt"]
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      words:
+        - search: crap
+          replace: crud
+        - search: crud
+          replace: yikes
+  - name: "DenyListPlugin"
+    kind: "plugins.deny_filter.deny.DenyListPlugin"
+    description: "A plugin that implements a deny list filter."
+    version: "0.1.0"
+    author: "MCP Context Forge Team"
+    hooks: ["prompt_pre_fetch"]
+    tags: ["plugin", "filter", "denylist", "pre-post"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 100
+    conditions:
+      # Apply to specific tools/servers
+      - prompts: ["test_prompt"]
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      words:
+        - innovative
+        - groundbreaking
+        - revolutionary
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"      # Built-in plugins
+  - "plugins/custom"      # Custom organization plugins
+  - "/etc/mcpgateway/plugins"  # System-wide plugins
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60
