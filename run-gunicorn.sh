@@ -245,7 +245,7 @@ fi
 GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-600}
 
 # Maximum requests a worker will process before restarting (prevents memory leaks)
-GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-1000}
+GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-100000}
 
 # Random jitter for max requests (prevents all workers restarting simultaneously)
 GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-100}
