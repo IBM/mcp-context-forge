@@ -1911,18 +1911,17 @@ async def admin_add_tool(
     logger.debug(f"User {user} is adding a new tool")
     form = await request.form()
     logger.debug(f"Received form data: {dict(form)}")
-    
+
     integration_type = form.get("integrationType", "REST")
     request_type = form.get("requestType")
 
     if request_type is None:
-      if integration_type == "REST":
-        request_type = "GET"  # or any valid REST method default
-      elif integration_type == "MCP":
-        request_type = "SSE"
-      else:
-        request_type = "GET" 
-
+        if integration_type == "REST":
+            request_type = "GET"  # or any valid REST method default
+        elif integration_type == "MCP":
+            request_type = "SSE"
+        else:
+            request_type = "GET"
 
     # Parse tags from comma-separated string
     tags_str = form.get("tags", "")
@@ -1932,7 +1931,7 @@ async def admin_add_tool(
         "name": form.get("name"),
         "url": form.get("url"),
         "description": form.get("description"),
-        "request_type": request_type, 
+        "request_type": request_type,
         "integration_type": integration_type,
         "headers": json.loads(form.get("headers") or "{}"),
         "input_schema": json.loads(form.get("input_schema") or "{}"),
@@ -1961,7 +1960,7 @@ async def admin_add_tool(
     except ToolError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # This block should catch ValidationError
-        
+
         logger.error(f"ValidationError in admin_add_tool: {str(ex)}")
         return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:
@@ -2031,11 +2030,11 @@ async def admin_edit_tool(
         >>> form_data_success = FormData([
         ...     ("name", "Updated_Tool"),
         ...     ("url", "http://updated.com"),
-        ...     ("requestType", "GET"), 
+        ...     ("requestType", "GET"),
         ...     ("integrationType", "REST"),
         ...     ("headers", '{"X-Api-Key": "abc"}'),
         ...     ("input_schema", '{}'),  # ✅ Required field
-        ...     ("description", "Sample tool")   
+        ...     ("description", "Sample tool")
         ... ])
         >>> mock_request_success = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_success.form = AsyncMock(return_value=form_data_success)

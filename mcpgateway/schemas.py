@@ -487,16 +487,15 @@ class ToolCreate(BaseModel):
         mcp_allowed = ["SSE"]
 
         if integration_type == "REST":
-           if v not in rest_allowed:
-              raise ValueError(f"Request type '{v}' not allowed for REST. Only {rest_allowed} methods are accepted.")
+            if v not in rest_allowed:
+                raise ValueError(f"Request type '{v}' not allowed for REST. Only {rest_allowed} methods are accepted.")
         elif integration_type == "MCP":
             if v not in mcp_allowed:
-               raise ValueError(f"Request type '{v}' not allowed for MCP. Only {mcp_allowed} methods are accepted.")
+                raise ValueError(f"Request type '{v}' not allowed for MCP. Only {mcp_allowed} methods are accepted.")
         else:
-         raise ValueError(f"Unknown integration type: {integration_type}")
+            raise ValueError(f"Unknown integration type: {integration_type}")
 
         return v
-
 
     @model_validator(mode="before")
     @classmethod

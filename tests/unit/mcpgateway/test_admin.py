@@ -432,35 +432,38 @@ class TestAdminToolRoutes:
         # IntegrityError should return 409 with JSON body
         # Third-Party
         from sqlalchemy.exc import IntegrityError
+        from starlette.datastructures import FormData
 
+        mock_request.form = AsyncMock(return_value=FormData([
+        ("name", "Tool_Name_1"),
+        ("url", "http://example.com"),
+        ("requestType", "GET"),
+        ("integrationType", "REST"),
+        ("headers", "{}"),
+        ("input_schema", "{}")
+        ])) 
         mock_update_tool.side_effect = IntegrityError("Integrity constraint", {}, Exception("Duplicate key"))
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
         
-        
-        # assert result.status_code == 409
+        assert result.status_code == 409
 
         # ToolError should return 500 with JSON body
         mock_update_tool.side_effect = ToolError("Tool configuration error")
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
+        assert result.status_code == 500
+        assert b"Tool configuration error" in result.body
         
-        # assert result.status_code == 500
         
-        data = result.body
-       
-        #assert b"Tool configuration error" in data
-
         # Generic Exception should return 500 with JSON body
         mock_update_tool.side_effect = Exception("Unexpected error")
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
-       
-        # assert result.status_code == 500
-        data = result.body
-       
-        #assert b"Unexpected error" in data
+        
+        assert result.status_code == 500
+        assert b"Unexpected error" in result.body
 
-    # @patch.object(ToolService, "update_tool")
+    @patch.object(ToolService, "update_tool")
     
-    @pytest.mark.skip("Need to investigate") 
+    # @pytest.mark.skip("Need to investigate") 
     async def test_admin_edit_tool_with_empty_optional_fields(self, mock_update_tool, mock_request, mock_db):
         """Test editing tool with empty optional fields."""
         # Override form with empty optional fields and valid name
@@ -473,6 +476,8 @@ class TestAdminToolRoutes:
                 "input_schema": "",
                 "jsonpathFilter": "",
                 "auth_type": "",
+                "requestType": "GET",
+                "integrationType": "REST"
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
@@ -1302,8 +1307,6 @@ class TestEdgeCasesAndErrorHandling:
                 expected = value.lower() == "true"
                 mock_toggle.assert_called_with(mock_db, "server-1", expected)
 
-    
-    @pytest.mark.skip("Need to Investigate")
     async def test_json_field_valid_cases(self, mock_request, mock_db):
         """Test JSON field parsing with valid cases."""
         # Use valid tool names and flat headers dict (no nested objects)
