@@ -4091,6 +4091,7 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
 @admin_router.get("/tags", response_model=List[Dict[str, Any]])
 async def admin_list_tags(
     entity_types: Optional[str] = None,
+    include_entities: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[Dict[str, Any]]:
@@ -4101,6 +4102,7 @@ async def admin_list_tags(
         entity_types: Comma-separated list of entity types to filter by
                      (e.g., "tools,resources,prompts,servers,gateways").
                      If not provided, returns tags from all entity types.
+        include_entities: Whether to include the list of entities that have each tag
         db: Database session
         user: Authenticated user
 
@@ -4117,14 +4119,15 @@ async def admin_list_tags(
     if entity_types:
         entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
 
-    logger.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}")
+    logger.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
-        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list)
+        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
 
         # Convert to list of dicts for admin UI
-        return [
-            {
+        result = []
+        for tag in tags:
+            tag_dict = {
                 "name": tag.name,
                 "tools": tag.stats.tools,
                 "resources": tag.stats.resources,
@@ -4133,8 +4136,22 @@ async def admin_list_tags(
                 "gateways": tag.stats.gateways,
                 "total": tag.stats.total,
             }
-            for tag in tags
-        ]
+
+            # Include entities if requested
+            if include_entities and tag.entities:
+                tag_dict["entities"] = [
+                    {
+                        "id": entity.id,
+                        "name": entity.name,
+                        "type": entity.type,
+                        "description": entity.description,
+                    }
+                    for entity in tag.entities
+                ]
+
+            result.append(tag_dict)
+
+        return result
     except Exception as e:
         logger.error(f"Failed to retrieve tags for admin: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")

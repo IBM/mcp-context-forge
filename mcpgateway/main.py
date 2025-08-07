@@ -92,6 +92,7 @@ from mcpgateway.schemas import (
     ServerCreate,
     ServerRead,
     ServerUpdate,
+    TaggedEntity,
     TagInfo,
     ToolCreate,
     ToolRead,
@@ -2427,6 +2428,7 @@ async def readiness_check(db: Session = Depends(get_db)):
 @tag_router.get("/", response_model=List[TagInfo])
 async def list_tags(
     entity_types: Optional[str] = None,
+    include_entities: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[TagInfo]:
@@ -2437,11 +2439,12 @@ async def list_tags(
         entity_types: Comma-separated list of entity types to filter by
                      (e.g., "tools,resources,prompts,servers,gateways").
                      If not provided, returns tags from all entity types.
+        include_entities: Whether to include the list of entities that have each tag
         db: Database session
         user: Authenticated user
 
     Returns:
-        List of TagInfo objects containing tag names and statistics
+        List of TagInfo objects containing tag names, statistics, and optionally entities
 
     Raises:
         HTTPException: If tag retrieval fails
@@ -2451,14 +2454,53 @@ async def list_tags(
     if entity_types:
         entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
 
-    logger.debug(f"User {user} is retrieving tags for entity types: {entity_types_list}")
+    logger.debug(f"User {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
-        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list)
+        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
         return tags
     except Exception as e:
         logger.error(f"Failed to retrieve tags: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
+
+
+@tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
+async def get_entities_by_tag(
+    tag_name: str,
+    entity_types: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> List[TaggedEntity]:
+    """
+    Get all entities that have a specific tag.
+
+    Args:
+        tag_name: The tag to search for
+        entity_types: Comma-separated list of entity types to filter by
+                     (e.g., "tools,resources,prompts,servers,gateways").
+                     If not provided, returns entities from all types.
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of TaggedEntity objects
+
+    Raises:
+        HTTPException: If entity retrieval fails
+    """
+    # Parse entity types parameter if provided
+    entity_types_list = None
+    if entity_types:
+        entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
+
+    logger.debug(f"User {user} is retrieving entities for tag '{tag_name}' with entity types: {entity_types_list}")
+
+    try:
+        entities = await tag_service.get_entities_by_tag(db, tag_name=tag_name, entity_types=entity_types_list)
+        return entities
+    except Exception as e:
+        logger.error(f"Failed to retrieve entities for tag '{tag_name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve entities: {str(e)}")
 
 
 # Mount static files

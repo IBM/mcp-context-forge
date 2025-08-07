@@ -2727,6 +2727,15 @@ class GatewayTestResponse(BaseModelWithConfigDict):
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")
 
 
+class TaggedEntity(BaseModelWithConfigDict):
+    """A simplified representation of an entity that has a tag."""
+
+    id: str = Field(..., description="The entity's ID")
+    name: str = Field(..., description="The entity's name")
+    type: str = Field(..., description="The entity type (tool, resource, prompt, server, gateway)")
+    description: Optional[str] = Field(None, description="The entity's description")
+
+
 class TagStats(BaseModelWithConfigDict):
     """Statistics for a single tag across all entity types."""
 
@@ -2743,3 +2752,4 @@ class TagInfo(BaseModelWithConfigDict):
 
     name: str = Field(..., description="The tag name")
     stats: TagStats = Field(..., description="Statistics for this tag")
+    entities: Optional[List[TaggedEntity]] = Field(default_factory=list, description="Entities that have this tag")
