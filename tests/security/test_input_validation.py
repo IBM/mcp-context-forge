@@ -495,12 +495,12 @@ class TestSecurityValidation:
         """Test request type validation based on integration type."""
         logger.debug("Testing tool request type validation")
 
-        # MCP integration types
-        mcp_valid = ["SSE", "STREAMABLEHTTP", "STDIO"]
-        for req_type in mcp_valid:
-            logger.debug(f"Testing MCP request type: {req_type}")
-            tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, integration_type="MCP", request_type=req_type)
-            assert tool.request_type == req_type
+        # # MCP integration types
+        # mcp_valid = ["SSE", "STREAMABLEHTTP", "STDIO"]
+        # for req_type in mcp_valid:
+        #     logger.debug(f"Testing MCP request type: {req_type}")
+        #     tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, integration_type="MCP", request_type=req_type)
+        #     assert tool.request_type == req_type
 
         # REST integration types
         rest_valid = ["GET", "POST", "PUT", "DELETE", "PATCH"]
@@ -1738,7 +1738,7 @@ class TestSchemaEvolution:
 
         # Check defaults
         assert tool.description is None
-        assert tool.integration_type == "MCP"
+        assert tool.integration_type == "REST"
         assert tool.request_type == "SSE"
         assert tool.headers is None or tool.headers == {}
         assert tool.input_schema is not None  # Has default

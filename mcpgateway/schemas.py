@@ -309,7 +309,7 @@ class ToolCreate(BaseModel):
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
+    integration_type: Literal["REST"] = Field("REST", description="'REST' for REST integrations")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
@@ -475,17 +475,28 @@ class ToolCreate(BaseModel):
             ...     "not allowed for MCP" in str(e)
             True
         """
-        data = info.data
-        integration_type = data.get("integration_type")
 
-        if integration_type == "MCP":
-            allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
-        else:  # REST
-            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+        # allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
-        if v not in allowed:
-            raise ValueError(f"Request type '{v}' not allowed for {integration_type} integration")
+        # if v not in allowed:
+        #     raise ValueError(f"Request type '{v}' not allowed. Only REST methods are accepted")
+        # return v
+        integration_type = info.data.get("integration_type")
+
+        rest_allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+        mcp_allowed = ["SSE"]
+
+        if integration_type == "REST":
+           if v not in rest_allowed:
+              raise ValueError(f"Request type '{v}' not allowed for REST. Only {rest_allowed} methods are accepted.")
+        elif integration_type == "MCP":
+            if v not in mcp_allowed:
+               raise ValueError(f"Request type '{v}' not allowed for MCP. Only {mcp_allowed} methods are accepted.")
+        else:
+         raise ValueError(f"Unknown integration type: {integration_type}")
+
         return v
+
 
     @model_validator(mode="before")
     @classmethod
@@ -677,11 +688,8 @@ class ToolUpdate(BaseModelWithConfigDict):
             ValueError: When value is unsafe
         """
 
-        integration_type = values.data.get("integration_type", "MCP")
-        if integration_type == "MCP":
-            allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
-        else:  # REST
-            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+        integration_type = values.data.get("integration_type", "REST")
+        allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
         if v not in allowed:
             raise ValueError(f"Request type '{v}' not allowed for {integration_type} integration")

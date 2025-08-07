@@ -119,7 +119,7 @@ curl -s -k -X POST $BASE_URL/tools \
         "url": "'"$LOCAL_MCP_TOOL_URL"'",
         "description": "Returns current time",
         "request_type": "POST",
-        "integration_type": "MCP",
+        "integration_type": "REST",
         "input_schema": {
           "type": "object",
           "properties": {
