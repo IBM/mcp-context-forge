@@ -5797,9 +5797,11 @@ function extractAvailableTags(entityType) {
 
     headerCells.forEach((header, index) => {
         const headerText = header.textContent.trim().toLowerCase();
-        if (headerText === 'tags') {
+        if (headerText === "tags") {
             tagsColumnIndex = index;
-            console.log(`[DEBUG] Found Tags column at index ${index} for ${entityType}`);
+            console.log(
+                `[DEBUG] Found Tags column at index ${index} for ${entityType}`,
+            );
         }
     });
 
@@ -5809,7 +5811,7 @@ function extractAvailableTags(entityType) {
     }
 
     rows.forEach((row, index) => {
-        const cells = row.querySelectorAll('td');
+        const cells = row.querySelectorAll("td");
 
         if (tagsColumnIndex < cells.length) {
             const tagsCell = cells[tagsColumnIndex];
@@ -5826,7 +5828,9 @@ function extractAvailableTags(entityType) {
 
             tagElements.forEach((tagEl) => {
                 const tagText = tagEl.textContent.trim();
-                console.log(`[DEBUG] Row ${index}: Tag element text: "${tagText}"`);
+                console.log(
+                    `[DEBUG] Row ${index}: Tag element text: "${tagText}"`,
+                );
 
                 // Basic validation for tag content
                 if (
@@ -5838,9 +5842,13 @@ function extractAvailableTags(entityType) {
                     tagText.length <= 50
                 ) {
                     tags.add(tagText);
-                    console.log(`[DEBUG] Row ${index}: Added tag: "${tagText}"`);
+                    console.log(
+                        `[DEBUG] Row ${index}: Added tag: "${tagText}"`,
+                    );
                 } else {
-                    console.log(`[DEBUG] Row ${index}: Filtered out: "${tagText}"`);
+                    console.log(
+                        `[DEBUG] Row ${index}: Filtered out: "${tagText}"`,
+                    );
                 }
             });
         }
