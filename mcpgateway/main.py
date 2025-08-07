@@ -1745,7 +1745,7 @@ async def get_prompt(
         return await prompt_service.get_prompt(db, name, args)
     except Exception as ex:
         logger.error(f"Could not retrieve prompt {name}: {ex}")
-        if isinstance(ex, ValueError) or isinstance(ex, PromptError):
+        if isinstance(ex, (ValueError, PromptError)):
             return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
         if isinstance(ex, PluginViolationError):
             return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues", "details": ex.message}, status_code=422)

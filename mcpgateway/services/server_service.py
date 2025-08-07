@@ -354,9 +354,6 @@ class ServerService:
 
         # Add tag filtering if tags are provided
         if tags:
-            # Third-Party
-            from sqlalchemy import func
-
             # Filter servers that have any of the specified tags
             tag_conditions = []
             for tag in tags:
