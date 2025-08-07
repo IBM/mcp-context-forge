@@ -2305,6 +2305,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
       - name
       - url
       - description (optional)
+      - tags (optional, comma-separated)
 
     Args:
         request: FastAPI request containing form data.
@@ -2470,6 +2471,7 @@ async def admin_edit_gateway(
       - name
       - url
       - description (optional)
+      - tags (optional, comma-separated)
 
     Args:
         gateway_id: Gateway ID.

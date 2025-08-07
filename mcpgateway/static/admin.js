@@ -5790,49 +5790,60 @@ function extractAvailableTags(entityType) {
         `[DEBUG] extractAvailableTags for ${entityType}: Found ${rows.length} rows`,
     );
 
+    // Find the Tags column index by examining the table header
+    const tableHeaderSelector = `#${entityType}-panel thead tr th`;
+    const headerCells = document.querySelectorAll(tableHeaderSelector);
+    let tagsColumnIndex = -1;
+
+    headerCells.forEach((header, index) => {
+        const headerText = header.textContent.trim().toLowerCase();
+        if (headerText === 'tags') {
+            tagsColumnIndex = index;
+            console.log(`[DEBUG] Found Tags column at index ${index} for ${entityType}`);
+        }
+    });
+
+    if (tagsColumnIndex === -1) {
+        console.log(`[DEBUG] Could not find Tags column for ${entityType}`);
+        return [];
+    }
+
     rows.forEach((row, index) => {
-        // Look for tag badges specifically - tag elements have unique characteristics:
-        // - Always use bg-blue-100 text-blue-800 (not green/red like status badges)
-        // - Tools/Resources/Prompts/Servers: font-medium class (status badges use font-semibold)
-        // - Gateways: specific pattern with rounded-full
-        // - Status badges use bg-green-100/bg-red-100 and font-semibold
+        const cells = row.querySelectorAll('td');
 
-        const tagElements = row.querySelectorAll(`
-            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
-        `);
+        if (tagsColumnIndex < cells.length) {
+            const tagsCell = cells[tagsColumnIndex];
 
-        console.log(
-            `[DEBUG] Row ${index}: Found ${tagElements.length} tag elements`,
-        );
+            // Look for tag badges ONLY within the Tags column
+            const tagElements = tagsCell.querySelectorAll(`
+                span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
+                span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
+            `);
 
-        tagElements.forEach((tagEl) => {
-            const tagText = tagEl.textContent.trim();
-            console.log(`[DEBUG] Row ${index}: Tag element text: "${tagText}"`);
+            console.log(
+                `[DEBUG] Row ${index}: Found ${tagElements.length} tag elements in Tags column`,
+            );
 
-            // Filter out any remaining non-tag content
-            if (
-                tagText &&
-                tagText !== "No tags" &&
-                tagText !== "None" &&
-                tagText !== "N/A" &&
-                tagText !== "Active" &&
-                tagText !== "Inactive" &&
-                tagText !== "Online" &&
-                tagText !== "Offline" &&
-                tagText !== "Enabled" &&
-                tagText !== "Disabled" &&
-                !tagText.includes("📖") &&
-                !tagText.includes("⚠️") &&
-                !tagText.includes("🔄") &&
-                !tagText.includes("🌐")
-            ) {
-                tags.add(tagText);
-                console.log(`[DEBUG] Row ${index}: Added tag: "${tagText}"`);
-            } else {
-                console.log(`[DEBUG] Row ${index}: Filtered out: "${tagText}"`);
-            }
-        });
+            tagElements.forEach((tagEl) => {
+                const tagText = tagEl.textContent.trim();
+                console.log(`[DEBUG] Row ${index}: Tag element text: "${tagText}"`);
+
+                // Basic validation for tag content
+                if (
+                    tagText &&
+                    tagText !== "No tags" &&
+                    tagText !== "None" &&
+                    tagText !== "N/A" &&
+                    tagText.length >= 2 &&
+                    tagText.length <= 50
+                ) {
+                    tags.add(tagText);
+                    console.log(`[DEBUG] Row ${index}: Added tag: "${tagText}"`);
+                } else {
+                    console.log(`[DEBUG] Row ${index}: Filtered out: "${tagText}"`);
+                }
+            });
+        }
     });
 
     const result = Array.from(tags).sort();
