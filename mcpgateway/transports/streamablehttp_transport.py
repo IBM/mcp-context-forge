@@ -64,7 +64,7 @@ logger = logging_service.get_logger(__name__)
 
 # Initialize ToolService and MCP Server
 tool_service: ToolService = ToolService()
-mcp_app: Server = Server("mcp-streamable-http-stateless")
+mcp_app: Server[Any] = Server("mcp-streamable-http-stateless")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 request_headers_var = contextvars.ContextVar("request_headers", default={})
@@ -537,7 +537,7 @@ class SessionManagerWrapper:
 # ------------------------- Authentication for /mcp routes ------------------------------
 
 
-async def streamable_http_auth(scope, receive, send) -> bool:
+async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     """
     Perform authentication check in middleware context (ASGI scope).
 
