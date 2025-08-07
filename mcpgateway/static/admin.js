@@ -2246,6 +2246,24 @@ async function viewGateway(gatewayId) {
                 { label: "Description", value: gateway.description || "N/A" },
             ];
 
+            // Add tags field with special handling
+            const tagsP = document.createElement("p");
+            const tagsStrong = document.createElement("strong");
+            tagsStrong.textContent = "Tags: ";
+            tagsP.appendChild(tagsStrong);
+            if (gateway.tags && gateway.tags.length > 0) {
+                gateway.tags.forEach((tag, index) => {
+                    const tagSpan = document.createElement("span");
+                    tagSpan.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1";
+                    tagSpan.textContent = tag;
+                    tagsP.appendChild(tagSpan);
+                });
+            } else {
+                tagsP.appendChild(document.createTextNode("No tags"));
+            }
+            container.appendChild(tagsP);
+
             fields.forEach((field) => {
                 const p = document.createElement("p");
                 const strong = document.createElement("strong");
@@ -2361,6 +2379,12 @@ async function editGateway(gatewayId) {
         }
         if (descField) {
             descField.value = gateway.description || "";
+        }
+
+        // Set tags field
+        const tagsField = safeGetElement("edit-gateway-tags");
+        if (tagsField) {
+            tagsField.value = gateway.tags ? gateway.tags.join(", ") : "";
         }
 
         if (transportField) {

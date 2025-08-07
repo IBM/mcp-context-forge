@@ -2409,10 +2409,15 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     logger.debug(f"User {user} is adding a new gateway")
     form = await request.form()
     try:
+        # Parse tags from comma-separated string
+        tags_str = form.get("tags", "")
+        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
         gateway = GatewayCreate(
             name=form["name"],
             url=form["url"],
             description=form.get("description"),
+            tags=tags,
             transport=form.get("transport", "SSE"),
             auth_type=form.get("auth_type", ""),
             auth_username=form.get("auth_username", ""),
@@ -2559,10 +2564,15 @@ async def admin_edit_gateway(
     logger.debug(f"User {user} is editing gateway ID {gateway_id}")
     form = await request.form()
     try:
+        # Parse tags from comma-separated string
+        tags_str = form.get("tags", "")
+        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=form.get("name"),
             url=form["url"],
             description=form.get("description"),
+            tags=tags,
             transport=form.get("transport", "SSE"),
             auth_type=form.get("auth_type", None),
             auth_username=form.get("auth_username", None),

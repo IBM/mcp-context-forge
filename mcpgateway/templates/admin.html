@@ -1825,6 +1825,36 @@
             >
           </div>
         </div>
+
+        <!-- Gateway Filter Section -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex flex-wrap gap-4 items-center">
+            <div class="flex-1 min-w-64">
+              <label
+                for="gateway-tag-filter"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                >Filter by Tags:</label
+              >
+              <input
+                type="text"
+                id="gateway-tag-filter"
+                placeholder="e.g., production,external (comma-separated)"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                oninput="filterEntitiesByTags('gateways', this.value)"
+              />
+            </div>
+            <div id="gateway-available-tags" class="flex flex-wrap gap-2">
+              <!-- Available tags will be populated by JavaScript -->
+            </div>
+            <button
+              onclick="clearTagFilter('gateways')"
+              class="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-600 dark:text-gray-300 dark:border-gray-500 dark:hover:bg-gray-500"
+            >
+              Clear Filter
+            </button>
+          </div>
+        </div>
+
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
@@ -1844,6 +1874,11 @@
                     class="px-2 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider w-24"
                   >
                     URL
+                  </th>
+                  <th
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
+                  >
+                    Tags
                   </th>
                   <th
                     class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
@@ -1881,6 +1916,16 @@
                     class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400"
                   >
                     {{ gateway.url }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm">
+                    {% if gateway.tags %} {% for tag in gateway.tags %}
+                    <span
+                      class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1"
+                      >{{ tag }}</span
+                    >
+                    {% endfor %} {% else %}
+                    <span class="text-gray-400">No tags</span>
+                    {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
                     {% set enabled = gateway.enabled %} {% set reachable =
@@ -2067,6 +2112,22 @@
                   name="description"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tags</label
+                >
+                <input
+                  type="text"
+                  name="tags"
+                  placeholder="e.g., production,external,api-gateway (comma-separated)"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+                <p class="mt-1 text-sm text-gray-500">
+                  Separate multiple tags with commas. Tags will be automatically
+                  normalized (lowercase, spaces→hyphens).
+                </p>
               </div>
               <div>
                 <label
@@ -3293,6 +3354,22 @@
                         id="edit-gateway-description"
                         class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       ></textarea>
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700"
+                        >Tags</label
+                      >
+                      <input
+                        type="text"
+                        name="tags"
+                        id="edit-gateway-tags"
+                        placeholder="e.g., production,external,api-gateway (comma-separated)"
+                        class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-sm text-gray-500">
+                        Separate multiple tags with commas. Tags will be
+                        automatically normalized.
+                      </p>
                     </div>
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
