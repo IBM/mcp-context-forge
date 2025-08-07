@@ -325,7 +325,14 @@ class ToolCreate(BaseModel):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
         return validate_tags_field(v)
 
     @field_validator("name")
@@ -571,7 +578,14 @@ class ToolUpdate(BaseModelWithConfigDict):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
         if v is None:
             return None
         return validate_tags_field(v)
@@ -938,7 +952,14 @@ class ResourceCreate(BaseModel):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
         return validate_tags_field(v)
 
     @field_validator("uri")
@@ -1051,7 +1072,14 @@ class ResourceUpdate(BaseModelWithConfigDict):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
         if v is None:
             return None
         return validate_tags_field(v)
@@ -1408,7 +1436,14 @@ class PromptCreate(BaseModel):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
         return validate_tags_field(v)
 
     @field_validator("name")
@@ -1516,7 +1551,14 @@ class PromptUpdate(BaseModelWithConfigDict):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
         if v is None:
             return None
         return validate_tags_field(v)
@@ -1679,7 +1721,14 @@ class GatewayCreate(BaseModel):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
         return validate_tags_field(v)
 
     @field_validator("name")
@@ -1854,7 +1903,14 @@ class GatewayUpdate(BaseModelWithConfigDict):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
         if v is None:
             return None
         return validate_tags_field(v)
@@ -2414,7 +2470,14 @@ class ServerCreate(BaseModel):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
         return validate_tags_field(v)
 
     associated_tools: Optional[List[str]] = Field(None, description="Comma-separated tool IDs")
@@ -2500,7 +2563,14 @@ class ServerUpdate(BaseModelWithConfigDict):
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate and normalize tags."""
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
         if v is None:
             return None
         return validate_tags_field(v)

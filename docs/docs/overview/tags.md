@@ -282,13 +282,13 @@ curl -X GET "http://localhost:8080/admin/resources?tags=config&include_inactive=
     ```bash
     # Environment tags
     "production", "development", "testing", "staging"
-    
+
     # Functional categories
     "api", "database", "utility", "integration"
-    
+
     # Content types
     "documentation", "config", "data", "template"
-    
+
     # Purpose/domain
     "weather", "finance", "security", "monitoring"
     ```
@@ -434,7 +434,7 @@ The MCP Gateway tag system provides:
 
 - ✅ **Universal Support**: Tags for all entity types
 - ✅ **REST API**: Full CRUD operations with filtering
-- ✅ **Admin UI**: Visual tag management and filtering  
+- ✅ **Admin UI**: Visual tag management and filtering
 - ✅ **Search & Filter**: Real-time tag-based discovery
 - ✅ **Flexible**: No restrictions on tag content or format
 
