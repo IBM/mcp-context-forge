@@ -83,7 +83,7 @@ class ErrorFormatter:
             ...     result = ErrorFormatter.format_validation_error(e)
             <class 'pydantic_core._pydantic_core.ValidationError'>
             >>> result['message']
-            'Validation failed'
+            'Validation failed: Name must start with a letter and contain only letters, numbers, and underscores'
             >>> result['success']
             False
             >>> len(result['details']) > 0
@@ -134,7 +134,7 @@ class ErrorFormatter:
         # Log the full error for debugging
         logger.debug(f"Validation error: {error}")
 
-        return {"message": "Validation failed", "details": errors, "success": False}
+        return {"message": f"Validation failed: {user_message}", "details": errors, "success": False}
 
     @staticmethod
     def _get_user_message(field: str, technical_msg: str) -> str:
