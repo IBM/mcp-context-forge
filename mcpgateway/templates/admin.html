@@ -190,7 +190,7 @@
               id="servers-tag-filter"
               placeholder="Enter tags (comma-separated)"
               class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              onkeyup="filterByTags('servers')"
+              oninput="filterEntitiesByTags('servers', this.value)"
             />
             <button
               onclick="clearTagFilter('servers')"
@@ -647,7 +647,7 @@
               id="tools-tag-filter"
               placeholder="Enter tags (comma-separated)"
               class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              onkeyup="filterByTags('tools')"
+              oninput="filterEntitiesByTags('tools', this.value)"
             />
             <button
               onclick="clearTagFilter('tools')"
@@ -1219,7 +1219,7 @@
               id="resources-tag-filter"
               placeholder="Enter tags (comma-separated)"
               class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              onkeyup="filterByTags('resources')"
+              oninput="filterEntitiesByTags('resources', this.value)"
             />
             <button
               onclick="clearTagFilter('resources')"
@@ -1538,7 +1538,7 @@
               id="prompts-tag-filter"
               placeholder="Enter tags (comma-separated)"
               class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              onkeyup="filterByTags('prompts')"
+              oninput="filterEntitiesByTags('prompts', this.value)"
             />
             <button
               onclick="clearTagFilter('prompts')"
