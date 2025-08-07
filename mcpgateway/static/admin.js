@@ -1467,6 +1467,12 @@ async function editTool(toolId) {
             typeField.value = tool.integrationType || "MCP";
         }
 
+        // Set tags field
+        const tagsField = safeGetElement("edit-tool-tags");
+        if (tagsField) {
+            tagsField.value = tool.tags ? tool.tags.join(", ") : "";
+        }
+
         // Handle JSON fields safely with validation
         const headersValidation = validateJson(
             JSON.stringify(tool.headers || {}),
@@ -1692,6 +1698,25 @@ async function viewResource(resourceUri) {
                 container.appendChild(p);
             });
 
+            // Tags section
+            const tagsP = document.createElement("p");
+            const tagsStrong = document.createElement("strong");
+            tagsStrong.textContent = "Tags: ";
+            tagsP.appendChild(tagsStrong);
+
+            if (resource.tags && resource.tags.length > 0) {
+                resource.tags.forEach((tag) => {
+                    const tagSpan = document.createElement("span");
+                    tagSpan.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
+                    tagSpan.textContent = tag;
+                    tagsP.appendChild(tagSpan);
+                });
+            } else {
+                tagsP.appendChild(document.createTextNode("None"));
+            }
+            container.appendChild(tagsP);
+
             // Status with safe styling
             const statusP = document.createElement("p");
             const statusStrong = document.createElement("strong");
@@ -1861,6 +1886,13 @@ async function editResource(resourceUri) {
         if (mimeField) {
             mimeField.value = resource.mimeType || "";
         }
+
+        // Set tags field
+        const tagsField = safeGetElement("edit-resource-tags");
+        if (tagsField) {
+            tagsField.value = resource.tags ? resource.tags.join(", ") : "";
+        }
+
         if (contentField) {
             let contentStr = extractContent(
                 content,
@@ -1947,6 +1979,25 @@ async function viewPrompt(promptName) {
                 p.appendChild(document.createTextNode(field.value));
                 container.appendChild(p);
             });
+
+            // Tags section
+            const tagsP = document.createElement("p");
+            const tagsStrong = document.createElement("strong");
+            tagsStrong.textContent = "Tags: ";
+            tagsP.appendChild(tagsStrong);
+
+            if (prompt.tags && prompt.tags.length > 0) {
+                prompt.tags.forEach((tag) => {
+                    const tagSpan = document.createElement("span");
+                    tagSpan.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
+                    tagSpan.textContent = tag;
+                    tagsP.appendChild(tagSpan);
+                });
+            } else {
+                tagsP.appendChild(document.createTextNode("None"));
+            }
+            container.appendChild(tagsP);
 
             // Status
             const statusP = document.createElement("p");
@@ -2114,6 +2165,13 @@ async function editPrompt(promptName) {
         if (descField) {
             descField.value = prompt.description || "";
         }
+
+        // Set tags field
+        const tagsField = safeGetElement("edit-prompt-tags");
+        if (tagsField) {
+            tagsField.value = prompt.tags ? prompt.tags.join(", ") : "";
+        }
+
         if (templateField) {
             templateField.value = prompt.template || "";
         }
@@ -2439,6 +2497,25 @@ async function viewServer(serverId) {
                 container.appendChild(p);
             });
 
+            // Tags section
+            const tagsP = document.createElement("p");
+            const tagsStrong = document.createElement("strong");
+            tagsStrong.textContent = "Tags: ";
+            tagsP.appendChild(tagsStrong);
+
+            if (server.tags && server.tags.length > 0) {
+                server.tags.forEach((tag) => {
+                    const tagSpan = document.createElement("span");
+                    tagSpan.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
+                    tagSpan.textContent = tag;
+                    tagsP.appendChild(tagSpan);
+                });
+            } else {
+                tagsP.appendChild(document.createTextNode("None"));
+            }
+            container.appendChild(tagsP);
+
             // Status
             const statusP = document.createElement("p");
             const statusStrong = document.createElement("strong");
@@ -2520,6 +2597,12 @@ async function editServer(serverId) {
         }
         if (descField) {
             descField.value = server.description || "";
+        }
+
+        // Set tags field
+        const tagsField = safeGetElement("edit-server-tags");
+        if (tagsField) {
+            tagsField.value = server.tags ? server.tags.join(", ") : "";
         }
 
         openModal("server-edit-modal");
@@ -4200,6 +4283,7 @@ async function viewTool(toolId) {
           <p><strong>URL:</strong> <span class="tool-url"></span></p>
           <p><strong>Type:</strong> <span class="tool-type"></span></p>
           <p><strong>Description:</strong> <span class="tool-description"></span></p>
+          <p><strong>Tags:</strong> <span class="tool-tags"></span></p>
           <p><strong>Request Type:</strong> <span class="tool-request-type"></span></p>
           ${authHTML}
           ${renderAnnotations(tool.annotations)}
@@ -4242,6 +4326,22 @@ async function viewTool(toolId) {
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
             setTextSafely(".tool-description", tool.description);
+
+            // Set tags as HTML with badges
+            const tagsElement = toolDetailsDiv.querySelector(".tool-tags");
+            if (tagsElement) {
+                if (tool.tags && tool.tags.length > 0) {
+                    tagsElement.innerHTML = tool.tags
+                        .map(
+                            (tag) =>
+                                `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${tag}</span>`,
+                        )
+                        .join("");
+                } else {
+                    tagsElement.textContent = "None";
+                }
+            }
+
             setTextSafely(".tool-request-type", tool.requestType);
             setTextSafely(
                 ".tool-headers",
