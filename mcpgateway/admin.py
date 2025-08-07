@@ -21,7 +21,7 @@ underlying data.
 import json
 import logging
 import time
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -63,6 +63,7 @@ from mcpgateway.services.prompt_service import PromptNotFoundError, PromptServic
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
+from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
@@ -4080,3 +4081,60 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
         logger.warning(f"Gateway test failed: {e}")
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
+
+
+####################
+# Admin Tag Routes #
+####################
+
+
+@admin_router.get("/tags", response_model=List[Dict[str, Any]])
+async def admin_list_tags(
+    entity_types: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> List[Dict[str, Any]]:
+    """
+    List all unique tags with statistics for the admin UI.
+
+    Args:
+        entity_types: Comma-separated list of entity types to filter by
+                     (e.g., "tools,resources,prompts,servers,gateways").
+                     If not provided, returns tags from all entity types.
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of tag information with statistics
+
+    Raises:
+        HTTPException: If tag retrieval fails
+    """
+    tag_service = TagService()
+
+    # Parse entity types parameter if provided
+    entity_types_list = None
+    if entity_types:
+        entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
+
+    logger.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}")
+
+    try:
+        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list)
+
+        # Convert to list of dicts for admin UI
+        return [
+            {
+                "name": tag.name,
+                "tools": tag.stats.tools,
+                "resources": tag.stats.resources,
+                "prompts": tag.stats.prompts,
+                "servers": tag.stats.servers,
+                "gateways": tag.stats.gateways,
+                "total": tag.stats.total,
+            }
+            for tag in tags
+        ]
+    except Exception as e:
+        logger.error(f"Failed to retrieve tags for admin: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")

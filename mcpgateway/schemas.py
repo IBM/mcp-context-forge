@@ -2725,3 +2725,21 @@ class GatewayTestResponse(BaseModelWithConfigDict):
     status_code: int = Field(..., description="HTTP status code returned by the gateway")
     latency_ms: int = Field(..., description="Latency of the request in milliseconds")
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")
+
+
+class TagStats(BaseModelWithConfigDict):
+    """Statistics for a single tag across all entity types."""
+
+    tools: int = Field(default=0, description="Number of tools with this tag")
+    resources: int = Field(default=0, description="Number of resources with this tag")
+    prompts: int = Field(default=0, description="Number of prompts with this tag")
+    servers: int = Field(default=0, description="Number of servers with this tag")
+    gateways: int = Field(default=0, description="Number of gateways with this tag")
+    total: int = Field(default=0, description="Total occurrences of this tag")
+
+
+class TagInfo(BaseModelWithConfigDict):
+    """Information about a single tag."""
+
+    name: str = Field(..., description="The tag name")
+    stats: TagStats = Field(..., description="Statistics for this tag")

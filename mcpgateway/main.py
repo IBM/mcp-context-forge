@@ -92,6 +92,7 @@ from mcpgateway.schemas import (
     ServerCreate,
     ServerRead,
     ServerUpdate,
+    TagInfo,
     ToolCreate,
     ToolRead,
     ToolUpdate,
@@ -118,6 +119,7 @@ from mcpgateway.services.server_service import (
     ServerNotFoundError,
     ServerService,
 )
+from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import (
     ToolError,
     ToolNameConflictError,
@@ -173,6 +175,7 @@ root_service = RootService()
 completion_service = CompletionService()
 sampling_handler = SamplingHandler()
 server_service = ServerService()
+tag_service = TagService()
 
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
@@ -551,6 +554,7 @@ root_router = APIRouter(prefix="/roots", tags=["Roots"])
 utility_router = APIRouter(tags=["Utilities"])
 server_router = APIRouter(prefix="/servers", tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
+tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 
 # Basic Auth setup
 
@@ -2414,6 +2418,49 @@ async def readiness_check(db: Session = Depends(get_db)):
         return JSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
 
 
+####################
+# Tag Endpoints    #
+####################
+
+
+@tag_router.get("", response_model=List[TagInfo])
+@tag_router.get("/", response_model=List[TagInfo])
+async def list_tags(
+    entity_types: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> List[TagInfo]:
+    """
+    Retrieve all unique tags across specified entity types.
+
+    Args:
+        entity_types: Comma-separated list of entity types to filter by
+                     (e.g., "tools,resources,prompts,servers,gateways").
+                     If not provided, returns tags from all entity types.
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of TagInfo objects containing tag names and statistics
+
+    Raises:
+        HTTPException: If tag retrieval fails
+    """
+    # Parse entity types parameter if provided
+    entity_types_list = None
+    if entity_types:
+        entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
+
+    logger.debug(f"User {user} is retrieving tags for entity types: {entity_types_list}")
+
+    try:
+        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list)
+        return tags
+    except Exception as e:
+        logger.error(f"Failed to retrieve tags: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
+
+
 # Mount static files
 # app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 
@@ -2428,6 +2475,7 @@ app.include_router(root_router)
 app.include_router(utility_router)
 app.include_router(server_router)
 app.include_router(metrics_router)
+app.include_router(tag_router)
 
 
 # Feature flags for admin UI and API
