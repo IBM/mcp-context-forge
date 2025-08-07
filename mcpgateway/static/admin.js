@@ -5786,18 +5786,61 @@ function extractAvailableTags(entityType) {
     const tableSelector = `#${entityType}-panel tbody tr:not(.inactive-row)`;
     const rows = document.querySelectorAll(tableSelector);
 
-    rows.forEach((row) => {
-        // Look for tag badges in the row
-        const tagElements = row.querySelectorAll(".bg-blue-100.text-blue-800");
+    console.log(
+        `[DEBUG] extractAvailableTags for ${entityType}: Found ${rows.length} rows`,
+    );
+
+    rows.forEach((row, index) => {
+        // Look for tag badges specifically - tag elements have unique characteristics:
+        // - Always use bg-blue-100 text-blue-800 (not green/red like status badges)
+        // - Tools/Resources/Prompts/Servers: font-medium class (status badges use font-semibold)
+        // - Gateways: specific pattern with rounded-full
+        // - Status badges use bg-green-100/bg-red-100 and font-semibold
+
+        const tagElements = row.querySelectorAll(`
+            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
+            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
+        `);
+
+        console.log(
+            `[DEBUG] Row ${index}: Found ${tagElements.length} tag elements`,
+        );
+
         tagElements.forEach((tagEl) => {
             const tagText = tagEl.textContent.trim();
-            if (tagText && tagText !== "No tags") {
+            console.log(`[DEBUG] Row ${index}: Tag element text: "${tagText}"`);
+
+            // Filter out any remaining non-tag content
+            if (
+                tagText &&
+                tagText !== "No tags" &&
+                tagText !== "None" &&
+                tagText !== "N/A" &&
+                tagText !== "Active" &&
+                tagText !== "Inactive" &&
+                tagText !== "Online" &&
+                tagText !== "Offline" &&
+                tagText !== "Enabled" &&
+                tagText !== "Disabled" &&
+                !tagText.includes("📖") &&
+                !tagText.includes("⚠️") &&
+                !tagText.includes("🔄") &&
+                !tagText.includes("🌐")
+            ) {
                 tags.add(tagText);
+                console.log(`[DEBUG] Row ${index}: Added tag: "${tagText}"`);
+            } else {
+                console.log(`[DEBUG] Row ${index}: Filtered out: "${tagText}"`);
             }
         });
     });
 
-    return Array.from(tags).sort();
+    const result = Array.from(tags).sort();
+    console.log(
+        `[DEBUG] extractAvailableTags for ${entityType}: Final result:`,
+        result,
+    );
+    return result;
 }
 
 /**
@@ -5878,12 +5921,24 @@ function filterEntitiesByTags(entityType, tagsInput) {
             return;
         }
 
-        // Extract tags from this row
+        // Extract tags from this row using specific tag selectors (not status badges)
         const rowTags = new Set();
-        const tagElements = row.querySelectorAll(".bg-blue-100.text-blue-800");
+        const tagElements = row.querySelectorAll(`
+            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
+            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
+        `);
         tagElements.forEach((tagEl) => {
             const tagText = tagEl.textContent.trim().toLowerCase();
-            if (tagText && tagText !== "no tags") {
+            // Filter out any remaining non-tag content
+            if (
+                tagText &&
+                tagText !== "no tags" &&
+                tagText !== "none" &&
+                tagText !== "active" &&
+                tagText !== "inactive" &&
+                tagText !== "online" &&
+                tagText !== "offline"
+            ) {
                 rowTags.add(tagText);
             }
         });
