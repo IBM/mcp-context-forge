@@ -45,13 +45,14 @@ class TagValidator:
     MIN_LENGTH = 2
     MAX_LENGTH = 50
     # Pattern: start with alphanumeric, middle can have hyphen/colon/dot, end with alphanumeric
-    ALLOWED_PATTERN = r"^[a-z0-9][a-z0-9\-\:\.]*[a-z0-9]$"
+    # Single character tags are allowed if they are alphanumeric
+    ALLOWED_PATTERN = r"^[a-z0-9]([a-z0-9\-\:\.]*[a-z0-9])?$"
 
     @staticmethod
     def normalize(tag: str) -> str:
         """Normalize a tag to standard format.
 
-        Converts to lowercase and strips whitespace.
+        Converts to lowercase, strips whitespace, and replaces spaces with hyphens.
 
         Args:
             tag: The tag string to normalize.
@@ -64,14 +65,27 @@ class TagValidator:
             'machine-learning'
             >>> TagValidator.normalize("  API  ")
             'api'
+            >>> TagValidator.normalize("data  processing")
+            'data-processing'
+            >>> TagValidator.normalize("Machine Learning")
+            'machine-learning'
+            >>> TagValidator.normalize("under_score")
+            'under-score'
         """
-        return tag.strip().lower()
+        # Strip whitespace and convert to lowercase
+        normalized = tag.strip().lower()
+        # Replace multiple spaces with single hyphen
+        normalized = "-".join(normalized.split())
+        # Replace underscores with hyphens for consistency
+        normalized = normalized.replace("_", "-")
+        return normalized
 
     @staticmethod
     def validate(tag: str) -> bool:
         """Validate a single tag.
 
-        Checks if the tag meets all requirements after normalization.
+        Checks if the tag meets all requirements. Tags with spaces are considered
+        invalid in their raw form, even though they would be normalized to valid tags.
 
         Args:
             tag: The tag to validate.
@@ -94,7 +108,13 @@ class TagValidator:
             False
             >>> TagValidator.validate("-invalid")
             False
+            >>> TagValidator.validate("invalid tag")
+            False
         """
+        # First check raw input for spaces (invalid in raw form)
+        if " " in tag:
+            return False
+
         normalized = TagValidator.normalize(tag)
 
         # Check length constraints
@@ -113,7 +133,7 @@ class TagValidator:
     def validate_list(tags: Optional[List[str]]) -> List[str]:
         """Validate and normalize a list of tags.
 
-        Filters out invalid tags and removes duplicates.
+        Filters out invalid tags, removes duplicates, and handles edge cases.
 
         Args:
             tags: List of tags to validate and normalize.
@@ -128,18 +148,32 @@ class TagValidator:
             ['valid-tag']
             >>> TagValidator.validate_list(None)
             []
+            >>> TagValidator.validate_list([" Finance ", "FINANCE", "  finance  "])
+            ['finance']
+            >>> TagValidator.validate_list(["API", None, "", "  ", "api"])
+            ['api']
+            >>> TagValidator.validate_list(["Machine Learning", "machine-learning"])
+            ['machine-learning']
         """
         if not tags:
             return []
 
+        # Filter out None values and convert everything to strings
+        string_tags = [str(tag) for tag in tags if tag is not None]
+
         # Normalize all tags
-        normalized_tags = [TagValidator.normalize(tag) for tag in tags]
+        normalized_tags = []
+        for tag in string_tags:
+            # Skip empty strings or strings with only whitespace
+            if tag and tag.strip():
+                normalized_tags.append(TagValidator.normalize(tag))
 
         # Filter valid tags and remove duplicates while preserving order
         seen = set()
         valid_tags = []
         for tag in normalized_tags:
-            if TagValidator.validate(tag) and tag not in seen:
+            # Validate and check for duplicates
+            if tag and TagValidator.validate(tag) and tag not in seen:
                 seen.add(tag)
                 valid_tags.append(tag)
 
@@ -184,12 +218,13 @@ def validate_tags_field(tags: Optional[List[str]]) -> List[str]:
 
     Use this function as a field validator in Pydantic models.
     Silently filters out invalid tags and returns only valid ones.
+    Ensures tags are unique, normalized, and valid.
 
     Args:
         tags: The tags list to validate.
 
     Returns:
-        Validated and normalized list of tags (invalid tags are filtered out).
+        Validated and normalized list of unique tags (invalid tags are filtered out).
 
     Examples:
         >>> validate_tags_field(["Analytics", "ml"])
@@ -198,11 +233,30 @@ def validate_tags_field(tags: Optional[List[str]]) -> List[str]:
         ['valid']
         >>> validate_tags_field(None)
         []
+        >>> validate_tags_field(["API", "api", "  API  "])
+        ['api']
+        >>> validate_tags_field(["machine learning", "Machine-Learning", "ML"])
+        ['machine-learning', 'ml']
     """
+    # Handle None, empty lists, and any other falsy values
     if not tags:
         return []
 
+    # Ensure we have a list (could be a single string by mistake)
+    if isinstance(tags, str):
+        tags = [tags]
+
+    # Handle case where tags might contain comma-separated values
+    # This helps if someone passes "tag1,tag2,tag3" as a single string
+    expanded_tags = []
+    for tag in tags:
+        if tag and isinstance(tag, str) and "," in tag:
+            # Split by comma and add individual tags
+            expanded_tags.extend(t.strip() for t in tag.split(",") if t.strip())
+        else:
+            expanded_tags.append(tag)
+
     # Validate and normalize, filtering out invalid tags
-    valid_tags = TagValidator.validate_list(tags)
+    valid_tags = TagValidator.validate_list(expanded_tags)
 
     return valid_tags

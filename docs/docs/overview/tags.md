@@ -14,8 +14,10 @@ Tags are metadata labels that can be attached to any entity in MCP Gateway:
 - **Servers** - Tag by environment (e.g., `production`, `development`, `testing`)
 
 !!! info "Tag Format"
-    - Tags are case-sensitive strings
-    - No special characters restrictions
+    - Tags are automatically normalized to lowercase
+    - Length: 2-50 characters
+    - Allowed characters: letters, numbers, hyphens, colons, dots
+    - Spaces and underscores automatically converted to hyphens
     - Stored as JSON arrays in the database
     - Displayed as comma-separated values in forms
 
@@ -33,6 +35,43 @@ Tags are metadata labels that can be attached to any entity in MCP Gateway:
 ### Using the REST API
 
 All CRUD operations support tags through the REST API with JWT authentication.
+
+---
+
+## ✨ Tag Normalization
+
+MCP Gateway automatically normalizes tags to ensure consistency and prevent duplicates:
+
+### **Automatic Transformations**
+
+- **Case Conversion**: `"Finance"` → `"finance"`
+- **Space Replacement**: `"Machine Learning"` → `"machine-learning"`
+- **Underscore Replacement**: `"web_development"` → `"web-development"`
+- **Whitespace Trimming**: `"  api  "` → `"api"`
+- **Multiple Spaces**: `"data   science"` → `"data-science"`
+
+### **Duplicate Removal**
+
+Tags are automatically deduplicated while preserving order:
+
+```json
+// Input
+["Machine Learning", "machine-learning", "API", "api", "ML"]
+
+// Result after normalization
+["machine-learning", "api", "ml"]
+```
+
+### **Smart Input Handling**
+
+The system intelligently handles various input formats:
+
+- **Comma-separated**: `"api,web,mobile"` → `["api", "web", "mobile"]`
+- **Mixed case**: `["API", "Api", "api"]` → `["api"]`
+- **Invalid entries**: `["valid", "", "a", "toolong..."]` → `["valid"]`
+
+!!! tip "User-Friendly Input"
+    Users can type tags naturally (e.g., "Machine Learning", "Web Development") and the system automatically converts them to the standard format ("machine-learning", "web-development").
 
 ---
 
@@ -279,19 +318,23 @@ curl -X GET "http://localhost:8080/admin/resources?tags=config&include_inactive=
 ### Naming Conventions
 
 !!! tip "Recommended Tag Patterns"
+    Thanks to automatic normalization, you can use natural language that gets converted automatically:
+
     ```bash
-    # Environment tags
-    "production", "development", "testing", "staging"
+    # Environment tags (any case works)
+    "Production", "Development", "Testing", "Staging"
 
-    # Functional categories
-    "api", "database", "utility", "integration"
+    # Functional categories (spaces converted to hyphens)
+    "API Gateway", "Database Access", "File Utility", "External Integration"
 
-    # Content types
-    "documentation", "config", "data", "template"
+    # Content types (underscores converted to hyphens)
+    "user_documentation", "config_files", "test_data", "email_templates"
 
-    # Purpose/domain
-    "weather", "finance", "security", "monitoring"
+    # Purpose/domain (mixed formats normalized)
+    "Weather API", "financial_data", "SECURITY-TOOLS", "system monitoring"
     ```
+
+    **All become properly formatted**: `"production"`, `"api-gateway"`, `"user-documentation"`, `"weather-api"`, etc.
 
 ### Organization Strategies
 
@@ -376,36 +419,45 @@ curl -X GET "http://localhost:8080/admin/resources?tags=config&include_inactive=
 
 ### Common Issues
 
-!!! warning "Tag Validation"
-    - Tags cannot be null (use empty array `[]` instead)
-    - Special characters are allowed but may need URL encoding
-    - Very long tag names may be truncated in UI
+!!! warning "Tag Validation Rules"
+    - **Length**: Tags must be 2-50 characters after normalization
+    - **Characters**: Only letters, numbers, hyphens, colons, dots allowed
+    - **Special Characters**: Invalid characters are filtered out (e.g., `@`, `#`, `$`)
+    - **Empty Tags**: Null, empty strings, and whitespace-only tags are filtered out
+    - **Automatic Filtering**: Invalid tags are silently removed rather than causing errors
 
-### Error Examples
+### Normalization Examples
 
 ```bash
-# Invalid request - null tags
+# Input with mixed formats and invalid tags
 curl -X POST "http://localhost:8080/admin/tools" \
   -H "Authorization: Bearer $JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "test-tool",
     "url": "https://example.com",
-    "tags": null
+    "tags": ["Machine Learning", "API", "web_development", "", "a", "invalid@tag", "ML"]
   }'
-# Response: 422 Validation Error
 
-# Correct approach - empty tags
+# Result: Tags automatically normalized and filtered
+# Stored as: ["machine-learning", "api", "web-development", "ml"]
+# Filtered out: "", "a" (too short), "invalid@tag" (special char)
+
+# Comma-separated input also works
 curl -X POST "http://localhost:8080/admin/tools" \
   -H "Authorization: Bearer $JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "test-tool",
-    "url": "https://example.com",
-    "tags": []
+    "name": "api-tool",
+    "url": "https://api.example.com",
+    "tags": ["web,mobile,API"]
   }'
-# Response: 201 Created
+
+# Result: ["web", "mobile", "api"]
 ```
+
+!!! success "Robust Handling"
+    The system gracefully handles invalid input by filtering out problematic tags rather than rejecting the entire request. This makes the API more user-friendly and robust.
 
 ---
 
@@ -432,10 +484,20 @@ curl -H "Authorization: Bearer $JWT_TOKEN" ...
 
 The MCP Gateway tag system provides:
 
-- ✅ **Universal Support**: Tags for all entity types
-- ✅ **REST API**: Full CRUD operations with filtering
-- ✅ **Admin UI**: Visual tag management and filtering
-- ✅ **Search & Filter**: Real-time tag-based discovery
-- ✅ **Flexible**: No restrictions on tag content or format
+- ✅ **Universal Support**: Tags for all entity types (tools, resources, prompts, servers)
+- ✅ **Smart Normalization**: Automatic case conversion, space-to-hyphen, deduplication
+- ✅ **REST API**: Full CRUD operations with intelligent tag filtering
+- ✅ **Admin UI**: Visual tag management, editing, and real-time filtering
+- ✅ **User-Friendly Input**: Natural language input automatically formatted
+- ✅ **Robust Validation**: Invalid tags filtered out, not rejected
+- ✅ **Flexible Formats**: Arrays, comma-separated strings, mixed case all supported
+- ✅ **Security**: Special characters and malicious input automatically filtered
 
-Tags make organizing and discovering MCP Gateway entities simple and intuitive!
+**Key Benefits:**
+
+- 🚀 **Zero Learning Curve**: Type tags naturally, system handles the rest
+- 🔍 **Powerful Search**: Find entities by any combination of tags
+- 🛡️ **Bulletproof**: Handles any input format gracefully
+- ⚡ **Performance**: Optimized database queries and indexing
+
+Tags make organizing and discovering MCP Gateway entities simple, intuitive, and bulletproof!
