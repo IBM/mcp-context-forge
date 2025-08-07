@@ -857,7 +857,7 @@ class SessionRegistry(SessionBackend):
 
         elif self._backend == "database":
 
-            def _db_read_session(session_id):
+            def _db_read_session(session_id: str) -> Any:
                 """Check if session still exists in the database.
 
                 Queries the SessionRecord table to verify that the session
@@ -892,7 +892,7 @@ class SessionRegistry(SessionBackend):
                 finally:
                     db_session.close()
 
-            def _db_read(session_id):
+            def _db_read(session_id: str) -> Any:
                 """Read pending message for a session from the database.
 
                 Retrieves the first (oldest) unprocessed message for the given
@@ -927,7 +927,7 @@ class SessionRegistry(SessionBackend):
                 finally:
                     db_session.close()
 
-            def _db_remove(session_id, message):
+            def _db_remove(session_id: str, message: str) -> None:
                 """Remove processed message from the database.
 
                 Deletes a specific message record after it has been successfully
@@ -960,7 +960,7 @@ class SessionRegistry(SessionBackend):
                 finally:
                     db_session.close()
 
-            async def message_check_loop(session_id):
+            async def message_check_loop(session_id: str) -> None:
                 """Poll database for messages and deliver to local transport.
 
                 Continuously checks the database for new messages directed to
@@ -1093,7 +1093,7 @@ class SessionRegistry(SessionBackend):
                             continue
 
                         # Refresh session in database
-                        def _refresh_session(session_id=session_id):
+                        def _refresh_session(session_id: str = session_id) -> bool:
                             """Update session's last accessed timestamp in the database.
 
                             Refreshes the last_accessed field for an active session to
