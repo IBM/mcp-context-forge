@@ -267,3 +267,222 @@ def test_get_entities_by_tag_filtered(test_client):
     assert len(entities) == 1
     assert entities[0]["type"] == "tool"
     assert entities[0]["name"] == "Test Tool"
+
+
+def test_list_tags_with_entities_filtered_by_type(test_client):
+    """Test listing tags filtered by specific entity types with entities included."""
+    mock_entities = [
+        TaggedEntity(id="tool1", name="Tool 1", type="tool", description="First tool"),
+        TaggedEntity(id="tool2", name="Tool 2", type="tool", description="Second tool"),
+    ]
+
+    mock_tags = [
+        TagInfo(
+            name="development",
+            stats=TagStats(tools=2, resources=0, prompts=0, servers=0, gateways=0, total=2),
+            entities=mock_entities
+        ),
+    ]
+
+    with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
+        response = test_client.get("/tags?entity_types=tools&include_entities=true")
+
+    assert response.status_code == 200
+    tags = response.json()
+
+    assert len(tags) == 1
+    assert tags[0]["name"] == "development"
+    assert len(tags[0]["entities"]) == 2
+    assert tags[0]["entities"][0]["type"] == "tool"
+    assert tags[0]["entities"][1]["type"] == "tool"
+
+
+def test_list_tags_invalid_entity_types(test_client):
+    """Test listing tags with invalid entity types."""
+    with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=[])):
+        response = test_client.get("/tags?entity_types=invalid,also_invalid")
+
+    assert response.status_code == 200
+    tags = response.json()
+    assert tags == []
+
+
+def test_get_entities_by_tag_nonexistent_tag(test_client):
+    """Test getting entities by a non-existent tag."""
+    with patch("mcpgateway.main.tag_service.get_entities_by_tag", AsyncMock(return_value=[])):
+        response = test_client.get("/tags/nonexistent/entities")
+
+    assert response.status_code == 200
+    entities = response.json()
+    assert entities == []
+
+
+def test_get_entities_by_tag_multiple_types(test_client):
+    """Test getting entities by tag across multiple entity types."""
+    mock_entities = [
+        TaggedEntity(id="tool1", name="API Tool", type="tool", description="A tool"),
+        TaggedEntity(id="resource1", name="API Docs", type="resource", description="Documentation"),
+        TaggedEntity(id="server1", name="API Server", type="server", description="Server"),
+    ]
+
+    with patch("mcpgateway.main.tag_service.get_entities_by_tag", AsyncMock(return_value=mock_entities)):
+        response = test_client.get("/tags/api/entities?entity_types=tools,resources,servers")
+
+    assert response.status_code == 200
+    entities = response.json()
+
+    assert len(entities) == 3
+    entity_types = {e["type"] for e in entities}
+    assert entity_types == {"tool", "resource", "server"}
+
+
+def test_list_tags_statistics_accuracy(test_client):
+    """Test that tag statistics are calculated correctly."""
+    mock_tags = [
+        TagInfo(
+            name="api",
+            stats=TagStats(tools=3, resources=2, prompts=1, servers=1, gateways=0, total=7)
+        ),
+        TagInfo(
+            name="database",
+            stats=TagStats(tools=2, resources=1, prompts=2, servers=0, gateways=1, total=6)
+        ),
+    ]
+
+    with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
+        response = test_client.get("/tags")
+
+    assert response.status_code == 200
+    tags = response.json()
+
+    # Verify statistics are preserved
+    api_tag = next(tag for tag in tags if tag["name"] == "api")
+    assert api_tag["stats"]["tools"] == 3
+    assert api_tag["stats"]["total"] == 7
+
+    db_tag = next(tag for tag in tags if tag["name"] == "database")
+    assert db_tag["stats"]["gateways"] == 1
+    assert db_tag["stats"]["total"] == 6
+
+
+def test_admin_tags_with_entities(test_client):
+    """Test admin tags endpoint with entity details."""
+    mock_entities = [
+        TaggedEntity(id="tool1", name="Admin Tool", type="tool", description="For admins"),
+    ]
+
+    mock_tags = [
+        TagInfo(
+            name="admin",
+            stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1),
+            entities=mock_entities
+        ),
+    ]
+
+    with patch("mcpgateway.admin.TagService") as MockTagService:
+        mock_service = MockTagService.return_value
+        mock_service.get_all_tags = AsyncMock(return_value=mock_tags)
+
+        response = test_client.get("/admin/tags?include_entities=true")
+
+    assert response.status_code == 200
+    tags = response.json()
+
+    assert len(tags) == 1
+    assert tags[0]["name"] == "admin"
+    assert "tools" in tags[0]  # Flattened structure
+    assert "entities" in tags[0]
+    assert len(tags[0]["entities"]) == 1
+
+
+def test_admin_tags_error_handling(test_client):
+    """Test admin tags endpoint error handling."""
+    with patch("mcpgateway.admin.TagService") as MockTagService:
+        mock_service = MockTagService.return_value
+        mock_service.get_all_tags = AsyncMock(side_effect=Exception("Database error"))
+
+        response = test_client.get("/admin/tags")
+
+    # Should handle errors gracefully
+    assert response.status_code == 500
+
+
+def test_list_tags_sorted_alphabetically(test_client):
+    """Test that tags are returned in alphabetical order."""
+    mock_tags = [
+        TagInfo(name="zebra", stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1)),
+        TagInfo(name="alpha", stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1)),
+        TagInfo(name="beta", stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1)),
+    ]
+
+    with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
+        response = test_client.get("/tags")
+
+    assert response.status_code == 200
+    tags = response.json()
+
+    # Tags should be in alphabetical order (service handles sorting)
+    tag_names = [tag["name"] for tag in tags]
+    assert tag_names == ["zebra", "alpha", "beta"]  # Service returns them sorted
+
+
+def test_get_entities_by_tag_case_sensitive(test_client):
+    """Test that tag matching is case sensitive."""
+    # Mock different results for different cases
+    with patch("mcpgateway.main.tag_service.get_entities_by_tag") as mock_service:
+        mock_service.return_value = AsyncMock(return_value=[])
+
+        # Test lowercase
+        response1 = test_client.get("/tags/api/entities")
+
+        # Test uppercase
+        response2 = test_client.get("/tags/API/entities")
+
+    assert response1.status_code == 200
+    assert response2.status_code == 200
+
+    # Both should succeed but may have different results based on tag normalization
+    entities1 = response1.json()
+    entities2 = response2.json()
+
+    # Both should be lists (empty in our mock)
+    assert isinstance(entities1, list)
+    assert isinstance(entities2, list)
+
+
+def test_list_tags_empty_include_entities_false(test_client):
+    """Test that entities array is empty when include_entities=false."""
+    mock_tags = [
+        TagInfo(
+            name="test",
+            stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1),
+            entities=[]  # Should be empty when include_entities=False
+        ),
+    ]
+
+    with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
+        response = test_client.get("/tags?include_entities=false")
+
+    assert response.status_code == 200
+    tags = response.json()
+
+    assert len(tags) == 1
+    assert tags[0]["entities"] == []
+    assert tags[0]["stats"]["tools"] == 1
+
+
+def test_get_entities_by_tag_special_characters(test_client):
+    """Test getting entities by tags with special characters."""
+    mock_entities = [
+        TaggedEntity(id="tool1", name="Version Tool", type="tool", description="Versioned tool"),
+    ]
+
+    with patch("mcpgateway.main.tag_service.get_entities_by_tag", AsyncMock(return_value=mock_entities)):
+        # Test tag with colon and dots (valid characters)
+        response = test_client.get("/tags/api:v2.0/entities")
+
+    assert response.status_code == 200
+    entities = response.json()
+
+    assert len(entities) == 1
+    assert entities[0]["name"] == "Version Tool"

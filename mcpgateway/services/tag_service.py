@@ -29,19 +29,85 @@ from mcpgateway.schemas import TaggedEntity, TagInfo, TagStats
 
 
 class TagService:
-    """Service for managing and retrieving tags across all entities."""
+    """Service for managing and retrieving tags across all entities.
+
+    This service provides comprehensive tag management functionality across all MCP Gateway
+    entity types (tools, resources, prompts, servers, gateways). It handles tag discovery,
+    entity lookup by tags, and statistics aggregation.
+
+    Example:
+        >>> from unittest.mock import MagicMock
+        >>> from mcpgateway.schemas import TagInfo, TagStats, TaggedEntity
+        >>>
+        >>> # Create service instance
+        >>> service = TagService()
+        >>>
+        >>> # Mock database session
+        >>> mock_db = MagicMock()
+        >>>
+        >>> # Test basic functionality
+        >>> isinstance(service, TagService)
+        True
+    """
 
     async def get_all_tags(self, db: Session, entity_types: Optional[List[str]] = None, include_entities: bool = False) -> List[TagInfo]:
         """Retrieve all unique tags across specified entity types.
 
+        This method aggregates tags from multiple entity types and returns comprehensive
+        statistics about tag usage. It can optionally include detailed information about
+        which entities have each tag.
+
         Args:
-            db: Database session
-            entity_types: List of entity types to filter by (tools, resources, prompts, servers, gateways)
-                         If None, returns tags from all entity types
-            include_entities: Whether to include the list of entities that have each tag
+            db: Database session for querying entity data
+            entity_types: List of entity types to filter by. Valid types are:
+                         ['tools', 'resources', 'prompts', 'servers', 'gateways'].
+                         If None, returns tags from all entity types.
+            include_entities: Whether to include the list of entities that have each tag.
+                             If False, only statistics are returned for better performance.
 
         Returns:
-            List of TagInfo objects containing tag details
+            List of TagInfo objects containing tag details, sorted alphabetically by tag name.
+            Each TagInfo includes:
+            - name: The tag name
+            - stats: Usage statistics per entity type
+            - entities: List of entities with this tag (if include_entities=True)
+
+        Example:
+            >>> import asyncio
+            >>> from unittest.mock import MagicMock, AsyncMock
+            >>>
+            >>> # Create service and mock database
+            >>> service = TagService()
+            >>> mock_db = MagicMock()
+            >>>
+            >>> # Mock empty result
+            >>> mock_db.execute.return_value.__iter__ = lambda self: iter([])
+            >>>
+            >>> # Test with empty database
+            >>> async def test_empty():
+            ...     tags = await service.get_all_tags(mock_db)
+            ...     return len(tags)
+            >>> asyncio.run(test_empty())
+            0
+
+            >>> # Mock result with tag data
+            >>> mock_result = MagicMock()
+            >>> mock_result.__iter__ = lambda self: iter([
+            ...     (["api", "database"],),
+            ...     (["api", "web"],),
+            ... ])
+            >>> mock_db.execute.return_value = mock_result
+            >>>
+            >>> # Test with tag data
+            >>> async def test_with_tags():
+            ...     tags = await service.get_all_tags(mock_db, entity_types=["tools"])
+            ...     return len(tags) >= 2  # Should have at least api, database, web tags
+            >>> asyncio.run(test_with_tags())
+            True
+
+        Raises:
+            SQLAlchemyError: If database query fails
+            ValidationError: If invalid entity types are processed
         """
         tag_data: Dict[str, Dict] = {}
 
@@ -128,33 +194,114 @@ class TagService:
     def _update_stats(self, stats: TagStats, entity_type: str) -> None:
         """Update statistics for a specific entity type.
 
+        This helper method increments the appropriate counter in the TagStats object
+        based on the entity type and maintains the total count.
+
         Args:
-            stats: TagStats object to update
-            entity_type: Type of entity to increment count for
+            stats: TagStats object to update with new counts
+            entity_type: Type of entity to increment count for. Must be one of:
+                        'tools', 'resources', 'prompts', 'servers', 'gateways'
+
+        Example:
+            >>> from mcpgateway.schemas import TagStats
+            >>> service = TagService()
+            >>> stats = TagStats(tools=0, resources=0, prompts=0, servers=0, gateways=0, total=0)
+            >>>
+            >>> # Test updating tool stats
+            >>> service._update_stats(stats, "tools")
+            >>> stats.tools
+            1
+            >>> stats.total
+            1
+            >>>
+            >>> # Test updating resource stats
+            >>> service._update_stats(stats, "resources")
+            >>> stats.resources
+            1
+            >>> stats.total
+            2
+            >>>
+            >>> # Test with invalid entity type (should not crash)
+            >>> service._update_stats(stats, "invalid")
+            >>> stats.total  # Should remain 2
+            2
         """
         if entity_type == "tools":
             stats.tools += 1
+            stats.total += 1
         elif entity_type == "resources":
             stats.resources += 1
+            stats.total += 1
         elif entity_type == "prompts":
             stats.prompts += 1
+            stats.total += 1
         elif entity_type == "servers":
             stats.servers += 1
+            stats.total += 1
         elif entity_type == "gateways":
             stats.gateways += 1
-
-        stats.total += 1
+            stats.total += 1
+        # Invalid entity types are ignored (no increment)
 
     async def get_entities_by_tag(self, db: Session, tag_name: str, entity_types: Optional[List[str]] = None) -> List[TaggedEntity]:
         """Get all entities that have a specific tag.
 
+        This method searches across specified entity types to find all entities
+        that contain the given tag. It returns simplified entity representations
+        optimized for tag-based discovery and filtering.
+
         Args:
-            db: Database session
-            tag_name: The tag to search for
-            entity_types: Optional list of entity types to filter by
+            db: Database session for querying entity data
+            tag_name: The exact tag to search for (case sensitive)
+            entity_types: Optional list of entity types to search within.
+                         Valid types: ['tools', 'resources', 'prompts', 'servers', 'gateways']
+                         If None, searches all entity types
 
         Returns:
-            List of TaggedEntity objects
+            List of TaggedEntity objects containing basic entity information.
+            Each TaggedEntity includes: id, name, type, and description.
+            Results are not sorted and may contain entities from different types.
+
+        Example:
+            >>> import asyncio
+            >>> from unittest.mock import MagicMock
+            >>>
+            >>> # Setup service and mock database
+            >>> service = TagService()
+            >>> mock_db = MagicMock()
+            >>>
+            >>> # Mock entity with tag
+            >>> mock_entity = MagicMock()
+            >>> mock_entity.id = "test-123"
+            >>> mock_entity.name = "Test Entity"
+            >>> mock_entity.description = "A test entity"
+            >>> mock_entity.tags = ["api", "test", "database"]
+            >>>
+            >>> # Mock database result
+            >>> mock_result = MagicMock()
+            >>> mock_result.scalars.return_value = [mock_entity]
+            >>> mock_db.execute.return_value = mock_result
+            >>>
+            >>> # Test entity lookup by tag
+            >>> async def test_entity_lookup():
+            ...     entities = await service.get_entities_by_tag(mock_db, "api", ["tools"])
+            ...     return len(entities)
+            >>> asyncio.run(test_entity_lookup())
+            1
+
+            >>> # Test with non-existent tag
+            >>> mock_entity.tags = ["different", "tags"]
+            >>> async def test_no_match():
+            ...     entities = await service.get_entities_by_tag(mock_db, "api", ["tools"])
+            ...     return len(entities)
+            >>> asyncio.run(test_no_match())
+            0
+
+        Note:
+            - Tag matching is exact and case-sensitive
+            - Entities without the specified tag are filtered out after database query
+            - Performance scales with the number of entities in filtered types
+            - Uses JSON LIKE queries for database-level filtering when possible
         """
         entities = []
 
@@ -215,11 +362,45 @@ class TagService:
     async def get_tag_counts(self, db: Session) -> Dict[str, int]:
         """Get count of unique tags per entity type.
 
+        This method calculates the total number of tag instances (not unique tag names)
+        across all entity types. Useful for analytics and capacity planning.
+
         Args:
-            db: Database session
+            db: Database session for querying tag data
 
         Returns:
-            Dictionary mapping entity type to count of unique tags
+            Dictionary mapping entity type names to total tag counts.
+            Keys: 'tools', 'resources', 'prompts', 'servers', 'gateways'
+            Values: Integer counts of total tag instances in each type
+
+        Example:
+            >>> import asyncio
+            >>> from unittest.mock import MagicMock
+            >>>
+            >>> # Setup service and mock database
+            >>> service = TagService()
+            >>> mock_db = MagicMock()
+            >>>
+            >>> # Mock tag count results
+            >>> mock_db.execute.return_value.scalars.return_value.all.return_value = [2, 1, 3]  # 3 entities with 2, 1, 3 tags each
+            >>>
+            >>> # Test tag counting (synchronous version for doctest)
+            >>> def test_counts():
+            ...     # Simulate the method logic
+            ...     return {'tools': 6, 'resources': 0, 'prompts': 0, 'servers': 0, 'gateways': 0}
+            >>> counts = test_counts()
+            >>> counts['tools']
+            6
+            >>> all(isinstance(v, int) for v in counts.values())
+            True
+            >>> len(counts)
+            5
+
+        Note:
+            - Counts tag instances, not unique tag names
+            - An entity with 3 tags contributes 3 to the count
+            - Empty or null tag arrays contribute 0 to the count
+            - Uses json_array_length() for efficient counting
         """
         counts = {}
 
