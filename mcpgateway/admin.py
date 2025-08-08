@@ -34,13 +34,15 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import get_db
+from mcpgateway.db import get_db, GlobalConfig
 from mcpgateway.schemas import (
     GatewayCreate,
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
     GatewayUpdate,
+    GlobalConfigRead,
+    GlobalConfigUpdate,
     PromptCreate,
     PromptMetrics,
     PromptRead,
@@ -86,6 +88,52 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 ####################
 # Admin UI Routes  #
 ####################
+
+
+@admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
+async def get_global_passthrough_headers(
+    db: Session = Depends(get_db),
+    _user: str = Depends(require_auth),
+) -> GlobalConfigRead:
+    """Get the global passthrough headers configuration.
+
+    Args:
+        db: Database session
+        _user: Authenticated user
+
+    Returns:
+        GlobalConfigRead: The current global passthrough headers configuration
+    """
+    config = db.query(GlobalConfig).first()
+    if not config:
+        config = GlobalConfig()
+    return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
+
+
+@admin_router.put("/config/passthrough-headers", response_model=GlobalConfigRead)
+async def update_global_passthrough_headers(
+    config_update: GlobalConfigUpdate,
+    db: Session = Depends(get_db),
+    _user: str = Depends(require_auth),
+) -> GlobalConfigRead:
+    """Update the global passthrough headers configuration.
+
+    Args:
+        config_update: The new configuration
+        db: Database session
+        _user: Authenticated user
+
+    Returns:
+        GlobalConfigRead: The updated configuration
+    """
+    config = db.query(GlobalConfig).first()
+    if not config:
+        config = GlobalConfig(passthrough_headers=config_update.passthrough_headers)
+        db.add(config)
+    else:
+        config.passthrough_headers = config_update.passthrough_headers
+    db.commit()
+    return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
 
 
 @admin_router.get("/servers", response_model=List[ServerRead])

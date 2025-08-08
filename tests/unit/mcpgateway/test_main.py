@@ -897,7 +897,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["content"][0]["text"] == "Tool response"
-        mock_invoke_tool.assert_called_once_with(db=ANY, name="test_tool", arguments={"param": "value"})
+        mock_invoke_tool.assert_called_once_with(db=ANY, name="test_tool", arguments={"param": "value"}, request_headers=ANY)
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     # @patch("mcpgateway.main.validate_request")

@@ -2134,8 +2134,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
             # Per the MCP spec, a ping returns an empty result.
             result = {}
         else:
+            # Get request headers
+            headers = {k.lower(): v for k, v in request.headers.items()}
             try:
-                result = await tool_service.invoke_tool(db=db, name=method, arguments=params)
+                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
