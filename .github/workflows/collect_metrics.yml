@@ -1,9 +1,9 @@
 # Collects various metrics from a GitHub repository using the GitHub API.
-# 
+#
 # Copyright 2025
 # SPDX-License-Identifier: Apache-2.0
 # Authors: Trevor Grant
-# 
+#
 # Metrics include:
 # - Standard repository attributes (stars, forks, issues, etc.)
 # - New forks and contributors in the last period
@@ -12,95 +12,95 @@
 # - Comments on issues and pull requests in the last period
 # - Discussions metrics via GraphQL
 # Outputs the collected metrics to a Parquet file.
-# 
+#
 # This is uploaded to the GitHub AI Alliance repository for metrics collection.
 
-name: Collect Repo Metrics and Upload to S3  
-  
-on:  
-  workflow_dispatch: # Allows manual triggering  
-  schedule:  
-    - cron: '0 0 * * *' # Run daily at 5 AM UTC  
-  
-jobs:  
-  collect-and-upload-metrics:  
-    runs-on: ubuntu-latest  
-    permissions:  
-      contents: read  # Read repo content (needed for repo object)  
-  
-    steps:  
-      - name: Checkout code  
-        uses: actions/checkout@v4  
-  
-      - name: Set up Python  
-        uses: actions/setup-python@v5  
-        with:  
-          python-version: '3.10' # Or your preferred version  
-  
-      - name: Install dependencies  
-        run: pip install PyGithub pandas pyarrow  
-  
-      # --- Configure AWS Credentials ---  
-      # Recommended: Use OpenID Connect (OIDC) if your AWS setup supports it.  
-      # Requires setting up a trust relationship in AWS IAM.  
-      # See: https://github.com/aws-actions/configure-aws-credentials#configure-aws-credentials-action-for-github-actions  
-      # - name: Configure AWS Credentials (OIDC)  
-      #   uses: aws-actions/configure-aws-credentials@v4  
-      #   with:  
-      #     role-to-assume: arn:aws:iam::ACCOUNT-ID-WITHOUT-HYPHENS:role/YOUR_GITHUB_ACTIONS_ROLE # Replace with your IAM role ARN  
-      #     aws-region: ${{ secrets.AWS_REGION }} # e.g., us-east-1  
-  
-      # Alternative: Use Access Keys (Store as GitHub Secrets)  
-      - name: Configure AWS Credentials (Access Keys)  
-        uses: aws-actions/configure-aws-credentials@v4  
-        with:  
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}  
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}  
-          aws-region: ${{ secrets.AWS_REGION }} # e.g., us-east-1  
-  
-      # --- Run Python Script to Generate Parquet ---  
-      - name: Run metrics collection script  
-        id: collect_metrics # Give the step an id to potentially reference output later if needed  
-        env:  
-          GITHUB_TOKEN: ${{ secrets.SPECIAL_GH_TOKEN }} # Use the default action token  
-          # GITHUB_REPOSITORY is automatically set by the runner  
-        run: python .github/scripts/collect_metrics.py # Assuming your script is named this  
-  
-      # --- Upload Parquet File to S3 ---  
-      - name: Upload Parquet to S3  
-        env:  
-          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}  
-          # GITHUB_REPOSITORY format is 'owner/repo'  
-          SOURCE_FILE_PATTERN: "github_metrics_*.parquet" # Pattern from the python script  
-          S3_DESTINATION_FILENAME: "blob.parquet"  
-        run: |  
-          # Check if source file exists  
-          if ! ls $SOURCE_FILE_PATTERN 1> /dev/null 2>&1; then  
-            echo "Error: No parquet file matching '$SOURCE_FILE_PATTERN' found."  
-            exit 1  
-          fi  
-          # Assume only one file matches the pattern from the script run  
-          SOURCE_FILE=$(ls $SOURCE_FILE_PATTERN)  
-  
-          # Format repository name for S3 path (replace '/' with '-')  
-          # Adjust sed expression if your repo names need different handling  
-          REPOSITORY_NAME_FORMATTED=$(echo "${{ github.repository }}" | sed 's/\//-/g')  
-  
-          # Get current date in YYYY-MM-DD format  
-          CURRENT_DATE=$(date +%Y-%m-%d)  
-  
-          # Construct the S3 destination path  
-          S3_PATH="s3://${AWS_S3_BUCKET}/service=github/repository=${REPOSITORY_NAME_FORMATTED}/date=${CURRENT_DATE}/${S3_DESTINATION_FILENAME}"  
-  
-          echo "Uploading '$SOURCE_FILE' to '$S3_PATH'..."  
-          aws s3 cp "$SOURCE_FILE" "$S3_PATH"  
-          echo "Upload to S3 complete."  
-  
-      # --- Optional: Upload Parquet artifact to GitHub Actions ---  
-      # Useful for debugging or if you need the file directly from the Actions run  
-      - name: Upload Parquet artifact (Optional)  
-        if: always() # Run even if S3 upload fails, for debugging  
-        uses: actions/upload-artifact@v4  
-        with:  
-          name: github-metrics-parquet  
+name: Collect Repo Metrics and Upload to S3
+
+on:
+  workflow_dispatch: # Allows manual triggering
+  schedule:
+    - cron: '0 0 * * *' # Run daily at 5 AM UTC
+
+jobs:
+  collect-and-upload-metrics:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # Read repo content (needed for repo object)
+    if: github.repository == 'IBM/mcp-context-forge'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10' # Or your preferred version
+
+      - name: Install dependencies
+        run: pip install PyGithub pandas pyarrow
+
+      # --- Configure AWS Credentials ---
+      # Recommended: Use OpenID Connect (OIDC) if your AWS setup supports it.
+      # Requires setting up a trust relationship in AWS IAM.
+      # See: https://github.com/aws-actions/configure-aws-credentials#configure-aws-credentials-action-for-github-actions
+      # - name: Configure AWS Credentials (OIDC)
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: arn:aws:iam::ACCOUNT-ID-WITHOUT-HYPHENS:role/YOUR_GITHUB_ACTIONS_ROLE # Replace with your IAM role ARN
+      #     aws-region: ${{ secrets.AWS_REGION }} # e.g., us-east-1
+
+      # Alternative: Use Access Keys (Store as GitHub Secrets)
+      - name: Configure AWS Credentials (Access Keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }} # e.g., us-east-1
+
+      # --- Run Python Script to Generate Parquet ---
+      - name: Run metrics collection script
+        id: collect_metrics # Give the step an id to potentially reference output later if needed
+        env:
+          GITHUB_TOKEN: ${{ secrets.SPECIAL_GH_TOKEN }} # Use the default action token
+          # GITHUB_REPOSITORY is automatically set by the runner
+        run: python .github/tools/collect_metrics.py # Assuming your script is named this
+
+      # --- Upload Parquet File to S3 ---
+      - name: Upload Parquet to S3
+        env:
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          # GITHUB_REPOSITORY format is 'owner/repo'
+          SOURCE_FILE_PATTERN: "github_metrics_*.parquet" # Pattern from the python script
+          S3_DESTINATION_FILENAME: "blob.parquet"
+        run: |
+          # Check if source file exists
+          if ! ls $SOURCE_FILE_PATTERN 1> /dev/null 2>&1; then
+            echo "Error: No parquet file matching '$SOURCE_FILE_PATTERN' found."
+            exit 1
+          fi
+          # Assume only one file matches the pattern from the script run
+          SOURCE_FILE=$(ls $SOURCE_FILE_PATTERN)
+
+          # Format repository name for S3 path (replace '/' with '-')
+          # Adjust sed expression if your repo names need different handling
+          REPOSITORY_NAME_FORMATTED=$(echo "${{ github.repository }}" | sed 's/\//-/g')
+
+          # Get current date in YYYY-MM-DD format
+          CURRENT_DATE=$(date +%Y-%m-%d)
+
+          # Construct the S3 destination path
+          S3_PATH="s3://${AWS_S3_BUCKET}/service=github/repository=${REPOSITORY_NAME_FORMATTED}/date=${CURRENT_DATE}/${S3_DESTINATION_FILENAME}"
+
+          echo "Uploading '$SOURCE_FILE' to '$S3_PATH'..."
+          aws s3 cp "$SOURCE_FILE" "$S3_PATH"
+          echo "Upload to S3 complete."
+
+      # --- Optional: Upload Parquet artifact to GitHub Actions ---
+      # Useful for debugging or if you need the file directly from the Actions run
+      - name: Upload Parquet artifact (Optional)
+        if: always() # Run even if S3 upload fails, for debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-metrics-parquet
           path: github_metrics_*.parquet # Upload the generated parquet file
