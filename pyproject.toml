@@ -68,9 +68,7 @@ dependencies = [
     "sse-starlette>=3.0.2",
     "starlette>=0.47.2",
     "uvicorn>=0.35.0",
-    "zeroconf>=0.147.0",
-    "aiohttp>=3.12.14",
-    "websockets>=15.0.1"
+    "zeroconf>=0.147.0"
 ]
 
 # ----------------------------------------------------------------
@@ -103,6 +101,7 @@ asyncpg = [
 
 # Optional dependency groups (development)
 dev = [
+    "aiohttp>=3.12.14",
     "argparse-manpage>=4.6",
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
@@ -163,6 +162,7 @@ dev = [
     "uv>=0.8.4",
     "vulture>=2.14",
     "yamllint>=1.37.1",
+    "websockets>=15.0.1"
 ]
 
 # UI Testing
