@@ -20,6 +20,7 @@ Environment variables:
 - AUTH_REQUIRED: Require authentication (default: True)
 - TRANSPORT_TYPE: Transport mechanisms (default: "all")
 - FEDERATION_ENABLED: Enable gateway federation (default: True)
+- DOCS_ALLOW_BASIC_AUTH: Allow basic auth for docs (default: False)
 - FEDERATION_DISCOVERY: Enable auto-discovery (default: False)
 - FEDERATION_PEERS: List of peer gateway URLs (default: [])
 - RESOURCE_CACHE_SIZE: Max cached resources (default: 1000)
@@ -60,7 +61,7 @@ from fastapi import HTTPException
 import jq
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logging.basicConfig(
@@ -98,6 +99,7 @@ class Settings(BaseSettings):
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
     port: int = 4444
+    docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
     templates_dir: Path = Path("mcpgateway/templates")
     # Absolute paths resolved at import-time (still override-able via env vars)
@@ -115,6 +117,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
+
+    require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
 
     #  Encryption key phrase for auth storage
     auth_encryption_secret: str = "my-test-salt"
@@ -278,6 +282,9 @@ class Settings(BaseSettings):
     health_check_timeout: int = 10  # seconds
     unhealthy_threshold: int = 5  # after this many failures, mark as Offline
 
+    # Validation Gateway URL
+    gateway_validation_timeout: int = 5  # seconds
+
     filelock_name: str = "gateway_service_leader.lock"
 
     # Default Roots
@@ -303,6 +310,10 @@ class Settings(BaseSettings):
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
+
+    # Core plugin settings
+    plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
+    plugin_config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file")
 
     # Development
     dev_mode: bool = False
@@ -494,7 +505,8 @@ class Settings(BaseSettings):
         r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
     )
 
-    validation_dangerous_js_pattern: str = r"javascript:|vbscript:|on\w+\s*=|data:.*script"
+    validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
+
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
@@ -503,6 +515,7 @@ class Settings(BaseSettings):
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
     validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # MCP tool naming
+    validation_tool_method_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_\./-]*$"
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255
@@ -512,6 +525,8 @@ class Settings(BaseSettings):
     validation_max_json_depth: int = 10
     validation_max_url_length: int = 2048
     validation_max_rpc_param_size: int = 262144  # 256KB
+
+    validation_max_method_length: int = 128
 
     # Allowed MIME types
     validation_allowed_mime_types: List[str] = [
@@ -532,6 +547,9 @@ class Settings(BaseSettings):
 
     # Rate limiting
     validation_max_requests_per_minute: int = 60
+
+    # Masking value for all sensitive data
+    masked_auth_value: str = "*****"
 
 
 def extract_using_jq(data, jq_filter=""):

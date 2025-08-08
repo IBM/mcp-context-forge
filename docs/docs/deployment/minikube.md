@@ -162,20 +162,20 @@ This applies the Kubernetes manifests. Alternative manual step:
 
 ```bash
 # PostgreSQL
-kubectl apply -f k8s/postgres-config.yaml
-kubectl apply -f k8s/postgres-pv.yaml
-kubectl apply -f k8s/postgres-pvc.yaml
-kubectl apply -f k8s/postgres-deployment.yaml
-kubectl apply -f k8s/postgres-service.yaml
+kubectl apply -f deployment/k8s/postgres-config.yaml
+kubectl apply -f deployment/k8s/postgres-pv.yaml
+kubectl apply -f deployment/k8s/postgres-pvc.yaml
+kubectl apply -f deployment/k8s/postgres-deployment.yaml
+kubectl apply -f deployment/k8s/postgres-service.yaml
 
 # Redis
-kubectl apply -f k8s/redis-deployment.yaml
-kubectl apply -f k8s/redis-service.yaml
+kubectl apply -f deployment/k8s/redis-deployment.yaml
+kubectl apply -f deployment/k8s/redis-service.yaml
 
 # MCP Gateway
-kubectl apply -f k8s/mcp-context-forge-deployment.yaml
-kubectl apply -f k8s/mcp-context-forge-service.yaml
-kubectl apply -f k8s/mcp-context-forge-ingress.yaml
+kubectl apply -f deployment/k8s/mcp-context-forge-deployment.yaml
+kubectl apply -f deployment/k8s/mcp-context-forge-service.yaml
+kubectl apply -f deployment/k8s/mcp-context-forge-ingress.yaml
 ```
 
 If you've enabled `ingress-dns`, set the Ingress `host:` to `gateway.local`. Otherwise, omit the `host:` and access via NodePort.

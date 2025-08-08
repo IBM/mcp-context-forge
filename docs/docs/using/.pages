@@ -5,3 +5,4 @@ nav:
   - Clients: clients
   - Agents: agents
   - Servers: servers
+  - Plugins: plugins

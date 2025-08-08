@@ -27,19 +27,22 @@ TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
 # Project-wide clean-up targets
 # -----------------------------------------------------------------------------
 DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .pytype \
-                 dist build site .eggs *.egg-info .cache htmlcov certs \
-                 $(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
-                 node_modules
+	dist build site .eggs *.egg-info .cache htmlcov certs \
+	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
+	node_modules
 
 FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
-                  $(PROJECT_NAME).sbom.json \
-                  snakefood.dot packages.dot classes.dot \
-                  $(DOCS_DIR)/pstats.png \
-                  $(DOCS_DIR)/docs/test/sbom.md \
-                  $(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
-				  $(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
-                  *.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
-				  .depsorter_cache.json .depupdate.*
+	$(PROJECT_NAME).sbom.json \
+	snakefood.dot packages.dot classes.dot \
+	$(DOCS_DIR)/pstats.png \
+	$(DOCS_DIR)/docs/test/sbom.md \
+	$(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
+	$(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
+	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
+	.depsorter_cache.json .depupdate.* \
+	grype-results.sarif devskim-results.sarif \
+	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb \
+	*.log mcpgateway.sbom.xml
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
@@ -186,16 +189,18 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 .PHONY: clean
 clean:
 	@echo "🧹  Cleaning workspace..."
-	@# Remove matching directories
-	@for dir in $(DIRS_TO_CLEAN); do \
-		find . -type d -name "$$dir" -exec rm -rf {} +; \
-	done
-	@# Remove listed files
-	@rm -f $(FILES_TO_CLEAN)
-	@# Delete Python bytecode
-	@find . -name '*.py[cod]' -delete
-	@# Delete coverage annotated files
-	@find . -name '*.py,cover' -delete
+	@bash -eu -o pipefail -c '\
+		# Remove matching directories \
+		for dir in $(DIRS_TO_CLEAN); do \
+			find . -type d -name "$$dir" -exec rm -rf {} +; \
+		done; \
+		# Remove listed files \
+		rm -f $(FILES_TO_CLEAN); \
+		# Delete Python bytecode \
+		find . -name "*.py[cod]" -delete; \
+		# Delete coverage annotated files \
+		find . -name "*.py,cover" -delete; \
+	'
 	@echo "✅  Clean complete."
 
 
@@ -219,8 +224,10 @@ clean:
 ## --- Automated checks --------------------------------------------------------
 smoketest:
 	@echo "🚀 Running smoketest..."
-	@./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
-	@echo "✅ Smoketest passed!"
+	@bash -c '\
+		./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }; \
+		echo "✅ Smoketest passed!" \
+	'
 
 test:
 	@echo "🧪 Running tests..."
@@ -265,6 +272,7 @@ htmlcov:
 pytest-examples:
 	@echo "🧪 Testing README examples..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@test -f test_readme.py || { echo "⚠️  test_readme.py not found - skipping"; exit 0; }
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q pytest pytest-examples && \
 		pytest -v test_readme.py"
@@ -401,6 +409,14 @@ images:
 # 🔍 LINTING & STATIC ANALYSIS
 # =============================================================================
 # help: 🔍 LINTING & STATIC ANALYSIS
+# help: TARGET=<path>        - Override default target (mcpgateway)
+# help: Usage Examples:
+# help:   make lint                    - Run all linters on default targets (mcpgateway)
+# help:   make lint TARGET=myfile.py   - Run file-aware linters on specific file
+# help:   make lint myfile.py          - Run file-aware linters on a file (shortcut)
+# help:   make lint-quick myfile.py    - Fast linters only (ruff, black, isort)
+# help:   make lint-fix myfile.py      - Auto-fix formatting issues
+# help:   make lint-changed            - Lint only git-changed files
 # help: lint                 - Run the full linting suite (see targets below)
 # help: black                - Reformat code with black
 # help: autoflake            - Remove unused imports / variables with autoflake
@@ -435,59 +451,239 @@ images:
 # help: unimport             - Unused import detection
 # help: vulture              - Dead code detection
 
-# List of individual lint targets; lint loops over these
-LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
-           ruff pyright radon pyroma pyrefly spellcheck importchecker \
-		   pytype check-manifest markdownlint vulture unimport
+# Allow specific file/directory targeting
+DEFAULT_TARGETS := mcpgateway
+TARGET ?= $(DEFAULT_TARGETS)
 
-.PHONY: lint $(LINTERS) black fawltydeps wily depend snakeviz pstats \
-        spellcheck-sort tox pytype sbom
+# Add dummy targets for file arguments passed to lint commands only
+# This prevents make from trying to build file targets when they're used as arguments
+ifneq ($(filter lint lint-quick lint-fix lint-smart,$(MAKECMDGOALS)),)
+  # Get all arguments after the first goal
+  LINT_FILE_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  # Create dummy targets for each file argument
+  $(LINT_FILE_ARGS):
+	@:
+endif
+
+# List of individual lint targets
+LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle pre-commit \
+	ruff ty pyright radon pyroma pyrefly spellcheck importchecker \
+		pytype check-manifest markdownlint vulture unimport
+
+# Linters that work well with individual files/directories
+FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
+	pycodestyle ruff pyright vulture unimport markdownlint
+
+.PHONY: lint $(LINTERS) black autoflake lint-py lint-yaml lint-json lint-md lint-strict \
+	lint-count-errors lint-report lint-changed lint-staged lint-commit \
+	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
+	lint-complexity lint-watch lint-watch-quick \
+	lint-install-hooks lint-quick lint-fix lint-smart lint-target lint-all
 
 
 ## --------------------------------------------------------------------------- ##
-##  Master target
+##  Main target with smart file/directory detection
 ## --------------------------------------------------------------------------- ##
 lint:
-	@echo "🔍  Running full lint suite..."
+	@# Handle multiple file arguments
+	@file_args="$(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))"; \
+	if [ -n "$$file_args" ]; then \
+		echo "🎯 Running linters on specified files: $$file_args"; \
+		for file in $$file_args; do \
+			if [ ! -e "$$file" ]; then \
+				echo "❌ File/directory not found: $$file"; \
+				exit 1; \
+			fi; \
+			echo "🔍 Linting: $$file"; \
+			$(MAKE) --no-print-directory lint-smart "$$file"; \
+		done; \
+	else \
+		echo "🔍 Running full lint suite on: $(TARGET)"; \
+		$(MAKE) --no-print-directory lint-all TARGET="$(TARGET)"; \
+	fi
+
+
+.PHONY: lint-target
+lint-target:
+	@# Check if target exists
+	@if [ ! -e "$(TARGET)" ]; then \
+		echo "❌ File/directory not found: $(TARGET)"; \
+		exit 1; \
+	fi
+	@# Run only file-aware linters
+	@echo "🔍 Running file-aware linters on: $(TARGET)"
+	@set -e; for t in $(FILE_AWARE_LINTERS); do \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "- $$t on $(TARGET)"; \
+		$(MAKE) --no-print-directory $$t TARGET="$(TARGET)" || true; \
+	done
+
+.PHONY: lint-all
+lint-all:
 	@set -e; for t in $(LINTERS); do \
-	    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	    echo "- $$t"; \
-	    $(MAKE) $$t || true; \
+		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+		echo "- $$t"; \
+		$(MAKE) --no-print-directory $$t TARGET="$(TARGET)" || true; \
 	done
 
 ## --------------------------------------------------------------------------- ##
-##  Individual targets (alphabetical)
+##  Convenience targets
+## --------------------------------------------------------------------------- ##
+
+# Quick lint - only fast linters (ruff, black, isort)
+.PHONY: lint-quick
+lint-quick:
+	@# Handle file arguments
+	@target_file="$(word 2,$(MAKECMDGOALS))"; \
+	if [ -n "$$target_file" ] && [ "$$target_file" != "" ]; then \
+		actual_target="$$target_file"; \
+	else \
+		actual_target="$(TARGET)"; \
+	fi; \
+	echo "⚡ Quick lint of $$actual_target (ruff + black + isort)..."; \
+	$(MAKE) --no-print-directory ruff-check TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory black-check TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory isort-check TARGET="$$actual_target"
+
+# Fix formatting issues
+.PHONY: lint-fix
+lint-fix:
+	@# Handle file arguments
+	@target_file="$(word 2,$(MAKECMDGOALS))"; \
+	if [ -n "$$target_file" ] && [ "$$target_file" != "" ]; then \
+		actual_target="$$target_file"; \
+	else \
+		actual_target="$(TARGET)"; \
+	fi; \
+	for target in $$(echo $$actual_target); do \
+		if [ ! -e "$$target" ]; then \
+			echo "❌ File/directory not found: $$target"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "🔧 Fixing lint issues in $$actual_target..."; \
+	$(MAKE) --no-print-directory black TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory isort TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory ruff-fix TARGET="$$actual_target"
+
+# Smart linting based on file extension
+.PHONY: lint-smart
+lint-smart:
+	@# Handle arguments passed to this target - FIXED VERSION
+	@target_file="$(word 2,$(MAKECMDGOALS))"; \
+	if [ -n "$$target_file" ] && [ "$$target_file" != "" ]; then \
+		actual_target="$$target_file"; \
+	else \
+		actual_target="mcpgateway"; \
+	fi; \
+	if [ ! -e "$$actual_target" ]; then \
+		echo "❌ File/directory not found: $$actual_target"; \
+		exit 1; \
+	fi; \
+	case "$$actual_target" in \
+		*.py) \
+			echo "🐍 Python file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory lint-target TARGET="$$actual_target" ;; \
+		*.yaml|*.yml) \
+			echo "📄 YAML file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory yamllint TARGET="$$actual_target" ;; \
+		*.json) \
+			echo "📄 JSON file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory jsonlint TARGET="$$actual_target" ;; \
+		*.md) \
+			echo "📝 Markdown file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory markdownlint TARGET="$$actual_target" ;; \
+		*.toml) \
+			echo "📄 TOML file detected: $$actual_target"; \
+			$(MAKE) --no-print-directory tomllint TARGET="$$actual_target" ;; \
+		*.sh) \
+			echo "🐚 Shell script detected: $$actual_target"; \
+			$(MAKE) --no-print-directory shell-lint TARGET="$$actual_target" ;; \
+		Makefile|*.mk) \
+			echo "🔨 Makefile detected: $$actual_target"; \
+			echo "ℹ️  Makefile linting not supported, skipping Python linters"; \
+			echo "💡 Consider using shellcheck for shell portions if needed" ;; \
+		*) \
+			if [ -d "$$actual_target" ]; then \
+				echo "📁 Directory detected: $$actual_target"; \
+				$(MAKE) --no-print-directory lint-target TARGET="$$actual_target"; \
+			else \
+				echo "❓ Unknown file type, running Python linters"; \
+				$(MAKE) --no-print-directory lint-target TARGET="$$actual_target"; \
+			fi ;; \
+	esac
+
+	fi
+
+## --------------------------------------------------------------------------- ##
+##  Individual targets (alphabetical, updated to use TARGET)
 ## --------------------------------------------------------------------------- ##
 autoflake:                          ## 🧹  Strip unused imports / vars
+	@echo "🧹 autoflake $(TARGET)..."
 	@$(VENV_DIR)/bin/autoflake --in-place --remove-all-unused-imports \
-	          --remove-unused-variables -r mcpgateway tests
+		--remove-unused-variables -r $(TARGET)
 
 black:                              ## 🎨  Reformat code with black
-	@echo "🎨  black ..." && $(VENV_DIR)/bin/black -l 200 mcpgateway tests
+	@echo "🎨  black $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 $(TARGET)
+
+# Black check mode (separate target)
+black-check:
+	@echo "🎨  black --check $(TARGET)..." && $(VENV_DIR)/bin/black -l 200 --check --diff $(TARGET)
 
 isort:                              ## 🔀  Sort imports
-	@echo "🔀  isort ..." && $(VENV_DIR)/bin/isort .
+	@echo "🔀  isort $(TARGET)..." && $(VENV_DIR)/bin/isort $(TARGET)
+
+# Isort check mode (separate target)
+isort-check:
+	@echo "🔀  isort --check $(TARGET)..." && $(VENV_DIR)/bin/isort --check-only --diff $(TARGET)
 
 flake8:                             ## 🐍  flake8 checks
-	@$(VENV_DIR)/bin/flake8 mcpgateway
+	@echo "🐍 flake8 $(TARGET)..." && $(VENV_DIR)/bin/flake8 $(TARGET)
 
 pylint:                             ## 🐛  pylint checks
-	@$(VENV_DIR)/bin/pylint mcpgateway
+	@echo "🐛 pylint $(TARGET)..." && $(VENV_DIR)/bin/pylint $(TARGET)
 
 markdownlint:					    ## 📖  Markdown linting
-	@$(VENV_DIR)/bin/markdownlint -c .markdownlint.json .
+	@# Install markdownlint-cli2 if not present
+	@if ! command -v markdownlint-cli2 >/dev/null 2>&1; then \
+		echo "📦 Installing markdownlint-cli2..."; \
+		if command -v npm >/dev/null 2>&1; then \
+			npm install -g markdownlint-cli2; \
+		else \
+			echo "❌ npm not found. Please install Node.js/npm first."; \
+			echo "💡 Install with:"; \
+			echo "   • macOS: brew install node"; \
+			echo "   • Linux: sudo apt-get install nodejs npm"; \
+			exit 1; \
+		fi; \
+	fi
+	@if [ -f "$(TARGET)" ] && echo "$(TARGET)" | grep -qE '\.(md|markdown)$$'; then \
+		echo "📖 markdownlint $(TARGET)..."; \
+		markdownlint-cli2 "$(TARGET)" || true; \
+	elif [ -d "$(TARGET)" ]; then \
+		echo "📖 markdownlint $(TARGET)..."; \
+		markdownlint-cli2 "$(TARGET)/**/*.md" || true; \
+	else \
+		echo "📖 markdownlint (default)..."; \
+		markdownlint-cli2 "**/*.md" || true; \
+	fi
 
 mypy:                               ## 🏷️  mypy type-checking
-	@$(VENV_DIR)/bin/mypy mcpgateway
+	@echo "🏷️ mypy $(TARGET)..." && $(VENV_DIR)/bin/mypy $(TARGET)
 
 bandit:                             ## 🛡️  bandit security scan
-	@$(VENV_DIR)/bin/bandit -r mcpgateway
+	@echo "🛡️ bandit $(TARGET)..."
+	@if [ -d "$(TARGET)" ]; then \
+		$(VENV_DIR)/bin/bandit -r $(TARGET); \
+	else \
+		$(VENV_DIR)/bin/bandit $(TARGET); \
+	fi
 
 pydocstyle:                         ## 📚  Docstring style
-	@$(VENV_DIR)/bin/pydocstyle mcpgateway
+	@echo "📚 pydocstyle $(TARGET)..." && $(VENV_DIR)/bin/pydocstyle $(TARGET)
 
 pycodestyle:                        ## 📝  Simple PEP-8 checker
-	@$(VENV_DIR)/bin/pycodestyle mcpgateway --max-line-length=200
+	@echo "📝 pycodestyle $(TARGET)..." && $(VENV_DIR)/bin/pycodestyle $(TARGET) --max-line-length=200
 
 pre-commit:                         ## 🪄  Run pre-commit hooks
 	@echo "🪄  Running pre-commit hooks..."
@@ -499,19 +695,29 @@ pre-commit:                         ## 🪄  Run pre-commit hooks
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pre-commit run --all-files --show-diff-on-failure"
 
 ruff:                               ## ⚡  Ruff lint + format
-	@$(VENV_DIR)/bin/ruff check mcpgateway && $(VENV_DIR)/bin/ruff format mcpgateway tests
+	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET) && $(VENV_DIR)/bin/ruff format $(TARGET)
+
+# Separate ruff targets for different modes
+ruff-check:
+	@echo "⚡ ruff check $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
+
+ruff-fix:
+	@echo "⚡ ruff check --fix $(TARGET)..." && $(VENV_DIR)/bin/ruff check --fix $(TARGET)
+
+ruff-format:
+	@echo "⚡ ruff format $(TARGET)..." && $(VENV_DIR)/bin/ruff format $(TARGET)
 
 ty:                                 ## ⚡  Ty type checker
-	@$(VENV_DIR)/bin/ty check mcpgateway tests
+	@echo "⚡ ty $(TARGET)..." && $(VENV_DIR)/bin/ty check $(TARGET)
 
 pyright:                            ## 🏷️  Pyright type-checking
-	@$(VENV_DIR)/bin/pyright mcpgateway tests
+	@echo "🏷️ pyright $(TARGET)..." && $(VENV_DIR)/bin/pyright $(TARGET)
 
 radon:                              ## 📈  Complexity / MI metrics
-	@$(VENV_DIR)/bin/radon mi -s mcpgateway tests && \
-	$(VENV_DIR)/bin/radon cc -s mcpgateway tests && \
-	$(VENV_DIR)/bin/radon hal mcpgateway tests && \
-	$(VENV_DIR)/bin/radon raw -s mcpgateway tests
+	@$(VENV_DIR)/bin/radon mi -s $(TARGET) && \
+	$(VENV_DIR)/bin/radon cc -s $(TARGET) && \
+	$(VENV_DIR)/bin/radon hal $(TARGET) && \
+	$(VENV_DIR)/bin/radon raw -s $(TARGET)
 
 pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
@@ -539,7 +745,7 @@ pyre:                               ## 🧠  Facebook Pyre analysis
 	@$(VENV_DIR)/bin/pyre
 
 pyrefly:                            ## 🧠  Facebook Pyrefly analysis (faster, rust)
-	@$(VENV_DIR)/bin/pyrefly check mcpgateway
+	@echo "🧠 pyrefly $(TARGET)..." && $(VENV_DIR)/bin/pyrefly check $(TARGET)
 
 depend:                             ## 📦  List dependencies
 	@echo "📦  List dependencies"
@@ -613,17 +819,388 @@ sbom:								## 🛡️  Generate SBOM & security report
 
 pytype:								## 🧠  Pytype static type analysis
 	@echo "🧠  Pytype analysis..."
-	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto mcpgateway tests
+	@$(VENV_DIR)/bin/pytype -V 3.12 -j auto $(TARGET)
 
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
 
 unimport:                           ## 📦  Unused import detection
-	@echo "📦  unimport …" && $(VENV_DIR)/bin/unimport --check --diff mcpgateway
+	@echo "📦  unimport $(TARGET)…" && $(VENV_DIR)/bin/unimport --check --diff $(TARGET)
 
 vulture:                            ## 🧹  Dead code detection
-	@echo "🧹  vulture …" && $(VENV_DIR)/bin/vulture mcpgateway --min-confidence 80
+	@echo "🧹  vulture $(TARGET) …" && $(VENV_DIR)/bin/vulture $(TARGET) --min-confidence 80
+
+# Shell script linting for individual files
+shell-lint-file:                    ## 🐚  Lint shell script
+	@if [ -f "$(TARGET)" ]; then \
+		echo "🐚 Linting shell script: $(TARGET)"; \
+		if command -v shellcheck >/dev/null 2>&1; then \
+			shellcheck "$(TARGET)" || true; \
+		else \
+			echo "⚠️  shellcheck not installed - skipping"; \
+		fi; \
+		if command -v shfmt >/dev/null 2>&1; then \
+			shfmt -d -i 4 -ci "$(TARGET)" || true; \
+		elif [ -f "$(HOME)/go/bin/shfmt" ]; then \
+			$(HOME)/go/bin/shfmt -d -i 4 -ci "$(TARGET)" || true; \
+		else \
+			echo "⚠️  shfmt not installed - skipping"; \
+		fi; \
+	else \
+		echo "❌ $(TARGET) is not a file"; \
+	fi
+
+# -----------------------------------------------------------------------------
+# 🔍 LINT CHANGED FILES (GIT INTEGRATION)
+# -----------------------------------------------------------------------------
+# help: lint-changed         - Lint only git-changed files
+# help: lint-staged          - Lint only git-staged files
+# help: lint-commit          - Lint files in specific commit (use COMMIT=hash)
+.PHONY: lint-changed lint-staged lint-commit
+
+lint-changed:							## 🔍 Lint only changed files (git)
+	@echo "🔍 Linting changed files..."
+	@changed_files=$$(git diff --name-only --diff-filter=ACM HEAD 2>/dev/null || true); \
+	if [ -z "$$changed_files" ]; then \
+		echo "ℹ️  No changed files to lint"; \
+	else \
+		echo "Changed files:"; \
+		echo "$$changed_files" | sed 's/^/  - /'; \
+		echo ""; \
+		for file in $$changed_files; do \
+			if [ -e "$$file" ]; then \
+				echo "🎯 Linting: $$file"; \
+				$(MAKE) --no-print-directory lint-smart "$$file"; \
+			fi; \
+		done; \
+	fi
+
+lint-staged:							## 🔍 Lint only staged files (git)
+	@echo "🔍 Linting staged files..."
+	@staged_files=$$(git diff --name-only --cached --diff-filter=ACM 2>/dev/null || true); \
+	if [ -z "$$staged_files" ]; then \
+		echo "ℹ️  No staged files to lint"; \
+	else \
+		echo "Staged files:"; \
+		echo "$$staged_files" | sed 's/^/  - /'; \
+		echo ""; \
+		for file in $$staged_files; do \
+			if [ -e "$$file" ]; then \
+				echo "🎯 Linting: $$file"; \
+				$(MAKE) --no-print-directory lint-smart "$$file"; \
+			fi; \
+		done; \
+	fi
+
+# Lint files in specific commit (use COMMIT=hash)
+COMMIT ?= HEAD
+lint-commit:							## 🔍 Lint files changed in commit
+	@echo "🔍 Linting files changed in commit $(COMMIT)..."
+	@commit_files=$$(git diff-tree --no-commit-id --name-only -r $(COMMIT) 2>/dev/null || true); \
+	if [ -z "$$commit_files" ]; then \
+		echo "ℹ️  No files found in commit $(COMMIT)"; \
+	else \
+		echo "Files in commit $(COMMIT):"; \
+		echo "$$commit_files" | sed 's/^/  - /'; \
+		echo ""; \
+		for file in $$commit_files; do \
+			if [ -e "$$file" ]; then \
+				echo "🎯 Linting: $$file"; \
+				$(MAKE) --no-print-directory lint-smart "$$file"; \
+			fi; \
+		done; \
+	fi
+
+# -----------------------------------------------------------------------------
+# 👁️ WATCH MODE - LINT ON FILE CHANGES
+# -----------------------------------------------------------------------------
+# help: lint-watch           - Watch files for changes and auto-lint
+# help: lint-watch-quick     - Watch files with quick linting only
+.PHONY: lint-watch lint-watch-quick install-watchdog
+
+install-watchdog:						## 📦 Install watchdog for file watching
+	@echo "📦 Installing watchdog for file watching..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q watchdog"
+
+# Watch mode - lint on file changes
+lint-watch: install-watchdog			## 👁️ Watch for changes and auto-lint
+	@echo "👁️ Watching $(TARGET) for changes (Ctrl+C to stop)..."
+	@echo "💡 Will run 'make lint-smart' on changed Python files"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/watchmedo shell-command \
+			--patterns='*.py;*.yaml;*.yml;*.json;*.md;*.toml' \
+			--recursive \
+			--command='echo \"📝 File changed: \$${watch_src_path}\" && make --no-print-directory lint-smart \"\$${watch_src_path}\"' \
+			$(TARGET)"
+
+# Watch mode with quick linting only
+lint-watch-quick: install-watchdog		## 👁️ Watch for changes and quick-lint
+	@echo "👁️ Quick-watching $(TARGET) for changes (Ctrl+C to stop)..."
+	@echo "💡 Will run 'make lint-quick' on changed Python files"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/watchmedo shell-command \
+			--patterns='*.py' \
+			--recursive \
+			--command='echo \"⚡ File changed: \$${watch_src_path}\" && make --no-print-directory lint-quick \"\$${watch_src_path}\"' \
+			$(TARGET)"
+
+# -----------------------------------------------------------------------------
+# 🚨 STRICT LINTING WITH ERROR THRESHOLDS
+# -----------------------------------------------------------------------------
+# help: lint-strict          - Lint with error threshold (fail on errors)
+# help: lint-count-errors    - Count and report linting errors
+# help: lint-report          - Generate detailed linting report
+.PHONY: lint-strict lint-count-errors lint-report
+
+# Lint with error threshold
+lint-strict:							## 🚨 Lint with strict error checking
+	@echo "🚨 Running strict linting on $(TARGET)..."
+	@mkdir -p $(DOCS_DIR)/reports
+	@$(MAKE) lint TARGET="$(TARGET)" 2>&1 | tee $(DOCS_DIR)/reports/lint-report.txt
+	@errors=$$(grep -ic "error\|failed\|❌" $(DOCS_DIR)/reports/lint-report.txt 2>/dev/null || echo 0); \
+	warnings=$$(grep -ic "warning\|warn\|⚠️" $(DOCS_DIR)/reports/lint-report.txt 2>/dev/null || echo 0); \
+	echo ""; \
+	echo "📊 Linting Summary:"; \
+	echo "   ❌ Errors: $$errors"; \
+	echo "   ⚠️  Warnings: $$warnings"; \
+	if [ $$errors -gt 0 ]; then \
+		echo ""; \
+		echo "❌ Linting failed with $$errors errors"; \
+		echo "📄 Full report: $(DOCS_DIR)/reports/lint-report.txt"; \
+		exit 1; \
+	else \
+		echo "✅ All linting checks passed!"; \
+	fi
+
+# Count errors from different linters
+lint-count-errors:						## 📊 Count linting errors by tool
+	@echo "📊 Counting linting errors by tool..."
+	@mkdir -p $(DOCS_DIR)/reports
+	@echo "# Linting Error Report - $$(date)" > $(DOCS_DIR)/reports/error-count.md
+	@echo "" >> $(DOCS_DIR)/reports/error-count.md
+	@echo "| Tool | Errors | Warnings |" >> $(DOCS_DIR)/reports/error-count.md
+	@echo "|------|--------|----------|" >> $(DOCS_DIR)/reports/error-count.md
+	@for tool in flake8 pylint mypy bandit ruff; do \
+		echo "🔍 Checking $$tool errors..."; \
+		errors=0; warnings=0; \
+		if $(MAKE) --no-print-directory $$tool TARGET="$(TARGET)" 2>&1 | tee /tmp/$$tool.log >/dev/null; then \
+			errors=$$(grep -c "error:" /tmp/$$tool.log 2>/dev/null || echo 0); \
+			warnings=$$(grep -c "warning:" /tmp/$$tool.log 2>/dev/null || echo 0); \
+		fi; \
+		echo "| $$tool | $$errors | $$warnings |" >> $(DOCS_DIR)/reports/error-count.md; \
+		rm -f /tmp/$$tool.log; \
+	done
+	@echo "" >> $(DOCS_DIR)/reports/error-count.md
+	@echo "Generated: $$(date)" >> $(DOCS_DIR)/reports/error-count.md
+	@cat $(DOCS_DIR)/reports/error-count.md
+	@echo "📄 Report saved: $(DOCS_DIR)/reports/error-count.md"
+
+# Generate comprehensive linting report
+lint-report:							## 📋 Generate comprehensive linting report
+	@echo "📋 Generating comprehensive linting report..."
+	@mkdir -p $(DOCS_DIR)/reports
+	@echo "# Comprehensive Linting Report" > $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "Generated: $$(date)" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "## Target: $(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "## Quick Summary" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@$(MAKE) --no-print-directory lint-quick TARGET="$(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md 2>&1 || true
+	@echo "" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "## Detailed Analysis" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@$(MAKE) --no-print-directory lint TARGET="$(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md 2>&1 || true
+	@echo "" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@echo "## Error Count by Tool" >> $(DOCS_DIR)/reports/full-lint-report.md
+	@$(MAKE) --no-print-directory lint-count-errors TARGET="$(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md 2>&1 || true
+	@echo "📄 Report generated: $(DOCS_DIR)/reports/full-lint-report.md"
+
+# -----------------------------------------------------------------------------
+# 🔧 PRE-COMMIT INTEGRATION
+# -----------------------------------------------------------------------------
+# help: lint-install-hooks   - Install git pre-commit hooks for linting
+# help: lint-pre-commit      - Run linting as pre-commit check
+# help: lint-pre-push        - Run linting as pre-push check
+.PHONY: lint-install-hooks lint-pre-commit lint-pre-push
+
+# Install git hooks for linting
+lint-install-hooks:						## 🔧 Install git hooks for auto-linting
+	@echo "🔧 Installing git pre-commit hooks for linting..."
+	@if [ ! -d ".git" ]; then \
+		echo "❌ Not a git repository"; \
+		exit 1; \
+	fi
+	@echo '#!/bin/bash' > .git/hooks/pre-commit
+	@echo '# Auto-generated pre-commit hook for linting' >> .git/hooks/pre-commit
+	@echo 'echo "🔍 Running pre-commit linting..."' >> .git/hooks/pre-commit
+	@echo 'make lint-pre-commit' >> .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo '#!/bin/bash' > .git/hooks/pre-push
+	@echo '# Auto-generated pre-push hook for linting' >> .git/hooks/pre-push
+	@echo 'echo "🔍 Running pre-push linting..."' >> .git/hooks/pre-push
+	@echo 'make lint-pre-push' >> .git/hooks/pre-push
+	@chmod +x .git/hooks/pre-push
+	@echo "✅ Git hooks installed:"
+	@echo "   📝 pre-commit: .git/hooks/pre-commit"
+	@echo "   📤 pre-push: .git/hooks/pre-push"
+	@echo "💡 To disable: rm .git/hooks/pre-commit .git/hooks/pre-push"
+
+# Pre-commit hook (lint staged files)
+lint-pre-commit:						## 🔍 Pre-commit linting check
+	@echo "🔍 Pre-commit linting check..."
+	@$(MAKE) --no-print-directory lint-staged
+	@echo "✅ Pre-commit linting passed!"
+
+# Pre-push hook (lint all changed files)
+lint-pre-push:							## 🔍 Pre-push linting check
+	@echo "🔍 Pre-push linting check..."
+	@$(MAKE) --no-print-directory lint-changed
+	@echo "✅ Pre-push linting passed!"
+
+# -----------------------------------------------------------------------------
+# 🎯 FILE TYPE SPECIFIC LINTING
+# -----------------------------------------------------------------------------
+# Lint only Python files in target
+lint-py:								## 🐍 Lint only Python files
+	@echo "🐍 Linting Python files in $(TARGET)..."
+	@for target in $(DEFAULT_TARGETS); do \
+		if [ -f "$$target" ] && echo "$$target" | grep -qE '\.py$$'; then \
+			echo "🎯 Linting Python file: $$target"; \
+			$(MAKE) --no-print-directory lint-target TARGET="$$target"; \
+		elif [ -d "$$target" ]; then \
+			echo "🔍 Finding Python files in: $$target"; \
+			find "$$target" -name "*.py" -type f | while read f; do \
+				echo "🎯 Linting: $$f"; \
+				$(MAKE) --no-print-directory lint-target TARGET="$$f"; \
+			done; \
+		else \
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+		exit 1; \
+	fi
+
+# Lint only YAML files
+lint-yaml:								## 📄 Lint only YAML files
+	@echo "📄 Linting YAML files in $(TARGET)..."
+	@for target in $(DEFAULT_TARGETS); do \
+		if [ -f "$$target" ] && echo "$$target" | grep -qE '\.(yaml|yml)$$'; then \
+			$(MAKE) --no-print-directory yamllint TARGET="$$target"; \
+		elif [ -d "$$target" ]; then \
+			find "$$target" -name "*.yaml" -o -name "*.yml" | while read f; do \
+				echo "🎯 Linting: $$f"; \
+				$(MAKE) --no-print-directory yamllint TARGET="$$f"; \
+			done; \
+		else \
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+	fi
+
+# Lint only JSON files
+lint-json:								## 📄 Lint only JSON files
+	@echo "📄 Linting JSON files in $(TARGET)..."
+	@for target in $(DEFAULT_TARGETS); do \
+		if [ -f "$$target" ] && echo "$$target" | grep -qE '\.json$$'; then \
+			$(MAKE) --no-print-directory jsonlint TARGET="$$target"; \
+		elif [ -d "$$target" ]; then \
+			find "$$target" -name "*.json" | while read f; do \
+				echo "🎯 Linting: $$f"; \
+				$(MAKE) --no-print-directory jsonlint TARGET="$$f"; \
+			done; \
+		else \
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+	fi
+
+# Lint only Markdown files
+lint-md:								## 📝 Lint only Markdown files
+	@echo "📝 Linting Markdown files in $(TARGET)..."
+	@for target in $(DEFAULT_TARGETS); do \
+		if [ -f "$$target" ] && echo "$$target" | grep -qE '\.(md|markdown)$$'; then \
+			$(MAKE) --no-print-directory markdownlint TARGET="$$target"; \
+		elif [ -d "$$target" ]; then \
+			find "$$target" -name "*.md" -o -name "*.markdown" | while read f; do \
+				echo "🎯 Linting: $$f"; \
+				$(MAKE) --no-print-directory markdownlint TARGET="$$f"; \
+			done; \
+		else \
+			echo "⚠️  Skipping non-existent target: $$target"; \
+		fi; \
+	done
+	fi
+
+# -----------------------------------------------------------------------------
+# 🚀 PERFORMANCE OPTIMIZATION
+# -----------------------------------------------------------------------------
+# help: lint-parallel        - Run linters in parallel for speed
+# help: lint-cache-clear     - Clear linting caches
+.PHONY: lint-parallel lint-cache-clear
+
+# Parallel linting for better performance
+lint-parallel:							## 🚀 Run linters in parallel
+	@echo "🚀 Running linters in parallel on $(TARGET)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q pytest-xdist"
+	@# Run fast linters in parallel
+	@$(MAKE) --no-print-directory ruff-check TARGET="$(TARGET)" & \
+	$(MAKE) --no-print-directory black-check TARGET="$(TARGET)" & \
+	$(MAKE) --no-print-directory isort-check TARGET="$(TARGET)" & \
+	wait
+	@echo "✅ Parallel linting completed!"
+
+# Clear linting caches
+lint-cache-clear:						## 🧹 Clear linting caches
+	@echo "🧹 Clearing linting caches..."
+	@rm -rf .mypy_cache .ruff_cache .pytest_cache __pycache__
+	@find . -name "*.pyc" -delete
+	@find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+	@echo "✅ Linting caches cleared!"
+
+# -----------------------------------------------------------------------------
+# 📊 LINTING STATISTICS AND METRICS
+# -----------------------------------------------------------------------------
+# help: lint-stats           - Show linting statistics
+# help: lint-complexity      - Analyze code complexity
+.PHONY: lint-stats lint-complexity
+
+# Show linting statistics
+lint-stats:								## 📊 Show linting statistics
+	@echo "📊 Linting statistics for $(TARGET)..."
+	@echo ""
+	@echo "📁 File counts:"
+	@if [ -d "$(TARGET)" ]; then \
+		echo "   🐍 Python files: $$(find $(TARGET) -name '*.py' | wc -l)"; \
+		echo "   📄 YAML files: $$(find $(TARGET) -name '*.yaml' -o -name '*.yml' | wc -l)"; \
+		echo "   📄 JSON files: $$(find $(TARGET) -name '*.json' | wc -l)"; \
+		echo "   📝 Markdown files: $$(find $(TARGET) -name '*.md' | wc -l)"; \
+	elif [ -f "$(TARGET)" ]; then \
+		echo "   📄 Single file: $(TARGET)"; \
+	fi
+	@echo ""
+	@echo "🔍 Running quick analysis..."
+	@$(MAKE) --no-print-directory lint-count-errors TARGET="$(TARGET)" 2>/dev/null || true
+
+# Analyze code complexity
+lint-complexity:						## 📈 Analyze code complexity
+	@echo "📈 Analyzing code complexity for $(TARGET)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q radon && \
+		echo '📊 Cyclomatic Complexity:' && \
+		$(VENV_DIR)/bin/radon cc $(TARGET) -s && \
+		echo '' && \
+		echo '📊 Maintainability Index:' && \
+		$(VENV_DIR)/bin/radon mi $(TARGET) -s"
 
 # -----------------------------------------------------------------------------
 # 📑 GRYPE SECURITY/VULNERABILITY SCANNING
@@ -709,11 +1286,14 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 # 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS
 # =============================================================================
 # help: 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
-# help: install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js & Prettier via npm
+# help: install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js, Prettier, JSHint, jscpd & markuplint via npm
 # help: nodejsscan           - Run nodejsscan for JS security vulnerabilities
 # help: lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js, nodejsscan and npm audit
+# help: jshint               - Run JSHint for additional JavaScript analysis
+# help: jscpd                - Detect copy-pasted code in JS/HTML/CSS files
+# help: markuplint           - Modern HTML linting with markuplint
 # help: format-web           - Format HTML, CSS & JS files with Prettier
-.PHONY: install-web-linters nodejsscan lint-web format-web
+.PHONY: install-web-linters nodejsscan lint-web jshint jscpd markuplint format-web
 
 install-web-linters:
 	@echo "🔧 Installing HTML/CSS/JS lint, security & formatting tools..."
@@ -726,7 +1306,10 @@ install-web-linters:
 		stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
 		eslint eslint-config-standard \
 		retire \
-		prettier
+		prettier \
+		jshint \
+		jscpd \
+		markuplint
 
 nodejsscan:
 	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
@@ -748,6 +1331,24 @@ lint-web: install-web-linters nodejsscan
 	else \
 	  echo "⚠️  Skipping npm audit: no package.json found"; \
 	fi
+
+jshint: install-web-linters
+	@echo "🔍 Running JSHint for JavaScript analysis..."
+	@if [ -f .jshintrc ]; then \
+	  echo "📋 Using .jshintrc configuration"; \
+	  npx jshint --config .jshintrc mcpgateway/static/*.js || true; \
+	else \
+	  echo "📋 No .jshintrc found, using defaults with ES11"; \
+	  npx jshint --esversion=11 mcpgateway/static/*.js || true; \
+	fi
+
+jscpd: install-web-linters
+	@echo "🔍 Detecting copy-pasted code with jscpd..."
+	@npx jscpd "mcpgateway/static/" "mcpgateway/templates/" || true
+
+markuplint: install-web-linters
+	@echo "🔍 Running markuplint for modern HTML validation..."
+	@npx markuplint mcpgateway/templates/* || true
 
 format-web: install-web-linters
 	@echo "🎨 Formatting HTML, CSS & JS with Prettier..."
@@ -812,13 +1413,13 @@ osv-scan: osv-scan-source osv-scan-image
 # help: sonar-deps-docker    - Install docker-compose + supporting tools
 # help: sonar-up-podman      - Launch SonarQube with podman-compose
 # help: sonar-up-docker      - Launch SonarQube with docker-compose
-# help: sonar-submit-docker  - Run containerised Sonar Scanner CLI with Docker
-# help: sonar-submit-podman  - Run containerised Sonar Scanner CLI with Podman
+# help: sonar-submit-docker  - Run containerized Sonar Scanner CLI with Docker
+# help: sonar-submit-podman  - Run containerized Sonar Scanner CLI with Podman
 # help: pysonar-scanner      - Run scan with Python wrapper (pysonar-scanner)
 # help: sonar-info           - How to create a token & which env vars to export
 
 .PHONY: sonar-deps-podman sonar-deps-docker sonar-up-podman sonar-up-docker \
-        sonar-submit-docker sonar-submit-podman pysonar-scanner sonar-info
+	sonar-submit-docker sonar-submit-podman pysonar-scanner sonar-info
 
 # ───── Configuration ─────────────────────────────────────────────────────
 # server image tag
@@ -859,9 +1460,9 @@ sonar-up-docker:
 	@sleep 30 && $(COMPOSE_CMD) ps | grep sonarqube || \
 	  echo "⚠️  Server may still be starting."
 
-## ─────────── Containerised Scanner CLI (Docker / Podman) ───────────────
+## ─────────── Containerized Scanner CLI (Docker / Podman) ───────────────
 sonar-submit-docker:
-	@echo "📡 Scanning code with containerised Sonar Scanner CLI (Docker) ..."
+	@echo "📡 Scanning code with containerized Sonar Scanner CLI (Docker) ..."
 	docker run --rm \
 		-e SONAR_HOST_URL="$(SONAR_HOST_URL)" \
 		$(if $(SONAR_TOKEN),-e SONAR_TOKEN="$(SONAR_TOKEN)",) \
@@ -870,7 +1471,7 @@ sonar-submit-docker:
 		-Dproject.settings=$(SONAR_PROPS)
 
 sonar-submit-podman:
-	@echo "📡 Scanning code with containerised Sonar Scanner CLI (Podman) ..."
+	@echo "📡 Scanning code with containerized Sonar Scanner CLI (Podman) ..."
 	podman run --rm \
 		--network $(SONAR_NETWORK) \
 		-e SONAR_HOST_URL="$(SONAR_HOST_URL)" \
@@ -930,7 +1531,9 @@ trivy:
 		echo "   • Or run: make trivy-install"; \
 		exit 1; \
 	}
-	@systemctl --user enable --now podman.socket 2>/dev/null || true
+	@if command -v systemctl >/dev/null 2>&1; then \
+		systemctl --user enable --now podman.socket 2>/dev/null || true; \
+	fi
 	@echo "🔎  trivy vulnerability scan..."
 	@trivy --format table --severity HIGH,CRITICAL image $(IMG)
 
@@ -1154,13 +1757,17 @@ endef
 # help: use-podman           - Switch to Podman runtime
 # help: show-runtime         - Show current container runtime
 
-.PHONY: container-build container-run container-run-host container-run-ssl container-run-ssl-host \
+.PHONY: container-build container-run container-run-ssl container-run-ssl-host \
         container-push container-info container-stop container-logs container-shell \
         container-health image-list image-clean image-retag container-check-image \
-        container-build-multi use-docker use-podman show-runtime
+        container-build-multi use-docker use-podman show-runtime print-runtime \
+        print-image container-validate-env container-check-ports container-wait-healthy
+
 
 # Containerfile to use (can be overridden)
-CONTAINER_FILE ?= Containerfile
+#CONTAINER_FILE ?= Containerfile
+CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
+
 
 # Define COMMA for the conditional Z flag
 COMMA := ,
@@ -1177,14 +1784,18 @@ container-info:
 	@echo "Container File: $(CONTAINER_FILE)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# Auto-detect platform based on uname
+PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+
 container-build:
-	@echo "🔨 Building with $(CONTAINER_RUNTIME)..."
+	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
 	$(CONTAINER_RUNTIME) build \
-		--platform=linux/amd64 \
+		--platform=$(PLATFORM) \
 		-f $(CONTAINER_FILE) \
 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 		.
 	@echo "✅ Built image: $(call get_image_name)"
+	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
 
 container-run: container-check-image
 	@echo "🚀 Running with $(CONTAINER_RUNTIME)..."
@@ -1264,9 +1875,6 @@ container-run-ssl-host: certs container-check-image
 	@sleep 2
 	@echo "✅ Container started with TLS (host networking)"
 
-
-
-
 container-push: container-check-image
 	@echo "📤 Preparing to push image..."
 	@# For Podman, we need to remove localhost/ prefix for push
@@ -1332,10 +1940,11 @@ container-health:
 container-build-multi:
 	@echo "🔨 Building multi-architecture image..."
 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
-		if ! docker buildx ls | grep -q "$(PROJECT_NAME)-builder"; then \
+		if ! docker buildx inspect $(PROJECT_NAME)-builder >/dev/null 2>&1; then \
 			echo "📦 Creating buildx builder..."; \
-			docker buildx create --name $(PROJECT_NAME)-builder --use; \
+			docker buildx create --name $(PROJECT_NAME)-builder; \
 		fi; \
+		docker buildx use $(PROJECT_NAME)-builder; \
 		docker buildx build \
 			--platform=linux/amd64,linux/arm64 \
 			-f $(CONTAINER_FILE) \
@@ -1405,9 +2014,9 @@ show-runtime:
 # help: container-check-ports  - Check if required ports are available
 
 # Pre-flight validation
-.PHONY: container-validate check-ports
+.PHONY: container-validate container-check-ports
 
-container-validate: container-validate-env check-ports
+container-validate: container-validate-env container-check-ports
 	@echo "✅ All validations passed"
 
 container-validate-env:
@@ -1418,6 +2027,11 @@ container-validate-env:
 
 container-check-ports:
 	@echo "🔍 Checking port availability..."
+	@if ! command -v lsof >/dev/null 2>&1; then \
+		echo "⚠️  lsof not installed - skipping port check"; \
+		echo "💡  Install with: brew install lsof (macOS) or apt-get install lsof (Linux)"; \
+		exit 0; \
+	fi
 	@failed=0; \
 	for port in 4444 8000 8080; do \
 		if lsof -Pi :$$port -sTCP:LISTEN -t >/dev/null 2>&1; then \
@@ -1463,6 +2077,19 @@ container-run-safe: container-validate container-run
 container-run-ssl-safe: container-validate container-run-ssl
 	@$(MAKE) container-wait-healthy
 
+container-wait-healthy:
+	@echo "⏳ Waiting for container to be healthy..."
+	@for i in $$(seq 1 30); do \
+		if $(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{.State.Health.Status}}' 2>/dev/null | grep -q healthy; then \
+			echo "✅ Container is healthy"; \
+			exit 0; \
+		fi; \
+		echo "⏳ Waiting for container health... ($$i/30)"; \
+		sleep 2; \
+	done; \
+	echo "⚠️  Container not healthy after 60 seconds"; \
+	exit 1
+
 # =============================================================================
 # 🦭 PODMAN CONTAINER BUILD & RUN
 # =============================================================================
@@ -1482,8 +2109,8 @@ container-run-ssl-safe: container-validate container-run-ssl
 # help: podman-top           - Show live top-level process info in container
 
 .PHONY: podman-dev podman podman-prod podman-build podman-run podman-run-shell \
-        podman-run-host podman-run-ssl podman-run-ssl-host podman-stop podman-test \
-        podman-logs podman-stats podman-top podman-shell
+	podman-run-host podman-run-ssl podman-run-ssl-host podman-stop podman-test \
+	podman-logs podman-stats podman-top podman-shell
 
 podman-dev:
 	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
@@ -1560,8 +2187,8 @@ podman-top:
 # help: docker-logs          - Follow container logs (⌃C to quit)
 
 .PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-host docker-run-ssl \
-        docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
-        docker-top docker-shell
+	docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
+	docker-top docker-shell
 
 docker-dev:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
@@ -1654,11 +2281,11 @@ ifeq ($(strip $(COMPOSE_CMD)),)
   COMPOSE_CMD := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || true)
   # If not found, check for podman compose
   ifeq ($(strip $(COMPOSE_CMD)),)
-    COMPOSE_CMD := $(shell podman compose version >/dev/null 2>&1 && echo "podman compose" || true)
+	COMPOSE_CMD := $(shell podman compose version >/dev/null 2>&1 && echo "podman compose" || true)
   endif
   # If still not found, check for podman-compose
   ifeq ($(strip $(COMPOSE_CMD)),)
-    COMPOSE_CMD := $(shell command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose")
+	COMPOSE_CMD := $(shell command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose")
   endif
 endif
 
@@ -1670,9 +2297,9 @@ $(COMPOSE_CMD) -f $(COMPOSE_FILE)
 endef
 
 .PHONY: compose-up compose-restart compose-build compose-pull \
-        compose-logs compose-ps compose-shell compose-stop compose-down \
-        compose-rm compose-clean compose-validate compose-exec \
-        compose-logs-service compose-restart-service compose-scale compose-up-safe
+	compose-logs compose-ps compose-shell compose-stop compose-down \
+	compose-rm compose-clean compose-validate compose-exec \
+	compose-logs-service compose-restart-service compose-scale compose-up-safe
 
 # Validate compose file
 compose-validate:
@@ -1689,8 +2316,10 @@ compose-up: compose-validate
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
 
 compose-restart:
-	@echo "🔄  Restarting stack (build + pull if needed)..."
-	IMAGE_LOCAL=$(IMAGE_LOCAL) $(COMPOSE) up -d --pull=missing --build  # These flags might conflict
+	@echo "🔄  Restarting stack..."
+	$(COMPOSE) pull
+	$(COMPOSE) build
+	IMAGE_LOCAL=$(IMAGE_LOCAL) $(COMPOSE) up -d
 
 compose-build:
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) build
@@ -1767,8 +2396,8 @@ compose-up-safe: compose-validate compose-up
 # help: ibmcloud-ce-rm              - Delete the Code Engine application
 
 .PHONY: ibmcloud-check-env ibmcloud-cli-install ibmcloud-login ibmcloud-ce-login \
-        ibmcloud-list-containers ibmcloud-tag ibmcloud-push ibmcloud-deploy \
-        ibmcloud-ce-logs ibmcloud-ce-status ibmcloud-ce-rm
+	ibmcloud-list-containers ibmcloud-tag ibmcloud-push ibmcloud-deploy \
+	ibmcloud-ce-logs ibmcloud-ce-status ibmcloud-ce-rm
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📦  Load environment file with IBM Cloud Code Engine configuration
@@ -1794,6 +2423,10 @@ IBMCLOUD_REGISTRY_SECRET ?= $(IBMCLOUD_PROJECT)-registry-secret
 # IBMCLOUD_API_KEY             = IBM Cloud IAM API key (optional, use --sso if not set)
 
 ibmcloud-check-env:
+	@test -f .env.ce || { \
+		echo "❌ Missing required .env.ce file!"; \
+		exit 1; \
+	}
 	@bash -eu -o pipefail -c '\
 		echo "🔍  Verifying required IBM Cloud variables (.env.ce)..."; \
 		missing=0; \
@@ -1956,7 +2589,7 @@ MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry regist
 # OCI image tag to preload into the cluster.
 # - By default we point to the *local* image built via `make docker-prod`, e.g.
 #   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
-#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.4.0).
+#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.5.0).
 TAG              ?= latest         # override with TAG=<ver>
 IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
 
@@ -1972,7 +2605,7 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # help: minikube-port-forward   - Run kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
 # help: minikube-dashboard      - Print & (best-effort) open the Kubernetes dashboard URL
 # help: minikube-image-load     - Load $(IMAGE) into Minikube container runtime
-# help: minikube-k8s-apply      - Apply manifests from k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
+# help: minikube-k8s-apply      - Apply manifests from deployment/k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
 # help: minikube-status         - Cluster + addon health overview
 # help: minikube-context        - Switch kubectl context to Minikube
 # help: minikube-ssh            - SSH into the Minikube VM
@@ -1980,9 +2613,9 @@ IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # help: minikube-registry-url 	- Echo the dynamic registry URL (e.g. http://localhost:32790)
 
 .PHONY: minikube-install helm-install minikube-start minikube-stop minikube-delete \
-        minikube-tunnel minikube-dashboard minikube-image-load minikube-k8s-apply \
-        minikube-status minikube-context minikube-ssh minikube-reset minikube-registry-url \
-        minikube-port-forward
+	minikube-tunnel minikube-dashboard minikube-image-load minikube-k8s-apply \
+	minikube-status minikube-context minikube-ssh minikube-reset minikube-registry-url \
+	minikube-port-forward
 
 # -----------------------------------------------------------------------------
 # 🚀  INSTALLATION HELPERS
@@ -2063,7 +2696,7 @@ minikube-image-load:
 
 minikube-k8s-apply:
 	@echo "🧩 Applying k8s manifests in ./k8s ..."
-	@kubectl apply -f k8s/ --recursive
+	@kubectl apply -f deployment/k8s/ --recursive
 
 # -----------------------------------------------------------------------------
 # 🔍  Utility: print the current registry URL (host-port) - works after cluster
@@ -2165,7 +2798,7 @@ GIT_REPO    ?= https://github.com/ibm/mcp-context-forge.git
 GIT_PATH    ?= k8s
 
 .PHONY: argocd-cli-install argocd-install argocd-password argocd-forward \
-        argocd-login argocd-app-bootstrap argocd-app-sync
+	argocd-login argocd-app-bootstrap argocd-app-sync
 
 argocd-cli-install:
 	@echo "🔧 Installing Argo CD CLI..."
@@ -2218,7 +2851,7 @@ argocd-app-sync:
 # =============================================================================
 # help: 🏠 LOCAL PYPI SERVER
 # help: local-pypi-install     - Install pypiserver for local testing
-# help: local-pypi-start       - Start local PyPI server on :8084 (no auth)
+# help: local-pypi-start       - Start local PyPI server on :8085 (no auth)
 # help: local-pypi-start-auth  - Start local PyPI server with basic auth (admin/admin)
 # help: local-pypi-stop        - Stop local PyPI server
 # help: local-pypi-upload      - Upload existing package to local PyPI (no auth)
@@ -2227,7 +2860,7 @@ argocd-app-sync:
 # help: local-pypi-clean       - Full cycle: build → upload → install locally
 
 .PHONY: local-pypi-install local-pypi-start local-pypi-start-auth local-pypi-stop local-pypi-upload \
-        local-pypi-upload-auth local-pypi-test local-pypi-clean
+	local-pypi-upload-auth local-pypi-test local-pypi-clean
 
 LOCAL_PYPI_DIR := $(HOME)/local-pypi
 LOCAL_PYPI_URL := http://localhost:8085
@@ -2240,12 +2873,12 @@ local-pypi-install:
 	@mkdir -p $(LOCAL_PYPI_DIR)
 
 local-pypi-start: local-pypi-install local-pypi-stop
-	@echo "🚀  Starting local PyPI server on http://localhost:8084..."
+	@echo "🚀  Starting local PyPI server on http://localhost:8085..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 	export PYPISERVER_BOTTLE_MEMFILE_MAX_OVERRIDE_BYTES=10485760 && \
-	pypi-server run -p 8084 -a . -P . $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
+	pypi-server run -p 8085 -a . -P . $(LOCAL_PYPI_DIR) --hash-algo=sha256 & echo \$! > $(LOCAL_PYPI_PID)"
 	@sleep 2
-	@echo "✅  Local PyPI server started at http://localhost:8084"
+	@echo "✅  Local PyPI server started at http://localhost:8085"
 	@echo "📂  Package directory: $(LOCAL_PYPI_DIR)"
 	@echo "🔓  No authentication required (open mode)"
 
@@ -2290,14 +2923,14 @@ local-pypi-upload:
 		echo "❌  No dist/ directory or files found. Run 'make dist' first."; \
 		exit 1; \
 	fi
-	@if ! curl -s http://localhost:8084 >/dev/null 2>&1; then \
-		echo "❌  Local PyPI server not running on port 8084. Run 'make local-pypi-start' first."; \
+	@if ! curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+		echo "❌  Local PyPI server not running on port 8085. Run 'make local-pypi-start' first."; \
 		exit 1; \
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	twine upload --verbose --repository-url http://localhost:8084 --skip-existing dist/*"
+	twine upload --verbose --repository-url $(LOCAL_PYPI_URL) --skip-existing dist/*"
 	@echo "✅  Package uploaded to local PyPI"
-	@echo "🌐  Browse packages: http://localhost:8084"
+	@echo "🌐  Browse packages: $(LOCAL_PYPI_URL)"
 
 local-pypi-upload-auth:
 	@echo "📤  Uploading existing package to local PyPI with auth..."
@@ -2337,9 +2970,7 @@ local-pypi-status:
 	@echo "🔍  Local PyPI server status:"
 	@if [ -f $(LOCAL_PYPI_PID) ] && kill -0 $(cat $(LOCAL_PYPI_PID)) 2>/dev/null; then \
 		echo "✅  Server running (PID: $(cat $(LOCAL_PYPI_PID)))"; \
-		if curl -s http://localhost:8084 >/dev/null 2>&1; then \
-			echo "🌐  Server on port 8084: http://localhost:8084"; \
-		elif curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
+		if curl -s $(LOCAL_PYPI_URL) >/dev/null 2>&1; then \
 			echo "🌐  Server on port 8085: $(LOCAL_PYPI_URL)"; \
 		fi; \
 		echo "📂  Directory: $(LOCAL_PYPI_DIR)"; \
@@ -2375,7 +3006,7 @@ local-pypi-debug:
 
 
 .PHONY: devpi-install devpi-init devpi-start devpi-stop devpi-setup-user devpi-upload \
-        devpi-delete devpi-test devpi-clean devpi-status devpi-web devpi-restart
+	devpi-delete devpi-test devpi-clean devpi-status devpi-web devpi-restart
 
 DEVPI_HOST := localhost
 DEVPI_PORT := 3141
@@ -2446,14 +3077,14 @@ devpi-stop:
 	@pids=$(pgrep -f "devpi-server.*$(DEVPI_PORT)" 2>/dev/null || true); \
 	if [ -n "$pids" ]; then \
 		echo "🔄  Killing remaining devpi processes: $pids"; \
-		echo "$pids" | xargs -r kill 2>/dev/null || true; \
+		echo "$pids" | xargs $(XARGS_FLAGS) kill 2>/dev/null || true; \
 		sleep 1; \
-		echo "$pids" | xargs -r kill -9 2>/dev/null || true; \
+		echo "$pids" | xargs $(XARGS_FLAGS) kill -9 2>/dev/null || true; \
 	fi
 	@# Force kill anything using the port
 	@if lsof -ti :$(DEVPI_PORT) >/dev/null 2>&1; then \
 		echo "⚠️   Port $(DEVPI_PORT) still in use, force killing..."; \
-		lsof -ti :$(DEVPI_PORT) | xargs -r kill -9 2>/dev/null || true; \
+		lsof -ti :$(DEVPI_PORT) | xargs $(XARGS_FLAGS) kill -9 2>/dev/null || true; \
 		sleep 1; \
 	fi
 	@echo "✅  DevPi server stopped"
@@ -2593,7 +3224,7 @@ devpi-unconfigure-pip:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📦  Version helper (defaults to the version in pyproject.toml)
-#      override on the CLI:  make VER=0.4.0 devpi-delete
+#      override on the CLI:  make VER=0.5.0 devpi-delete
 # ─────────────────────────────────────────────────────────────────────────────
 VER ?= $(shell python3 -c "import tomllib, pathlib; \
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
@@ -2619,7 +3250,18 @@ devpi-delete: devpi-setup-user                 ## Delete mcp-contextforge-gatewa
 # ──────────────────────────
 # Which shell files to scan
 # ──────────────────────────
-SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' -not -path './node_modules/*')
+SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
+	-not -path './node_modules/*' \
+	-not -path './.venv/*' \
+	-not -path './venv/*' \
+	-not -path './$(VENV_DIR)/*' \
+	-not -path './.git/*' \
+	-not -path './dist/*' \
+	-not -path './build/*' \
+	-not -path './.tox/*')
+
+# Define shfmt binary location
+SHFMT := $(shell command -v shfmt 2>/dev/null || echo "$(HOME)/go/bin/shfmt")
 
 .PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
 
@@ -2638,11 +3280,21 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	  esac ; \
 	fi ; \
 	# -------- shfmt (Go) -------- \
-	if ! command -v shfmt >/dev/null 2>&1 ; then \
+	if ! command -v shfmt >/dev/null 2>&1 && [ ! -f "$(HOME)/go/bin/shfmt" ] ; then \
 	  echo "🛠  Installing shfmt..." ; \
-	  GO111MODULE=on go install mvdan.cc/sh/v3/cmd/shfmt@latest || \
-	  { echo "⚠️  go not found - install Go or brew/apt shfmt package manually"; } ; \
-	  export PATH=$$PATH:$$HOME/go/bin ; \
+	  if command -v go >/dev/null 2>&1; then \
+	    GO111MODULE=on go install mvdan.cc/sh/v3/cmd/shfmt@latest; \
+	    echo "✅  shfmt installed to $(HOME)/go/bin/shfmt"; \
+	  else \
+	    case "$$(uname -s)" in \
+	      Darwin)  brew install shfmt ;; \
+	      Linux)   { command -v apt-get && sudo apt-get update -qq && sudo apt-get install -y shfmt ; } || \
+	               { echo "⚠️  Go not found - install Go or shfmt package manually"; } ;; \
+	      *) echo "⚠️  Please install shfmt manually" ;; \
+	    esac ; \
+	  fi ; \
+	else \
+	  echo "✅  shfmt already installed at: $$(command -v shfmt || echo $(HOME)/go/bin/shfmt)"; \
 	fi ; \
 	# -------- bashate (pip) ----- \
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
@@ -2656,10 +3308,14 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 
 shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
 	@echo "🔍  Running shfmt (diff-only)..."
-	@command -v shfmt >/dev/null 2>&1 || { \
+	@if command -v shfmt >/dev/null 2>&1; then \
+		shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true; \
+	elif [ -f "$(SHFMT)" ]; then \
+		$(SHFMT) -d -i 4 -ci $(SHELL_SCRIPTS) || true; \
+	else \
 		echo "⚠️  shfmt not installed - skipping"; \
 		echo "💡  Install with: go install mvdan.cc/sh/v3/cmd/shfmt@latest"; \
-	} && shfmt -d -i 4 -ci $(SHELL_SCRIPTS) || true
+	fi
 	@echo "🔍  Running ShellCheck..."
 	@command -v shellcheck >/dev/null 2>&1 || { \
 		echo "⚠️  shellcheck not installed - skipping"; \
@@ -2672,7 +3328,16 @@ shell-lint: shell-linters-install  ## 🔍  Run shfmt, ShellCheck & bashate
 
 shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 	@echo "🎨  Formatting shell scripts with shfmt -w..."
-	@shfmt -w -i 4 -ci $(SHELL_SCRIPTS)
+	@if command -v shfmt >/dev/null 2>&1; then \
+		shfmt -w -i 4 -ci $(SHELL_SCRIPTS); \
+	elif [ -f "$(SHFMT)" ]; then \
+		$(SHFMT) -w -i 4 -ci $(SHELL_SCRIPTS); \
+	else \
+		echo "❌  shfmt not found in PATH or $(HOME)/go/bin/"; \
+		echo "💡  Install with: go install mvdan.cc/sh/v3/cmd/shfmt@latest"; \
+		echo "    Or: brew install shfmt (macOS)"; \
+		exit 1; \
+	fi
 	@echo "✅  shfmt formatting done."
 
 
@@ -2680,47 +3345,112 @@ shfmt-fix: shell-linters-install   ## 🎨  Auto-format *.sh in place
 # =============================================================================
 # help: 🛢️  ALEMBIC DATABASE MIGRATIONS
 # help: alembic-install   - Install Alembic CLI (and SQLAlchemy) in the current env
-# help: db-new            - Create a new migration  (override with MSG="your title")
-# help: db-up             - Upgrade DB to the latest revision (head)
-# help: db-down           - Downgrade one revision       (override with REV=<id|steps>)
-# help: db-current        - Show the current head revision for the database
-# help: db-history        - Show the full migration graph / history
-# help: db-revision-id    - Echo just the current revision id (handy for scripting)
+# help: db-init           - Initialize alembic migrations
+# help: db-migrate        - Create a new migration
+# help: db-upgrade        - Upgrade database to latest migration
+# help: db-downgrade      - Downgrade database by one revision
+# help: db-current        - Show current database revision
+# help: db-history        - Show migration history
+# help: db-heads          - Show available heads
+# help: db-show           - Show a specific revision
+# help: db-stamp          - Stamp database with a specific revision
+# help: db-reset          - Reset database (CAUTION: drops all data)
+# help: db-status         - Show detailed database status
+# help: db-check          - Check if migrations are up to date
+# help: db-fix-head       - Fix multiple heads issue
 # -----------------------------------------------------------------------------
 
-# ──────────────────────────
-# Internals & defaults
-# ──────────────────────────
-ALEMBIC ?= alembic        # Override to e.g. `poetry run alembic`
-MSG     ?= "auto migration"
-REV     ?= -1             # Default: one step down; can be hash, -n, +n, etc.
+# Database migration commands
+ALEMBIC_CONFIG = mcpgateway/alembic.ini
 
-.PHONY: alembic-install db-new db-up db-down db-current db-history db-revision-id
+.PHONY: alembic-install db-init db-migrate db-upgrade db-downgrade db-current db-history db-heads db-show db-stamp db-reset db-status db-check db-fix-head
 
 alembic-install:
 	@echo "➜ Installing Alembic ..."
 	pip install --quiet alembic sqlalchemy
 
-db-new:
-	@echo "➜ Generating revision: $(MSG)"
-	$(ALEMBIC) -c mcpgateway/alembic.ini revision --autogenerate -m $(MSG)
+.PHONY: db-init
+db-init: ## Initialize alembic migrations
+	@echo "🗄️ Initializing database migrations..."
+	alembic -c $(ALEMBIC_CONFIG) init alembic
 
-db-up:
-	@echo "➜ Upgrading database to head ..."
-	$(ALEMBIC) -c mcpgateway/alembic.ini upgrade head
+.PHONY: db-migrate
+db-migrate: ## Create a new migration
+	@echo "�️ Creating new migration..."
+	@read -p "Enter migration message: " msg; \
+	alembic -c $(ALEMBIC_CONFIG) revision --autogenerate -m "$$msg"
 
-db-down:
-	@echo "➜ Downgrading database → $(REV) ..."
-	$(ALEMBIC) -c mcpgateway/alembic.ini downgrade $(REV)
+.PHONY: db-upgrade
+db-upgrade: ## Upgrade database to latest migration
+	@echo "🗄️ Upgrading database..."
+	alembic -c $(ALEMBIC_CONFIG) upgrade head
 
-db-current:
-	$(ALEMBIC) -c mcpgateway/alembic.ini current
+.PHONY: db-downgrade
+db-downgrade: ## Downgrade database by one revision
+	@echo "�️ Downgrading database..."
+	alembic -c $(ALEMBIC_CONFIG) downgrade -1
 
-db-history:
-	$(ALEMBIC) -c mcpgateway/alembic.ini history --verbose
+.PHONY: db-current
+db-current: ## Show current database revision
+	@echo "🗄️ Current database revision:"
+	@alembic -c $(ALEMBIC_CONFIG) current
 
-db-revision-id:
-	@$(ALEMBIC) -c mcpgateway/alembic.ini current --verbose | awk '/Current revision/ {print $$3}'
+.PHONY: db-history
+db-history: ## Show migration history
+	@echo "🗄️ Migration history:"
+	@alembic -c $(ALEMBIC_CONFIG) history
+
+.PHONY: db-heads
+db-heads: ## Show available heads
+	@echo "�️ Available heads:"
+	@alembic -c $(ALEMBIC_CONFIG) heads
+
+.PHONY: db-show
+db-show: ## Show a specific revision
+	@read -p "Enter revision ID: " rev; \
+	alembic -c $(ALEMBIC_CONFIG) show $$rev
+
+.PHONY: db-stamp
+db-stamp: ## Stamp database with a specific revision
+	@read -p "Enter revision to stamp: " rev; \
+	alembic -c $(ALEMBIC_CONFIG) stamp $$rev
+
+.PHONY: db-reset
+db-reset: ## Reset database (CAUTION: drops all data)
+	@echo "⚠️  WARNING: This will drop all data!"
+	@read -p "Are you sure? (y/N): " confirm; \
+	if [ "$$confirm" = "y" ]; then \
+		alembic -c $(ALEMBIC_CONFIG) downgrade base && \
+		alembic -c $(ALEMBIC_CONFIG) upgrade head; \
+		echo "✅ Database reset complete"; \
+	else \
+		echo "❌ Database reset cancelled"; \
+	fi
+
+.PHONY: db-status
+db-status: ## Show detailed database status
+	@echo "�️ Database Status:"
+	@echo "Current revision:"
+	@alembic -c $(ALEMBIC_CONFIG) current
+	@echo ""
+	@echo "Pending migrations:"
+	@alembic -c $(ALEMBIC_CONFIG) history -r current:head
+
+.PHONY: db-check
+db-check: ## Check if migrations are up to date
+	@echo "🗄️ Checking migration status..."
+	@if alembic -c $(ALEMBIC_CONFIG) current | grep -q "(head)"; then \
+		echo "✅ Database is up to date"; \
+	else \
+		echo "⚠️  Database needs migration"; \
+		echo "Run 'make db-upgrade' to apply pending migrations"; \
+		exit 1; \
+	fi
+
+.PHONY: db-fix-head
+db-fix-head: ## Fix multiple heads issue
+	@echo "�️ Fixing multiple heads..."
+	alembic -c $(ALEMBIC_CONFIG) merge -m "merge heads"
 
 
 # =============================================================================
@@ -2930,14 +3660,14 @@ semgrep:                            ## 🔍 Security patterns & anti-patterns
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q semgrep && \
-		$(VENV_DIR)/bin/semgrep --config=auto mcpgateway tests || true"
+		$(VENV_DIR)/bin/semgrep --config=auto $(TARGET) --exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 || true"
 
 dodgy:                              ## 🔐 Suspicious code patterns
 	@echo "🔐  dodgy - scanning for hardcoded secrets..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q dodgy && \
-		$(VENV_DIR)/bin/dodgy mcpgateway tests || true"
+		$(VENV_DIR)/bin/dodgy $(TARGET) || true"
 
 dlint:                              ## 📏 Python best practices
 	@echo "📏  dlint - checking Python best practices..."
@@ -2951,8 +3681,8 @@ pyupgrade:                          ## ⬆️  Upgrade Python syntax
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q pyupgrade && \
-		find mcpgateway tests -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus --diff {} + || true"
-	@echo "💡  To apply changes, run: find mcpgateway tests -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
+		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus --diff {} + || true"
+	@echo "💡  To apply changes, run: find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 
 interrogate:                        ## 📝 Docstring coverage
 	@echo "📝  interrogate - checking docstring coverage..."
@@ -3165,12 +3895,12 @@ security-report:                    ## 📊 Generate comprehensive security repo
 	@echo "## Code Security Patterns (semgrep)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q semgrep && \
-		$(VENV_DIR)/bin/semgrep --config=auto mcpgateway tests --quiet || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
+		$(VENV_DIR)/bin/semgrep --config=auto $(TARGET) --quiet || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## Suspicious Code Patterns (dodgy)" >> $(DOCS_DIR)/docs/security/report.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q dodgy && \
-		$(VENV_DIR)/bin/dodgy mcpgateway tests || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
+		$(VENV_DIR)/bin/dodgy $(TARGET) || true" >> $(DOCS_DIR)/docs/security/report.md 2>&1
 	@echo "" >> $(DOCS_DIR)/docs/security/report.md
 	@echo "## DevSkim Security Anti-patterns" >> $(DOCS_DIR)/docs/security/report.md
 	@if command -v devskim >/dev/null 2>&1 || [ -f "$$HOME/.dotnet/tools/devskim" ]; then \
@@ -3186,7 +3916,7 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "➤ Upgrading Python syntax with pyupgrade..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q pyupgrade && \
-		find mcpgateway tests -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
+		find $(TARGET) -name '*.py' -exec $(VENV_DIR)/bin/pyupgrade --py312-plus {} +"
 	@echo "➤ Updating dependencies to latest secure versions..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install --upgrade pip setuptools && \
@@ -3197,3 +3927,354 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "   - Secrets in code (review dodgy/gitleaks output)"
 	@echo "   - Security patterns (review semgrep output)"
 	@echo "   - DevSkim findings (review devskim-results.sarif)"
+
+
+# =============================================================================
+# 🛡️ SNYK - Comprehensive vulnerability scanning and SBOM generation
+# =============================================================================
+# help: 🛡️ SNYK - Comprehensive vulnerability scanning and SBOM generation
+# help: snyk-auth           - Authenticate Snyk CLI with your Snyk account
+# help: snyk-test           - Test for open-source vulnerabilities and license issues
+# help: snyk-code-test      - Test source code for security issues (SAST)
+# help: snyk-container-test - Test container images for vulnerabilities
+# help: snyk-iac-test       - Test Infrastructure as Code files for security issues
+# help: snyk-aibom          - Generate AI Bill of Materials for Python projects
+# help: snyk-sbom           - Generate Software Bill of Materials (SBOM)
+# help: snyk-monitor        - Enable continuous monitoring on Snyk platform
+# help: snyk-all            - Run all Snyk security scans (test, code-test, container-test, iac-test, sbom)
+# help: snyk-helm-test       - Test Helm charts for security issues
+
+.PHONY: snyk-auth snyk-test snyk-code-test snyk-container-test snyk-iac-test snyk-aibom snyk-sbom snyk-monitor snyk-all snyk-helm-test
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Authentication
+## --------------------------------------------------------------------------- ##
+snyk-auth:                          ## 🔑 Authenticate with Snyk (required before first use)
+	@echo "🔑 Authenticating with Snyk..."
+	@command -v snyk >/dev/null 2>&1 || { \
+		echo "❌ Snyk CLI not installed."; \
+		echo "💡 Install with:"; \
+		echo "   • npm: npm install -g snyk"; \
+		echo "   • Homebrew: brew install snyk"; \
+		echo "   • Direct: curl -sSL https://static.snyk.io/cli/latest/snyk-linux -o /usr/local/bin/snyk && chmod +x /usr/local/bin/snyk"; \
+		exit 1; \
+	}
+	@snyk auth
+	@echo "✅ Snyk authentication complete!"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Dependency Testing
+## --------------------------------------------------------------------------- ##
+snyk-test:                          ## 🔍 Test for open-source vulnerabilities
+	@echo "🔍 Running Snyk open-source vulnerability scan..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📦 Testing Python dependencies..."
+	@if [ -f "requirements.txt" ]; then \
+		snyk test --file=requirements.txt --severity-threshold=high --org=$${SNYK_ORG:-} || true; \
+	fi
+	@if [ -f "pyproject.toml" ]; then \
+		echo "📦 Testing pyproject.toml dependencies..."; \
+		snyk test --file=pyproject.toml --severity-threshold=high --org=$${SNYK_ORG:-} || true; \
+	fi
+	@if [ -f "requirements-dev.txt" ]; then \
+		echo "📦 Testing dev dependencies..."; \
+		snyk test --file=requirements-dev.txt --severity-threshold=high --dev --org=$${SNYK_ORG:-} || true; \
+	fi
+	@echo "💡 Run 'snyk monitor' to continuously monitor this project"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Code (SAST) Testing
+## --------------------------------------------------------------------------- ##
+snyk-code-test:                     ## 🔐 Test source code for security issues
+	@echo "🔐 Running Snyk Code static analysis..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📂 Scanning mcpgateway/ for security issues..."
+	@snyk code test mcpgateway/ \
+		--severity-threshold=high \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=snyk-code-results.json || true
+	@echo "📊 Summary of findings:"
+	@snyk code test mcpgateway/ --severity-threshold=high || true
+	@echo "📄 Detailed results saved to: snyk-code-results.json"
+	@echo "💡 To include ignored issues, add: --include-ignores"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Container Testing
+## --------------------------------------------------------------------------- ##
+snyk-container-test:                ## 🐳 Test container images for vulnerabilities
+	@echo "🐳 Running Snyk container vulnerability scan..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "🔍 Testing container image $(IMAGE_NAME):$(IMAGE_TAG)..."
+	@snyk container test $(IMAGE_NAME):$(IMAGE_TAG) \
+		--file=$(CONTAINERFILE) \
+		--severity-threshold=high \
+		--exclude-app-vulns \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=snyk-container-results.json || true
+	@echo "📊 Summary of container vulnerabilities:"
+	@snyk container test $(IMAGE_NAME):$(IMAGE_TAG) --file=$(CONTAINERFILE) --severity-threshold=high || true
+	@echo "📄 Detailed results saved to: snyk-container-results.json"
+	@echo "💡 To include application vulnerabilities, remove --exclude-app-vulns"
+	@echo "💡 To exclude base image vulns, add: --exclude-base-image-vulns"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Infrastructure as Code Testing
+## --------------------------------------------------------------------------- ##
+snyk-iac-test:                      ## 🏗️ Test IaC files for security issues
+	@echo "🏗️ Running Snyk Infrastructure as Code scan..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📂 Scanning for IaC security issues..."
+	@if [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ]; then \
+		echo "🐳 Testing docker-compose files..."; \
+		snyk iac test docker-compose*.y*ml \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} \
+			--json-file-output=snyk-iac-compose-results.json || true; \
+	fi
+	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ]; then \
+		echo "📦 Testing Dockerfile/Containerfile..."; \
+		snyk iac test $(CONTAINERFILE) \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} \
+			--json-file-output=snyk-iac-docker-results.json || true; \
+	fi
+	@if [ -f "Makefile" ]; then \
+		echo "🔧 Testing Makefile..."; \
+		snyk iac test Makefile \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} || true; \
+	fi
+	@if [ -d "charts/mcp-stack" ]; then \
+		echo "⎈ Testing Helm charts..."; \
+		snyk iac test charts/mcp-stack/ \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} \
+			--json-file-output=snyk-helm-results.json || true; \
+	fi
+	@echo "💡 To generate a report, add: --report"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk AI Bill of Materials
+## --------------------------------------------------------------------------- ##
+snyk-aibom:                         ## 🤖 Generate AI Bill of Materials
+	@echo "🤖 Generating AI Bill of Materials..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📊 Scanning for AI models, datasets, and tools..."
+	@snyk aibom \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=aibom.json \
+		mcpgateway/ || { \
+			echo "⚠️  AIBOM generation failed. This feature requires:"; \
+			echo "   • Python project with AI/ML dependencies"; \
+			echo "   • Snyk plan that supports AIBOM"; \
+			echo "   • Proper authentication (run 'make snyk-auth')"; \
+		}
+	@if [ -f "aibom.json" ]; then \
+		echo "📄 AI BOM saved to: aibom.json"; \
+		echo "🔍 Summary:"; \
+		cat aibom.json | jq -r '.models[]?.name' 2>/dev/null | sort | uniq | sed 's/^/   • /' || true; \
+	fi
+	@echo "💡 To generate HTML report, add: --html"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Software Bill of Materials
+## --------------------------------------------------------------------------- ##
+snyk-sbom:                          ## 📋 Generate Software Bill of Materials
+	@echo "📋 Generating Software Bill of Materials (SBOM)..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@echo "📦 Generating SBOM for mcpgateway..."
+	@snyk sbom \
+		--format=cyclonedx1.5+json \
+		--file=pyproject.toml \
+		--name=mcpgateway \
+		--version=$(shell grep -m1 version pyproject.toml | cut -d'"' -f2 || echo "0.0.0") \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=sbom-cyclonedx.json \
+		. || true
+	@if [ -f "sbom-cyclonedx.json" ]; then \
+		echo "✅ CycloneDX SBOM saved to: sbom-cyclonedx.json"; \
+		echo "📊 Component summary:"; \
+		cat sbom-cyclonedx.json | jq -r '.components[].name' 2>/dev/null | wc -l | xargs echo "   • Total components:"; \
+		cat sbom-cyclonedx.json | jq -r '.vulnerabilities[]?.id' 2>/dev/null | wc -l | xargs echo "   • Known vulnerabilities:"; \
+	fi
+	@echo "📦 Generating SPDX format SBOM..."
+	@snyk sbom \
+		--format=spdx2.3+json \
+		--file=pyproject.toml \
+		--name=mcpgateway \
+		--org=$${SNYK_ORG:-} \
+		--json-file-output=sbom-spdx.json \
+		. || true
+	@if [ -f "sbom-spdx.json" ]; then \
+		echo "✅ SPDX SBOM saved to: sbom-spdx.json"; \
+	fi
+	@echo "💡 Supported formats: cyclonedx1.4+json|cyclonedx1.4+xml|cyclonedx1.5+json|cyclonedx1.5+xml|cyclonedx1.6+json|cyclonedx1.6+xml|spdx2.3+json"
+	@echo "💡 To test an SBOM for vulnerabilities: snyk sbom test --file=sbom-cyclonedx.json"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Combined Security Report
+## --------------------------------------------------------------------------- ##
+snyk-all:                           ## 🔐 Run all Snyk security scans
+	@echo "🔐 Running complete Snyk security suite..."
+	@$(MAKE) snyk-test
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@$(MAKE) snyk-code-test
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@$(MAKE) snyk-container-test
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@$(MAKE) snyk-iac-test
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@$(MAKE) snyk-sbom
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "✅ Snyk security scan complete!"
+	@echo "📊 Results saved to:"
+	@ls -la snyk-*.json sbom-*.json 2>/dev/null || echo "   No result files found"
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Monitoring (Continuous)
+## --------------------------------------------------------------------------- ##
+snyk-monitor:                       ## 📡 Enable continuous monitoring on Snyk platform
+	@echo "📡 Setting up continuous monitoring..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@snyk monitor \
+		--org=$${SNYK_ORG:-} \
+		--project-name=mcpgateway \
+		--project-environment=production \
+		--project-lifecycle=production \
+		--project-business-criticality=high \
+		--project-tags=security:high,team:platform
+	@echo "✅ Project is now being continuously monitored on Snyk platform"
+	@echo "🌐 View results at: https://app.snyk.io"
+
+
+## --------------------------------------------------------------------------- ##
+##  Snyk Helm Chart Testing
+## --------------------------------------------------------------------------- ##
+snyk-helm-test:                     ## ⎈ Test Helm charts for security issues
+	@echo "⎈ Running Snyk Helm chart security scan..."
+	@command -v snyk >/dev/null 2>&1 || { echo "❌ Snyk CLI not installed. Run 'make snyk-auth' for install instructions."; exit 1; }
+	@if [ -d "charts/mcp-stack" ]; then \
+		echo "📂 Scanning charts/mcp-stack/ for security issues..."; \
+		snyk iac test charts/mcp-stack/ \
+			--severity-threshold=medium \
+			--org=$${SNYK_ORG:-} \
+			--json-file-output=snyk-helm-results.json || true; \
+		echo "📄 Detailed results saved to: snyk-helm-results.json"; \
+	else \
+		echo "⚠️  No Helm charts found in charts/mcp-stack/"; \
+	fi
+
+# ==============================================================================
+# 🔍 HEADER MANAGEMENT - Check and fix Python file headers
+# ==============================================================================
+# help: 🔍 HEADER MANAGEMENT - Check and fix Python file headers
+# help: check-headers          - Check all Python file headers (dry run - default)
+# help: check-headers-diff     - Check headers and show diff preview
+# help: check-headers-debug    - Check headers with debug information
+# help: check-header           - Check specific file/directory (use: path=...)
+# help: fix-all-headers        - Fix ALL files with incorrect headers (modifies files!)
+# help: fix-all-headers-no-encoding - Fix headers without encoding line requirement
+# help: fix-all-headers-custom - Fix with custom config (year=YYYY license=... shebang=...)
+# help: interactive-fix-headers - Fix headers with prompts before each change
+# help: fix-header             - Fix specific file/directory (use: path=... authors=...)
+# help: pre-commit-check-headers - Check headers for pre-commit hooks
+# help: pre-commit-fix-headers - Fix headers for pre-commit hooks
+
+.PHONY: check-headers fix-all-headers interactive-fix-headers fix-header check-headers-diff check-header \
+        check-headers-debug fix-all-headers-no-encoding fix-all-headers-custom \
+        pre-commit-check-headers pre-commit-fix-headers
+
+## --------------------------------------------------------------------------- ##
+##  Check modes (no modifications)
+## --------------------------------------------------------------------------- ##
+check-headers:                      ## 🔍 Check all Python file headers (dry run - default)
+	@echo "🔍 Checking Python file headers (dry run - no files will be modified)..."
+	@python3 .github/tools/fix_file_headers.py
+
+check-headers-diff:                 ## 🔍 Check headers and show diff preview
+	@echo "🔍 Checking Python file headers with diff preview..."
+	@python3 .github/tools/fix_file_headers.py --show-diff
+
+check-headers-debug:                ## 🔍 Check headers with debug information
+	@echo "🔍 Checking Python file headers with debug info..."
+	@python3 .github/tools/fix_file_headers.py --debug
+
+check-header:                       ## 🔍 Check specific file/directory (use: path=... debug=1 diff=1)
+	@if [ -z "$(path)" ]; then \
+		echo "❌ Error: 'path' parameter is required"; \
+		echo "💡 Usage: make check-header path=<file_or_directory> [debug=1] [diff=1]"; \
+		exit 1; \
+	fi
+	@echo "🔍 Checking headers in $(path) (dry run)..."
+	@extra_args=""; \
+	if [ "$(debug)" = "1" ]; then \
+		extra_args="$$extra_args --debug"; \
+	fi; \
+	if [ "$(diff)" = "1" ]; then \
+		extra_args="$$extra_args --show-diff"; \
+	fi; \
+	python3 .github/tools/fix_file_headers.py --check --path "$(path)" $$extra_args
+
+## --------------------------------------------------------------------------- ##
+##  Fix modes (will modify files)
+## --------------------------------------------------------------------------- ##
+fix-all-headers:                    ## 🔧 Fix ALL files with incorrect headers (⚠️ modifies files!)
+	@echo "⚠️  WARNING: This will modify all Python files with incorrect headers!"
+	@echo "🔧 Automatically fixing all Python file headers..."
+	@python3 .github/tools/fix_file_headers.py --fix-all
+
+fix-all-headers-no-encoding:        ## 🔧 Fix headers without encoding line requirement
+	@echo "🔧 Fixing headers without encoding line requirement..."
+	@python3 .github/tools/fix_file_headers.py --fix-all --no-encoding
+
+fix-all-headers-custom:             ## 🔧 Fix with custom config (year=YYYY license=... shebang=...)
+	@echo "🔧 Fixing headers with custom configuration..."
+	@if [ -n "$(year)" ]; then \
+		extra_args="$$extra_args --copyright-year $(year)"; \
+	fi; \
+	if [ -n "$(license)" ]; then \
+		extra_args="$$extra_args --license $(license)"; \
+	fi; \
+	if [ -n "$(shebang)" ]; then \
+		extra_args="$$extra_args --require-shebang $(shebang)"; \
+	fi; \
+	python3 .github/tools/fix_file_headers.py --fix-all $$extra_args
+
+interactive-fix-headers:            ## 💬 Fix headers with prompts before each change
+	@echo "💬 Interactively fixing Python file headers..."
+	@echo "You will be prompted before each change."
+	@python3 .github/tools/fix_file_headers.py --interactive
+
+fix-header:                         ## 🔧 Fix specific file/directory (use: path=... authors=... shebang=... encoding=no)
+	@if [ -z "$(path)" ]; then \
+		echo "❌ Error: 'path' parameter is required"; \
+		echo "💡 Usage: make fix-header path=<file_or_directory> [authors=\"Name1, Name2\"] [shebang=auto|always|never] [encoding=no]"; \
+		exit 1; \
+	fi
+	@echo "🔧 Fixing headers in $(path)"
+	@echo "⚠️  This will modify the file(s)!"
+	@extra_args=""; \
+	if [ -n "$(authors)" ]; then \
+		echo "   Authors: $(authors)"; \
+		extra_args="$$extra_args --authors \"$(authors)\""; \
+	fi; \
+	if [ -n "$(shebang)" ]; then \
+		echo "   Shebang requirement: $(shebang)"; \
+		extra_args="$$extra_args --require-shebang $(shebang)"; \
+	fi; \
+	if [ "$(encoding)" = "no" ]; then \
+		echo "   Encoding line: not required"; \
+		extra_args="$$extra_args --no-encoding"; \
+	fi; \
+	eval python3 .github/tools/fix_file_headers.py --fix --path "$(path)" $$extra_args
+
+## --------------------------------------------------------------------------- ##
+##  Pre-commit integration
+## --------------------------------------------------------------------------- ##
+pre-commit-check-headers:           ## 🪝 Check headers for pre-commit hooks
+	@echo "🪝 Checking headers for pre-commit..."
+	@python3 .github/tools/fix_file_headers.py --check
+
+pre-commit-fix-headers:             ## 🪝 Fix headers for pre-commit hooks
+	@echo "🪝 Fixing headers for pre-commit..."
+	@python3 .github/tools/fix_file_headers.py --fix-all

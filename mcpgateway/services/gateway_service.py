@@ -244,6 +244,57 @@ class GatewayService:
         else:
             self._redis_client = None
 
+    async def _validate_gateway_url(self, url: str, headers: dict, transport_type: str, timeout: Optional[int] = None):
+        """
+        Validate if the given URL is a live Server-Sent Events (SSE) endpoint.
+
+        Args:
+            url (str): The full URL of the endpoint to validate.
+            headers (dict): Headers to be included in the requests (e.g., Authorization).
+            transport_type (str): SSE or STREAMABLEHTTP
+            timeout (int, optional): Timeout in seconds. Defaults to settings.gateway_validation_timeout.
+
+        Returns:
+            bool: True if the endpoint is reachable and supports SSE/StreamableHTTP, otherwise False.
+        """
+        if timeout is None:
+            timeout = settings.gateway_validation_timeout
+        validation_client = ResilientHttpClient(client_args={"timeout": settings.gateway_validation_timeout, "verify": not settings.skip_ssl_verify})
+        try:
+            async with validation_client.client.stream("GET", url, headers=headers, timeout=timeout) as response:
+                response_headers = dict(response.headers)
+                location = response_headers.get("location")
+                content_type = response_headers.get("content-type")
+                if response.status_code in (401, 403):
+                    logger.debug(f"Authentication failed for {url} with status {response.status_code}")
+                    return False
+
+                if transport_type == "STREAMABLEHTTP":
+                    if location:
+                        async with validation_client.client.stream("GET", location, headers=headers, timeout=timeout) as response_redirect:
+                            response_headers = dict(response_redirect.headers)
+                            mcp_session_id = response_headers.get("mcp-session-id")
+                            content_type = response_headers.get("content-type")
+                            if response_redirect.status_code in (401, 403):
+                                logger.debug(f"Authentication failed at redirect location {location}")
+                                return False
+                            if mcp_session_id is not None and mcp_session_id != "":
+                                if content_type is not None and content_type != "" and "application/json" in content_type:
+                                    return True
+
+                elif transport_type == "SSE":
+                    if content_type is not None and content_type != "" and "text/event-stream" in content_type:
+                        return True
+                return False
+        except httpx.UnsupportedProtocol as e:
+            logger.debug(f"Gateway URL Unsupported Protocol for {url}: {str(e)}", exc_info=True)
+            return False
+        except Exception as e:
+            logger.debug(f"Gateway validation failed for {url}: {str(e)}", exc_info=True)
+            return False
+        finally:
+            await validation_client.aclose()
+
     async def initialize(self) -> None:
         """Initialize the service and start health check if this instance is the leader.
 
@@ -367,6 +418,7 @@ class GatewayService:
                 slug=slugify(gateway.name),
                 url=gateway.url,
                 description=gateway.description,
+                tags=gateway.tags,
                 transport=gateway.transport,
                 capabilities=capabilities,
                 last_seen=datetime.now(timezone.utc),
@@ -386,12 +438,17 @@ class GatewayService:
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
-            return GatewayRead.model_validate(db_gateway)
+            return GatewayRead.model_validate(db_gateway).masked()
         except* GatewayConnectionError as ge:
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
             logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
             raise ge.exceptions[0]
+        except* GatewayNameConflictError as gnce:
+            if TYPE_CHECKING:
+                gnce: ExceptionGroup[GatewayNameConflictError]
+            logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
+            raise gnce.exceptions[0]
         except* ValueError as ve:
             if TYPE_CHECKING:
                 ve: ExceptionGroup[ValueError]
@@ -431,7 +488,9 @@ class GatewayService:
             >>> db = MagicMock()
             >>> gateway_obj = MagicMock()
             >>> db.execute.return_value.scalars.return_value.all.return_value = [gateway_obj]
-            >>> GatewayRead.model_validate = MagicMock(return_value='gateway_read')
+            >>> mocked_gateway_read = MagicMock()
+            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
+            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
             >>> import asyncio
             >>> result = asyncio.run(service.list_gateways(db))
             >>> result == ['gateway_read']
@@ -454,7 +513,7 @@ class GatewayService:
             query = query.where(DbGateway.enabled)
 
         gateways = db.execute(query).scalars().all()
-        return [GatewayRead.model_validate(g) for g in gateways]
+        return [GatewayRead.model_validate(g).masked() for g in gateways]
 
     async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate, include_inactive: bool = True) -> GatewayRead:
         """Update a gateway.
@@ -472,6 +531,8 @@ class GatewayService:
             GatewayNotFoundError: If gateway not found
             GatewayError: For other update errors
             GatewayNameConflictError: If gateway name conflict occurs
+            IntegrityError: If there is a database integrity error
+            ValidationError: If validation fails
         """
         try:
             # Find gateway
@@ -501,13 +562,26 @@ class GatewayService:
                     gateway.description = gateway_update.description
                 if gateway_update.transport is not None:
                     gateway.transport = gateway_update.transport
+                if gateway_update.tags is not None:
+                    gateway.tags = gateway_update.tags
 
                 if getattr(gateway, "auth_type", None) is not None:
                     gateway.auth_type = gateway_update.auth_type
 
+                    # If auth_type is empty, update the auth_value too
+                    if gateway_update.auth_type == "":
+                        gateway.auth_value = ""
+
                     # if auth_type is not None and only then check auth_value
-                    if getattr(gateway, "auth_value", {}) != {}:
-                        gateway.auth_value = gateway_update.auth_value
+                    if getattr(gateway, "auth_value", "") != "":
+                        token = gateway_update.auth_token
+                        password = gateway_update.auth_password
+                        header_value = gateway_update.auth_header_value
+
+                        if settings.masked_auth_value not in (token, password, header_value):
+                            # Check if values differ from existing ones
+                            if gateway.auth_value != gateway_update.auth_value:
+                                gateway.auth_value = gateway_update.auth_value
 
                 # Try to reinitialize connection if URL changed
                 if gateway_update.url is not None:
@@ -533,7 +607,6 @@ class GatewayService:
                                         auth_value=gateway.auth_value,
                                     )
                                 )
-
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                         gateway.last_seen = datetime.now(timezone.utc)
@@ -544,6 +617,10 @@ class GatewayService:
                     except Exception as e:
                         logger.warning(f"Failed to initialize updated gateway: {e}")
 
+                # Update tags if provided
+                if gateway_update.tags is not None:
+                    gateway.tags = gateway_update.tags
+
                 gateway.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(gateway)
@@ -552,8 +629,14 @@ class GatewayService:
                 await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {gateway.name}")
-                return GatewayRead.model_validate(gateway)
 
+                return GatewayRead.model_validate(gateway)
+        except GatewayNameConflictError as ge:
+            logger.error(f"GatewayNameConflictError in group: {ge}")
+            raise ge
+        except IntegrityError as ie:
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie
         except Exception as e:
             db.rollback()
             raise GatewayError(f"Failed to update gateway: {str(e)}")
@@ -573,7 +656,6 @@ class GatewayService:
             GatewayNotFoundError: If the gateway is not found
 
         Examples:
-            >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from unittest.mock import MagicMock
             >>> from mcpgateway.schemas import GatewayRead
             >>> service = GatewayService()
@@ -581,7 +663,9 @@ class GatewayService:
             >>> gateway_mock = MagicMock()
             >>> gateway_mock.enabled = True
             >>> db.get.return_value = gateway_mock
-            >>> GatewayRead.model_validate = MagicMock(return_value='gateway_read')
+            >>> mocked_gateway_read = MagicMock()
+            >>> mocked_gateway_read.masked.return_value = 'gateway_read'
+            >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
             >>> import asyncio
             >>> result = asyncio.run(service.get_gateway(db, 'gateway_id'))
             >>> result == 'gateway_read'
@@ -615,7 +699,7 @@ class GatewayService:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
-            return GatewayRead.model_validate(gateway)
+            return GatewayRead.model_validate(gateway).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -703,7 +787,7 @@ class GatewayService:
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
-            return GatewayRead.model_validate(gateway)
+            return GatewayRead.model_validate(gateway).masked()
 
         except Exception as e:
             db.rollback()
@@ -825,13 +909,11 @@ class GatewayService:
 
             # Update last seen timestamp
             gateway.last_seen = datetime.now(timezone.utc)
-
-            if "error" in result:
-                raise GatewayError(f"Gateway error: {result['error'].get('message')}")
-            return result.get("result")
-
-        except Exception as e:
-            raise GatewayConnectionError(f"Failed to forward request to {gateway.name}: {str(e)}")
+        except Exception:
+            raise GatewayConnectionError(f"Failed to forward request to {gateway.name}")
+        if "error" in result:
+            raise GatewayError(f"Gateway error: {result['error'].get('message')}")
+        return result.get("result")
 
     async def _handle_gateway_failure(self, gateway: str) -> None:
         """Tracks and handles gateway failures during health checks.
@@ -1096,9 +1178,10 @@ class GatewayService:
             >>> import asyncio
             >>> async def test_params():
             ...     try:
-            ...         await service._initialize_gateway("invalid://url")
+            ...         await service._initialize_gateway("hello//")
             ...     except Exception as e:
-            ...         return "Failed" in str(e) or "GatewayConnectionError" in str(type(e).__name__)
+            ...         return isinstance(e, GatewayConnectionError) or "Failed" in str(e)
+
             >>> asyncio.run(test_params())
             True
 
@@ -1153,21 +1236,23 @@ class GatewayService:
                 # Store the context managers so they stay alive
                 decoded_auth = decode_auth(authentication)
 
-                # Use async with for both sse_client and ClientSession
-                async with sse_client(url=server_url, headers=decoded_auth) as streams:
-                    async with ClientSession(*streams) as session:
-                        # Initialize the session
-                        response = await session.initialize()
-                        capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                if await self._validate_gateway_url(url=server_url, headers=decoded_auth, transport_type="SSE"):
+                    # Use async with for both sse_client and ClientSession
+                    async with sse_client(url=server_url, headers=decoded_auth) as streams:
+                        async with ClientSession(*streams) as session:
+                            # Initialize the session
+                            response = await session.initialize()
+                            capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
 
-                        response = await session.list_tools()
-                        tools = response.tools
-                        tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                            response = await session.list_tools()
+                            tools = response.tools
+                            tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
 
-                        tools = [ToolCreate.model_validate(tool) for tool in tools]
-                        logger.info(f"{tools[0]=}")
+                            tools = [ToolCreate.model_validate(tool) for tool in tools]
+                            logger.info(f"{tools[0]=}")
 
-                return capabilities, tools
+                    return capabilities, tools
+                raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
             async def connect_to_streamablehttp_server(server_url: str, authentication: Optional[Dict[str, str]] = None):
                 """
@@ -1184,24 +1269,22 @@ class GatewayService:
                     authentication = {}
                 # Store the context managers so they stay alive
                 decoded_auth = decode_auth(authentication)
-
-                # Use async with for both streamablehttp_client and ClientSession
+                # The _validate_gateway_url logic is flawed for streamablehttp, so we bypass it
+                # and go straight to the client connection. The outer try/except in
+                # _initialize_gateway will handle any connection errors.
                 async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         # Initialize the session
                         response = await session.initialize()
-                        # if get_session_id:
-                        #     session_id = get_session_id()
-                        #     if session_id:
-                        #         print(f"Session ID: {session_id}")
                         capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+
                         response = await session.list_tools()
                         tools = response.tools
                         tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+
                         tools = [ToolCreate.model_validate(tool) for tool in tools]
                         for tool in tools:
                             tool.request_type = "STREAMABLEHTTP"
-
                 return capabilities, tools
 
             capabilities = {}
@@ -1213,7 +1296,8 @@ class GatewayService:
 
             return capabilities, tools
         except Exception as e:
-            raise GatewayConnectionError(f"Failed to initialize gateway at {url}: {str(e)}")
+            logger.debug(f"Gateway initialization failed for {url}: {str(e)}", exc_info=True)
+            raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).

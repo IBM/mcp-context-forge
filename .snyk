@@ -1,0 +1,226 @@
+# Snyk (https://snyk.io) policy file, which patches or ignores known vulnerabilities.
+version: v1.25.0
+
+# Language settings
+language-settings:
+  python: "3.12"
+
+# Patches apply the minimum changes required to fix a vulnerability
+patches: []
+
+# Ignore specific vulnerabilities
+ignore: {}
+
+# Exclude files and directories from scanning
+exclude:
+  global:
+    # Test files
+    - "tests/**"
+    - "**/test_*.py"
+    - "**/*_test.py"
+
+    # Documentation
+    - "docs/**"
+    - "*.md"
+
+    # Development/build artifacts
+    - ".venv/**"
+    - "venv/**"
+    - "env/**"
+    - "dist/**"
+    - "build/**"
+    - "*.egg-info/**"
+    - "__pycache__/**"
+    - "*.pyc"
+
+    # CI/CD and config files
+    - ".github/**"
+    - ".git/**"
+    - "Makefile"
+    - "docker-compose*.yml"
+    - "docker-compose*.yaml"
+    - "docker-compose*.yml"
+    - "Dockerfile*"
+    - "Containerfile*"
+
+    # Security scan results
+    - "devskim-results.sarif"
+    - ".semgrep/**"
+    - ".gitleaks/**"
+    - "snyk-*.json"
+    - "sbom-*.json"
+    - "aibom.json"
+
+    # IDE files
+    - ".vscode/**"
+    - ".idea/**"
+
+    # Coverage and reports
+    - "htmlcov/**"
+    - ".coverage"
+    - "*.cover"
+    - ".pytest_cache/**"
+
+    # Node/JS dependencies (if any)
+    - "node_modules/**"
+
+    # Certificates and secrets (should not be in repo anyway)
+    - "certs/**"
+    - "*.pem"
+    - "*.key"
+    - "*.crt"
+
+    # Log files
+    - "*.log"
+    - "logs/**"
+
+# Custom rules for Python
+custom-rules:
+  - id: "insecure-jwt-secret"
+    title: "Hardcoded JWT secret key"
+    description: "JWT secret keys should not be hardcoded in source code"
+    severity: "high"
+    cwe: ["CWE-798"]
+
+  - id: "basic-auth-hardcoded"
+    title: "Hardcoded basic authentication credentials"
+    description: "Basic auth credentials should be stored securely, not in source code"
+    severity: "high"
+    cwe: ["CWE-798", "CWE-259"]
+
+# Severity threshold for failing builds
+# Options: low, medium, high, critical
+fail-on: high
+
+# Enable automatic fix PRs (if using Snyk with GitHub)
+enableAutomaticPRs: false
+
+# Python-specific settings
+python:
+  # Scan for vulnerabilities in installed packages
+  enableLicensesScan: true
+
+  # Include dev dependencies in the scan
+  includeDevDependencies: true
+
+  # Scan requirements files
+  scanRequirements:
+    - "requirements.txt"
+    - "pyproject.toml"
+
+  # Additional pip arguments
+  pipArgs: []
+
+  # Python version for compatibility checks
+  pythonVersion: "3.12"
+
+# Container scanning settings (for your Docker images)
+container:
+  # Exclude base image vulnerabilities that can't be fixed
+  exclude-base-image-vulns: false
+
+  # Severity threshold for container scanning
+  severity-threshold: medium
+
+# Infrastructure as Code settings
+iac:
+  # Scan docker-compose, containers and charts
+  scan:
+    - "docker-compose.yml"
+    - "docker-compose.yaml"
+    - "docker-compose.*.yml"
+    - "docker-compose.*.yaml"
+    - "Containerfile"
+    - "Containerfile.lite"
+    - "Containerfile.*"
+    - "charts/mcp-stack/**/*.yaml"
+    - "charts/mcp-stack/**/*.yml"
+    - "charts/**/values.yaml"
+    - "charts/**/templates/*.yaml"
+
+  # Severity threshold for IaC issues
+  severity-threshold: medium
+
+# Code quality settings
+code:
+  # Enable SAST (Static Application Security Testing)
+  enableSAST: true
+
+  # Severity threshold for code issues
+  severity-threshold: medium
+
+# Integration settings
+integrations:
+  # Integrate with your existing tools
+  webhooks:
+    - name: "security-alerts"
+      enabled: false
+
+  # JIRA integration (if applicable)
+  jira:
+    enabled: false
+    projectKey: ""
+    issueType: "Bug"
+
+  # Slack integration (if applicable)
+  slack:
+    enabled: false
+    webhookUrl: ""
+    channel: "#security-alerts"
+    severity-threshold: high
+
+# License policies
+license-policies:
+  # Allow only these licenses
+  allow:
+    - "MIT"
+    - "Apache-2.0"
+    - "BSD-3-Clause"
+    - "BSD-2-Clause"
+    - "ISC"
+    - "Python-2.0"
+    - "PSF-2.0"
+    - "LGPL-3.0"
+    - "LGPL-2.1"
+
+  # Explicitly deny these licenses
+  deny:
+    - "GPL-3.0"
+    - "AGPL-3.0"
+    - "SSPL"
+
+  # Review required for these licenses
+  review:
+    - "MPL-2.0"
+    - "LGPL-2.0"
+    - "CC-BY-SA-4.0"
+
+# Monitoring settings
+monitoring:
+  # Enable runtime monitoring (Snyk Runtime)
+  runtime:
+    enabled: false
+
+  # Alert on new vulnerabilities
+  newVulnerabilities:
+    enabled: false
+    severity-threshold: medium
+
+  # Weekly summary reports
+  weeklyReport:
+    enabled: false
+    day: "monday"
+
+# CLI behavior
+cli:
+  # Fail on issues of this severity or higher
+  fail-on-issues: high
+
+  # Show all vulnerability paths
+  show-vulnerable-paths: all
+
+  # Output format for CI/CD
+  output: json
+
+  # Trust policies from this file
+  trust-policies: true

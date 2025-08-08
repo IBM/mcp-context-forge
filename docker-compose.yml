@@ -1,4 +1,4 @@
-version: "3.9"          # Supported by both podman-compose and Docker Compose v2+
+#version: "3.9"          # Supported by both podman-compose and Docker Compose v2+
 
 ###############################################################################
 #  NETWORKS + VOLUMES - declared first so they can be referenced later
@@ -24,7 +24,7 @@ services:
   # MCP Gateway - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
-    #image: ghcr.io/ibm/mcp-context-forge:0.4.0 # Use the release MCP Context Forge image
+    #image: ghcr.io/ibm/mcp-context-forge:0.5.0 # Use the release MCP Context Forge image
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
     build:
       context: .
@@ -124,7 +124,7 @@ services:
   #   networks: [mcpnet]
 
   # migration:
-  #   #image: ghcr.io/ibm/mcp-context-forge:0.4.0 # Use the release MCP Context Forge image
+  #   #image: ghcr.io/ibm/mcp-context-forge:0.5.0 # Use the release MCP Context Forge image
   #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
   #   build:
   #     context: .
@@ -294,37 +294,105 @@ services:
   #     mysql:
   #       condition: service_started
 
+
 ###############################################################################
 #  OPTIONAL MCP SERVERS - drop-in helpers the Gateway can call
-# ###############################################################################
-#   mcp_time:
-#     image: mcp/time:latest
-#     networks: [mcpnet]
+###############################################################################
 
-#   mcp_playwright:
-#     image: mcp/playwright:latest
-#     networks: [mcpnet]
+  ###############################################################################
+  # Fast Time Server - High-performance time/timezone service for MCP
+  ###############################################################################
+  fast_time_server:
+    image: ghcr.io/ibm/fast-time-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8888:8080"    # Map host port 8888 to container port 8080
+    command: ["-transport=sse", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
 
-#   mcp_postgres:
-#     image: mcp/postgres:latest
-#     networks: [mcpnet]
+  ###############################################################################
+  # Auto-registration service - registers fast_time_server with gateway
+  ###############################################################################
+  register_fast_time:
+    image: python:3.11-slim
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      fast_time_server:
+        condition: service_started
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    # This is a one-shot container that exits after registration
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Installing MCP Context Forge Gateway..."
+        pip install --quiet mcp-contextforge-gateway
 
-#   mcp_github:
-#     image: mcp/github:latest
-#     networks: [mcpnet]
+        echo "Installing curl..."
+        apt-get update -qq && apt-get install -y -qq curl
 
-#   mcp_filesystem:
-#     image: mcp/filesystem:latest
-#     networks: [mcpnet]
+        echo "Waiting for services to be ready..."
+        # Wait for fast_time_server to be ready
+        for i in {1..30}; do
+          if curl -s -f http://fast_time_server:8080/health > /dev/null 2>&1; then
+            echo "✅ fast_time_server is healthy"
+            break
+          fi
+          echo "Waiting for fast_time_server... ($$i/30)"
+          sleep 2
+        done
 
-#   mcp_perplexity_ask:
-#     image: mcp/perplexity-ask:latest
-#     networks: [mcpnet]
+        echo "Generating JWT token..."
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
 
-#   mcp_memory:
-#     image: mcp/memory:latest
-#     networks: [mcpnet]
+        echo "Registering fast_time_server with gateway..."
+        RESPONSE=$$(curl -s -X POST http://gateway:4444/gateways \
+          -H "Authorization: Bearer $$MCPGATEWAY_BEARER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{"name":"fast_time","url":"http://fast_time_server:8080/sse"}')
 
-#   mcp_fetch:
-#     image: mcp/fetch:latest
-#     networks: [mcpnet]
+        echo "Registration response: $$RESPONSE"
+
+        # Check if registration was successful
+        if echo "$$RESPONSE" | grep -q '"id"'; then
+          echo "✅ Successfully registered fast_time_server"
+
+          # Optional: Create a virtual server with the time tools
+          echo "Creating virtual server..."
+          curl -s -X POST http://gateway:4444/servers \
+            -H "Authorization: Bearer $$MCPGATEWAY_BEARER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"time_server","description":"Fast time tools","associatedTools":["1","2"]}' || true
+
+          echo "✅ Setup complete!"
+        else
+          echo "❌ Registration failed"
+          exit 1
+        fi
+
+  ###############################################################################
+  # Hashicorp Terraform MCP Server
+  # https://hub.docker.com/r/hashicorp/terraform-mcp-server
+  # https://github.com/hashicorp/terraform-mcp-server/blob/main/README.md
+  ###############################################################################
+  # terraform-mcp-server:
+  #   image: docker.io/hashicorp/terraform-mcp-server:dev
+  #   container_name: terraform-mcp-server
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "8001:8080"    # Map host port 8888 to container port 8080
+  #   restart: unless-stopped
+  #   environment:
+  #     - TRANSPORT_MODE=streamable-http
+  #     - TRANSPORT_HOST=0.0.0.0
+  #     - TRANSPORT_PORT=8080
+  #     - MCP_CORS_MODE=disabled
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 20s

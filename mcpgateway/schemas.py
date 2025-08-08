@@ -39,6 +39,7 @@ from mcpgateway.models import Resource as MCPResource
 from mcpgateway.models import ResourceContent, TextContent
 from mcpgateway.models import Tool as MCPTool
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.validation.tags import validate_tags_field
 from mcpgateway.validators import SecurityValidator
 
 logger = logging.getLogger(__name__)
@@ -319,6 +320,20 @@ class ToolCreate(BaseModel):
     jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
+    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
+        return validate_tags_field(v)
 
     @field_validator("name")
     @classmethod
@@ -550,14 +565,30 @@ class ToolUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     integration_type: Optional[Literal["MCP", "REST"]] = Field(None, description="Tool integration type")
+    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
     annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
     jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
+    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
+        if v is None:
+            return None
+        return validate_tags_field(v)
 
     @field_validator("name")
     @classmethod
@@ -645,8 +676,8 @@ class ToolUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: When value is unsafe
         """
-        integration_type = values.config.get("integration_type", "MCP")
 
+        integration_type = values.data.get("integration_type", "MCP")
         if integration_type == "MCP":
             allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
         else:  # REST
@@ -733,6 +764,7 @@ class ToolRead(BaseModelWithConfigDict):
     name: str
     gateway_slug: str
     original_name_slug: str
+    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the tool")
 
 
 class ToolInvocation(BaseModelWithConfigDict):
@@ -915,6 +947,20 @@ class ResourceCreate(BaseModel):
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
     template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
+    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the resource")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
+        return validate_tags_field(v)
 
     @field_validator("uri")
     @classmethod
@@ -999,15 +1045,13 @@ class ResourceCreate(BaseModel):
 
         if isinstance(v, bytes):
             try:
-                v_str = v.decode("utf-8")
-
-                if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v_str if isinstance(v, bytes) else v, re.IGNORECASE):
-                    raise ValueError("Content contains HTML tags that may cause display issues")
+                text = v.decode("utf-8")
             except UnicodeDecodeError:
                 raise ValueError("Content must be UTF-8 decodable")
         else:
-            if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v if isinstance(v, bytes) else v, re.IGNORECASE):
-                raise ValueError("Content contains HTML tags that may cause display issues")
+            text = v
+        if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
+            raise ValueError("Content contains HTML tags that may cause display issues")
 
         return v
 
@@ -1023,6 +1067,22 @@ class ResourceUpdate(BaseModelWithConfigDict):
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
     template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
+    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the resource")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
+        if v is None:
+            return None
+        return validate_tags_field(v)
 
     @field_validator("name")
     @classmethod
@@ -1094,15 +1154,13 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
         if isinstance(v, bytes):
             try:
-                v_str = v.decode("utf-8")
-
-                if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v_str if isinstance(v, bytes) else v, re.IGNORECASE):
-                    raise ValueError("Content contains HTML tags that may cause display issues")
+                text = v.decode("utf-8")
             except UnicodeDecodeError:
                 raise ValueError("Content must be UTF-8 decodable")
         else:
-            if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, v if isinstance(v, bytes) else v, re.IGNORECASE):
-                raise ValueError("Content contains HTML tags that may cause display issues")
+            text = v
+        if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
+            raise ValueError("Content contains HTML tags that may cause display issues")
 
         return v
 
@@ -1128,6 +1186,7 @@ class ResourceRead(BaseModelWithConfigDict):
     updated_at: datetime
     is_active: bool
     metrics: ResourceMetrics
+    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the resource")
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -1372,6 +1431,20 @@ class PromptCreate(BaseModel):
     description: Optional[str] = Field(None, description="Prompt description")
     template: str = Field(..., description="Prompt template text")
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
+    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the prompt")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
+        return validate_tags_field(v)
 
     @field_validator("name")
     @classmethod
@@ -1473,6 +1546,23 @@ class PromptUpdate(BaseModelWithConfigDict):
     template: Optional[str] = Field(None, description="Prompt template text")
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
 
+    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the prompt")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
+        if v is None:
+            return None
+        return validate_tags_field(v)
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -1552,6 +1642,7 @@ class PromptRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     is_active: bool
+    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the prompt")
     metrics: PromptMetrics
 
 
@@ -1625,6 +1716,20 @@ class GatewayCreate(BaseModel):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the gateway")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
+        return validate_tags_field(v)
 
     @field_validator("name")
     @classmethod
@@ -1783,8 +1888,6 @@ class GatewayUpdate(BaseModelWithConfigDict):
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
-
-    name: Optional[str] = Field(None, description="Unique name for the prompt")
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
@@ -1795,6 +1898,22 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the gateway")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
+        if v is None:
+            return None
+        return validate_tags_field(v)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -1882,13 +2001,13 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If auth type is invalid
         """
-        auth_type = values.get("auth_type")
+
+        auth_type = values.data.get("auth_type")
 
         if auth_type == "basic":
             # For basic authentication, both username and password must be present
-            username = values.get("auth_username")
-            password = values.get("auth_password")
-
+            username = values.data.get("auth_username")
+            password = values.data.get("auth_password")
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
@@ -1897,7 +2016,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         if auth_type == "bearer":
             # For bearer authentication, only token is required
-            token = values.get("auth_token")
+            token = values.data.get("auth_token")
 
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
@@ -1906,8 +2025,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         if auth_type == "authheaders":
             # For headers authentication, both key and value must be present
-            header_key = values.get("auth_header_key")
-            header_value = values.get("auth_header_value")
+            header_key = values.data.get("auth_header_key")
+            header_value = values.data.get("auth_header_value")
 
             if not header_key or not header_value:
                 raise ValueError("For 'headers' auth, both 'auth_header_key' and 'auth_header_value' must be provided.")
@@ -1961,6 +2080,7 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
+    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
     slug: str = Field(None, description="Slug for gateway endpoint URL")
 
@@ -2033,6 +2153,11 @@ class GatewayRead(BaseModelWithConfigDict):
         """
         auth_type = values.auth_type
         auth_value_encoded = values.auth_value
+
+        # Skip validation logic if masked value
+        if auth_value_encoded == settings.masked_auth_value:
+            return values
+
         auth_value = decode_auth(auth_value_encoded)
         if auth_type == "basic":
             auth = auth_value.get("Authorization")
@@ -2056,6 +2181,40 @@ class GatewayRead(BaseModelWithConfigDict):
             values.auth_header_key, values.auth_header_value = k, v
 
         return values
+
+    def masked(self) -> "GatewayRead":
+        """
+        Return a masked version of the model instance with sensitive authentication fields hidden.
+
+        This method creates a dictionary representation of the model data and replaces sensitive fields
+        such as `auth_value`, `auth_password`, `auth_token`, and `auth_header_value` with a masked
+        placeholder value defined in `settings.masked_auth_value`. Masking is only applied if the fields
+        are present and not already masked.
+
+        Args:
+            None
+
+        Returns:
+            GatewayRead: A new instance of the GatewayRead model with sensitive authentication-related fields
+            masked to prevent exposure of sensitive information.
+
+        Notes:
+            - The `auth_value` field is only masked if it exists and its value is different from the masking
+            placeholder.
+            - Other sensitive fields (`auth_password`, `auth_token`, `auth_header_value`) are masked if present.
+            - Fields not related to authentication remain unmodified.
+        """
+        masked_data = self.model_dump()
+
+        # Only mask if auth_value is present and not already masked
+        if masked_data.get("auth_value") and masked_data["auth_value"] != settings.masked_auth_value:
+            masked_data["auth_value"] = settings.masked_auth_value
+
+        masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
+        masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
+        masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+
+        return GatewayRead.model_validate(masked_data)
 
 
 class FederatedTool(BaseModelWithConfigDict):
@@ -2123,9 +2282,10 @@ class RPCRequest(BaseModel):
         Raises:
             ValueError: When value is not safe
         """
-        if not re.match(r"^[a-zA-Z][a-zA-Z0-9_\.]*$", v):
+        SecurityValidator.validate_no_xss(v, "RPC method name")
+        if not re.match(settings.validation_tool_method_pattern, v):
             raise ValueError("Invalid method name format")
-        if len(v) > 128:  # MCP method name limit
+        if len(v) > settings.validation_max_method_length:
             raise ValueError("Method name too long")
         return v
 
@@ -2305,6 +2465,21 @@ class ServerCreate(BaseModel):
     name: str = Field(..., description="The server's name")
     description: Optional[str] = Field(None, description="Server description")
     icon: Optional[str] = Field(None, description="URL for the server's icon")
+    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the server")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
+        return validate_tags_field(v)
+
     associated_tools: Optional[List[str]] = Field(None, description="Comma-separated tool IDs")
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
@@ -2383,6 +2558,23 @@ class ServerUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="The server's name")
     description: Optional[str] = Field(None, description="Server description")
     icon: Optional[str] = Field(None, description="URL for the server's icon")
+    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the server")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
+        if v is None:
+            return None
+        return validate_tags_field(v)
+
     associated_tools: Optional[List[str]] = Field(None, description="Comma-separated tool IDs")
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
@@ -2474,6 +2666,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_resources: List[int] = []
     associated_prompts: List[int] = []
     metrics: ServerMetrics
+    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the server")
 
     @model_validator(mode="before")
     @classmethod
@@ -2532,3 +2725,31 @@ class GatewayTestResponse(BaseModelWithConfigDict):
     status_code: int = Field(..., description="HTTP status code returned by the gateway")
     latency_ms: int = Field(..., description="Latency of the request in milliseconds")
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")
+
+
+class TaggedEntity(BaseModelWithConfigDict):
+    """A simplified representation of an entity that has a tag."""
+
+    id: str = Field(..., description="The entity's ID")
+    name: str = Field(..., description="The entity's name")
+    type: str = Field(..., description="The entity type (tool, resource, prompt, server, gateway)")
+    description: Optional[str] = Field(None, description="The entity's description")
+
+
+class TagStats(BaseModelWithConfigDict):
+    """Statistics for a single tag across all entity types."""
+
+    tools: int = Field(default=0, description="Number of tools with this tag")
+    resources: int = Field(default=0, description="Number of resources with this tag")
+    prompts: int = Field(default=0, description="Number of prompts with this tag")
+    servers: int = Field(default=0, description="Number of servers with this tag")
+    gateways: int = Field(default=0, description="Number of gateways with this tag")
+    total: int = Field(default=0, description="Total occurrences of this tag")
+
+
+class TagInfo(BaseModelWithConfigDict):
+    """Information about a single tag."""
+
+    name: str = Field(..., description="The tag name")
+    stats: TagStats = Field(..., description="Statistics for this tag")
+    entities: Optional[List[TaggedEntity]] = Field(default_factory=list, description="Entities that have this tag")

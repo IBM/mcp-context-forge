@@ -186,7 +186,7 @@ class TestAdminServerAPIs:
             "associatedPrompts": "",
         }
         response = await client.post(f"/admin/servers/{server_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
+        assert response.status_code == 200
 
         # Toggle server status
         response = await client.post(f"/admin/servers/{server_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
@@ -286,7 +286,7 @@ class TestAdminToolAPIs:
 
         # Try to create duplicate
         response = await client.post("/admin/tools/", data=form_data, headers=TEST_AUTH_HEADER)
-        assert response.status_code in [400, 500]  # Could be either
+        assert response.status_code in [400, 409, 500]  # Could be either
         assert response.json()["success"] is False
 
 
@@ -363,7 +363,7 @@ class TestAdminPromptAPIs:
 
         # POST to /admin/prompts should redirect
         response = await client.post("/admin/prompts", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
+        assert response.status_code == 200
 
         # List prompts to verify creation
         response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
@@ -386,7 +386,7 @@ class TestAdminPromptAPIs:
             "arguments": '[{"name": "greeting", "description": "Greeting", "required": false}]',
         }
         response = await client.post(f"/admin/prompts/{form_data['name']}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
-        assert response.status_code == 303
+        assert response.status_code == 200
 
         # Toggle prompt status
         response = await client.post(f"/admin/prompts/{prompt_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)

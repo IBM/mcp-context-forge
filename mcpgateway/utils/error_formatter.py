@@ -83,7 +83,7 @@ class ErrorFormatter:
             ...     result = ErrorFormatter.format_validation_error(e)
             <class 'pydantic_core._pydantic_core.ValidationError'>
             >>> result['message']
-            'Validation failed'
+            'Validation failed: Name must start with a letter and contain only letters, numbers, and underscores'
             >>> result['success']
             False
             >>> len(result['details']) > 0
@@ -134,7 +134,7 @@ class ErrorFormatter:
         # Log the full error for debugging
         logger.debug(f"Validation error: {error}")
 
-        return {"message": "Validation failed", "details": errors, "success": False}
+        return {"message": f"Validation failed: {user_message}", "details": errors, "success": False}
 
     @staticmethod
     def _get_user_message(field: str, technical_msg: str) -> str:
@@ -244,6 +244,18 @@ class ErrorFormatter:
             >>> result['message']
             'A resource with this URI already exists'
 
+            >>> # Test UNIQUE constraint on server name
+            >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: servers.name"
+            >>> result = ErrorFormatter.format_database_error(mock_error)
+            >>> result['message']
+            'A server with this name already exists'
+
+            >>> # Test UNIQUE constraint on prompt name
+            >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: prompts.name"
+            >>> result = ErrorFormatter.format_database_error(mock_error)
+            >>> result['message']
+            'A prompt with this name already exists'
+
             >>> # Test FOREIGN KEY constraint
             >>> mock_error.orig.__str__ = lambda self: "FOREIGN KEY constraint failed"
             >>> result = ErrorFormatter.format_database_error(mock_error)
@@ -289,6 +301,8 @@ class ErrorFormatter:
                     return {"message": "A resource with this URI already exists", "success": False}
                 elif "servers.name" in error_str:
                     return {"message": "A server with this name already exists", "success": False}
+                elif "prompts.name" in error_str:
+                    return {"message": "A prompt with this name already exists", "success": False}
 
             elif "FOREIGN KEY constraint failed" in error_str:
                 return {"message": "Referenced item not found", "success": False}

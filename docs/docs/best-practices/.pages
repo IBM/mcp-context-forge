@@ -1,0 +1,3 @@
+nav:
+  - "⭐ Best Practices Guide": mcp-best-practices.md
+  - "🛠️ Write an MCP Server in Python": developing-your-mcp-server-python.md

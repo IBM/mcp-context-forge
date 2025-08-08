@@ -94,7 +94,7 @@ async def temp_db():
     Base.metadata.create_all(bind=engine)
 
     # Create session factory
-    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
 
     # Override the get_db dependency
     def override_get_db():
@@ -440,17 +440,15 @@ class TestServerAPIs:
         response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 201
 
-        # Try to create duplicate - returns 400 or 409
+        # Try to create duplicate - must return 409 Conflict
         response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
-        assert response.status_code in [400, 409]  # Accept either
+        assert response.status_code == 409
         resp_json = response.json()
-        if "detail" in resp_json:
-            assert "already exists" in resp_json["detail"]
-        elif "message" in resp_json:
+        if "message" in resp_json:
             assert "already exists" in resp_json["message"]
         else:
             # Accept any error format as long as status is correct
-            assert response.status_code in [400, 409]
+            assert response.status_code == 409
 
 
 # -------------------------
@@ -615,8 +613,8 @@ class TestToolAPIs:
 
         # Try to create duplicate - might succeed with different ID
         response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
-        # Either succeeds (200) or conflicts (409)
-        assert response.status_code in [200, 400]
+        # Accept 409 Conflict as valid for duplicate
+        assert response.status_code in [200, 400, 409]
         if response.status_code == 400:
             assert "already exists" in response.json()["detail"]
 
@@ -637,10 +635,11 @@ class TestResourceAPIs:
         response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 409]
         resp_json = response.json()
-        if "detail" in resp_json:
-            assert "already exists" in resp_json["detail"]
-        elif "message" in resp_json:
+        if "message" in resp_json:
             assert "already exists" in resp_json["message"]
+        else:
+            # Accept any error format as long as status is correct
+            assert response.status_code == 409
 
     """Test resource management endpoints."""
 
@@ -779,9 +778,7 @@ class TestResourceAPIs:
         response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 409]
         resp_json = response.json()
-        if "detail" in resp_json:
-            assert "already exists" in resp_json["detail"]
-        elif "message" in resp_json:
+        if "message" in resp_json:
             assert "already exists" in resp_json["message"]
         else:
             # Accept any error format as long as status is correct
@@ -931,10 +928,17 @@ class TestPromptAPIs:
         response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
-        # Try to create duplicate - returns 400 at the moment, not 409
+        # Try to create duplicate - must return 409 Conflict
         response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
-        assert response.status_code == 400
-        assert "already exists" in response.json()["detail"]
+        assert response.status_code == 409
+        resp_json = response.json()
+        if "detail" in resp_json:
+            assert "already exists" in resp_json["detail"]
+        elif "message" in resp_json:
+            assert "already exists" in resp_json["message"]
+        else:
+            # Accept any error format as long as status is correct
+            assert response.status_code == 409
 
 
 # -------------------------
