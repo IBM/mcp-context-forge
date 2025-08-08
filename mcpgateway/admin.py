@@ -18,6 +18,8 @@ underlying data.
 """
 
 # Standard
+from collections import defaultdict
+from functools import wraps
 import json
 import logging
 import time
@@ -83,6 +85,84 @@ root_service = RootService()
 # Set up basic authentication
 logger = logging.getLogger("mcpgateway")
 
+# Rate limiting storage
+rate_limit_storage = defaultdict(list)
+
+
+# Rate limiting decorator
+def rate_limit(requests_per_minute: int = None):
+    """Rate limiting decorator for admin endpoints.
+
+    Args:
+        requests_per_minute: Maximum requests per minute (default: uses config value)
+
+    Returns:
+        Decorator function that applies rate limiting to the wrapped endpoint
+
+    Examples:
+        >>> # Test that rate_limit is callable
+        >>> from mcpgateway.admin import rate_limit
+        >>> callable(rate_limit)
+        True
+        >>> # Test that it returns a decorator function
+        >>> import inspect
+        >>> decorator = rate_limit(30)
+        >>> inspect.isfunction(decorator)
+        True
+    """
+
+    def decorator(func):
+        """Inner decorator function that wraps the endpoint with rate limiting.
+
+        Args:
+            func: The FastAPI endpoint function to wrap
+
+        Returns:
+            The wrapped function with rate limiting applied
+        """
+
+        @wraps(func)
+        async def wrapper(*args, request: Request = None, **kwargs):
+            """Wrapper function that applies rate limiting logic.
+
+            Args:
+                *args: Variable length argument list passed to wrapped function
+                request: FastAPI Request object containing client information
+                **kwargs: Arbitrary keyword arguments passed to wrapped function
+
+            Returns:
+                The result of the wrapped function call
+
+            Raises:
+                HTTPException: When rate limit is exceeded (429 Too Many Requests)
+            """
+            # Get the rate limit from parameter or config
+            limit = requests_per_minute or settings.validation_max_requests_per_minute
+
+            # Get client identifier (IP address)
+            client_ip = request.client.host if request and request.client else "unknown"
+            current_time = time.time()
+            minute_ago = current_time - 60
+
+            # Clean old entries and get current requests
+            rate_limit_storage[client_ip] = [timestamp for timestamp in rate_limit_storage[client_ip] if timestamp > minute_ago]
+
+            # Check rate limit
+            if len(rate_limit_storage[client_ip]) >= limit:
+                logger.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func.__name__}")
+                raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Maximum {limit} requests per minute.")
+
+            # Add current request timestamp
+            rate_limit_storage[client_ip].append(current_time)
+
+            # Call the original function
+            return await func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 
 ####################
@@ -91,18 +171,31 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 
 
 @admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
+@rate_limit(requests_per_minute=30)  # Lower limit for config endpoints
 async def get_global_passthrough_headers(
+    request: Request,  # pylint: disable=unused-argument
     db: Session = Depends(get_db),
     _user: str = Depends(require_auth),
 ) -> GlobalConfigRead:
     """Get the global passthrough headers configuration.
 
     Args:
+        request: HTTP request object
         db: Database session
         _user: Authenticated user
 
     Returns:
         GlobalConfigRead: The current global passthrough headers configuration
+
+    Examples:
+        >>> # Test function exists and has correct name
+        >>> from mcpgateway.admin import get_global_passthrough_headers
+        >>> get_global_passthrough_headers.__name__
+        'get_global_passthrough_headers'
+        >>> # Test it's a coroutine function
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(get_global_passthrough_headers)
+        True
     """
     config = db.query(GlobalConfig).first()
     if not config:
@@ -111,7 +204,9 @@ async def get_global_passthrough_headers(
 
 
 @admin_router.put("/config/passthrough-headers", response_model=GlobalConfigRead)
+@rate_limit(requests_per_minute=20)  # Stricter limit for config updates
 async def update_global_passthrough_headers(
+    request: Request,  # pylint: disable=unused-argument
     config_update: GlobalConfigUpdate,
     db: Session = Depends(get_db),
     _user: str = Depends(require_auth),
@@ -119,12 +214,23 @@ async def update_global_passthrough_headers(
     """Update the global passthrough headers configuration.
 
     Args:
+        request: HTTP request object
         config_update: The new configuration
         db: Database session
         _user: Authenticated user
 
     Returns:
         GlobalConfigRead: The updated configuration
+
+    Examples:
+        >>> # Test function exists and has correct name
+        >>> from mcpgateway.admin import update_global_passthrough_headers
+        >>> update_global_passthrough_headers.__name__
+        'update_global_passthrough_headers'
+        >>> # Test it's a coroutine function
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(update_global_passthrough_headers)
+        True
     """
     config = db.query(GlobalConfig).first()
     if not config:
@@ -4161,6 +4267,16 @@ async def admin_list_tags(
 
     Raises:
         HTTPException: If tag retrieval fails
+
+    Examples:
+        >>> # Test function exists and has correct name
+        >>> from mcpgateway.admin import admin_list_tags
+        >>> admin_list_tags.__name__
+        'admin_list_tags'
+        >>> # Test it's a coroutine function
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(admin_list_tags)
+        True
     """
     tag_service = TagService()
 
