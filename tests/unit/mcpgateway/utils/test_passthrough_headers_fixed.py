@@ -29,7 +29,7 @@ class TestPassthroughHeaders:
     def test_basic_header_passthrough_global_config(self, mock_settings):
         """Test basic header passthrough with global configuration."""
         mock_settings.enable_header_passthrough = True
-        
+
         # Mock database and global config
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
@@ -56,7 +56,7 @@ class TestPassthroughHeaders:
     def test_gateway_specific_override(self, mock_settings):
         """Test that gateway-specific headers override global configuration."""
         mock_settings.enable_header_passthrough = True
-        
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
@@ -86,7 +86,7 @@ class TestPassthroughHeaders:
     def test_authorization_conflict_basic_auth(self, mock_settings, caplog):
         """Test that Authorization header is blocked when gateway uses basic auth."""
         mock_settings.enable_header_passthrough = True
-        
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["Authorization", "X-Tenant-Id"]
@@ -121,7 +121,7 @@ class TestPassthroughHeaders:
     def test_authorization_conflict_bearer_auth(self, mock_settings, caplog):
         """Test that Authorization header is blocked when gateway uses bearer auth."""
         mock_settings.enable_header_passthrough = True
-        
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["Authorization"]
@@ -151,10 +151,10 @@ class TestPassthroughHeaders:
         mock_db = Mock()
         request_headers = {"x-tenant-id": "test"}
         base_headers = {"Content-Type": "application/json"}
-        
+
         # Don't mock settings - use default behavior
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
-        
+
         # Should return only base headers when disabled (default)
         assert result == base_headers
         # Database should not be queried when feature is disabled
@@ -164,7 +164,7 @@ class TestPassthroughHeaders:
     def test_case_insensitive_header_matching(self, mock_settings):
         """Test that header matching works with lowercase request headers."""
         mock_settings.enable_header_passthrough = True
-        
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["X-Tenant-ID", "Authorization"]
