@@ -187,13 +187,13 @@
             >
             <input
               type="text"
-              id="servers-tag-filter"
+              id="catalog-tag-filter"
               placeholder="Enter tags (comma-separated)"
               class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              oninput="filterEntitiesByTags('servers', this.value)"
+              oninput="filterEntitiesByTags('catalog', this.value)"
             />
             <button
-              onclick="clearTagFilter('servers')"
+              onclick="clearTagFilter('catalog')"
               class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
             >
               Clear
@@ -203,7 +203,7 @@
             <span class="text-xs text-gray-500 dark:text-gray-400"
               >Available tags:</span
             >
-            <div id="servers-available-tags" class="mt-1 flex flex-wrap gap-1">
+            <div id="catalog-available-tags" class="mt-1 flex flex-wrap gap-1">
               <!-- Tag suggestions will be populated here by JavaScript -->
             </div>
           </div>

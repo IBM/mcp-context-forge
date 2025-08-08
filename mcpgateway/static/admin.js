@@ -6039,6 +6039,7 @@ function clearTagFilter(entityType) {
  */
 function initializeTagFiltering() {
     const entityTypes = [
+        "catalog",
         "tools",
         "resources",
         "prompts",
