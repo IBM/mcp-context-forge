@@ -18,6 +18,8 @@ underlying data.
 """
 
 # Standard
+from collections import defaultdict
+from functools import wraps
 import json
 import logging
 import time
@@ -83,6 +85,51 @@ root_service = RootService()
 # Set up basic authentication
 logger = logging.getLogger("mcpgateway")
 
+# Rate limiting storage
+rate_limit_storage = defaultdict(list)
+
+
+# Rate limiting decorator
+def rate_limit(requests_per_minute: int = None):
+    """Rate limiting decorator for admin endpoints.
+
+    Args:
+        requests_per_minute: Maximum requests per minute (default: uses config value)
+
+    Returns:
+        Decorator function that applies rate limiting to the wrapped endpoint
+    """
+
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, request: Request = None, **kwargs):
+            # Get the rate limit from parameter or config
+            limit = requests_per_minute or settings.validation_max_requests_per_minute
+
+            # Get client identifier (IP address)
+            client_ip = request.client.host if request and request.client else "unknown"
+            current_time = time.time()
+            minute_ago = current_time - 60
+
+            # Clean old entries and get current requests
+            rate_limit_storage[client_ip] = [timestamp for timestamp in rate_limit_storage[client_ip] if timestamp > minute_ago]
+
+            # Check rate limit
+            if len(rate_limit_storage[client_ip]) >= limit:
+                logger.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func.__name__}")
+                raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Maximum {limit} requests per minute.")
+
+            # Add current request timestamp
+            rate_limit_storage[client_ip].append(current_time)
+
+            # Call the original function
+            return await func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 
 ####################
@@ -91,13 +138,16 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 
 
 @admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
+@rate_limit(requests_per_minute=30)  # Lower limit for config endpoints
 async def get_global_passthrough_headers(
+    request: Request,  # pylint: disable=unused-argument
     db: Session = Depends(get_db),
     _user: str = Depends(require_auth),
 ) -> GlobalConfigRead:
     """Get the global passthrough headers configuration.
 
     Args:
+        request: HTTP request object
         db: Database session
         _user: Authenticated user
 
@@ -111,7 +161,9 @@ async def get_global_passthrough_headers(
 
 
 @admin_router.put("/config/passthrough-headers", response_model=GlobalConfigRead)
+@rate_limit(requests_per_minute=20)  # Stricter limit for config updates
 async def update_global_passthrough_headers(
+    request: Request,  # pylint: disable=unused-argument
     config_update: GlobalConfigUpdate,
     db: Session = Depends(get_db),
     _user: str = Depends(require_auth),
@@ -119,6 +171,7 @@ async def update_global_passthrough_headers(
     """Update the global passthrough headers configuration.
 
     Args:
+        request: HTTP request object
         config_update: The new configuration
         db: Database session
         _user: Authenticated user

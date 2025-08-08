@@ -549,26 +549,33 @@ class Settings(BaseSettings):
     # Rate limiting
     validation_max_requests_per_minute: int = 60
 
-    # passthrough headers
-    default_passthrough_headers: Any = os.environ.get("DEFAULT_PASSTHROUGH_HEADERS", ["Authorization", "X-Tenant-Id", "X-Trace-Id"])
-    if not isinstance(default_passthrough_headers, list):
-        try:
-            default_passthrough_headers = list(default_passthrough_headers)
-        except Exception as e:
-            logger.warning(f"Invalid DEFAULT_PASSTHROUGH_HEADERS format in .env. Must be a list of header names, e.g. ['Authorization', 'X-Tenant-Id'], error: {e}")
-            default_passthrough_headers = []
+    # Header passthrough feature (disabled by default for security)
+    enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")
+
+    # Passthrough headers configuration
+    default_passthrough_headers: List[str] = Field(default_factory=list)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        # Parse DEFAULT_PASSTHROUGH_HEADERS environment variable
+        default_value = os.environ.get("DEFAULT_PASSTHROUGH_HEADERS")
+        if default_value:
+            try:
+                # Try JSON parsing first
+                self.default_passthrough_headers = json.loads(default_value)
+                if not isinstance(self.default_passthrough_headers, list):
+                    raise ValueError("Must be a JSON array")
+            except (json.JSONDecodeError, ValueError):
+                # Fallback to comma-separated parsing
+                self.default_passthrough_headers = [h.strip() for h in default_value.split(",") if h.strip()]
+                logger.info(f"Parsed comma-separated passthrough headers: {self.default_passthrough_headers}")
+        else:
+            # Safer defaults without Authorization header
+            self.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
 
     # Masking value for all sensitive data
     masked_auth_value: str = "*****"
-
-    # passthrough headers
-    default_passthrough_headers: Any = os.environ.get("DEFAULT_PASSTHROUGH_HEADERS", ["Authorization", "X-Tenant-Id", "X-Trace-Id"])
-    if not isinstance(default_passthrough_headers, list):
-        try:
-            default_passthrough_headers = list(default_passthrough_headers)
-        except Exception as e:
-            logger.warning(f"Invalid DEFAULT_PASSTHROUGH_HEADERS format in .env. Must be a list of header names, e.g. ['Authorization', 'X-Tenant-Id'], error: {e}")
-            default_passthrough_headers = []
 
 
 def extract_using_jq(data, jq_filter=""):
