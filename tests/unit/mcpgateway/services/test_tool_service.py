@@ -1118,7 +1118,7 @@ class TestToolService:
 
         # Should raise NotFoundError
         with pytest.raises(ToolNotFoundError) as exc_info:
-            await tool_service.invoke_tool(test_db, "nonexistent_tool", {})
+            await tool_service.invoke_tool(test_db, "nonexistent_tool", {}, request_headers=None)
 
         assert "Tool not found: nonexistent_tool" in str(exc_info.value)
 
@@ -1139,7 +1139,7 @@ class TestToolService:
 
         # Should raise NotFoundError with "inactive" message
         with pytest.raises(ToolNotFoundError) as exc_info:
-            await tool_service.invoke_tool(test_db, "test_tool", {})
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
         assert "Tool 'test_tool' exists but is inactive" in str(exc_info.value)
 
@@ -1169,7 +1169,7 @@ class TestToolService:
         tool_service._record_tool_metric = AsyncMock()
 
         # -------------- invoke -----------------
-        result = await tool_service.invoke_tool(test_db, "test_tool", {})
+        result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
         # ------------- asserts -----------------
         tool_service._http_client.get.assert_called_once_with(
@@ -1192,7 +1192,7 @@ class TestToolService:
         tool_service._record_tool_metric = AsyncMock()
 
         # -------------- invoke -----------------
-        result = await tool_service.invoke_tool(test_db, "test_tool", {})
+        result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
         assert result.content[0].text == "Request completed successfully (No Content)"
 
@@ -1208,7 +1208,7 @@ class TestToolService:
         tool_service._record_tool_metric = AsyncMock()
 
         # -------------- invoke -----------------
-        result = await tool_service.invoke_tool(test_db, "test_tool", {})
+        result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
         assert result.content[0].text == "Tool error encountered"
 
@@ -1240,7 +1240,7 @@ class TestToolService:
         # Mock extract_using_jq to return the input unmodified when filter is empty
         with patch("mcpgateway.services.tool_service.decode_auth", return_value={}), patch("mcpgateway.config.extract_using_jq", return_value={"result": "REST tool response"}):
             # Invoke tool
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"})
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         # Verify HTTP request
         tool_service._http_client.request.assert_called_once_with(
@@ -1286,7 +1286,7 @@ class TestToolService:
 
         tool_service._http_client.request = AsyncMock(return_value=mock_response)
 
-        await tool_service.invoke_tool(test_db, "test_tool", payload)
+        await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
 
         tool_service._http_client.request.assert_called_once_with(
             "POST",
@@ -1313,7 +1313,7 @@ class TestToolService:
         test_db.execute = Mock(return_value=mock_scalar)
 
         with pytest.raises(ToolInvocationError) as exc_info:
-            await tool_service.invoke_tool(test_db, "test_tool", payload)
+            await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
 
             assert "Required URL parameter 'type' not found in arguments" in str(exc_info.value)
 
@@ -1382,7 +1382,7 @@ class TestToolService:
             # ------------------------------------------------------------------
             # 4.  Act
             # ------------------------------------------------------------------
-            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"})
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
         session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"})
@@ -1468,7 +1468,7 @@ class TestToolService:
             # ------------------------------------------------------------------
             # 4.  Act
             # ------------------------------------------------------------------
-            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"})
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
 
         # Our ToolResult bubbled back out
         assert result.content[0].text == ""
@@ -1517,7 +1517,7 @@ class TestToolService:
         mock_scalar.scalar_one_or_none.return_value = mock_tool
         test_db.execute = Mock(return_value=mock_scalar)
 
-        response = await tool_service.invoke_tool(test_db, "test_tool", payload)
+        response = await tool_service.invoke_tool(test_db, "test_tool", payload, request_headers=None)
 
         assert response.content[0].text == "Invalid tool type"
 
@@ -1581,7 +1581,7 @@ class TestToolService:
             # ------------------------------------------------------------------
             # 4.  Act
             # ------------------------------------------------------------------
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"})
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
         session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"})
@@ -1616,7 +1616,7 @@ class TestToolService:
 
             # Should raise ToolInvocationError
             with pytest.raises(ToolInvocationError) as exc_info:
-                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"})
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
             assert "Tool invocation failed: HTTP error" in str(exc_info.value)
 

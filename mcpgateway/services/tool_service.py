@@ -45,6 +45,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 
@@ -332,7 +333,9 @@ class ToolService:
         except Exception as ex:
             raise ToolError(f"Failed to register tool: {str(ex)}")
 
-    async def list_tools(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> List[ToolRead]:
+    async def list_tools(
+        self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, _request_headers: Optional[Dict[str, str]] = None
+    ) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
 
@@ -343,6 +346,8 @@ class ToolService:
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
             tags (Optional[List[str]]): Filter tools by tags. If provided, only tools with at least one matching tag will be returned.
+            _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Currently unused but kept for API consistency. Defaults to None.
 
         Returns:
             List[ToolRead]: A list of registered tools represented as ToolRead objects.
@@ -378,7 +383,7 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 
-    async def list_server_tools(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[ToolRead]:
+    async def list_server_tools(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
 
@@ -389,6 +394,8 @@ class ToolService:
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
+            _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Currently unused but kept for API consistency. Defaults to None.
 
         Returns:
             List[ToolRead]: A list of registered tools represented as ToolRead objects.
@@ -548,7 +555,7 @@ class ToolService:
             db.rollback()
             raise ToolError(f"Failed to toggle tool status: {str(e)}")
 
-    async def invoke_tool(self, db: Session, name: str, arguments: Dict[str, Any]) -> ToolResult:
+    async def invoke_tool(self, db: Session, name: str, arguments: Dict[str, Any], request_headers: Optional[Dict[str, str]] = None) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
 
@@ -556,6 +563,8 @@ class ToolService:
             db: Database session.
             name: Name of tool to invoke.
             arguments: Tool arguments.
+            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Defaults to None.
 
         Returns:
             Tool invocation result.
@@ -595,14 +604,17 @@ class ToolService:
         success = False
         error_message = None
         try:
-            # tool.validate_arguments(arguments)
-            # Build headers with auth if necessary.
+            # Get combined headers for the tool including base headers, auth, and passthrough headers
+            # headers = self._get_combined_headers(db, tool, tool.headers or {}, request_headers)
             headers = tool.headers or {}
             if tool.integration_type == "REST":
                 credentials = decode_auth(tool.auth_value)
                 headers.update(credentials)
 
-                # Build the payload based on integration type.
+                # Only call get_passthrough_headers if we actually have request headers to pass through
+                if request_headers:
+                    headers = get_passthrough_headers(request_headers, headers, db)
+                # Build the payload based on integration type
                 payload = arguments.copy()
 
                 # Handle URL path parameter substitution
@@ -646,6 +658,11 @@ class ToolService:
                 transport = tool.request_type.lower()
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
                 headers = decode_auth(gateway.auth_value)
+
+                # Get combined headers including gateway auth and passthrough
+                # base_headers = decode_auth(gateway.auth_value) if gateway and gateway.auth_value else {}
+                if request_headers:
+                    headers = get_passthrough_headers(request_headers, headers, db, gateway)
 
                 async def connect_to_sse_server(server_url: str) -> str:
                     """

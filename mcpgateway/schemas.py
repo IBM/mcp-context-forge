@@ -1658,6 +1658,27 @@ class PromptInvocation(BaseModelWithConfigDict):
     arguments: Dict[str, str] = Field(default_factory=dict, description="Arguments for template rendering")
 
 
+# --- Global Config Schemas ---
+class GlobalConfigUpdate(BaseModel):
+    """Schema for updating global configuration.
+
+    Attributes:
+        passthrough_headers (Optional[List[str]]): List of headers allowed to be passed through globally
+    """
+
+    passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through globally")
+
+
+class GlobalConfigRead(BaseModel):
+    """Schema for reading global configuration.
+
+    Attributes:
+        passthrough_headers (Optional[List[str]]): List of headers allowed to be passed through globally
+    """
+
+    passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through globally")
+
+
 # --- Gateway Schemas ---
 
 
@@ -1704,6 +1725,7 @@ class GatewayCreate(BaseModel):
     url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
+    passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
     auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, or none")
@@ -1888,13 +1910,15 @@ class GatewayUpdate(BaseModelWithConfigDict):
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
+
+    passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
     auth_password: Optional[str] = Field(None, description="password for basic authentication")
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
-    auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
+    auth_header_value: Optional[str] = Field(None, description="value for custom headers authentication")
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
@@ -2070,6 +2094,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     last_seen: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last seen timestamp")
 
+    passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")

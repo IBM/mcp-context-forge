@@ -179,7 +179,7 @@ async def test_forward_request_targeted(fwd_service):
     gw = DummyGateway(1, "Alpha", "http://alpha")
     db = FakeSession(gateways=[gw])
 
-    result = await fwd_service.forward_request(db, "test/method", {"param": "value"}, target_gateway_id=1)
+    result = await fwd_service.forward_request(db, "test/method", {"param": "value"}, target_gateway_id=1, request_headers=None)
     assert result == {"method": "test/method"}
 
 
@@ -190,7 +190,7 @@ async def test_forward_request_broadcast(fwd_service):
     gw2 = DummyGateway(2, "Beta", "http://beta")
     db = FakeSession(gateways=[gw1, gw2])
 
-    results = await fwd_service.forward_request(db, "tools/list")
+    results = await fwd_service.forward_request(db, "tools/list", request_headers=None)
     assert len(results) == 2
     assert all(r == {"method": "tools/list"} for r in results)
 
@@ -206,7 +206,7 @@ async def test_forward_request_error_handling(monkeypatch, fwd_service):
 
     db = FakeSession()
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service.forward_request(db, "test", target_gateway_id=1)
+        await fwd_service.forward_request(db, "test", target_gateway_id=1, request_headers=None)
     assert "Forward request failed: Network error" in str(exc_info.value)
 
 
@@ -219,7 +219,7 @@ async def test_forward_request_error_handling(monkeypatch, fwd_service):
 async def test_forward_tool_request_success(monkeypatch, fwd_service):
     """Test successful tool forwarding."""
 
-    async def fake_forward(db, gid, method, params):
+    async def fake_forward(db, gid, method, params, request_headers=None):
         assert method == "tools/invoke"
         assert params["name"] == "calculator"
         return {
@@ -232,7 +232,7 @@ async def test_forward_tool_request_success(monkeypatch, fwd_service):
     tool = DummyTool(1, "calculator", gateway_id=42)
     db = FakeSession(gateways=[DummyGateway(42, "CalcGW", "http://calc")], tools=[tool])
 
-    result = await fwd_service.forward_tool_request(db, "calculator", {"operation": "add", "a": 20, "b": 22})
+    result = await fwd_service.forward_tool_request(db, "calculator", {"operation": "add", "a": 20, "b": 22}, request_headers=None)
     assert not result.is_error
     assert len(result.content) == 1
     # Access TextContent object attributes, not dictionary keys
@@ -246,7 +246,7 @@ async def test_forward_tool_request_not_found(fwd_service):
     db = FakeSession(tools=[])
 
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service.forward_tool_request(db, "unknown_tool", {})
+        await fwd_service.forward_tool_request(db, "unknown_tool", {}, request_headers=None)
     assert "Tool not found: unknown_tool" in str(exc_info.value)
 
 
@@ -257,7 +257,7 @@ async def test_forward_tool_request_not_federated(fwd_service):
     db = FakeSession(tools=[tool])
 
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service.forward_tool_request(db, "local_tool", {})
+        await fwd_service.forward_tool_request(db, "local_tool", {}, request_headers=None)
     assert "Tool local_tool is not federated" in str(exc_info.value)
 
 
@@ -274,7 +274,7 @@ async def test_forward_tool_request_generic_error(monkeypatch, fwd_service):
     monkeypatch.setattr(db, "execute", failing_execute)
 
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service.forward_tool_request(db, "test_tool", {})
+        await fwd_service.forward_tool_request(db, "test_tool", {}, request_headers=None)
     assert "Failed to forward tool request: Database error" in str(exc_info.value)
 
 
@@ -291,7 +291,7 @@ async def test_forward_resource_request_text(monkeypatch, fwd_service):
     async def fake_find_gateway(db, uri):
         return gateway
 
-    async def fake_forward(db, gid, method, params):
+    async def fake_forward(db, gid, method, params, request_headers=None):
         assert method == "resources/read"
         assert params["uri"] == "file://hello.txt"
         return {"text": "Hello, World!", "mime_type": "text/plain"}
@@ -313,7 +313,7 @@ async def test_forward_resource_request_binary(monkeypatch, fwd_service):
     async def fake_find_gateway(db, uri):
         return gateway
 
-    async def fake_forward(db, gid, method, params):
+    async def fake_forward(db, gid, method, params, request_headers=None):
         return {"blob": b"\x89PNG...", "mime_type": "image/png"}
 
     monkeypatch.setattr(fwd_service, "_find_resource_gateway", fake_find_gateway)
@@ -349,7 +349,7 @@ async def test_forward_resource_request_invalid_format(monkeypatch, fwd_service)
     async def fake_find_gateway(db, uri):
         return gateway
 
-    async def fake_forward(db, gid, method, params):
+    async def fake_forward(db, gid, method, params, request_headers=None):
         return {"invalid": "response"}
 
     monkeypatch.setattr(fwd_service, "_find_resource_gateway", fake_find_gateway)
@@ -387,7 +387,7 @@ async def test_forward_to_gateway_success(fwd_service):
     gw = DummyGateway(1, "Alpha", "http://alpha")
     db = FakeSession(gateways=[gw])
 
-    result = await fwd_service._forward_to_gateway(db, 1, "ping", {"x": 1})
+    result = await fwd_service._forward_to_gateway(db, 1, "ping", {"x": 1}, request_headers=None)
     assert result == {"method": "ping"}
     assert isinstance(gw.last_seen, datetime)
 
@@ -398,7 +398,7 @@ async def test_forward_to_gateway_not_found(fwd_service):
     db = FakeSession()
 
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service._forward_to_gateway(db, 999, "test")
+        await fwd_service._forward_to_gateway(db, 999, "test", request_headers=None)
     assert "Gateway not found: 999" in str(exc_info.value)
 
 
@@ -409,7 +409,7 @@ async def test_forward_to_gateway_disabled(fwd_service):
     db = FakeSession(gateways=[gw])
 
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service._forward_to_gateway(db, 1, "test")
+        await fwd_service._forward_to_gateway(db, 1, "test", request_headers=None)
     assert "Gateway not found: 1" in str(exc_info.value)
 
 
@@ -422,7 +422,7 @@ async def test_forward_to_gateway_rate_limited(monkeypatch, fwd_service):
     monkeypatch.setattr(fwd_service, "_check_rate_limit", lambda url: False)
 
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service._forward_to_gateway(db, 1, "test")
+        await fwd_service._forward_to_gateway(db, 1, "test", request_headers=None)
     assert "Rate limit exceeded" in str(exc_info.value)
 
 
@@ -445,7 +445,7 @@ async def test_forward_to_gateway_with_error_response(monkeypatch, fwd_service):
     monkeypatch.setattr(fwd_service._http_client, "post", fake_post)
 
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service._forward_to_gateway(db, 1, "unknown_method")
+        await fwd_service._forward_to_gateway(db, 1, "unknown_method", request_headers=None)
     assert "Gateway error: Method not found" in str(exc_info.value)
 
 
@@ -480,7 +480,7 @@ async def test_forward_to_gateway_timeout_retry(monkeypatch, fwd_service):
 
     monkeypatch.setattr(fwd_service._http_client, "post", fake_post)
 
-    result = await fwd_service._forward_to_gateway(db, 1, "test")
+    result = await fwd_service._forward_to_gateway(db, 1, "test", request_headers=None)
     assert result == {"success": True}
     assert call_count == 3
 
@@ -502,7 +502,7 @@ async def test_forward_to_gateway_timeout_max_retries(monkeypatch, fwd_service):
     monkeypatch.setattr(fwd_service._http_client, "post", fake_post)
 
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service._forward_to_gateway(db, 1, "test")
+        await fwd_service._forward_to_gateway(db, 1, "test", request_headers=None)
     assert "Failed to forward to Alpha" in str(exc_info.value)
 
 
@@ -518,7 +518,7 @@ async def test_forward_to_gateway_generic_error(monkeypatch, fwd_service):
     monkeypatch.setattr(fwd_service._http_client, "post", fake_post)
 
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service._forward_to_gateway(db, 1, "test")
+        await fwd_service._forward_to_gateway(db, 1, "test", request_headers=None)
     assert "Failed to forward to Alpha: Connection refused" in str(exc_info.value)
 
 
@@ -534,7 +534,7 @@ async def test_forward_to_all_success(fwd_service):
     gw2 = DummyGateway(2, "Beta", "http://beta")
     db = FakeSession(gateways=[gw1, gw2])
 
-    results = await fwd_service._forward_to_all(db, "tools/list")
+    results = await fwd_service._forward_to_all(db, "tools/list", request_headers=None)
     assert len(results) == 2
     assert all(r == {"method": "tools/list"} for r in results)
 
@@ -545,7 +545,7 @@ async def test_forward_to_all_partial_success(monkeypatch, fwd_service):
     gw_ok = DummyGateway(1, "GoodGW", "http://good")
     gw_bad = DummyGateway(2, "BadGW", "http://bad")
 
-    async def fake_forward(db, gid, method, params=None):  # Add default params=None
+    async def fake_forward(db, gid, method, params=None, request_headers=None):  # Add default params=None
         if gid == 1:
             return "ok!"
         raise ForwardingError("boom")
@@ -553,7 +553,7 @@ async def test_forward_to_all_partial_success(monkeypatch, fwd_service):
     monkeypatch.setattr(fwd_service, "_forward_to_gateway", fake_forward)
 
     db = FakeSession(gateways=[gw_ok, gw_bad])
-    results = await fwd_service._forward_to_all(db, "stats/get")
+    results = await fwd_service._forward_to_all(db, "stats/get", request_headers=None)
     assert results == ["ok!"]
 
 
@@ -563,14 +563,14 @@ async def test_forward_to_all_complete_failure(monkeypatch, fwd_service):
     gw1 = DummyGateway(1, "BadGW1", "http://bad1")
     gw2 = DummyGateway(2, "BadGW2", "http://bad2")
 
-    async def fake_forward(db, gid, method, params=None):  # Add default params=None
+    async def fake_forward(db, gid, method, params=None, request_headers=None):  # Add default params=None
         raise ForwardingError(f"Gateway {gid} failed")
 
     monkeypatch.setattr(fwd_service, "_forward_to_gateway", fake_forward)
 
     db = FakeSession(gateways=[gw1, gw2])
     with pytest.raises(ForwardingError) as exc_info:
-        await fwd_service._forward_to_all(db, "test")
+        await fwd_service._forward_to_all(db, "test", request_headers=None)
     assert "All forwards failed" in str(exc_info.value)
     assert "Gateway 1 failed" in str(exc_info.value)
     assert "Gateway 2 failed" in str(exc_info.value)
@@ -580,7 +580,7 @@ async def test_forward_to_all_complete_failure(monkeypatch, fwd_service):
 async def test_forward_to_all_no_gateways(fwd_service):
     """Test forwarding with no active gateways."""
     db = FakeSession(gateways=[])
-    results = await fwd_service._forward_to_all(db, "test")
+    results = await fwd_service._forward_to_all(db, "test", request_headers=None)
     assert results == []
 
 
@@ -595,7 +595,7 @@ async def test_find_resource_gateway_found(monkeypatch, fwd_service):
     gw1 = DummyGateway(1, "Gateway 1", "http://gw1")
     gw2 = DummyGateway(2, "Gateway 2", "http://gw2")
 
-    async def fake_forward(db, gid, method, params=None):  # Add default params=None
+    async def fake_forward(db, gid, method, params=None, request_headers=None):  # Add default params=None
         assert method == "resources/list"  # This is the actual method called
         if gid == 1:
             return [{"uri": "file://doc1.txt"}, {"uri": "file://doc2.txt"}]
@@ -614,7 +614,7 @@ async def test_find_resource_gateway_not_found(monkeypatch, fwd_service):
     """Test resource not found in any gateway."""
     gw1 = DummyGateway(1, "Gateway 1", "http://gw1")
 
-    async def fake_forward(db, gid, method, params=None):  # Add default params=None
+    async def fake_forward(db, gid, method, params=None, request_headers=None):  # Add default params=None
         assert method == "resources/list"
         return [{"uri": "file://other.txt"}]
 
@@ -631,7 +631,7 @@ async def test_find_resource_gateway_with_errors(monkeypatch, fwd_service, caplo
     gw1 = DummyGateway(1, "Gateway 1", "http://gw1")
     gw2 = DummyGateway(2, "Gateway 2", "http://gw2")
 
-    async def fake_forward(db, gid, method, params=None):  # Add default params=None
+    async def fake_forward(db, gid, method, params=None, request_headers=None):  # Add default params=None
         assert method == "resources/list"
         if gid == 1:
             raise Exception("Gateway unavailable")
@@ -765,7 +765,7 @@ async def test_forward_with_no_params(fwd_service):
     gw = DummyGateway(1, "Alpha", "http://alpha")
     db = FakeSession(gateways=[gw])
 
-    result = await fwd_service._forward_to_gateway(db, 1, "status")
+    result = await fwd_service._forward_to_gateway(db, 1, "status", request_headers=None)
     assert result == {"method": "status"}
 
 
@@ -776,7 +776,7 @@ async def test_concurrent_forwards(monkeypatch, fwd_service):
 
     call_times = []
 
-    async def fake_forward(db, gid, method, params=None):  # Add default params=None
+    async def fake_forward(db, gid, method, params=None, request_headers=None):  # Add default params=None
         start = asyncio.get_event_loop().time()
         await asyncio.sleep(0.1)  # Simulate network delay
         call_times.append((gid, asyncio.get_event_loop().time() - start))
@@ -785,7 +785,7 @@ async def test_concurrent_forwards(monkeypatch, fwd_service):
     monkeypatch.setattr(fwd_service, "_forward_to_gateway", fake_forward)
 
     db = FakeSession(gateways=gateways)
-    results = await fwd_service._forward_to_all(db, "health/check")
+    results = await fwd_service._forward_to_all(db, "health/check", request_headers=None)
 
     # All gateways should respond
     assert len(results) == 5
@@ -798,7 +798,7 @@ async def test_concurrent_forwards(monkeypatch, fwd_service):
 async def test_forward_tool_with_empty_content(monkeypatch, fwd_service):
     """Test tool forwarding with empty content."""
 
-    async def fake_forward(db, gid, method, params):
+    async def fake_forward(db, gid, method, params, request_headers=None):
         return {"content": [], "is_error": False}
 
     monkeypatch.setattr(fwd_service, "_forward_to_gateway", fake_forward)
@@ -806,7 +806,7 @@ async def test_forward_tool_with_empty_content(monkeypatch, fwd_service):
     tool = DummyTool(1, "empty_tool", gateway_id=1)
     db = FakeSession(gateways=[DummyGateway(1, "GW", "http://gw")], tools=[tool])
 
-    result = await fwd_service.forward_tool_request(db, "empty_tool", {})
+    result = await fwd_service.forward_tool_request(db, "empty_tool", {}, request_headers=None)
     assert not result.is_error
     assert result.content == []
 
@@ -819,7 +819,7 @@ async def test_forward_resource_with_defaults(monkeypatch, fwd_service):
     async def fake_find_gateway(db, uri):
         return gateway
 
-    async def fake_forward_text(db, gid, method, params):
+    async def fake_forward_text(db, gid, method, params, request_headers=None):
         return {"text": "Plain text"}  # No mime_type specified
 
     monkeypatch.setattr(fwd_service, "_find_resource_gateway", fake_find_gateway)
@@ -831,7 +831,7 @@ async def test_forward_resource_with_defaults(monkeypatch, fwd_service):
     assert mime_type == "text/plain"  # Default
 
     # Test binary with default
-    async def fake_forward_binary(db, gid, method, params):
+    async def fake_forward_binary(db, gid, method, params, request_headers=None):
         return {"blob": b"binary data"}  # No mime_type specified
 
     monkeypatch.setattr(fwd_service, "_forward_to_gateway", fake_forward_binary)
