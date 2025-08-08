@@ -28,6 +28,15 @@ def import_module(mod_name: str) -> ModuleType:
 
     Returns:
         A module.
+
+    Examples:
+        >>> import sys
+        >>> mod = import_module('sys')
+        >>> mod is sys
+        True
+        >>> os_mod = import_module('os')
+        >>> hasattr(os_mod, 'path')
+        True
     """
     return importlib.import_module(mod_name)
 
@@ -40,6 +49,14 @@ def parse_class_name(name: str) -> tuple[str, str]:
 
     Returns:
         A pair containing the qualified class prefix and the class name
+
+    Examples:
+        >>> parse_class_name('module.submodule.ClassName')
+        ('module.submodule', 'ClassName')
+        >>> parse_class_name('SimpleClass')
+        ('', 'SimpleClass')
+        >>> parse_class_name('package.Class')
+        ('package', 'Class')
     """
     clslist = name.rsplit(".", 1)
     if len(clslist) == 2:
@@ -56,6 +73,21 @@ def matches(condition: PluginCondition, context: GlobalContext) -> bool:
 
     Returns:
         True if the plugin matches criteria.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.models import PluginCondition
+        >>> from mcpgateway.plugins.framework.plugin_types import GlobalContext
+        >>> cond = PluginCondition(server_ids={"srv1", "srv2"})
+        >>> ctx = GlobalContext("req1", server_id="srv1")
+        >>> matches(cond, ctx)
+        True
+        >>> ctx2 = GlobalContext("req2", server_id="srv3")
+        >>> matches(cond, ctx2)
+        False
+        >>> cond2 = PluginCondition(user_patterns=["admin"])
+        >>> ctx3 = GlobalContext("req3", user="admin_user")
+        >>> matches(cond2, ctx3)
+        True
     """
     # Check server ID
     if condition.server_ids and context.server_id not in condition.server_ids:
@@ -82,6 +114,18 @@ def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCon
 
     Returns:
         True if the plugin matches criteria.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.models import PluginCondition
+        >>> from mcpgateway.plugins.framework.plugin_types import PromptPrehookPayload, GlobalContext
+        >>> payload = PromptPrehookPayload("greeting", {})
+        >>> cond = PluginCondition(prompts={"greeting"})
+        >>> ctx = GlobalContext("req1")
+        >>> pre_prompt_matches(payload, [cond], ctx)
+        True
+        >>> payload2 = PromptPrehookPayload("other", {})
+        >>> pre_prompt_matches(payload2, [cond], ctx)
+        False
     """
     current_result = True
     for index, condition in enumerate(conditions):
