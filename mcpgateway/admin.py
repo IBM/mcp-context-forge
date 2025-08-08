@@ -98,11 +98,44 @@ def rate_limit(requests_per_minute: int = None):
 
     Returns:
         Decorator function that applies rate limiting to the wrapped endpoint
+
+    Examples:
+        >>> # Test that rate_limit is callable
+        >>> from mcpgateway.admin import rate_limit
+        >>> callable(rate_limit)
+        True
+        >>> # Test that it returns a decorator function
+        >>> import inspect
+        >>> decorator = rate_limit(30)
+        >>> inspect.isfunction(decorator)
+        True
     """
 
     def decorator(func):
+        """Inner decorator function that wraps the endpoint with rate limiting.
+
+        Args:
+            func: The FastAPI endpoint function to wrap
+
+        Returns:
+            The wrapped function with rate limiting applied
+        """
+
         @wraps(func)
         async def wrapper(*args, request: Request = None, **kwargs):
+            """Wrapper function that applies rate limiting logic.
+
+            Args:
+                *args: Variable length argument list passed to wrapped function
+                request: FastAPI Request object containing client information
+                **kwargs: Arbitrary keyword arguments passed to wrapped function
+
+            Returns:
+                The result of the wrapped function call
+
+            Raises:
+                HTTPException: When rate limit is exceeded (429 Too Many Requests)
+            """
             # Get the rate limit from parameter or config
             limit = requests_per_minute or settings.validation_max_requests_per_minute
 
@@ -153,6 +186,16 @@ async def get_global_passthrough_headers(
 
     Returns:
         GlobalConfigRead: The current global passthrough headers configuration
+
+    Examples:
+        >>> # Test function exists and has correct name
+        >>> from mcpgateway.admin import get_global_passthrough_headers
+        >>> get_global_passthrough_headers.__name__
+        'get_global_passthrough_headers'
+        >>> # Test it's a coroutine function
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(get_global_passthrough_headers)
+        True
     """
     config = db.query(GlobalConfig).first()
     if not config:
@@ -178,6 +221,16 @@ async def update_global_passthrough_headers(
 
     Returns:
         GlobalConfigRead: The updated configuration
+
+    Examples:
+        >>> # Test function exists and has correct name
+        >>> from mcpgateway.admin import update_global_passthrough_headers
+        >>> update_global_passthrough_headers.__name__
+        'update_global_passthrough_headers'
+        >>> # Test it's a coroutine function
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(update_global_passthrough_headers)
+        True
     """
     config = db.query(GlobalConfig).first()
     if not config:
@@ -4214,6 +4267,16 @@ async def admin_list_tags(
 
     Raises:
         HTTPException: If tag retrieval fails
+
+    Examples:
+        >>> # Test function exists and has correct name
+        >>> from mcpgateway.admin import admin_list_tags
+        >>> admin_list_tags.__name__
+        'admin_list_tags'
+        >>> # Test it's a coroutine function
+        >>> import inspect
+        >>> inspect.iscoroutinefunction(admin_list_tags)
+        True
     """
     tag_service = TagService()
 

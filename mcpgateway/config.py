@@ -336,6 +336,18 @@ class Settings(BaseSettings):
 
         Returns:
             The validated separator, defaults to '-' if invalid.
+
+        Examples:
+            >>> Settings.must_be_allowed_sep('-')
+            '-'
+            >>> Settings.must_be_allowed_sep('--')
+            '--'
+            >>> Settings.must_be_allowed_sep('_')
+            '_'
+            >>> Settings.must_be_allowed_sep('.')
+            '.'
+            >>> Settings.must_be_allowed_sep('invalid')
+            '-'
         """
         if not re.fullmatch(cls.valid_slug_separator_regexp, v):
             logger.warning(
@@ -452,6 +464,17 @@ class Settings(BaseSettings):
 
         Returns:
             dict: Dictionary containing CORS configuration options.
+
+        Examples:
+            >>> s = Settings(cors_enabled=True, allowed_origins={'http://localhost'})
+            >>> cors = s.cors_settings
+            >>> cors['allow_origins']
+            ['http://localhost']
+            >>> cors['allow_credentials']
+            True
+            >>> s2 = Settings(cors_enabled=False)
+            >>> s2.cors_settings
+            {}
         """
         return (
             {
@@ -556,6 +579,27 @@ class Settings(BaseSettings):
     default_passthrough_headers: List[str] = Field(default_factory=list)
 
     def __init__(self, **kwargs):
+        """Initialize Settings with environment variable parsing.
+
+        Args:
+            **kwargs: Keyword arguments passed to parent Settings class
+
+        Raises:
+            ValueError: When environment variable parsing fails or produces invalid data
+
+        Examples:
+            >>> import os
+            >>> # Test with no environment variable set
+            >>> old_val = os.environ.get('DEFAULT_PASSTHROUGH_HEADERS')
+            >>> if 'DEFAULT_PASSTHROUGH_HEADERS' in os.environ:
+            ...     del os.environ['DEFAULT_PASSTHROUGH_HEADERS']
+            >>> s = Settings()
+            >>> s.default_passthrough_headers
+            ['X-Tenant-Id', 'X-Trace-Id']
+            >>> # Restore original value if it existed
+            >>> if old_val is not None:
+            ...     os.environ['DEFAULT_PASSTHROUGH_HEADERS'] = old_val
+        """
         super().__init__(**kwargs)
 
         # Parse DEFAULT_PASSTHROUGH_HEADERS environment variable
@@ -703,6 +747,15 @@ def get_settings() -> Settings:
 
     Returns:
         Settings: A cached instance of the Settings class.
+
+    Examples:
+        >>> settings = get_settings()
+        >>> isinstance(settings, Settings)
+        True
+        >>> # Second call returns the same cached instance
+        >>> settings2 = get_settings()
+        >>> settings is settings2
+        True
     """
     # Instantiate a fresh Pydantic Settings object,
     # loading from env vars or .env exactly once.

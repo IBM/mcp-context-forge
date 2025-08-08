@@ -325,7 +325,6 @@ class TestGatewayServiceExtended:
         """Test _run_health_checks method."""
         service = GatewayService()
         service._health_check_interval = 0.1  # Short interval for testing
-        service._stop_health_checks = asyncio.Event()
 
         # Mock database session
         mock_db = MagicMock()
@@ -345,15 +344,26 @@ class TestGatewayServiceExtended:
         service._get_gateways = MagicMock(return_value=[mock_gateway1, mock_gateway2])
         service.check_health_of_gateways = AsyncMock(return_value=True)
 
-        # Run health checks for a short time
-        health_check_task = asyncio.create_task(service._run_health_checks())
-        await asyncio.sleep(0.2)
-        service._stop_health_checks.set()
+        # Mock file lock to always succeed for testing
+        mock_file_lock = MagicMock()
+        mock_file_lock.acquire = MagicMock()  # Always succeeds
+        mock_file_lock.is_locked = True
+        mock_file_lock.release = MagicMock()
+        service._file_lock = mock_file_lock
 
-        try:
-            await asyncio.wait_for(health_check_task, timeout=1.0)
-        except asyncio.TimeoutError:
+        # Use cache_type="none" to avoid file lock complexity
+        with patch('mcpgateway.services.gateway_service.settings') as mock_settings:
+            mock_settings.cache_type = "none"
+
+            # Run health checks for a short time
+            health_check_task = asyncio.create_task(service._run_health_checks())
+            await asyncio.sleep(0.2)
             health_check_task.cancel()
+
+            try:
+                await asyncio.wait_for(health_check_task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass  # Expected when we cancel
 
         # Verify health checks were called
         assert service.check_health_of_gateways.called
