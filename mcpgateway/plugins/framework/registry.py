@@ -21,10 +21,44 @@ logger = logging.getLogger(__name__)
 
 
 class PluginInstanceRegistry:
-    """Registry for managing loaded plugins."""
+    """Registry for managing loaded plugins.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.base import Plugin
+        >>> from mcpgateway.plugins.framework.models import PluginConfig, HookType
+        >>> registry = PluginInstanceRegistry()
+        >>> config = PluginConfig(
+        ...     name="test",
+        ...     description="Test",
+        ...     author="test",
+        ...     kind="test.Plugin",
+        ...     version="1.0",
+        ...     hooks=[HookType.PROMPT_PRE_FETCH],
+        ...     tags=[]
+        ... )
+        >>> plugin = Plugin(config)
+        >>> registry.register(plugin)
+        >>> registry.get_plugin("test").name
+        'test'
+        >>> len(registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH))
+        1
+        >>> registry.unregister("test")
+        >>> registry.get_plugin("test") is None
+        True
+    """
 
     def __init__(self) -> None:
-        """Initialize a plugin instance registry."""
+        """Initialize a plugin instance registry.
+
+        Examples:
+            >>> registry = PluginInstanceRegistry()
+            >>> isinstance(registry._plugins, dict)
+            True
+            >>> isinstance(registry._hooks, dict)
+            True
+            >>> len(registry._plugins)
+            0
+        """
         self._plugins: dict[str, PluginRef] = {}
         self._hooks: dict[HookType, list[PluginRef]] = defaultdict(list)
         self._priority_cache: dict[HookType, list[PluginRef]] = {}

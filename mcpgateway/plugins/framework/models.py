@@ -23,6 +23,16 @@ class HookType(str, Enum):
     Attributes:
         prompt_pre_fetch: The prompt pre hook.
         prompt_post_fetch: The prompt post hook.
+
+    Examples:
+        >>> HookType.PROMPT_PRE_FETCH
+        <HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>
+        >>> HookType.PROMPT_PRE_FETCH.value
+        'prompt_pre_fetch'
+        >>> HookType('prompt_post_fetch')
+        <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>
+        >>> list(HookType)
+        [<HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>, <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>]
     """
 
     PROMPT_PRE_FETCH = "prompt_pre_fetch"
@@ -36,6 +46,16 @@ class PluginMode(str, Enum):
        enforce: enforces the plugin result.
        permissive: audits the result.
        disabled: plugin disabled.
+
+    Examples:
+        >>> PluginMode.ENFORCE
+        <PluginMode.ENFORCE: 'enforce'>
+        >>> PluginMode.PERMISSIVE.value
+        'permissive'
+        >>> PluginMode('disabled')
+        <PluginMode.DISABLED: 'disabled'>
+        >>> 'enforce' in [m.value for m in PluginMode]
+        True
     """
 
     ENFORCE = "enforce"
@@ -50,6 +70,18 @@ class ToolTemplate(BaseModel):
         tool_name (str): the name of the tool.
         fields (Optional[list[str]]): the tool fields that are affected.
         result (bool): analyze tool output if true.
+
+    Examples:
+        >>> tool = ToolTemplate(tool_name="my_tool")
+        >>> tool.tool_name
+        'my_tool'
+        >>> tool.result
+        False
+        >>> tool2 = ToolTemplate(tool_name="analyzer", fields=["input", "params"], result=True)
+        >>> tool2.fields
+        ['input', 'params']
+        >>> tool2.result
+        True
     """
 
     tool_name: str
@@ -64,6 +96,16 @@ class PromptTemplate(BaseModel):
         prompt_name (str): the name of the prompt.
         fields (Optional[list[str]]): the prompt fields that are affected.
         result (bool): analyze tool output if true.
+
+    Examples:
+        >>> prompt = PromptTemplate(prompt_name="greeting")
+        >>> prompt.prompt_name
+        'greeting'
+        >>> prompt.result
+        False
+        >>> prompt2 = PromptTemplate(prompt_name="question", fields=["context"], result=True)
+        >>> prompt2.fields
+        ['context']
     """
 
     prompt_name: str
@@ -81,6 +123,17 @@ class PluginCondition(BaseModel):
         prompts (Optional[set[str]]): set of prompt names.
         user_pattern (Optional[list[str]]): list of user patterns.
         content_types (Optional[list[str]]): list of content types.
+
+    Examples:
+        >>> cond = PluginCondition(server_ids={"server1", "server2"})
+        >>> "server1" in cond.server_ids
+        True
+        >>> cond2 = PluginCondition(tools={"tool1"}, prompts={"prompt1"})
+        >>> cond2.tools
+        {'tool1'}
+        >>> cond3 = PluginCondition(user_patterns=["admin", "root"])
+        >>> len(cond3.user_patterns)
+        2
     """
 
     server_ids: Optional[set[str]] = None
@@ -166,6 +219,21 @@ class PluginViolation(BaseModel):
         code (str): a violation code.
         details: (dict[str, Any]): additional violation details.
         _plugin_name (str): the plugin name, private attribute set by the plugin manager.
+
+    Examples:
+        >>> violation = PluginViolation(
+        ...     reason="Invalid input",
+        ...     description="The input contains prohibited content",
+        ...     code="PROHIBITED_CONTENT",
+        ...     details={"field": "message", "value": "test"}
+        ... )
+        >>> violation.reason
+        'Invalid input'
+        >>> violation.code
+        'PROHIBITED_CONTENT'
+        >>> violation.plugin_name = "content_filter"
+        >>> violation.plugin_name
+        'content_filter'
     """
 
     reason: str

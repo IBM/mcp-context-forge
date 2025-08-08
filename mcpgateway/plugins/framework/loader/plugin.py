@@ -21,10 +21,24 @@ logger = logging.getLogger(__name__)
 
 
 class PluginLoader(object):
-    """A plugin loader object for loading and instantiating plugins."""
+    """A plugin loader object for loading and instantiating plugins.
+
+    Examples:
+        >>> loader = PluginLoader()
+        >>> isinstance(loader._plugin_types, dict)
+        True
+        >>> len(loader._plugin_types)
+        0
+    """
 
     def __init__(self) -> None:
-        """Initialize the plugin loader."""
+        """Initialize the plugin loader.
+
+        Examples:
+            >>> loader = PluginLoader()
+            >>> loader._plugin_types
+            {}
+        """
         self._plugin_types: dict[str, Type[Plugin]] = {}
 
     def __get_plugin_type(self, kind: str) -> Type[Plugin]:
