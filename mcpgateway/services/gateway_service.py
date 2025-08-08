@@ -418,6 +418,7 @@ class GatewayService:
                 slug=slugify(gateway.name),
                 url=gateway.url,
                 description=gateway.description,
+                tags=gateway.tags,
                 transport=gateway.transport,
                 capabilities=capabilities,
                 last_seen=datetime.now(timezone.utc),
@@ -561,6 +562,8 @@ class GatewayService:
                     gateway.description = gateway_update.description
                 if gateway_update.transport is not None:
                     gateway.transport = gateway_update.transport
+                if gateway_update.tags is not None:
+                    gateway.tags = gateway_update.tags
 
                 if getattr(gateway, "auth_type", None) is not None:
                     gateway.auth_type = gateway_update.auth_type
@@ -613,6 +616,10 @@ class GatewayService:
                         self._active_gateways.add(gateway.url)
                     except Exception as e:
                         logger.warning(f"Failed to initialize updated gateway: {e}")
+
+                # Update tags if provided
+                if gateway_update.tags is not None:
+                    gateway.tags = gateway_update.tags
 
                 gateway.updated_at = datetime.now(timezone.utc)
                 db.commit()

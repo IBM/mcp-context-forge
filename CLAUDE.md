@@ -210,3 +210,8 @@ pytest -m "not slow"
 
 # You have access to cli tools
 - You can use `gh` for github commands, e.g. gh issue view 586
+
+# To test everything:
+
+make autoflake isort black pre-commit
+make doctest test smoketest lint-web flake8 pylint

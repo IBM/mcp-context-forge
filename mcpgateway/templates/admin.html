@@ -178,6 +178,36 @@
             </div>
           </div>
         </div>
+
+        <!-- Tag Filtering for Servers -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex items-center space-x-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Filter by Tags:</label
+            >
+            <input
+              type="text"
+              id="catalog-tag-filter"
+              placeholder="Enter tags (comma-separated)"
+              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+              oninput="filterEntitiesByTags('catalog', this.value)"
+            />
+            <button
+              onclick="clearTagFilter('catalog')"
+              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+            >
+              Clear
+            </button>
+          </div>
+          <div class="mt-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400"
+              >Available tags:</span
+            >
+            <div id="catalog-available-tags" class="mt-1 flex flex-wrap gap-1">
+              <!-- Tag suggestions will be populated here by JavaScript -->
+            </div>
+          </div>
+        </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
@@ -222,6 +252,11 @@
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Prompts
+                  </th>
+                  <th
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                  >
+                    Tags
                   </th>
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
@@ -289,6 +324,18 @@
                     {% if server.associatedPrompts %} {{
                     server.associatedPrompts | join(', ') }} {% else %}
                     <span class="text-gray-500 dark:text-gray-300">N/A</span>
+                    {% endif %}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    {% if server.tags %} {% for tag in server.tags %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1"
+                      >{{ tag }}</span
+                    >
+                    {% endfor %} {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >None</span
+                    >
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -513,6 +560,23 @@
               Submitting...
             </div>
 
+            <div>
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >Tags</label
+              >
+              <input
+                type="text"
+                name="tags"
+                placeholder="e.g., development,production,api-gateway (comma-separated)"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Enter tags separated by commas. Tags help categorize and filter
+                servers.
+              </p>
+            </div>
+
             <div class="mt-6">
               <button
                 type="submit"
@@ -557,7 +621,7 @@
               >
             </div>
           </div>
-          <div class="flex items-center">
+          <div class="flex items-center space-x-4">
             <input
               type="checkbox"
               id="show-inactive-tools"
@@ -569,6 +633,36 @@
               class="text-sm font-medium text-gray-700 dark:text-gray-300"
               >Show Inactive</label
             >
+          </div>
+        </div>
+
+        <!-- Tag Filtering for Tools -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex items-center space-x-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Filter by Tags:</label
+            >
+            <input
+              type="text"
+              id="tools-tag-filter"
+              placeholder="Enter tags (comma-separated)"
+              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+              oninput="filterEntitiesByTags('tools', this.value)"
+            />
+            <button
+              onclick="clearTagFilter('tools')"
+              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+            >
+              Clear
+            </button>
+          </div>
+          <div class="mt-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400"
+              >Available tags:</span
+            >
+            <div id="tools-available-tags" class="mt-1 flex flex-wrap gap-1">
+              <!-- Tag suggestions will be populated here by JavaScript -->
+            </div>
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
@@ -615,6 +709,11 @@
                     class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24"
                   >
                     Annotations
+                  </th>
+                  <th
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20"
+                  >
+                    Tags
                   </th>
                   <th
                     class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12"
@@ -695,6 +794,18 @@
                       >🌐</span
                     >
                     {% endif %} {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >None</span
+                    >
+                    {% endif %}
+                  </td>
+                  <td class="px-2 py-4 whitespace-nowrap">
+                    {% if tool.tags %} {% for tag in tool.tags %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1"
+                      >{{ tag }}</span
+                    >
+                    {% endfor %} {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
                       >None</span
                     >
@@ -1043,6 +1154,22 @@
                 </div>
               </div>
             </div>
+            <div>
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >Tags</label
+              >
+              <input
+                type="text"
+                name="tags"
+                placeholder="e.g., api,data-processing,external (comma-separated)"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Enter tags separated by commas. Tags help categorize and filter
+                tools.
+              </p>
+            </div>
             <div class="mt-6">
               <button
                 type="submit"
@@ -1080,6 +1207,39 @@
             >
           </div>
         </div>
+
+        <!-- Tag Filtering for Resources -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex items-center space-x-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Filter by Tags:</label
+            >
+            <input
+              type="text"
+              id="resources-tag-filter"
+              placeholder="Enter tags (comma-separated)"
+              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+              oninput="filterEntitiesByTags('resources', this.value)"
+            />
+            <button
+              onclick="clearTagFilter('resources')"
+              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+            >
+              Clear
+            </button>
+          </div>
+          <div class="mt-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400"
+              >Available tags:</span
+            >
+            <div
+              id="resources-available-tags"
+              class="mt-1 flex flex-wrap gap-1"
+            >
+              <!-- Tag suggestions will be populated here by JavaScript -->
+            </div>
+          </div>
+        </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
@@ -1109,6 +1269,11 @@
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
                     MIME Type
+                  </th>
+                  <th
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                  >
+                    Tags
                   </th>
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
@@ -1151,6 +1316,18 @@
                     class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500"
                   >
                     {{ resource.mimeType or "N/A" }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    {% if resource.tags %} {% for tag in resource.tags %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1"
+                      >{{ tag }}</span
+                    >
+                    {% endfor %} {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >None</span
+                    >
+                    {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
                     <span
@@ -1295,6 +1472,22 @@
                 <div class="spinner"></div>
               </div>
               <div id="status-resources"></div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tags</label
+                >
+                <input
+                  type="text"
+                  name="tags"
+                  placeholder="e.g., documentation,api-spec,template (comma-separated)"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Enter tags separated by commas. Tags help categorize and
+                  filter resources.
+                </p>
+              </div>
             </div>
             <div class="mt-6">
               <button
@@ -1333,6 +1526,36 @@
             >
           </div>
         </div>
+
+        <!-- Tag Filtering for Prompts -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex items-center space-x-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Filter by Tags:</label
+            >
+            <input
+              type="text"
+              id="prompts-tag-filter"
+              placeholder="Enter tags (comma-separated)"
+              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+              oninput="filterEntitiesByTags('prompts', this.value)"
+            />
+            <button
+              onclick="clearTagFilter('prompts')"
+              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+            >
+              Clear
+            </button>
+          </div>
+          <div class="mt-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400"
+              >Available tags:</span
+            >
+            <div id="prompts-available-tags" class="mt-1 flex flex-wrap gap-1">
+              <!-- Tag suggestions will be populated here by JavaScript -->
+            </div>
+          </div>
+        </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
@@ -1357,6 +1580,11 @@
                     class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider"
                   >
                     Arguments
+                  </th>
+                  <th
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider"
+                  >
+                    Tags
                   </th>
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider"
@@ -1395,6 +1623,18 @@
                   >
                     {% for arg in prompt.arguments %}{{ arg.name }}{% if not
                     loop.last %}, {% endif %}{% endfor %}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    {% if prompt.tags %} {% for tag in prompt.tags %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1"
+                      >{{ tag }}</span
+                    >
+                    {% endfor %} {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >None</span
+                    >
+                    {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
                     <span
@@ -1532,6 +1772,22 @@
               <div class="spinner"></div>
             </div>
             <div id="status-prompts"></div>
+            <div>
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >Tags</label
+              >
+              <input
+                type="text"
+                name="tags"
+                placeholder="e.g., greeting,template,conversation (comma-separated)"
+                class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Enter tags separated by commas. Tags help categorize and filter
+                prompts.
+              </p>
+            </div>
             <div class="mt-6">
               <button
                 type="submit"
@@ -1569,6 +1825,36 @@
             >
           </div>
         </div>
+
+        <!-- Gateway Filter Section -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex flex-wrap gap-4 items-center">
+            <div class="flex-1 min-w-64">
+              <label
+                for="gateway-tag-filter"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                >Filter by Tags:</label
+              >
+              <input
+                type="text"
+                id="gateway-tag-filter"
+                placeholder="e.g., production,external (comma-separated)"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                oninput="filterEntitiesByTags('gateways', this.value)"
+              />
+            </div>
+            <div id="gateway-available-tags" class="flex flex-wrap gap-2">
+              <!-- Available tags will be populated by JavaScript -->
+            </div>
+            <button
+              onclick="clearTagFilter('gateways')"
+              class="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-600 dark:text-gray-300 dark:border-gray-500 dark:hover:bg-gray-500"
+            >
+              Clear Filter
+            </button>
+          </div>
+        </div>
+
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
@@ -1588,6 +1874,11 @@
                     class="px-2 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider w-24"
                   >
                     URL
+                  </th>
+                  <th
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
+                  >
+                    Tags
                   </th>
                   <th
                     class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
@@ -1625,6 +1916,16 @@
                     class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400"
                   >
                     {{ gateway.url }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm">
+                    {% if gateway.tags %} {% for tag in gateway.tags %}
+                    <span
+                      class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1"
+                      >{{ tag }}</span
+                    >
+                    {% endfor %} {% else %}
+                    <span class="text-gray-400">No tags</span>
+                    {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
                     {% set enabled = gateway.enabled %} {% set reachable =
@@ -1811,6 +2112,22 @@
                   name="description"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tags</label
+                >
+                <input
+                  type="text"
+                  name="tags"
+                  placeholder="e.g., production,external,api-gateway (comma-separated)"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+                <p class="mt-1 text-sm text-gray-500">
+                  Separate multiple tags with commas. Tags will be automatically
+                  normalized (lowercase, spaces→hyphens).
+                </p>
               </div>
               <div>
                 <label
@@ -2465,6 +2782,24 @@
                       />
                     </div>
                   </div>
+                  <!-- Tags Section -->
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >Tags</label
+                    >
+                    <input
+                      type="text"
+                      name="tags"
+                      id="edit-tool-tags"
+                      placeholder="e.g., api,data-processing,external (comma-separated)"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Enter tags separated by commas. Tags help categorize and
+                      filter tools.
+                    </p>
+                  </div>
                   <div
                     class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100"
                   >
@@ -2610,6 +2945,24 @@
                         class="mt-1 block w-full h-48 rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                       ></textarea>
                     </div>
+                    <!-- Tags Section -->
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Tags</label
+                      >
+                      <input
+                        type="text"
+                        name="tags"
+                        id="edit-resource-tags"
+                        placeholder="e.g., data,content,media (comma-separated)"
+                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Enter tags separated by commas. Tags help categorize and
+                        filter resources.
+                      </p>
+                    </div>
                   </div>
                   <div
                     class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100"
@@ -2736,6 +3089,24 @@
                         id="edit-prompt-arguments"
                         class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       ></textarea>
+                    </div>
+                    <!-- Tags Section -->
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Tags</label
+                      >
+                      <input
+                        type="text"
+                        name="tags"
+                        id="edit-prompt-tags"
+                        placeholder="e.g., greeting,template,conversation (comma-separated)"
+                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Enter tags separated by commas. Tags help categorize and
+                        filter prompts.
+                      </p>
                     </div>
                   </div>
                   <div
@@ -2986,6 +3357,22 @@
                     </div>
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
+                        >Tags</label
+                      >
+                      <input
+                        type="text"
+                        name="tags"
+                        id="edit-gateway-tags"
+                        placeholder="e.g., production,external,api-gateway (comma-separated)"
+                        class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-sm text-gray-500">
+                        Separate multiple tags with commas. Tags will be
+                        automatically normalized.
+                      </p>
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700"
                         >Transport Type</label
                       >
                       <select
@@ -3192,6 +3579,25 @@
                       />
                     </div>
 
+                    <!-- Tags Section -->
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Tags</label
+                      >
+                      <input
+                        type="text"
+                        name="tags"
+                        id="edit-server-tags"
+                        placeholder="e.g., api,data-processing,external (comma-separated)"
+                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Enter tags separated by commas. Tags help categorize and
+                        filter servers.
+                      </p>
+                    </div>
+
                     <div
                       class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
                     >
@@ -3325,6 +3731,30 @@
       window.ROOT_PATH = {{ root_path | tojson }};
       window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
       window.MAX_NAME_LENGTH = {{ max_name_length | tojson }};
+
+      // Tag filtering functionality moved to admin.js
+      function clearTagFilter(entityType) {
+        const input = document.getElementById(entityType + '-tag-filter');
+        input.value = '';
+        // Use the corrected filterEntitiesByTags function from admin.js
+        if (typeof filterEntitiesByTags === 'function') {
+          filterEntitiesByTags(entityType, '');
+        }
+      }
+
+      // updateAvailableTags function moved to admin.js with proper tag element selectors
+
+      // addTagToFilter function moved to admin.js
+
+      // Initialize tag suggestions when page loads - using functions from admin.js
+      document.addEventListener('DOMContentLoaded', function() {
+        ['tools', 'resources', 'prompts', 'servers', 'gateways'].forEach(entityType => {
+          // Use the corrected functions from admin.js
+          if (typeof updateAvailableTags === 'function') {
+            updateAvailableTags(entityType);
+          }
+        });
+      });
 
       // Add search functionality for filtering tools
       document.addEventListener('DOMContentLoaded', function() {
