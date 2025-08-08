@@ -37,8 +37,6 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import ToolResult
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
-from mcpgateway.utils.passthrough_headers import get_passthrough_headers
-
 logger = logging.getLogger(__name__)
 
 

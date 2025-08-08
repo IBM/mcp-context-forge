@@ -48,7 +48,6 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
-from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
 # Local
 from ..config import extract_using_jq
