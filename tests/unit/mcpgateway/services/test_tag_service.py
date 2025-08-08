@@ -411,7 +411,7 @@ async def test_update_stats(tag_service):
 
     # Test invalid entity type (should not crash or increment)
     tag_service._update_stats(stats, "invalid")
-    assert stats.total == 5  # Should remain unchanged
+    assert stats.total == 5  # Should remain unmodified
 
 
 @pytest.mark.asyncio
