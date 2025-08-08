@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Plugin Framework</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="plugin-framework">Plugin Framework</h1>
+<p>!!! warning &quot;Experimental Feature&quot;
+The plugin framework is currently in <strong>MVP stage</strong> and marked as experimental. Only prompt hooks (<code>prompt_pre_fetch</code> and <code>prompt_post_fetch</code>) are implemented. Additional hooks for tools, resources, authentication, and server registration are planned for future releases.</p>
+<h2 id="overview">Overview</h2>
+<p>The MCP Gateway Plugin Framework provides a standardized way to extend gateway functionality through pre/post processing hooks at various points in the request lifecycle. Plugins can inspect, modify, or block requests and responses, enabling use cases like:</p>
+<ul>
+<li><strong>Content Filtering</strong> - PII detection and masking</li>
+<li><strong>AI Safety</strong> - Integration with LLMGuard, OpenAI Moderation</li>
+<li><strong>Security</strong> - Input validation and output sanitization</li>
+<li><strong>Policy Enforcement</strong> - Business rules and compliance</li>
+<li><strong>Transformation</strong> - Request/response modification</li>
+<li><strong>Auditing</strong> - Logging and monitoring</li>
+</ul>
+<h2 id="architecture">Architecture</h2>
+<p>The plugin framework supports two types of plugins:</p>
+<h3 id="native-plugins">Native Plugins</h3>
+<ul>
+<li>Written in Python and run in-process</li>
+<li>Zero additional deployment overhead</li>
+<li>Direct access to gateway internals</li>
+<li>Best for lightweight operations (regex, validation)</li>
+</ul>
+<h3 id="external-service-plugins">External Service Plugins</h3>
+<ul>
+<li>Integrate with external microservices</li>
+<li>Support for authentication (Bearer, API Key, etc.)</li>
+<li>Ideal for AI models and complex processing</li>
+<li>Examples: LLMGuard, OPA, custom ML services</li>
+</ul>
+<h2 id="enabling-plugins">Enabling Plugins</h2>
+<h3 id="1-environment-configuration">1. Environment Configuration</h3>
+<p>Enable the plugin framework in your <code>.env</code> file:</p>
+<pre><code class="language-bash"><span class="hljs-comment"># Enable plugin framework</span>
+PLUGINS_ENABLED=<span class="hljs-literal">true</span>
+
+<span class="hljs-comment"># Optional: Custom plugin config path</span>
+PLUGIN_CONFIG_FILE=plugins/config.yaml
+</code></pre>
+<h3 id="2-plugin-configuration">2. Plugin Configuration</h3>
+<p>The plugin configuration file is used to configure a set of plugins to run a
+set of hook points throughout the MCP Context Forge.  An example configuration
+is below.  It contains two main sections: <code>plugins</code> and <code>plugin_settings</code>.</p>
+<p>Create or modify <code>plugins/config.yaml</code>:</p>
+<pre><code class="language-yaml"><span class="hljs-comment"># Main plugin configuration</span>
+<span class="hljs-attr">plugins:</span>
+  <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">&quot;ContentFilter&quot;</span>
+    <span class="hljs-attr">kind:</span> <span class="hljs-string">&quot;plugins.native.content_filter.ContentFilterPlugin&quot;</span>
+    <span class="hljs-attr">description:</span> <span class="hljs-string">&quot;Filters inappropriate content&quot;</span>
+    <span class="hljs-attr">version:</span> <span class="hljs-string">&quot;1.0&quot;</span>
+    <span class="hljs-attr">author:</span> <span class="hljs-string">&quot;Your Team&quot;</span>
+    <span class="hljs-attr">hooks:</span> [<span class="hljs-string">&quot;prompt_pre_fetch&quot;</span>, <span class="hljs-string">&quot;prompt_post_fetch&quot;</span>]
+    <span class="hljs-attr">tags:</span> [<span class="hljs-string">&quot;security&quot;</span>, <span class="hljs-string">&quot;filter&quot;</span>]
+    <span class="hljs-attr">mode:</span> <span class="hljs-string">&quot;enforce&quot;</span>  <span class="hljs-comment"># enforce | permissive | disabled</span>
+    <span class="hljs-attr">priority:</span> <span class="hljs-number">100</span>    <span class="hljs-comment"># Lower number = higher priority</span>
+    <span class="hljs-attr">conditions:</span>
+      <span class="hljs-bullet">-</span> <span class="hljs-attr">prompts:</span> [<span class="hljs-string">&quot;customer_chat&quot;</span>, <span class="hljs-string">&quot;support_bot&quot;</span>]
+        <span class="hljs-attr">server_ids:</span> []  <span class="hljs-comment"># Apply to all servers</span>
+        <span class="hljs-attr">tenant_ids:</span> []  <span class="hljs-comment"># Apply to all tenants</span>
+    <span class="hljs-attr">config:</span>
+      <span class="hljs-comment"># Plugin-specific configuration</span>
+      <span class="hljs-attr">block_patterns:</span> [<span class="hljs-string">&quot;ssn&quot;</span>, <span class="hljs-string">&quot;credit_card&quot;</span>]
+      <span class="hljs-attr">mask_char:</span> <span class="hljs-string">&quot;*&quot;</span>
+
+<span class="hljs-comment"># Global plugin settings</span>
+<span class="hljs-attr">plugin_settings:</span>
+  <span class="hljs-attr">parallel_execution_within_band:</span> <span class="hljs-literal">false</span>
+  <span class="hljs-attr">plugin_timeout:</span> <span class="hljs-number">30</span>
+  <span class="hljs-attr">fail_on_plugin_error:</span> <span class="hljs-literal">false</span>
+  <span class="hljs-attr">enable_plugin_api:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">plugin_health_check_interval:</span> <span class="hljs-number">60</span>
+</code></pre>
+<p>The <code>plugins</code> section lists the set of configured plugins that will be loaded
+by the Context Forge at startup.  Each plugin contains a set of standard configurations,
+and then a <code>config</code> section designed for plugin specific configurations. The attributes
+are defined as follows:</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Description</th>
+<th>Example Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>name</strong></td>
+<td>A unique name for the plugin.</td>
+<td>MyFirstPlugin</td>
+</tr>
+<tr>
+<td><strong>kind</strong></td>
+<td>A fully qualified string representing the plugin python object.</td>
+<td>plugins.native.content_filter.ContentFilterPlugin</td>
+</tr>
+<tr>
+<td><strong>description</strong></td>
+<td>The description of the plugin configuration.</td>
+<td>A plugin for replacing bad words.</td>
+</tr>
+<tr>
+<td><strong>version</strong></td>
+<td>The version of the plugin configuration.</td>
+<td>0.1</td>
+</tr>
+<tr>
+<td><strong>author</strong></td>
+<td>The team that wrote the plugin.</td>
+<td>MCP Context Forge</td>
+</tr>
+<tr>
+<td><strong>hooks</strong></td>
+<td>A list of hooks for which the plugin will be executed. <strong>Note</strong>: currently supports two hooks: &quot;prompt_pre_fetch&quot;, &quot;prompt_post_fetch&quot;</td>
+<td>[&quot;prompt_pre_fetch&quot;, &quot;prompt_post_fetch&quot;]</td>
+</tr>
+<tr>
+<td><strong>tags</strong></td>
+<td>Descriptive keywords that make the configuration searchable.</td>
+<td>[&quot;security&quot;, &quot;filter&quot;]</td>
+</tr>
+<tr>
+<td><strong>mode</strong></td>
+<td>Mode of operation of the plugin. - enforce (stops during a violation), permissive (audits a violation but doesn't stop), disabled (disabled)</td>
+<td>permissive</td>
+</tr>
+<tr>
+<td><strong>priority</strong></td>
+<td>The priority in which the plugin will run - 0 is higher priority</td>
+<td>100</td>
+</tr>
+<tr>
+<td><strong>conditions</strong></td>
+<td>A list of conditions under which a plugin is run. See section on conditions.</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>config</strong></td>
+<td>Plugin specific configuration.  This is a dictionary and is passed to the plugin on initialization.</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>The <code>plugin_settings</code> are as follows:</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Description</th>
+<th>Example Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>parallel_execution_within_band</strong></td>
+<td>Plugins in the same band are run in parallel (currently not implemented).</td>
+<td>true or false</td>
+</tr>
+<tr>
+<td><strong>plugin_timeout</strong></td>
+<td>The time in seconds before stopping plugin execution (not implemented).</td>
+<td>30</td>
+</tr>
+<tr>
+<td><strong>fail_on_plugin_error</strong></td>
+<td>Cause the execution of the task to fail if the plugin errors.</td>
+<td>true or false</td>
+</tr>
+<tr>
+<td><strong>plugin_health_check_interval</strong></td>
+<td>Health check interval in seconds (not implemented).</td>
+<td>60</td>
+</tr>
+</tbody>
+</table>
+<h3 id="3-execution-modes">3. Execution Modes</h3>
+<p>Each plugin can operate in one of three modes:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Description</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>enforce</strong></td>
+<td>Blocks requests on policy violations</td>
+<td>Production guardrails</td>
+</tr>
+<tr>
+<td><strong>permissive</strong></td>
+<td>Logs violations but allows requests</td>
+<td>Testing and monitoring</td>
+</tr>
+<tr>
+<td><strong>disabled</strong></td>
+<td>Plugin loaded but not executed</td>
+<td>Temporary deactivation</td>
+</tr>
+</tbody>
+</table>
+<h3 id="4-priority-and-execution-order">4. Priority and Execution Order</h3>
+<p>Plugins execute in priority order (ascending):</p>
+<pre><code class="language-yaml"><span class="hljs-comment"># Execution order example</span>
+<span class="hljs-attr">plugins:</span>
+  <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">&quot;Authentication&quot;</span>
+    <span class="hljs-attr">priority:</span> <span class="hljs-number">10</span>      <span class="hljs-comment"># Runs first</span>
+
+  <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">&quot;RateLimiter&quot;</span>
+    <span class="hljs-attr">priority:</span> <span class="hljs-number">50</span>      <span class="hljs-comment"># Runs second</span>
+
+  <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">&quot;ContentFilter&quot;</span>
+    <span class="hljs-attr">priority:</span> <span class="hljs-number">100</span>     <span class="hljs-comment"># Runs third</span>
+
+  <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">&quot;Logger&quot;</span>
+    <span class="hljs-attr">priority:</span> <span class="hljs-number">200</span>     <span class="hljs-comment"># Runs last</span>
+</code></pre>
+<p>Plugins with the same priority may execute in parallel if <code>parallel_execution_within_band</code> is enabled.</p>
+<h3 id="5-conditions-of-execution">5. Conditions of Execution</h3>
+<p>Users may only want plugins to be invoked on specific servers, tools, and prompts. To address this, a set of conditionals can be applied to a plugin. The attributes in a conditional combine together in as a set of <code>and</code> operations, while each attribute list item is <code>ored</code> with other items in the list.  The attributes are defined as follows:</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>server_ids</strong></td>
+<td>The list of MCP servers on which the plugin will trigger</td>
+</tr>
+<tr>
+<td><strong>tools</strong></td>
+<td>The list of tools on which the plugin will be applied.</td>
+</tr>
+<tr>
+<td><strong>prompts</strong></td>
+<td>The list of prompts on which the plugin will be applied.</td>
+</tr>
+<tr>
+<td><strong>user_patterns</strong></td>
+<td>The list of users on which the plugin will be applied.</td>
+</tr>
+<tr>
+<td><strong>content_types</strong></td>
+<td>The list of content types on which the plugin will trigger.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="available-hooks">Available Hooks</h2>
+<p>Currently implemented hooks:</p>
+<table>
+<thead>
+<tr>
+<th>Hook</th>
+<th>Description</th>
+<th>Use Cases</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prompt_pre_fetch</code></td>
+<td>Before prompt retrieval</td>
+<td>Validate/modify prompt arguments</td>
+</tr>
+<tr>
+<td><code>prompt_post_fetch</code></td>
+<td>After prompt rendering</td>
+<td>Filter/transform rendered prompts</td>
+</tr>
+</tbody>
+</table>
+<p>Planned hooks (not yet implemented):</p>
+<ul>
+<li><code>tool_pre_invoke</code> / <code>tool_post_invoke</code> - Tool execution guardrails</li>
+<li><code>resource_pre_fetch</code> / <code>resource_post_fetch</code> - Resource content filtering</li>
+<li><code>server_pre_register</code> / <code>server_post_register</code> - Server validation</li>
+<li><code>auth_pre_check</code> / <code>auth_post_check</code> - Custom authentication</li>
+<li><code>federation_pre_sync</code> / <code>federation_post_sync</code> - Gateway federation</li>
+</ul>
+<h2 id="writing-plugins">Writing Plugins</h2>
+<h3 id="plugin-structure">Plugin Structure</h3>
+<pre><code class="language-python"><span class="hljs-keyword">from</span> mcpgateway.plugins.framework.base <span class="hljs-keyword">import</span> Plugin
+<span class="hljs-keyword">from</span> mcpgateway.plugins.framework.models <span class="hljs-keyword">import</span> PluginConfig
+<span class="hljs-keyword">from</span> mcpgateway.plugins.framework.types <span class="hljs-keyword">import</span> (
+    PluginContext,
+    PromptPrehookPayload,
+    PromptPrehookResult,
+    PromptPosthookPayload,
+    PromptPosthookResult
+)
+
+<span class="hljs-keyword">class</span> <span class="hljs-title class_">MyPlugin</span>(<span class="hljs-title class_ inherited__">Plugin</span>):
+    <span class="hljs-string">&quot;&quot;&quot;Example plugin implementation.&quot;&quot;&quot;</span>
+
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">__init__</span>(<span class="hljs-params">self, config: PluginConfig</span>):
+        <span class="hljs-built_in">super</span>().__init__(config)
+        <span class="hljs-comment"># Initialize plugin-specific configuration</span>
+        self.my_setting = config.config.get(<span class="hljs-string">&quot;my_setting&quot;</span>, <span class="hljs-string">&quot;default&quot;</span>)
+
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title function_">prompt_pre_fetch</span>(<span class="hljs-params">
+        self,
+        payload: PromptPrehookPayload,
+        context: PluginContext
+    </span>) -&gt; PromptPrehookResult:
+        <span class="hljs-string">&quot;&quot;&quot;Process prompt before retrieval.&quot;&quot;&quot;</span>
+
+        <span class="hljs-comment"># Access prompt name and arguments</span>
+        prompt_name = payload.name
+        args = payload.args
+
+        <span class="hljs-comment"># Example: Block requests with forbidden words</span>
+        <span class="hljs-keyword">if</span> <span class="hljs-string">&quot;forbidden&quot;</span> <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(args.values()).lower():
+            <span class="hljs-keyword">return</span> PromptPrehookResult(
+                continue_processing=<span class="hljs-literal">False</span>,
+                violation=PluginViolation(
+                    plugin_name=self.name,
+                    description=<span class="hljs-string">&quot;Forbidden content detected&quot;</span>,
+                    violation_code=<span class="hljs-string">&quot;FORBIDDEN_CONTENT&quot;</span>,
+                    details={<span class="hljs-string">&quot;found_in&quot;</span>: <span class="hljs-string">&quot;arguments&quot;</span>}
+                )
+            )
+
+        <span class="hljs-comment"># Example: Modify arguments</span>
+        <span class="hljs-keyword">if</span> <span class="hljs-string">&quot;transform_me&quot;</span> <span class="hljs-keyword">in</span> args:
+            args[<span class="hljs-string">&quot;transform_me&quot;</span>] = args[<span class="hljs-string">&quot;transform_me&quot;</span>].upper()
+            <span class="hljs-keyword">return</span> PromptPrehookResult(
+                modified_payload=PromptPrehookPayload(prompt_name, args)
+            )
+
+        <span class="hljs-comment"># Allow request to continue unmodified</span>
+        <span class="hljs-keyword">return</span> PromptPrehookResult()
+
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title function_">prompt_post_fetch</span>(<span class="hljs-params">
+        self,
+        payload: PromptPosthookPayload,
+        context: PluginContext
+    </span>) -&gt; PromptPosthookResult:
+        <span class="hljs-string">&quot;&quot;&quot;Process prompt after rendering.&quot;&quot;&quot;</span>
+
+        <span class="hljs-comment"># Access rendered prompt</span>
+        prompt_result = payload.result
+
+        <span class="hljs-comment"># Example: Add metadata to context</span>
+        context.metadata[<span class="hljs-string">&quot;processed_by&quot;</span>] = self.name
+
+        <span class="hljs-comment"># Example: Modify response</span>
+        <span class="hljs-keyword">for</span> message <span class="hljs-keyword">in</span> prompt_result.messages:
+            message.content.text = message.content.text.replace(
+                <span class="hljs-string">&quot;old_text&quot;</span>, <span class="hljs-string">&quot;new_text&quot;</span>
+            )
+
+        <span class="hljs-keyword">return</span> PromptPosthookResult(
+            modified_payload=payload
+        )
+
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title function_">shutdown</span>(<span class="hljs-params">self</span>):
+        <span class="hljs-string">&quot;&quot;&quot;Cleanup when plugin shuts down.&quot;&quot;&quot;</span>
+        <span class="hljs-comment"># Close connections, save state, etc.</span>
+        <span class="hljs-keyword">pass</span>
+</code></pre>
+<h3 id="plugin-context-and-state">Plugin Context and State</h3>
+<p>Plugins can maintain state between pre/post hooks:</p>
+<pre><code class="language-python"><span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title function_">prompt_pre_fetch</span>(<span class="hljs-params">self, payload, context</span>):
+    <span class="hljs-comment"># Store state for later use</span>
+    context.set_state(<span class="hljs-string">&quot;request_time&quot;</span>, time.time())
+    context.set_state(<span class="hljs-string">&quot;original_args&quot;</span>, payload.args.copy())
+
+    <span class="hljs-keyword">return</span> PromptPrehookResult()
+
+<span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title function_">prompt_post_fetch</span>(<span class="hljs-params">self, payload, context</span>):
+    <span class="hljs-comment"># Retrieve state from pre-hook</span>
+    elapsed = time.time() - context.get_state(<span class="hljs-string">&quot;request_time&quot;</span>, <span class="hljs-number">0</span>)
+    original = context.get_state(<span class="hljs-string">&quot;original_args&quot;</span>, {})
+
+    <span class="hljs-comment"># Add timing metadata</span>
+    context.metadata[<span class="hljs-string">&quot;processing_time_ms&quot;</span>] = elapsed * <span class="hljs-number">1000</span>
+
+    <span class="hljs-keyword">return</span> PromptPosthookResult()
+</code></pre>
+<h3 id="external-service-plugin-example">External Service Plugin Example</h3>
+<pre><code class="language-python"><span class="hljs-keyword">class</span> <span class="hljs-title class_">LLMGuardPlugin</span>(<span class="hljs-title class_ inherited__">Plugin</span>):
+    <span class="hljs-string">&quot;&quot;&quot;Example external service integration.&quot;&quot;&quot;</span>
+
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">__init__</span>(<span class="hljs-params">self, config: PluginConfig</span>):
+        <span class="hljs-built_in">super</span>().__init__(config)
+        self.service_url = config.config.get(<span class="hljs-string">&quot;service_url&quot;</span>)
+        self.api_key = config.config.get(<span class="hljs-string">&quot;api_key&quot;</span>)
+        self.timeout = config.config.get(<span class="hljs-string">&quot;timeout&quot;</span>, <span class="hljs-number">30</span>)
+
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title function_">prompt_pre_fetch</span>(<span class="hljs-params">self, payload, context</span>):
+        <span class="hljs-comment"># Call external service</span>
+        <span class="hljs-keyword">async</span> <span class="hljs-keyword">with</span> httpx.AsyncClient() <span class="hljs-keyword">as</span> client:
+            <span class="hljs-keyword">try</span>:
+                response = <span class="hljs-keyword">await</span> client.post(
+                    <span class="hljs-string">f&quot;<span class="hljs-subst">{self.service_url}</span>/analyze&quot;</span>,
+                    json={
+                        <span class="hljs-string">&quot;text&quot;</span>: <span class="hljs-built_in">str</span>(payload.args),
+                        <span class="hljs-string">&quot;policy&quot;</span>: <span class="hljs-string">&quot;strict&quot;</span>
+                    },
+                    headers={
+                        <span class="hljs-string">&quot;Authorization&quot;</span>: <span class="hljs-string">f&quot;Bearer <span class="hljs-subst">{self.api_key}</span>&quot;</span>
+                    },
+                    timeout=self.timeout
+                )
+
+                result = response.json()
+
+                <span class="hljs-keyword">if</span> result.get(<span class="hljs-string">&quot;blocked&quot;</span>, <span class="hljs-literal">False</span>):
+                    <span class="hljs-keyword">return</span> PromptPrehookResult(
+                        continue_processing=<span class="hljs-literal">False</span>,
+                        violation=PluginViolation(
+                            plugin_name=self.name,
+                            description=result.get(<span class="hljs-string">&quot;reason&quot;</span>, <span class="hljs-string">&quot;Content blocked&quot;</span>),
+                            violation_code=<span class="hljs-string">&quot;LLMGUARD_BLOCKED&quot;</span>,
+                            details=result
+                        )
+                    )
+
+            <span class="hljs-keyword">except</span> Exception <span class="hljs-keyword">as</span> e:
+                <span class="hljs-comment"># Handle errors based on plugin settings</span>
+                <span class="hljs-keyword">if</span> self.config.mode == PluginMode.ENFORCE:
+                    <span class="hljs-keyword">return</span> PromptPrehookResult(
+                        continue_processing=<span class="hljs-literal">False</span>,
+                        violation=PluginViolation(
+                            plugin_name=self.name,
+                            description=<span class="hljs-string">f&quot;Service error: <span class="hljs-subst">{<span class="hljs-built_in">str</span>(e)}</span>&quot;</span>,
+                            violation_code=<span class="hljs-string">&quot;SERVICE_ERROR&quot;</span>,
+                            details={<span class="hljs-string">&quot;error&quot;</span>: <span class="hljs-built_in">str</span>(e)}
+                        )
+                    )
+
+        <span class="hljs-keyword">return</span> PromptPrehookResult()
+</code></pre>
+<h2 id="plugin-development-guide">Plugin Development Guide</h2>
+<h3 id="1-create-plugin-directory">1. Create Plugin Directory</h3>
+<pre><code class="language-bash"><span class="hljs-built_in">mkdir</span> -p plugins/my_plugin
+<span class="hljs-built_in">touch</span> plugins/my_plugin/__init__.py
+<span class="hljs-built_in">touch</span> plugins/my_plugin/plugin.py
+<span class="hljs-built_in">touch</span> plugins/my_plugin/plugin-manifest.yaml
+</code></pre>
+<h3 id="2-write-plugin-manifest">2. Write Plugin Manifest</h3>
+<pre><code class="language-yaml"><span class="hljs-comment"># plugins/my_plugin/plugin-manifest.yaml</span>
+<span class="hljs-attr">description:</span> <span class="hljs-string">&quot;My custom plugin for X&quot;</span>
+<span class="hljs-attr">author:</span> <span class="hljs-string">&quot;Your Name&quot;</span>
+<span class="hljs-attr">version:</span> <span class="hljs-string">&quot;1.0.0&quot;</span>
+<span class="hljs-attr">tags:</span> [<span class="hljs-string">&quot;custom&quot;</span>, <span class="hljs-string">&quot;filter&quot;</span>]
+<span class="hljs-attr">available_hooks:</span>
+  <span class="hljs-bullet">-</span> <span class="hljs-string">&quot;prompt_pre_fetch&quot;</span>
+  <span class="hljs-bullet">-</span> <span class="hljs-string">&quot;prompt_post_fetch&quot;</span>
+<span class="hljs-attr">default_config:</span>
+  <span class="hljs-attr">setting_one:</span> <span class="hljs-string">&quot;default_value&quot;</span>
+  <span class="hljs-attr">setting_two:</span> <span class="hljs-number">123</span>
+</code></pre>
+<h3 id="3-implement-plugin-class">3. Implement Plugin Class</h3>
+<pre><code class="language-python"><span class="hljs-comment"># plugins/my_plugin/plugin.py</span>
+<span class="hljs-keyword">from</span> mcpgateway.plugins.framework.base <span class="hljs-keyword">import</span> Plugin
+
+<span class="hljs-keyword">class</span> <span class="hljs-title class_">MyPlugin</span>(<span class="hljs-title class_ inherited__">Plugin</span>):
+    <span class="hljs-comment"># Implementation here</span>
+    <span class="hljs-keyword">pass</span>
+</code></pre>
+<h3 id="4-register-in-configuration">4. Register in Configuration</h3>
+<pre><code class="language-yaml"><span class="hljs-comment"># plugins/config.yaml</span>
+<span class="hljs-attr">plugins:</span>
+  <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">&quot;MyCustomPlugin&quot;</span>
+    <span class="hljs-attr">kind:</span> <span class="hljs-string">&quot;plugins.my_plugin.plugin.MyPlugin&quot;</span>
+    <span class="hljs-attr">hooks:</span> [<span class="hljs-string">&quot;prompt_pre_fetch&quot;</span>]
+    <span class="hljs-comment"># ... other configuration</span>
+</code></pre>
+<h3 id="5-test-your-plugin">5. Test Your Plugin</h3>
+<pre><code class="language-python"><span class="hljs-comment"># tests/test_my_plugin.py</span>
+<span class="hljs-keyword">import</span> pytest
+<span class="hljs-keyword">from</span> plugins.my_plugin.plugin <span class="hljs-keyword">import</span> MyPlugin
+<span class="hljs-keyword">from</span> mcpgateway.plugins.framework.models <span class="hljs-keyword">import</span> PluginConfig
+
+<span class="hljs-meta">@pytest.mark.asyncio</span>
+<span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title function_">test_my_plugin</span>():
+    config = PluginConfig(
+        name=<span class="hljs-string">&quot;test&quot;</span>,
+        kind=<span class="hljs-string">&quot;plugins.my_plugin.plugin.MyPlugin&quot;</span>,
+        hooks=[<span class="hljs-string">&quot;prompt_pre_fetch&quot;</span>],
+        config={<span class="hljs-string">&quot;setting_one&quot;</span>: <span class="hljs-string">&quot;test_value&quot;</span>}
+    )
+
+    plugin = MyPlugin(config)
+
+    <span class="hljs-comment"># Test your plugin logic</span>
+    result = <span class="hljs-keyword">await</span> plugin.prompt_pre_fetch(payload, context)
+    <span class="hljs-keyword">assert</span> result.continue_processing
+</code></pre>
+<h2 id="best-practices">Best Practices</h2>
+<h3 id="1-error-handling">1. Error Handling</h3>
+<p>Always handle errors gracefully:</p>
+<pre><code class="language-python"><span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title function_">prompt_pre_fetch</span>(<span class="hljs-params">self, payload, context</span>):
+    <span class="hljs-keyword">try</span>:
+        <span class="hljs-comment"># Plugin logic</span>
+        <span class="hljs-keyword">pass</span>
+    <span class="hljs-keyword">except</span> Exception <span class="hljs-keyword">as</span> e:
+        logger.error(<span class="hljs-string">f&quot;Plugin <span class="hljs-subst">{self.name}</span> error: <span class="hljs-subst">{e}</span>&quot;</span>)
+
+        <span class="hljs-comment"># In permissive mode, log and continue</span>
+        <span class="hljs-keyword">if</span> self.mode == PluginMode.PERMISSIVE:
+            <span class="hljs-keyword">return</span> PromptPrehookResult()
+
+        <span class="hljs-comment"># In enforce mode, block the request</span>
+        <span class="hljs-keyword">return</span> PromptPrehookResult(
+            continue_processing=<span class="hljs-literal">False</span>,
+            violation=PluginViolation(
+                plugin_name=self.name,
+                description=<span class="hljs-string">&quot;Plugin error occurred&quot;</span>,
+                violation_code=<span class="hljs-string">&quot;PLUGIN_ERROR&quot;</span>,
+                details={<span class="hljs-string">&quot;error&quot;</span>: <span class="hljs-built_in">str</span>(e)}
+            )
+        )
+</code></pre>
+<h3 id="2-performance-considerations">2. Performance Considerations</h3>
+<ul>
+<li>Keep plugin operations lightweight</li>
+<li>Use caching for expensive operations</li>
+<li>Respect the configured timeout</li>
+<li>Consider async operations for I/O</li>
+</ul>
+<pre><code class="language-python"><span class="hljs-keyword">class</span> <span class="hljs-title class_">CachedPlugin</span>(<span class="hljs-title class_ inherited__">Plugin</span>):
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">__init__</span>(<span class="hljs-params">self, config</span>):
+        <span class="hljs-built_in">super</span>().__init__(config)
+        self._cache = {}
+        self._cache_ttl = config.config.get(<span class="hljs-string">&quot;cache_ttl&quot;</span>, <span class="hljs-number">300</span>)
+
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title function_">expensive_operation</span>(<span class="hljs-params">self, key</span>):
+        <span class="hljs-comment"># Check cache first</span>
+        <span class="hljs-keyword">if</span> key <span class="hljs-keyword">in</span> self._cache:
+            cached_value, timestamp = self._cache[key]
+            <span class="hljs-keyword">if</span> time.time() - timestamp &lt; self._cache_ttl:
+                <span class="hljs-keyword">return</span> cached_value
+
+        <span class="hljs-comment"># Perform expensive operation</span>
+        result = <span class="hljs-keyword">await</span> self._do_expensive_work(key)
+
+        <span class="hljs-comment"># Cache result</span>
+        self._cache[key] = (result, time.time())
+        <span class="hljs-keyword">return</span> result
+</code></pre>
+<h3 id="3-conditional-execution">3. Conditional Execution</h3>
+<p>Use conditions to limit plugin scope:</p>
+<pre><code class="language-yaml"><span class="hljs-attr">conditions:</span>
+  <span class="hljs-bullet">-</span> <span class="hljs-attr">prompts:</span> [<span class="hljs-string">&quot;sensitive_prompt&quot;</span>]
+    <span class="hljs-attr">server_ids:</span> [<span class="hljs-string">&quot;prod-server-1&quot;</span>, <span class="hljs-string">&quot;prod-server-2&quot;</span>]
+    <span class="hljs-attr">tenant_ids:</span> [<span class="hljs-string">&quot;enterprise-tenant&quot;</span>]
+    <span class="hljs-attr">user_patterns:</span> [<span class="hljs-string">&quot;admin-*&quot;</span>, <span class="hljs-string">&quot;support-*&quot;</span>]
+</code></pre>
+<h3 id="4-logging-and-monitoring">4. Logging and Monitoring</h3>
+<p>Use appropriate log levels:</p>
+<pre><code class="language-python">logger.debug(<span class="hljs-string">f&quot;Plugin <span class="hljs-subst">{self.name}</span> processing prompt: <span class="hljs-subst">{payload.name}</span>&quot;</span>)
+logger.info(<span class="hljs-string">f&quot;Plugin <span class="hljs-subst">{self.name}</span> blocked request: <span class="hljs-subst">{violation_code}</span>&quot;</span>)
+logger.warning(<span class="hljs-string">f&quot;Plugin <span class="hljs-subst">{self.name}</span> timeout approaching&quot;</span>)
+logger.error(<span class="hljs-string">f&quot;Plugin <span class="hljs-subst">{self.name}</span> failed: <span class="hljs-subst">{error}</span>&quot;</span>)
+</code></pre>
+<h2 id="api-reference">API Reference</h2>
+<h3 id="plugin-management-endpoints">Plugin Management Endpoints</h3>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/plugins</code></td>
+<td>GET</td>
+<td>List all loaded plugins</td>
+</tr>
+<tr>
+<td><code>/plugins/stats</code></td>
+<td>GET</td>
+<td>Get plugin execution statistics</td>
+</tr>
+<tr>
+<td><code>/plugins/reload/{name}</code></td>
+<td>POST</td>
+<td>Reload a specific plugin</td>
+</tr>
+<tr>
+<td><code>/plugins/stats/reset</code></td>
+<td>POST</td>
+<td>Reset plugin statistics</td>
+</tr>
+</tbody>
+</table>
+<h3 id="example-api-usage">Example API Usage</h3>
+<pre><code class="language-bash"><span class="hljs-comment"># List plugins</span>
+curl http://localhost:8000/plugins
+
+<span class="hljs-comment"># Response</span>
+[
+  {
+    <span class="hljs-string">&quot;name&quot;</span>: <span class="hljs-string">&quot;ContentFilter&quot;</span>,
+    <span class="hljs-string">&quot;priority&quot;</span>: 100,
+    <span class="hljs-string">&quot;mode&quot;</span>: <span class="hljs-string">&quot;enforce&quot;</span>,
+    <span class="hljs-string">&quot;hooks&quot;</span>: [<span class="hljs-string">&quot;prompt_pre_fetch&quot;</span>, <span class="hljs-string">&quot;prompt_post_fetch&quot;</span>],
+    <span class="hljs-string">&quot;tags&quot;</span>: [<span class="hljs-string">&quot;security&quot;</span>, <span class="hljs-string">&quot;filter&quot;</span>],
+    <span class="hljs-string">&quot;conditions&quot;</span>: {
+      <span class="hljs-string">&quot;prompts&quot;</span>: [<span class="hljs-string">&quot;customer_chat&quot;</span>]
+    }
+  }
+]
+</code></pre>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="plugin-not-loading">Plugin Not Loading</h3>
+<ol>
+<li>Check server logs for initialization errors</li>
+<li>Verify plugin class path in configuration</li>
+<li>Ensure all dependencies are installed</li>
+<li>Check Python import path includes plugin directory</li>
+</ol>
+<h3 id="plugin-not-executing">Plugin Not Executing</h3>
+<ol>
+<li>Verify plugin is enabled (<code>mode</code> != &quot;disabled&quot;)</li>
+<li>Check conditions match your request</li>
+<li>Review priority ordering</li>
+<li>Enable debug logging to see execution flow</li>
+</ol>
+<h3 id="performance-issues">Performance Issues</h3>
+<ol>
+<li>Monitor plugin execution time in logs</li>
+<li>Check for blocking I/O operations</li>
+<li>Review timeout settings</li>
+<li>Consider caching expensive operations</li>
+</ol>
+<h2 id="future-roadmap">Future Roadmap</h2>
+<p>The plugin framework is under active development. Planned features include:</p>
+<ul>
+<li><strong>Additional Hooks</strong> - Tool, resource, auth, and server hooks</li>
+<li><strong>Admin UI</strong> - Visual plugin management interface</li>
+<li><strong>Hot Reload</strong> - Configuration changes without restart</li>
+<li><strong>Plugin Marketplace</strong> - Share and discover plugins</li>
+<li><strong>Advanced Features</strong> - Rate limiting, caching, metrics</li>
+</ul>
+<h2 id="contributing">Contributing</h2>
+<p>To contribute a plugin:</p>
+<ol>
+<li>Follow the plugin structure guidelines</li>
+<li>Include comprehensive tests</li>
+<li>Document configuration options</li>
+<li>Submit a pull request with examples</li>
+</ol>
+<p>For framework improvements, please open an issue to discuss proposed changes.</p>
+
+            
+            
+        </body>
+        </html>
