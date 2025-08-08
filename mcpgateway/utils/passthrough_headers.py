@@ -16,6 +16,7 @@ Key Features:
 - Intelligent conflict detection with existing authentication headers
 - Security-first approach with explicit allowlist handling
 - Comprehensive logging for debugging and monitoring
+- Header validation and sanitization
 
 The header passthrough system follows a priority hierarchy:
 1. Gateway-specific headers (highest priority)
@@ -23,23 +24,13 @@ The header passthrough system follows a priority hierarchy:
 3. Environment variable defaults (lowest priority)
 
 Example Usage:
-    Basic header passthrough with global configuration:
-    >>> from unittest.mock import Mock
-    >>> mock_db = Mock()
-    >>> mock_global_config = Mock()
-    >>> mock_global_config.passthrough_headers = ["X-Tenant-Id"]
-    >>> mock_db.query.return_value.first.return_value = mock_global_config
-    >>> headers = get_passthrough_headers(
-    ...     request_headers={"x-tenant-id": "123"},
-    ...     base_headers={"Content-Type": "application/json"},
-    ...     db=mock_db
-    ... )
-    >>> sorted(headers.items())
-    [('Content-Type', 'application/json'), ('X-Tenant-Id', '123')]
+    See comprehensive unit tests in tests/unit/mcpgateway/utils/test_passthrough_headers*.py
+    for detailed examples of header passthrough functionality.
 """
 
 # Standard
 import logging
+import re
 from typing import Dict, Optional
 
 # Third-Party
@@ -51,6 +42,48 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import GlobalConfig
 
 logger = logging.getLogger(__name__)
+
+# Header name validation regex - allows letters, numbers, and hyphens
+HEADER_NAME_REGEX = re.compile(r"^[A-Za-z0-9\-]+$")
+
+# Maximum header value length (4KB)
+MAX_HEADER_VALUE_LENGTH = 4096
+
+
+def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH) -> str:
+    """Sanitize header value for security.
+
+    Removes dangerous characters and enforces length limits.
+
+    Args:
+        value: Header value to sanitize
+        max_length: Maximum allowed length
+
+    Returns:
+        Sanitized header value
+    """
+    # Remove newlines and carriage returns to prevent header injection
+    value = value.replace("\r", "").replace("\n", "")
+
+    # Trim to max length
+    value = value[:max_length]
+
+    # Remove control characters except tab (ASCII 9) and space (ASCII 32)
+    value = "".join(c for c in value if ord(c) >= 32 or c == "\t")
+
+    return value.strip()
+
+
+def validate_header_name(name: str) -> bool:
+    """Validate header name against allowed pattern.
+
+    Args:
+        name: Header name to validate
+
+    Returns:
+        True if valid, False otherwise
+    """
+    return bool(HEADER_NAME_REGEX.match(name))
 
 
 def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[str, str], db: Session, gateway: Optional[DbGateway] = None) -> Dict[str, str]:
@@ -66,8 +99,11 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
     3. Environment variable DEFAULT_PASSTHROUGH_HEADERS
 
     Security Features:
+    - Feature flag control (disabled by default)
     - Prevents conflicts with existing base headers (e.g., Content-Type)
     - Blocks Authorization header conflicts with gateway authentication
+    - Header name validation (regex pattern matching)
+    - Header value sanitization (removes dangerous characters, enforces limits)
     - Logs all conflicts and skipped headers for debugging
     - Uses case-insensitive header matching for robustness
 
@@ -94,70 +130,17 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
         Database connection issues may propagate from the db.query() call.
 
     Examples:
-        Basic usage with global configuration:
-        >>> # Mock database and settings for doctest
-        >>> from unittest.mock import Mock, MagicMock
+        Feature disabled by default (secure by default):
+        >>> from unittest.mock import Mock
         >>> mock_db = Mock()
-        >>> mock_global_config = Mock()
-        >>> mock_global_config.passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
-        >>> mock_db.query.return_value.first.return_value = mock_global_config
-        >>>
-        >>> request_headers = {
-        ...     "authorization": "Bearer token123",
-        ...     "x-tenant-id": "acme-corp",
-        ...     "x-trace-id": "trace-456",
-        ...     "user-agent": "TestClient/1.0"
-        ... }
-        >>> base_headers = {"Content-Type": "application/json"}
-        >>>
-        >>> result = get_passthrough_headers(request_headers, base_headers, mock_db)
-        >>> sorted(result.items())
-        [('Content-Type', 'application/json'), ('X-Tenant-Id', 'acme-corp'), ('X-Trace-Id', 'trace-456')]
-
-        Gateway-specific configuration override:
-        >>> mock_gateway = Mock()
-        >>> mock_gateway.passthrough_headers = ["X-Custom-Header"]
-        >>> mock_gateway.auth_type = None
-        >>> request_headers = {
-        ...     "x-custom-header": "custom-value",
-        ...     "x-tenant-id": "should-be-ignored"
-        ... }
-        >>>
-        >>> result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
-        >>> sorted(result.items())
-        [('Content-Type', 'application/json'), ('X-Custom-Header', 'custom-value')]
-
-        Authorization header conflict with basic auth:
-        >>> mock_gateway.auth_type = "basic"
-        >>> mock_gateway.passthrough_headers = ["Authorization", "X-Tenant-Id"]
-        >>> request_headers = {
-        ...     "authorization": "Bearer should-be-blocked",
-        ...     "x-tenant-id": "acme-corp"
-        ... }
-        >>>
-        >>> result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
-        >>> sorted(result.items())  # Authorization blocked due to basic auth conflict
-        [('Content-Type', 'application/json'), ('X-Tenant-Id', 'acme-corp')]
-
-        Base header conflict prevention:
-        >>> base_headers_with_conflict = {"Content-Type": "application/json", "x-tenant-id": "from-base"}
-        >>> request_headers = {"x-tenant-id": "from-request"}
-        >>> mock_gateway.auth_type = None
-        >>> mock_gateway.passthrough_headers = ["X-Tenant-Id"]
-        >>>
-        >>> result = get_passthrough_headers(request_headers, base_headers_with_conflict, mock_db, mock_gateway)
-        >>> result["x-tenant-id"]  # Base header preserved, request header blocked
-        'from-base'
-
-        Empty allowed headers (no passthrough):
-        >>> empty_global_config = Mock()
-        >>> empty_global_config.passthrough_headers = []
-        >>> mock_db.query.return_value.first.return_value = empty_global_config
-        >>>
         >>> request_headers = {"x-tenant-id": "should-be-ignored"}
-        >>> result = get_passthrough_headers(request_headers, {"Content-Type": "application/json"}, mock_db)
+        >>> base_headers = {"Content-Type": "application/json"}
+        >>> result = get_passthrough_headers(request_headers, base_headers, mock_db)
         >>> result
         {'Content-Type': 'application/json'}
+
+        See comprehensive unit tests in tests/unit/mcpgateway/utils/test_passthrough_headers*.py
+        for detailed examples of enabled functionality, conflict detection, and security features.
 
     Note:
         Header names are matched case-insensitively but preserved in their original
@@ -165,6 +148,11 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
         matched case-insensitively against the request_headers dictionary.
     """
     passthrough_headers = base_headers.copy()
+
+    # Early return if feature is disabled
+    if not settings.enable_header_passthrough:
+        logger.debug("Header passthrough is disabled via ENABLE_HEADER_PASSTHROUGH flag")
+        return passthrough_headers
 
     # Get global passthrough headers first
     global_config = db.query(GlobalConfig).first()
@@ -175,16 +163,34 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
         if gateway.passthrough_headers is not None:
             allowed_headers = gateway.passthrough_headers
 
+    # Create case-insensitive lookup for request headers
+    request_headers_lower = {k.lower(): v for k, v in request_headers.items()} if request_headers else {}
+
     # Get auth headers to check for conflicts
     base_headers_keys = {key.lower(): key for key in passthrough_headers.keys()}
 
     # Copy allowed headers from request
-    if request_headers and allowed_headers:
+    if request_headers_lower and allowed_headers:
         for header_name in allowed_headers:
-            header_value = request_headers.get(header_name.lower())
-            if header_value:
+            # Validate header name
+            if not validate_header_name(header_name):
+                logger.warning(f"Invalid header name '{header_name}' - skipping (must match pattern: {HEADER_NAME_REGEX.pattern})")
+                continue
 
-                header_lower = header_name.lower()
+            header_lower = header_name.lower()
+            header_value = request_headers_lower.get(header_lower)
+
+            if header_value:
+                # Sanitize header value
+                try:
+                    sanitized_value = sanitize_header_value(header_value)
+                    if not sanitized_value:
+                        logger.warning(f"Header {header_name} value became empty after sanitization - skipping")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Failed to sanitize header {header_name}: {e} - skipping")
+                    continue
+
                 # Skip if header would conflict with existing auth headers
                 if header_lower in base_headers_keys:
                     logger.warning(f"Skipping {header_name} header passthrough as it conflicts with pre-defined headers")
@@ -199,8 +205,11 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
                         logger.warning(f"Skipping Authorization header passthrough due to bearer auth configuration on gateway {gateway.name}")
                         continue
 
-                passthrough_headers[header_name] = header_value
+                # Use original header name casing from configuration, sanitized value from request
+                passthrough_headers[header_name] = sanitized_value
+                logger.debug(f"Added passthrough header: {header_name}")
             else:
-                logger.warning(f"Header {header_name} not found in request headers, skipping passthrough")
+                logger.debug(f"Header {header_name} not found in request headers, skipping passthrough")
 
+    logger.debug(f"Final passthrough headers: {list(passthrough_headers.keys())}")
     return passthrough_headers

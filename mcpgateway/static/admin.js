@@ -36,6 +36,59 @@ function escapeHtml(unsafe) {
 }
 
 /**
+ * Header validation constants and functions
+ */
+const HEADER_NAME_REGEX = /^[A-Za-z0-9-]+$/;
+const MAX_HEADER_VALUE_LENGTH = 4096;
+
+/**
+ * Validate a passthrough header name and value
+ * @param {string} name - Header name to validate
+ * @param {string} value - Header value to validate
+ * @returns {Object} Validation result with 'valid' boolean and 'error' message
+ */
+function validatePassthroughHeader(name, value) {
+    // Validate header name
+    if (!HEADER_NAME_REGEX.test(name)) {
+        return {
+            valid: false,
+            error: `Header name "${name}" contains invalid characters. Only letters, numbers, and hyphens are allowed.`,
+        };
+    }
+
+    // Check for dangerous characters in value
+    if (value.includes("\n") || value.includes("\r")) {
+        return {
+            valid: false,
+            error: "Header value cannot contain newline characters",
+        };
+    }
+
+    // Check value length
+    if (value.length > MAX_HEADER_VALUE_LENGTH) {
+        return {
+            valid: false,
+            error: `Header value too long (${value.length} chars, max ${MAX_HEADER_VALUE_LENGTH})`,
+        };
+    }
+
+    // Check for control characters (except tab)
+    const hasControlChars = Array.from(value).some((char) => {
+        const code = char.charCodeAt(0);
+        return code < 32 && code !== 9; // Allow tab (9) but not other control chars
+    });
+
+    if (hasControlChars) {
+        return {
+            valid: false,
+            error: "Header value contains invalid control characters",
+        };
+    }
+
+    return { valid: true };
+}
+
+/**
  * SECURITY: Validate input names to prevent XSS and ensure clean data
  */
 function validateInputName(name, type = "input") {
@@ -3802,9 +3855,27 @@ async function runToolTest() {
                         const headerValue = trimmedLine
                             .substring(colonIndex + 1)
                             .trim();
+
+                        // Validate header name and value
+                        const validation = validatePassthroughHeader(
+                            headerName,
+                            headerValue,
+                        );
+                        if (!validation.valid) {
+                            showErrorMessage(
+                                `Invalid header: ${validation.error}`,
+                            );
+                            return;
+                        }
+
                         if (headerName && headerValue) {
                             requestHeaders[headerName] = headerValue;
                         }
+                    } else if (colonIndex === -1) {
+                        showErrorMessage(
+                            `Invalid header format: "${trimmedLine}". Expected format: "Header-Name: Value"`,
+                        );
+                        return;
                     }
                 }
             }
@@ -4564,6 +4635,16 @@ async function handleGatewayFormSubmit(e) {
                 .map((header) => header.trim())
                 .filter((header) => header.length > 0);
 
+            // Validate each header name
+            for (const headerName of passthroughHeaders) {
+                if (!HEADER_NAME_REGEX.test(headerName)) {
+                    showErrorMessage(
+                        `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`,
+                    );
+                    return;
+                }
+            }
+
             // Remove the original string and add as JSON array
             formData.delete("passthrough_headers");
             formData.append(
@@ -4990,6 +5071,17 @@ async function handleEditGatewayFormSubmit(e) {
             .split(",")
             .map((header) => header.trim())
             .filter((header) => header.length > 0);
+
+        // Validate each header name
+        for (const headerName of passthroughHeaders) {
+            if (headerName && !HEADER_NAME_REGEX.test(headerName)) {
+                showErrorMessage(
+                    `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`,
+                );
+                return;
+            }
+        }
+
         formData.append(
             "passthrough_headers",
             JSON.stringify(passthroughHeaders),

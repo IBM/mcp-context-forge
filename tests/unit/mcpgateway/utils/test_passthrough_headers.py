@@ -25,8 +25,11 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 class TestPassthroughHeaders:
     """Test suite for HTTP header passthrough functionality."""
 
-    def test_basic_header_passthrough_global_config(self):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_basic_header_passthrough_global_config(self, mock_settings):
         """Test basic header passthrough with global configuration."""
+        mock_settings.enable_header_passthrough = True
+
         # Mock database and global config
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
@@ -49,8 +52,11 @@ class TestPassthroughHeaders:
         }
         assert result == expected
 
-    def test_gateway_specific_override(self):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_gateway_specific_override(self, mock_settings):
         """Test that gateway-specific headers override global configuration."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
@@ -76,8 +82,11 @@ class TestPassthroughHeaders:
         }
         assert result == expected
 
-    def test_authorization_conflict_basic_auth(self, caplog):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_authorization_conflict_basic_auth(self, mock_settings, caplog):
         """Test that Authorization header is blocked when gateway uses basic auth."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["Authorization", "X-Tenant-Id"]
@@ -108,8 +117,11 @@ class TestPassthroughHeaders:
         assert any("Skipping Authorization header passthrough due to basic auth" in record.message
                   for record in caplog.records)
 
-    def test_authorization_conflict_bearer_auth(self, caplog):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_authorization_conflict_bearer_auth(self, mock_settings, caplog):
         """Test that Authorization header is blocked when gateway uses bearer auth."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["Authorization"]
@@ -134,8 +146,11 @@ class TestPassthroughHeaders:
         assert any("Skipping Authorization header passthrough due to bearer auth" in record.message
                   for record in caplog.records)
 
-    def test_base_header_conflict_prevention(self, caplog):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_base_header_conflict_prevention(self, mock_settings, caplog):
         """Test that request headers don't override base headers."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["Content-Type", "X-Tenant-Id"]
@@ -161,8 +176,11 @@ class TestPassthroughHeaders:
         assert any("conflicts with pre-defined headers" in record.message
                   for record in caplog.records)
 
-    def test_case_insensitive_header_matching(self):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_case_insensitive_header_matching(self, mock_settings):
         """Test that header matching works with lowercase request headers."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["X-Tenant-ID", "Authorization"]
@@ -184,8 +202,11 @@ class TestPassthroughHeaders:
         }
         assert result == expected
 
-    def test_missing_request_headers(self, caplog):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_missing_request_headers(self, mock_settings, caplog):
         """Test behavior when configured headers are missing from request."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["X-Missing", "X-Present"]
@@ -204,12 +225,19 @@ class TestPassthroughHeaders:
         }
         assert result == expected
 
-        # Check warning for missing header
-        assert any("Header X-Missing not found in request headers" in record.message
+        # Check debug message for missing header
+        with caplog.at_level(logging.DEBUG):
+            # Re-run to capture debug messages
+            result = get_passthrough_headers(request_headers, base_headers, mock_db)
+
+        assert any("X-Missing not found in request headers" in record.message
                   for record in caplog.records)
 
-    def test_empty_allowed_headers(self):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_empty_allowed_headers(self, mock_settings):
         """Test behavior with empty allowed headers configuration."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = []
@@ -296,8 +324,11 @@ class TestPassthroughHeaders:
         expected = {"Content-Type": "application/json"}
         assert result == expected
 
-    def test_base_headers_not_modified(self):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_base_headers_not_modified(self, mock_settings):
         """Test that original base_headers dictionary is not modified."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["X-Tenant-Id"]
@@ -316,8 +347,11 @@ class TestPassthroughHeaders:
         assert "Content-Type" in result
         assert "X-Tenant-Id" in result
 
-    def test_multiple_auth_type_conflicts(self, caplog):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_multiple_auth_type_conflicts(self, mock_settings, caplog):
         """Test various auth type conflict scenarios."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["Authorization"]
@@ -348,8 +382,11 @@ class TestPassthroughHeaders:
                 # Authorization should pass through
                 assert result.get("Authorization") == "Bearer token"
 
-    def test_complex_mixed_scenario(self):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_complex_mixed_scenario(self, mock_settings):
         """Test complex scenario with multiple headers, conflicts, and overrides."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["Authorization", "X-Global", "X-Conflict"]
@@ -382,8 +419,11 @@ class TestPassthroughHeaders:
         }
         assert result == expected
 
-    def test_database_query_called_correctly(self):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_database_query_called_correctly(self, mock_settings):
         """Test that database is queried correctly for GlobalConfig."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = []
@@ -395,8 +435,11 @@ class TestPassthroughHeaders:
         mock_db.query.assert_called_once_with(GlobalConfig)
         mock_db.query.return_value.first.assert_called_once()
 
-    def test_logging_levels(self, caplog):
+    @patch('mcpgateway.utils.passthrough_headers.settings')
+    def test_logging_levels(self, mock_settings, caplog):
         """Test that appropriate log levels are used for different scenarios."""
+        mock_settings.enable_header_passthrough = True
+
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
         mock_global_config.passthrough_headers = ["X-Missing", "Authorization", "X-Conflict"]
@@ -419,7 +462,6 @@ class TestPassthroughHeaders:
         # Should have warnings for: missing header, auth conflict, base header conflict
         warning_messages = [record.message for record in caplog.records if record.levelno == logging.WARNING]
 
-        assert len(warning_messages) == 3
-        assert any("not found in request headers" in msg for msg in warning_messages)
+        assert len(warning_messages) == 2  # Only auth conflict and base header conflict
         assert any("due to basic auth" in msg for msg in warning_messages)
         assert any("conflicts with pre-defined headers" in msg for msg in warning_messages)
