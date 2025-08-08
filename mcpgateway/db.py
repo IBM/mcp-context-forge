@@ -352,6 +352,7 @@ class Tool(Base):
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
     jsonpath_filter: Mapped[str] = mapped_column(default="")
+    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Request type and authentication fields
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", or None
@@ -597,6 +598,7 @@ class Resource(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
+    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
     metrics: Mapped[List["ResourceMetric"]] = relationship("ResourceMetric", back_populates="resource", cascade="all, delete-orphan")
 
     # Content storage - can be text or binary
@@ -807,6 +809,7 @@ class Prompt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
+    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
 
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
@@ -974,6 +977,7 @@ class Server(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
+    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
     metrics: Mapped[List["ServerMetric"]] = relationship("ServerMetric", back_populates="server", cascade="all, delete-orphan")
 
     # Many-to-many relationships for associated items
@@ -1108,6 +1112,10 @@ class Gateway(Base):
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]]
+    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Header passthrough configuration
+    passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array
 
     # Header passthrough configuration
     passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array

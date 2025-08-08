@@ -90,6 +90,7 @@ MOCK_TOOL = ToolRead(
     metrics=ToolMetrics(**MOCK_METRICS),
     gateway_slug="default",
     original_name_slug="test-tool",
+        tags=[],
 )
 
 MOCK_SERVER = ServerRead(
@@ -104,6 +105,7 @@ MOCK_SERVER = ServerRead(
     associated_resources=[],
     associated_prompts=[],
     metrics=MOCK_METRICS,
+    tags=[],
 )
 
 MOCK_RESOURCE = ResourceRead(
@@ -117,6 +119,7 @@ MOCK_RESOURCE = ResourceRead(
     updated_at=datetime(2025, 1, 1),
     is_active=True,
     metrics=MOCK_METRICS,
+    tags=[],
 )
 
 # URL-escaped version of the resource URI (used in path parameters)
@@ -245,7 +248,7 @@ class TestIntegrationScenarios:
         resp = test_client.post("/rpc/", json=rpc_body, headers=auth_headers)
         assert resp.status_code == 200
         assert resp.json()["content"][0]["text"] == "ok"
-        mock_invoke.assert_awaited_once_with(db=ANY, name="test_tool", arguments={"foo": "bar"})
+        mock_invoke.assert_awaited_once_with(db=ANY, name="test_tool", arguments={"foo": "bar"}, request_headers=ANY)
 
     # --------------------------------------------------------------------- #
     # 5. Metrics aggregation endpoint                                       #

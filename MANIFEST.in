@@ -5,6 +5,7 @@
 # 1️⃣  Core project files that SDists/Wheels should always carry
 include LICENSE
 include README.md
+include plugins/README.md
 include pyproject.toml
 include gunicorn.config.py
 include Containerfile
@@ -55,6 +56,9 @@ recursive-include alembic *.md
 recursive-include alembic *.py
 # recursive-include deployment *
 # recursive-include mcp-servers *
+recursive-include plugins *.py
+recursive-include plugins *.yaml
+recursive-include plugins *.md
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs

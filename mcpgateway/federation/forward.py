@@ -35,6 +35,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import ToolResult
+from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
@@ -504,7 +505,7 @@ class ForwardingService:
             >>> db.execute.return_value = mock_result
             >>>
             >>> # Mock forwarding with mixed results
-            >>> async def mock_forward(db, gw_id, method, params=None):
+            >>> async def mock_forward(db, gw_id, method, params=None, request_headers=None):
             ...     if gw_id == 1:
             ...         return {"gateway": "gw1", "status": "ok"}
             ...     elif gw_id == 2:
@@ -522,7 +523,7 @@ class ForwardingService:
             'gw3'
 
             >>> # Test all gateways failing
-            >>> async def mock_all_fail(db, gw_id, method, params=None):
+            >>> async def mock_all_fail(db, gw_id, method, params=None, request_headers=None):
             ...     raise Exception(f"Gateway {gw_id} failed")
             >>>
             >>> service._forward_to_gateway = mock_all_fail

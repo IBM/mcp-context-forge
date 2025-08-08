@@ -45,6 +45,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
@@ -230,6 +231,7 @@ class ToolService:
         tool_dict["name"] = tool.name
         tool_dict["gateway_slug"] = tool.gateway_slug if tool.gateway_slug else ""
         tool_dict["original_name_slug"] = tool.original_name_slug
+        tool_dict["tags"] = tool.tags or []
 
         return ToolRead.model_validate(tool_dict)
 
@@ -318,6 +320,7 @@ class ToolService:
                 auth_type=auth_type,
                 auth_value=auth_value,
                 gateway_id=tool.gateway_id,
+                tags=tool.tags or [],
             )
             db.add(db_tool)
             db.commit()
@@ -331,7 +334,9 @@ class ToolService:
         except Exception as ex:
             raise ToolError(f"Failed to register tool: {str(ex)}")
 
-    async def list_tools(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, request_headers: Optional[Dict[str, str]] = None) -> List[ToolRead]:
+    async def list_tools(
+        self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, _request_headers: Optional[Dict[str, str]] = None
+    ) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
 
@@ -341,8 +346,9 @@ class ToolService:
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
-            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
-                Defaults to None.
+            tags (Optional[List[str]]): Filter tools by tags. If provided, only tools with at least one matching tag will be returned.
+            _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Currently unused but kept for API consistency. Defaults to None.
 
         Returns:
             List[ToolRead]: A list of registered tools represented as ToolRead objects.
@@ -362,13 +368,23 @@ class ToolService:
         """
         query = select(DbTool)
         cursor = None  # Placeholder for pagination; ignore for now
-        logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}")
+        logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}, tags={tags}")
         if not include_inactive:
             query = query.where(DbTool.enabled)
+
+        # Add tag filtering if tags are provided
+        if tags:
+            # Filter tools that have any of the specified tags
+            tag_conditions = []
+            for tag in tags:
+                tag_conditions.append(func.json_contains(DbTool.tags, f'"{tag}"'))
+            if tag_conditions:
+                query = query.where(func.or_(*tag_conditions))
+
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 
-    async def list_server_tools(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None, request_headers: Optional[Dict[str, str]] = None) -> List[ToolRead]:
+    async def list_server_tools(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
 
@@ -379,8 +395,8 @@ class ToolService:
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
-            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
-                Defaults to None.
+            _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Currently unused but kept for API consistency. Defaults to None.
 
         Returns:
             List[ToolRead]: A list of registered tools represented as ToolRead objects.
@@ -596,7 +612,9 @@ class ToolService:
                 credentials = decode_auth(tool.auth_value)
                 headers.update(credentials)
 
-                headers = get_passthrough_headers(request_headers, headers, db)
+                # Only call get_passthrough_headers if we actually have request headers to pass through
+                if request_headers:
+                    headers = get_passthrough_headers(request_headers, headers, db)
                 # Build the payload based on integration type
                 payload = arguments.copy()
 
@@ -644,7 +662,8 @@ class ToolService:
 
                 # Get combined headers including gateway auth and passthrough
                 # base_headers = decode_auth(gateway.auth_value) if gateway and gateway.auth_value else {}
-                headers = get_passthrough_headers(request_headers, headers, db, gateway)
+                if request_headers:
+                    headers = get_passthrough_headers(request_headers, headers, db, gateway)
 
                 async def connect_to_sse_server(server_url: str) -> str:
                     """
@@ -770,6 +789,10 @@ class ToolService:
                     tool.auth_value = tool_update.auth.auth_value
             else:
                 tool.auth_type = None
+
+            # Update tags if provided
+            if tool_update.tags is not None:
+                tool.tags = tool_update.tags
 
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()

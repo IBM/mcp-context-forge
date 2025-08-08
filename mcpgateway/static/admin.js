@@ -69,10 +69,10 @@ function validateInputName(name, type = "input") {
         return { valid: false, error: `${type} name cannot be empty` };
     }
 
-    if (cleaned.length > 100) {
+    if (cleaned.length > window.MAX_NAME_LENGTH) {
         return {
             valid: false,
-            error: `${type} name must be 100 characters or less`,
+            error: `${type} name must be ${window.MAX_NAME_LENGTH} characters or less`,
         };
     }
 
@@ -1467,6 +1467,12 @@ async function editTool(toolId) {
             typeField.value = tool.integrationType || "MCP";
         }
 
+        // Set tags field
+        const tagsField = safeGetElement("edit-tool-tags");
+        if (tagsField) {
+            tagsField.value = tool.tags ? tool.tags.join(", ") : "";
+        }
+
         // Handle JSON fields safely with validation
         const headersValidation = validateJson(
             JSON.stringify(tool.headers || {}),
@@ -1692,6 +1698,25 @@ async function viewResource(resourceUri) {
                 container.appendChild(p);
             });
 
+            // Tags section
+            const tagsP = document.createElement("p");
+            const tagsStrong = document.createElement("strong");
+            tagsStrong.textContent = "Tags: ";
+            tagsP.appendChild(tagsStrong);
+
+            if (resource.tags && resource.tags.length > 0) {
+                resource.tags.forEach((tag) => {
+                    const tagSpan = document.createElement("span");
+                    tagSpan.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
+                    tagSpan.textContent = tag;
+                    tagsP.appendChild(tagSpan);
+                });
+            } else {
+                tagsP.appendChild(document.createTextNode("None"));
+            }
+            container.appendChild(tagsP);
+
             // Status with safe styling
             const statusP = document.createElement("p");
             const statusStrong = document.createElement("strong");
@@ -1861,6 +1886,13 @@ async function editResource(resourceUri) {
         if (mimeField) {
             mimeField.value = resource.mimeType || "";
         }
+
+        // Set tags field
+        const tagsField = safeGetElement("edit-resource-tags");
+        if (tagsField) {
+            tagsField.value = resource.tags ? resource.tags.join(", ") : "";
+        }
+
         if (contentField) {
             let contentStr = extractContent(
                 content,
@@ -1947,6 +1979,25 @@ async function viewPrompt(promptName) {
                 p.appendChild(document.createTextNode(field.value));
                 container.appendChild(p);
             });
+
+            // Tags section
+            const tagsP = document.createElement("p");
+            const tagsStrong = document.createElement("strong");
+            tagsStrong.textContent = "Tags: ";
+            tagsP.appendChild(tagsStrong);
+
+            if (prompt.tags && prompt.tags.length > 0) {
+                prompt.tags.forEach((tag) => {
+                    const tagSpan = document.createElement("span");
+                    tagSpan.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
+                    tagSpan.textContent = tag;
+                    tagsP.appendChild(tagSpan);
+                });
+            } else {
+                tagsP.appendChild(document.createTextNode("None"));
+            }
+            container.appendChild(tagsP);
 
             // Status
             const statusP = document.createElement("p");
@@ -2114,6 +2165,13 @@ async function editPrompt(promptName) {
         if (descField) {
             descField.value = prompt.description || "";
         }
+
+        // Set tags field
+        const tagsField = safeGetElement("edit-prompt-tags");
+        if (tagsField) {
+            tagsField.value = prompt.tags ? prompt.tags.join(", ") : "";
+        }
+
         if (templateField) {
             templateField.value = prompt.template || "";
         }
@@ -2187,6 +2245,24 @@ async function viewGateway(gatewayId) {
                 { label: "URL", value: gateway.url },
                 { label: "Description", value: gateway.description || "N/A" },
             ];
+
+            // Add tags field with special handling
+            const tagsP = document.createElement("p");
+            const tagsStrong = document.createElement("strong");
+            tagsStrong.textContent = "Tags: ";
+            tagsP.appendChild(tagsStrong);
+            if (gateway.tags && gateway.tags.length > 0) {
+                gateway.tags.forEach((tag, index) => {
+                    const tagSpan = document.createElement("span");
+                    tagSpan.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1";
+                    tagSpan.textContent = tag;
+                    tagsP.appendChild(tagSpan);
+                });
+            } else {
+                tagsP.appendChild(document.createTextNode("No tags"));
+            }
+            container.appendChild(tagsP);
 
             fields.forEach((field) => {
                 const p = document.createElement("p");
@@ -2305,6 +2381,12 @@ async function editGateway(gatewayId) {
             descField.value = gateway.description || "";
         }
 
+        // Set tags field
+        const tagsField = safeGetElement("edit-gateway-tags");
+        if (tagsField) {
+            tagsField.value = gateway.tags ? gateway.tags.join(", ") : "";
+        }
+
         if (transportField) {
             transportField.value = gateway.transport || "SSE"; // falls back to SSE(default)
         }
@@ -2389,6 +2471,22 @@ async function editGateway(gatewayId) {
                 break;
         }
 
+        // Handle passthrough headers
+        const passthroughHeadersField = safeGetElement(
+            "edit-gateway-passthrough-headers",
+        );
+        if (passthroughHeadersField) {
+            if (
+                gateway.passthroughHeaders &&
+                Array.isArray(gateway.passthroughHeaders)
+            ) {
+                passthroughHeadersField.value =
+                    gateway.passthroughHeaders.join(", ");
+            } else {
+                passthroughHeadersField.value = "";
+            }
+        }
+
         openModal("gateway-edit-modal");
         console.log("✓ Gateway edit modal loaded successfully");
     } catch (error) {
@@ -2438,6 +2536,25 @@ async function viewServer(serverId) {
                 p.appendChild(document.createTextNode(field.value));
                 container.appendChild(p);
             });
+
+            // Tags section
+            const tagsP = document.createElement("p");
+            const tagsStrong = document.createElement("strong");
+            tagsStrong.textContent = "Tags: ";
+            tagsP.appendChild(tagsStrong);
+
+            if (server.tags && server.tags.length > 0) {
+                server.tags.forEach((tag) => {
+                    const tagSpan = document.createElement("span");
+                    tagSpan.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
+                    tagSpan.textContent = tag;
+                    tagsP.appendChild(tagSpan);
+                });
+            } else {
+                tagsP.appendChild(document.createTextNode("None"));
+            }
+            container.appendChild(tagsP);
 
             // Status
             const statusP = document.createElement("p");
@@ -2520,6 +2637,12 @@ async function editServer(serverId) {
         }
         if (descField) {
             descField.value = server.description || "";
+        }
+
+        // Set tags field
+        const tagsField = safeGetElement("edit-server-tags");
+        if (tagsField) {
+            tagsField.value = server.tags ? server.tags.join(", ") : "";
         }
 
         openModal("server-edit-modal");
@@ -2958,7 +3081,7 @@ function createParameterForm(parameterCount) {
 // ===================================================================
 
 const integrationRequestMap = {
-    MCP: ["SSE", "STREAMABLE", "STDIO"],
+    MCP: ["SSE", "STREAMABLEHTTP", "STDIO"],
     REST: ["GET", "POST", "PUT", "PATCH", "DELETE"],
 };
 
@@ -3307,27 +3430,31 @@ async function testTool(toolId) {
 
                 // Field label - use textContent to avoid double escaping
                 const label = document.createElement("label");
-                label.textContent = keyValidation.value;
                 label.className =
                     "block text-sm font-medium text-gray-700 dark:text-gray-300";
+
+                // Create span for label text
+                const labelText = document.createElement("span");
+                labelText.textContent = keyValidation.value;
+                label.appendChild(labelText);
+
+                // Add red star if field is required
+                if (schema.required && schema.required.includes(key)) {
+                    const requiredMark = document.createElement("span");
+                    requiredMark.textContent = " *";
+                    requiredMark.className = "text-red-500";
+                    label.appendChild(requiredMark);
+                }
+
                 fieldDiv.appendChild(label);
 
                 // Description help text - use textContent
                 if (prop.description) {
                     const description = document.createElement("small");
-                    description.textContent = prop.description; // NO escapeHtml here
+                    description.textContent = prop.description;
                     description.className = "text-gray-500 block mb-1";
                     fieldDiv.appendChild(description);
                 }
-
-                // Input field with validation
-                const input = document.createElement("input");
-                input.name = keyValidation.value;
-                input.type = "text";
-                input.required =
-                    schema.required && schema.required.includes(key);
-                input.className =
-                    "mt-1 block w-full rounded-md border border-gray-500 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                 if (prop.type === "array") {
                     const arrayContainer = document.createElement("div");
@@ -3343,18 +3470,27 @@ async function testTool(toolId) {
                             schema.required && schema.required.includes(key);
                         input.className =
                             "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-                        if (prop.items && prop.items.type === "number") {
-                            input.type = "number";
-                        } else if (
-                            prop.items &&
-                            prop.items.type === "boolean"
+
+                        const itemTypes = Array.isArray(prop.items?.anyOf)
+                            ? prop.items.anyOf.map((t) => t.type)
+                            : [prop.items?.type];
+
+                        if (
+                            itemTypes.includes("number") ||
+                            itemTypes.includes("integer")
                         ) {
+                            input.type = "number";
+                            input.step = itemTypes.includes("integer")
+                                ? "1"
+                                : "any";
+                        } else if (itemTypes.includes("boolean")) {
                             input.type = "checkbox";
                             input.value = "true";
                             input.checked = value === true || value === "true";
                         } else {
                             input.type = "text";
                         }
+
                         if (
                             typeof value === "string" ||
                             typeof value === "number"
@@ -3386,34 +3522,68 @@ async function testTool(toolId) {
                         arrayContainer.appendChild(createArrayInput());
                     });
 
-                    arrayContainer.appendChild(createArrayInput());
+                    if (Array.isArray(prop.default)) {
+                        if (prop.default.length > 0) {
+                            prop.default.forEach((val) => {
+                                arrayContainer.appendChild(
+                                    createArrayInput(val),
+                                );
+                            });
+                        } else {
+                            // Create one empty input for empty default arrays
+                            arrayContainer.appendChild(createArrayInput());
+                        }
+                    } else {
+                        arrayContainer.appendChild(createArrayInput());
+                    }
 
                     fieldDiv.appendChild(arrayContainer);
                     fieldDiv.appendChild(addBtn);
                 } else {
-                    // Input field with validation
-                    const input = document.createElement("input");
-                    input.name = keyValidation.value;
-                    input.required =
-                        schema.required && schema.required.includes(key);
-                    input.className =
-                        "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-                    // Add validation based on type
-                    if (prop.type === "text") {
-                        input.type = "text";
-                    } else if (prop.type === "number") {
-                        input.type = "number";
-                    } else if (prop.type === "boolean") {
-                        input.type = "checkbox";
-                        input.className =
-                            "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded";
+                    // Input field with validation (with multiline support)
+                    let fieldInput;
+                    const isTextType = prop.type === "text";
+                    if (isTextType) {
+                        fieldInput = document.createElement("textarea");
+                        fieldInput.rows = 4;
+                    } else {
+                        fieldInput = document.createElement("input");
+                        if (prop.type === "number" || prop.type === "integer") {
+                            fieldInput.type = "number";
+                        } else if (prop.type === "boolean") {
+                            fieldInput.type = "checkbox";
+                        } else {
+                            fieldInput = document.createElement("textarea");
+                            fieldInput.rows = 1;
+                        }
                     }
-                    fieldDiv.appendChild(input);
+
+                    fieldInput.name = keyValidation.value;
+                    fieldInput.required =
+                        schema.required && schema.required.includes(key);
+                    fieldInput.className =
+                        prop.type === "boolean"
+                            ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+                            : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                    // Set default values here
+                    if (prop.default !== undefined) {
+                        if (fieldInput.type === "checkbox") {
+                            fieldInput.checked = prop.default === true;
+                        } else if (isTextType) {
+                            fieldInput.value = prop.default;
+                        } else {
+                            fieldInput.value = prop.default;
+                        }
+                    }
+
+                    fieldDiv.appendChild(fieldInput);
                 }
 
                 container.appendChild(fieldDiv);
             }
         }
+
         openModal("tool-test-modal");
         console.log("✓ Tool test modal loaded successfully");
     } catch (error) {
@@ -3507,19 +3677,77 @@ async function runToolTest() {
                 }
                 let value;
                 if (prop.type === "array") {
-                    value = formData.getAll(key);
-                    if (prop.items && prop.items.type === "number") {
-                        value = value.map((v) => (v === "" ? null : Number(v)));
-                    } else if (prop.items && prop.items.type === "boolean") {
-                        value = value.map((v) => v === "true" || v === true);
+                    const inputValues = formData.getAll(key);
+                    try {
+                        // Convert values based on the items schema type
+                        if (prop.items) {
+                            const itemType = Array.isArray(prop.items.anyOf)
+                                ? prop.items.anyOf.map((t) => t.type)
+                                : [prop.items.type];
+
+                            if (
+                                itemType.includes("number") ||
+                                itemType.includes("integer")
+                            ) {
+                                value = inputValues.map((v) => {
+                                    const num = Number(v);
+                                    if (isNaN(num)) {
+                                        throw new Error(`Invalid number: ${v}`);
+                                    }
+                                    return num;
+                                });
+                            } else if (itemType.includes("boolean")) {
+                                value = inputValues.map(
+                                    (v) => v === "true" || v === true,
+                                );
+                            } else if (itemType.includes("object")) {
+                                value = inputValues.map((v) => {
+                                    try {
+                                        const parsed = JSON.parse(v);
+                                        if (
+                                            typeof parsed !== "object" ||
+                                            Array.isArray(parsed)
+                                        ) {
+                                            throw new Error(
+                                                "Value must be an object",
+                                            );
+                                        }
+                                        return parsed;
+                                    } catch {
+                                        throw new Error(
+                                            `Invalid object format for ${key}`,
+                                        );
+                                    }
+                                });
+                            } else {
+                                value = inputValues;
+                            }
+                        }
+
+                        // Handle empty values
+                        if (
+                            value.length === 0 ||
+                            (value.length === 1 && value[0] === "")
+                        ) {
+                            if (
+                                schema.required &&
+                                schema.required.includes(key)
+                            ) {
+                                params[keyValidation.value] = [];
+                            }
+                            continue;
+                        }
+                        params[keyValidation.value] = value;
+                    } catch (error) {
+                        console.error(
+                            `Error parsing array values for ${key}:`,
+                            error,
+                        );
+                        showErrorMessage(
+                            `Invalid input format for ${key}. Please check the values are in correct format.`,
+                        );
+                        throw error;
                     }
-                    if (
-                        value.length === 0 ||
-                        (value.length === 1 && value[0] === "")
-                    ) {
-                        continue;
-                    }
-                    params[keyValidation.value] = value;
                 } else {
                     value = formData.get(key);
                     if (value === null || value === undefined || value === "") {
@@ -3551,14 +3779,43 @@ async function runToolTest() {
             params,
         };
 
+        // Parse custom headers from the passthrough headers field
+        const requestHeaders = {
+            "Content-Type": "application/json",
+        };
+
+        const passthroughHeadersField = document.getElementById(
+            "test-passthrough-headers",
+        );
+        if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
+            const headerLines = passthroughHeadersField.value
+                .trim()
+                .split("\n");
+            for (const line of headerLines) {
+                const trimmedLine = line.trim();
+                if (trimmedLine) {
+                    const colonIndex = trimmedLine.indexOf(":");
+                    if (colonIndex > 0) {
+                        const headerName = trimmedLine
+                            .substring(0, colonIndex)
+                            .trim();
+                        const headerValue = trimmedLine
+                            .substring(colonIndex + 1)
+                            .trim();
+                        if (headerName && headerValue) {
+                            requestHeaders[headerName] = headerValue;
+                        }
+                    }
+                }
+            }
+        }
+
         // Use longer timeout for test execution
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/rpc`,
             {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
+                headers: requestHeaders,
                 body: JSON.stringify(payload),
                 credentials: "include",
             },
@@ -4095,6 +4352,7 @@ async function viewTool(toolId) {
           <p><strong>URL:</strong> <span class="tool-url"></span></p>
           <p><strong>Type:</strong> <span class="tool-type"></span></p>
           <p><strong>Description:</strong> <span class="tool-description"></span></p>
+          <p><strong>Tags:</strong> <span class="tool-tags"></span></p>
           <p><strong>Request Type:</strong> <span class="tool-request-type"></span></p>
           ${authHTML}
           ${renderAnnotations(tool.annotations)}
@@ -4137,6 +4395,22 @@ async function viewTool(toolId) {
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
             setTextSafely(".tool-description", tool.description);
+
+            // Set tags as HTML with badges
+            const tagsElement = toolDetailsDiv.querySelector(".tool-tags");
+            if (tagsElement) {
+                if (tool.tags && tool.tags.length > 0) {
+                    tagsElement.innerHTML = tool.tags
+                        .map(
+                            (tag) =>
+                                `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${tag}</span>`,
+                        )
+                        .join("");
+                } else {
+                    tagsElement.textContent = "None";
+                }
+            }
+
             setTextSafely(".tool-request-type", tool.requestType);
             setTextSafely(
                 ".tool-headers",
@@ -4280,6 +4554,23 @@ async function handleGatewayFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        // Process passthrough headers - convert comma-separated string to array
+        const passthroughHeadersString = formData.get("passthrough_headers");
+        if (passthroughHeadersString && passthroughHeadersString.trim()) {
+            // Split by comma and clean up each header name
+            const passthroughHeaders = passthroughHeadersString
+                .split(",")
+                .map((header) => header.trim())
+                .filter((header) => header.length > 0);
+
+            // Remove the original string and add as JSON array
+            formData.delete("passthrough_headers");
+            formData.append(
+                "passthrough_headers",
+                JSON.stringify(passthroughHeaders),
+            );
+        }
 
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/gateways`,
@@ -4522,7 +4813,6 @@ async function handleServerFormSubmit(e) {
 
         const result = await response.json();
         if (!result.success) {
-            console.log(result.message);
             throw new Error(result.message || "Failed to add server.");
         } else {
             // Success redirect
@@ -4670,6 +4960,164 @@ async function handleEditToolFormSubmit(event) {
         }
     } catch (error) {
         console.error("Fetch error:", error);
+        showErrorMessage(error.message);
+    }
+}
+async function handleEditGatewayFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    try {
+        // Validate form inputs
+        const name = formData.get("name");
+        const url = formData.get("url");
+
+        const nameValidation = validateInputName(name, "gateway");
+        const urlValidation = validateUrl(url);
+
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        if (!urlValidation.valid) {
+            throw new Error(urlValidation.error);
+        }
+
+        // Handle passthrough headers
+        const passthroughHeadersString =
+            formData.get("passthrough_headers") || "";
+        const passthroughHeaders = passthroughHeadersString
+            .split(",")
+            .map((header) => header.trim())
+            .filter((header) => header.length > 0);
+        formData.append(
+            "passthrough_headers",
+            JSON.stringify(passthroughHeaders),
+        );
+
+        const isInactiveCheckedBool = isInactiveChecked("gateways");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        const redirectUrl = isInactiveCheckedBool
+            ? `${window.ROOT_PATH}/admin?include_inactive=true#gateways`
+            : `${window.ROOT_PATH}/admin#gateways`;
+        window.location.href = redirectUrl;
+    } catch (error) {
+        console.error("Error:", error);
+        showErrorMessage(error.message);
+    }
+}
+
+async function handleEditServerFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+
+    try {
+        // Validate inputs
+        const name = formData.get("name");
+        const nameValidation = validateInputName(name, "server");
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        // Save CodeMirror editors' contents if present
+        if (window.promptToolHeadersEditor) {
+            window.promptToolHeadersEditor.save();
+        }
+        if (window.promptToolSchemaEditor) {
+            window.promptToolSchemaEditor.save();
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("servers");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        else {
+            // Redirect to the appropriate page based on inactivity checkbox
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#catalog`
+                : `${window.ROOT_PATH}/admin#catalog`;
+            window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Error:", error);
+        showErrorMessage(error.message);
+    }
+}
+
+async function handleEditResFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+
+    try {
+        // Validate inputs
+        const name = formData.get("name");
+        const uri = formData.get("uri");
+        const nameValidation = validateInputName(name, "resource");
+        const uriValidation = validateInputName(uri, "resource URI");
+
+        if (!nameValidation.valid) {
+            showErrorMessage(nameValidation.error);
+            return;
+        }
+
+        if (!uriValidation.valid) {
+            showErrorMessage(uriValidation.error);
+            return;
+        }
+
+        // Save CodeMirror editors' contents if present
+        if (window.promptToolHeadersEditor) {
+            window.promptToolHeadersEditor.save();
+        }
+        if (window.promptToolSchemaEditor) {
+            window.promptToolSchemaEditor.save();
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("resources");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || "An error occurred");
+        }
+        // Only redirect on success
+        else {
+            // Redirect to the appropriate page based on inactivity checkbox
+            const redirectUrl = isInactiveCheckedBool
+                ? `${window.ROOT_PATH}/admin?include_inactive=true#resources`
+                : `${window.ROOT_PATH}/admin#resources`;
+            window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Error:", error);
         showErrorMessage(error.message);
     }
 }
@@ -5218,19 +5666,41 @@ function setupFormHandlers() {
         serverForm.addEventListener("submit", handleServerFormSubmit);
     }
 
-    const editResourceForm = safeGetElement("edit-resource-form");
-    if (editResourceForm) {
-        editResourceForm.addEventListener("submit", () => {
-            if (window.editResourceContentEditor) {
-                window.editResourceContentEditor.save();
+    const editServerForm = safeGetElement("edit-server-form");
+    if (editServerForm) {
+        editServerForm.addEventListener("submit", handleEditServerFormSubmit);
+        editServerForm.addEventListener("click", () => {
+            if (getComputedStyle(editServerForm).display !== "none") {
+                refreshEditors();
             }
         });
     }
+
+    const editResourceForm = safeGetElement("edit-resource-form");
+    if (editResourceForm) {
+        editResourceForm.addEventListener("submit", handleEditResFormSubmit);
+        editResourceForm.addEventListener("click", () => {
+            if (getComputedStyle(editResourceForm).display !== "none") {
+                refreshEditors();
+            }
+        });
+    }
+
     const editToolForm = safeGetElement("edit-tool-form");
     if (editToolForm) {
         editToolForm.addEventListener("submit", handleEditToolFormSubmit);
         editToolForm.addEventListener("click", () => {
             if (getComputedStyle(editToolForm).display !== "none") {
+                refreshEditors();
+            }
+        });
+    }
+
+    const editGatewayForm = safeGetElement("edit-gateway-form");
+    if (editGatewayForm) {
+        editGatewayForm.addEventListener("submit", handleEditGatewayFormSubmit);
+        editGatewayForm.addEventListener("click", () => {
+            if (getComputedStyle(editGatewayForm).display !== "none") {
                 refreshEditors();
             }
         });
@@ -5375,5 +5845,305 @@ window.editServer = editServer;
 window.runToolTest = runToolTest;
 window.closeModal = closeModal;
 window.testGateway = testGateway;
+
+// ===============================================
+// TAG FILTERING FUNCTIONALITY
+// ===============================================
+
+/**
+ * Extract all unique tags from entities in a given entity type
+ * @param {string} entityType - The entity type (tools, resources, prompts, servers, gateways)
+ * @returns {Array<string>} - Array of unique tags
+ */
+function extractAvailableTags(entityType) {
+    const tags = new Set();
+    const tableSelector = `#${entityType}-panel tbody tr:not(.inactive-row)`;
+    const rows = document.querySelectorAll(tableSelector);
+
+    console.log(
+        `[DEBUG] extractAvailableTags for ${entityType}: Found ${rows.length} rows`,
+    );
+
+    // Find the Tags column index by examining the table header
+    const tableHeaderSelector = `#${entityType}-panel thead tr th`;
+    const headerCells = document.querySelectorAll(tableHeaderSelector);
+    let tagsColumnIndex = -1;
+
+    headerCells.forEach((header, index) => {
+        const headerText = header.textContent.trim().toLowerCase();
+        if (headerText === "tags") {
+            tagsColumnIndex = index;
+            console.log(
+                `[DEBUG] Found Tags column at index ${index} for ${entityType}`,
+            );
+        }
+    });
+
+    if (tagsColumnIndex === -1) {
+        console.log(`[DEBUG] Could not find Tags column for ${entityType}`);
+        return [];
+    }
+
+    rows.forEach((row, index) => {
+        const cells = row.querySelectorAll("td");
+
+        if (tagsColumnIndex < cells.length) {
+            const tagsCell = cells[tagsColumnIndex];
+
+            // Look for tag badges ONLY within the Tags column
+            const tagElements = tagsCell.querySelectorAll(`
+                span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
+                span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
+            `);
+
+            console.log(
+                `[DEBUG] Row ${index}: Found ${tagElements.length} tag elements in Tags column`,
+            );
+
+            tagElements.forEach((tagEl) => {
+                const tagText = tagEl.textContent.trim();
+                console.log(
+                    `[DEBUG] Row ${index}: Tag element text: "${tagText}"`,
+                );
+
+                // Basic validation for tag content
+                if (
+                    tagText &&
+                    tagText !== "No tags" &&
+                    tagText !== "None" &&
+                    tagText !== "N/A" &&
+                    tagText.length >= 2 &&
+                    tagText.length <= 50
+                ) {
+                    tags.add(tagText);
+                    console.log(
+                        `[DEBUG] Row ${index}: Added tag: "${tagText}"`,
+                    );
+                } else {
+                    console.log(
+                        `[DEBUG] Row ${index}: Filtered out: "${tagText}"`,
+                    );
+                }
+            });
+        }
+    });
+
+    const result = Array.from(tags).sort();
+    console.log(
+        `[DEBUG] extractAvailableTags for ${entityType}: Final result:`,
+        result,
+    );
+    return result;
+}
+
+/**
+ * Update the available tags display for an entity type
+ * @param {string} entityType - The entity type
+ */
+function updateAvailableTags(entityType) {
+    const availableTagsContainer = document.getElementById(
+        `${entityType}-available-tags`,
+    );
+    if (!availableTagsContainer) {
+        return;
+    }
+
+    const tags = extractAvailableTags(entityType);
+    availableTagsContainer.innerHTML = "";
+
+    if (tags.length === 0) {
+        availableTagsContainer.innerHTML =
+            '<span class="text-sm text-gray-500">No tags found</span>';
+        return;
+    }
+
+    tags.forEach((tag) => {
+        const tagButton = document.createElement("button");
+        tagButton.type = "button";
+        tagButton.className =
+            "inline-flex items-center px-2 py-1 text-xs font-medium rounded-full text-blue-700 bg-blue-100 hover:bg-blue-200 cursor-pointer";
+        tagButton.textContent = tag;
+        tagButton.title = `Click to filter by "${tag}"`;
+        tagButton.onclick = () => addTagToFilter(entityType, tag);
+        availableTagsContainer.appendChild(tagButton);
+    });
+}
+
+/**
+ * Add a tag to the filter input
+ * @param {string} entityType - The entity type
+ * @param {string} tag - The tag to add
+ */
+function addTagToFilter(entityType, tag) {
+    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    if (!filterInput) {
+        return;
+    }
+
+    const currentTags = filterInput.value
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t);
+    if (!currentTags.includes(tag)) {
+        currentTags.push(tag);
+        filterInput.value = currentTags.join(", ");
+        filterEntitiesByTags(entityType, filterInput.value);
+    }
+}
+
+/**
+ * Filter entities by tags
+ * @param {string} entityType - The entity type (tools, resources, prompts, servers, gateways)
+ * @param {string} tagsInput - Comma-separated string of tags to filter by
+ */
+function filterEntitiesByTags(entityType, tagsInput) {
+    const filterTags = tagsInput
+        .split(",")
+        .map((tag) => tag.trim().toLowerCase())
+        .filter((tag) => tag);
+    const tableSelector = `#${entityType}-panel tbody tr`;
+    const rows = document.querySelectorAll(tableSelector);
+
+    let visibleCount = 0;
+
+    rows.forEach((row) => {
+        if (filterTags.length === 0) {
+            // Show all rows when no filter is applied
+            row.style.display = "";
+            visibleCount++;
+            return;
+        }
+
+        // Extract tags from this row using specific tag selectors (not status badges)
+        const rowTags = new Set();
+        const tagElements = row.querySelectorAll(`
+            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
+            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
+        `);
+        tagElements.forEach((tagEl) => {
+            const tagText = tagEl.textContent.trim().toLowerCase();
+            // Filter out any remaining non-tag content
+            if (
+                tagText &&
+                tagText !== "no tags" &&
+                tagText !== "none" &&
+                tagText !== "active" &&
+                tagText !== "inactive" &&
+                tagText !== "online" &&
+                tagText !== "offline"
+            ) {
+                rowTags.add(tagText);
+            }
+        });
+
+        // Check if any of the filter tags match any of the row tags (OR logic)
+        const hasMatchingTag = filterTags.some((filterTag) =>
+            Array.from(rowTags).some(
+                (rowTag) =>
+                    rowTag.includes(filterTag) || filterTag.includes(rowTag),
+            ),
+        );
+
+        if (hasMatchingTag) {
+            row.style.display = "";
+            visibleCount++;
+        } else {
+            row.style.display = "none";
+        }
+    });
+
+    // Update empty state message
+    updateFilterEmptyState(entityType, visibleCount, filterTags.length > 0);
+}
+
+/**
+ * Update empty state message when filtering
+ * @param {string} entityType - The entity type
+ * @param {number} visibleCount - Number of visible entities
+ * @param {boolean} isFiltering - Whether filtering is active
+ */
+function updateFilterEmptyState(entityType, visibleCount, isFiltering) {
+    const tableContainer = document.querySelector(
+        `#${entityType}-panel .overflow-x-auto`,
+    );
+    if (!tableContainer) {
+        return;
+    }
+
+    let emptyMessage = tableContainer.querySelector(
+        ".tag-filter-empty-message",
+    );
+
+    if (visibleCount === 0 && isFiltering) {
+        if (!emptyMessage) {
+            emptyMessage = document.createElement("div");
+            emptyMessage.className =
+                "tag-filter-empty-message text-center py-8 text-gray-500";
+            emptyMessage.innerHTML = `
+                <div class="flex flex-col items-center">
+                    <svg class="w-12 h-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No matching ${entityType}</h3>
+                    <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button onclick="clearTagFilter('${entityType}')" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
+                </div>
+            `;
+            tableContainer.appendChild(emptyMessage);
+        }
+        emptyMessage.style.display = "block";
+    } else if (emptyMessage) {
+        emptyMessage.style.display = "none";
+    }
+}
+
+/**
+ * Clear the tag filter for an entity type
+ * @param {string} entityType - The entity type
+ */
+function clearTagFilter(entityType) {
+    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    if (filterInput) {
+        filterInput.value = "";
+        filterEntitiesByTags(entityType, "");
+    }
+}
+
+/**
+ * Initialize tag filtering for all entity types on page load
+ */
+function initializeTagFiltering() {
+    const entityTypes = [
+        "catalog",
+        "tools",
+        "resources",
+        "prompts",
+        "servers",
+        "gateways",
+    ];
+
+    entityTypes.forEach((entityType) => {
+        // Update available tags on page load
+        updateAvailableTags(entityType);
+
+        // Set up event listeners for tab switching to refresh tags
+        const tabButton = document.getElementById(`tab-${entityType}`);
+        if (tabButton) {
+            tabButton.addEventListener("click", () => {
+                // Delay to ensure tab content is visible
+                setTimeout(() => updateAvailableTags(entityType), 100);
+            });
+        }
+    });
+}
+
+// Initialize tag filtering when page loads
+document.addEventListener("DOMContentLoaded", function () {
+    initializeTagFiltering();
+});
+
+// Expose tag filtering functions to global scope
+window.filterEntitiesByTags = filterEntitiesByTags;
+window.clearTagFilter = clearTagFilter;
+window.updateAvailableTags = updateAvailableTags;
 
 console.log("🛡️ ContextForge MCP Gateway admin.js initialized");

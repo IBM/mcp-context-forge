@@ -8,3 +8,4 @@ nav:
   - packaging.md
   - developer-workstation.md
   - doctest-coverage.md
+  - module-documentation.md

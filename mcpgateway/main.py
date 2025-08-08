@@ -46,6 +46,8 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.background import BackgroundTasks
+from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -73,6 +75,7 @@ from mcpgateway.models import (
     ResourceContent,
     Root,
 )
+from mcpgateway.plugins import PluginManager, PluginViolationError
 from mcpgateway.schemas import (
     GatewayCreate,
     GatewayRead,
@@ -89,6 +92,8 @@ from mcpgateway.schemas import (
     ServerCreate,
     ServerRead,
     ServerUpdate,
+    TaggedEntity,
+    TagInfo,
     ToolCreate,
     ToolRead,
     ToolUpdate,
@@ -115,6 +120,7 @@ from mcpgateway.services.server_service import (
     ServerNotFoundError,
     ServerService,
 )
+from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import (
     ToolError,
     ToolNameConflictError,
@@ -158,6 +164,8 @@ except RuntimeError:
 else:
     loop.create_task(bootstrap_db())
 
+# Initialize plugin manager as a singleton.
+plugin_manager: PluginManager | None = PluginManager(settings.plugin_config_file) if settings.plugins_enabled else None
 
 # Initialize services
 tool_service = ToolService()
@@ -168,6 +176,7 @@ root_service = RootService()
 completion_service = CompletionService()
 sampling_handler = SamplingHandler()
 server_service = ServerService()
+tag_service = TagService()
 
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
@@ -212,6 +221,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     logger.info("Starting MCP Gateway services")
     try:
+        if plugin_manager:
+            await plugin_manager.initialize()
+            logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
         await tool_service.initialize()
         await resource_service.initialize()
         await prompt_service.initialize()
@@ -230,6 +242,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.error(f"Error during startup: {str(e)}")
         raise
     finally:
+        # Shutdown plugin manager
+        if plugin_manager:
+            try:
+                await plugin_manager.shutdown()
+                logger.info("Plugin manager shutdown complete")
+            except Exception as e:
+                logger.error(f"Error shutting down plugin manager: {str(e)}")
         logger.info("Shutting down MCP Gateway services")
         # await stop_streamablehttp()
         for service in [resource_cache, sampling_handler, logging_service, completion_service, root_service, gateway_service, prompt_service, resource_service, tool_service, streamable_http_session]:
@@ -290,6 +309,41 @@ async def validation_exception_handler(_request: Request, exc: ValidationError):
     return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
 
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):
+    """Handle FastAPI request validation errors (automatic request parsing).
+
+    This handles ValidationErrors that occur during FastAPI's automatic request
+    parsing before the request reaches your endpoint.
+
+    Args:
+        _request: The FastAPI request object that triggered validation error.
+        exc: The RequestValidationError exception containing failure details.
+
+    Returns:
+        JSONResponse: A 422 Unprocessable Entity response with error details.
+    """
+    if _request.url.path.startswith("/tools"):
+        error_details = []
+
+        for error in exc.errors():
+            loc = error.get("loc", [])
+            msg = error.get("msg", "Unknown error")
+            ctx = error.get("ctx", {"error": {}})
+            type_ = error.get("type", "value_error")
+            # Ensure ctx is JSON serializable
+            if isinstance(ctx, dict):
+                ctx_serializable = {k: (str(v) if isinstance(v, Exception) else v) for k, v in ctx.items()}
+            else:
+                ctx_serializable = str(ctx)
+            error_detail = {"type": type_, "loc": loc, "msg": msg, "ctx": ctx_serializable}
+            error_details.append(error_detail)
+
+        response_content = {"detail": error_details}
+        return JSONResponse(status_code=422, content=response_content)
+    return await fastapi_default_validation_handler(_request, exc)
+
+
 @app.exception_handler(IntegrityError)
 async def database_exception_handler(_request: Request, exc: IntegrityError):
     """Handle SQLAlchemy database integrity constraint violations globally.
@@ -332,6 +386,10 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
     If a request to one of these paths is made without a valid token,
     the request is rejected with a 401 or 403 error.
+
+    Note:
+        When DOCS_ALLOW_BASIC_AUTH is enabled, Basic Authentication
+        is also accepted using BASIC_AUTH_USER and BASIC_AUTH_PASSWORD credentials.
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -497,6 +555,7 @@ root_router = APIRouter(prefix="/roots", tags=["Roots"])
 utility_router = APIRouter(tags=["Utilities"])
 server_router = APIRouter(prefix="/servers", tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
+tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 
 # Basic Auth setup
 
@@ -779,6 +838,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user:
 @server_router.get("/", response_model=List[ServerRead])
 async def list_servers(
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[ServerRead]:
@@ -787,14 +847,20 @@ async def list_servers(
 
     Args:
         include_inactive (bool): Whether to include inactive servers in the response.
+        tags (Optional[str]): Comma-separated list of tags to filter by.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
         List[ServerRead]: A list of server objects.
     """
-    logger.debug(f"User {user} requested server list")
-    return await server_service.list_servers(db, include_inactive=include_inactive)
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User {user} requested server list with tags={tags_list}")
+    return await server_service.list_servers(db, include_inactive=include_inactive, tags=tags_list)
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
@@ -848,6 +914,12 @@ async def create_server(
         raise HTTPException(status_code=409, detail=str(e))
     except ServerError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        logger.error(f"Validation error while creating server: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while creating server: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
 @server_router.put("/{server_id}", response_model=ServerRead)
@@ -881,6 +953,12 @@ async def update_server(
         raise HTTPException(status_code=409, detail=str(e))
     except ServerError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        logger.error(f"Validation error while updating server {server_id}: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while updating server {server_id}: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
 @server_router.post("/{server_id}/toggle", response_model=ServerRead)
@@ -1114,6 +1192,7 @@ async def server_get_prompts(
 async def list_tools(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
     _: str = Depends(require_auth),
@@ -1123,6 +1202,7 @@ async def list_tools(
     Args:
         cursor: Pagination cursor for fetching the next set of results
         include_inactive: Whether to include inactive tools in the results
+        tags: Comma-separated list of tags to filter by (e.g., "api,data")
         db: Database session
         apijsonpath: JSON path modifier to filter or transform the response
         _: Authenticated user
@@ -1131,8 +1211,13 @@ async def list_tools(
         List of tools or modified result based on jsonpath
     """
 
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
     # For now just pass the cursor parameter even if not used
-    data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive)
+    data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
 
     if apijsonpath is None:
         return data
@@ -1360,6 +1445,7 @@ async def toggle_resource_status(
 async def list_resources(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[ResourceRead]:
@@ -1369,17 +1455,23 @@ async def list_resources(
     Args:
         cursor (Optional[str]): Optional cursor for pagination.
         include_inactive (bool): Whether to include inactive resources.
+        tags (Optional[str]): Comma-separated list of tags to filter by.
         db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
         List[ResourceRead]: List of resources.
     """
-    logger.debug(f"User {user} requested resource list with cursor {cursor} and include_inactive={include_inactive}")
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User {user} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
     if cached := resource_cache.get("resource_list"):
         return cached
     # Pass the cursor parameter
-    resources = await resource_service.list_resources(db, include_inactive=include_inactive)
+    resources = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
     resource_cache.set("resource_list", resources)
     return resources
 
@@ -1403,7 +1495,7 @@ async def create_resource(
         ResourceRead: The created resource.
 
     Raises:
-        HTTPException: On conflict or validation errors.
+        HTTPException: On conflict or validation errors or IntegrityError.
     """
     logger.debug(f"User {user} is creating a new resource")
     try:
@@ -1413,6 +1505,13 @@ async def create_resource(
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        # Handle validation errors from Pydantic
+        logger.error(f"Validation error while creating resource: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while creating resource: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
 @resource_router.get("/{uri:path}")
@@ -1470,6 +1569,12 @@ async def update_resource(
         result = await resource_service.update_resource(db, uri, resource)
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        logger.error(f"Validation error while updating resource {uri}: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while updating resource {uri}: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     await invalidate_resource_cache(uri)
     return result
 
@@ -1559,6 +1664,7 @@ async def toggle_prompt_status(
 async def list_prompts(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[PromptRead]:
@@ -1568,14 +1674,20 @@ async def list_prompts(
     Args:
         cursor: Cursor for pagination.
         include_inactive: Include inactive prompts.
+        tags: Comma-separated list of tags to filter by.
         db: Database session.
         user: Authenticated user.
 
     Returns:
         List of prompt records.
     """
-    logger.debug(f"User: {user} requested prompt list with include_inactive={include_inactive}, cursor={cursor}")
-    return await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive)
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User: {user} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
+    return await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
 
 
 @prompt_router.post("", response_model=PromptRead)
@@ -1637,9 +1749,11 @@ async def get_prompt(
         PromptExecuteArgs(args=args)
         return await prompt_service.get_prompt(db, name, args)
     except Exception as ex:
-        logger.error(f"Error retrieving prompt {name}: {ex}")
-        if isinstance(ex, ValueError):
+        logger.error(f"Could not retrieve prompt {name}: {ex}")
+        if isinstance(ex, (ValueError, PromptError)):
             return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
+        if isinstance(ex, PluginViolationError):
+            return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues", "details": ex.message}, status_code=422)
 
 
 @prompt_router.get("/{name}")
@@ -1812,6 +1926,10 @@ async def register_gateway(
             return JSONResponse(content={"message": "Gateway name already exists"}, status_code=400)
         if isinstance(ex, RuntimeError):
             return JSONResponse(content={"message": "Error during execution"}, status_code=500)
+        if isinstance(ex, ValidationError):
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
         return JSONResponse(content={"message": "Unexpected error"}, status_code=500)
 
 
@@ -2303,6 +2421,90 @@ async def readiness_check(db: Session = Depends(get_db)):
         return JSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
 
 
+####################
+# Tag Endpoints    #
+####################
+
+
+@tag_router.get("", response_model=List[TagInfo])
+@tag_router.get("/", response_model=List[TagInfo])
+async def list_tags(
+    entity_types: Optional[str] = None,
+    include_entities: bool = False,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> List[TagInfo]:
+    """
+    Retrieve all unique tags across specified entity types.
+
+    Args:
+        entity_types: Comma-separated list of entity types to filter by
+                     (e.g., "tools,resources,prompts,servers,gateways").
+                     If not provided, returns tags from all entity types.
+        include_entities: Whether to include the list of entities that have each tag
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of TagInfo objects containing tag names, statistics, and optionally entities
+
+    Raises:
+        HTTPException: If tag retrieval fails
+    """
+    # Parse entity types parameter if provided
+    entity_types_list = None
+    if entity_types:
+        entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
+
+    logger.debug(f"User {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
+
+    try:
+        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
+        return tags
+    except Exception as e:
+        logger.error(f"Failed to retrieve tags: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
+
+
+@tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
+async def get_entities_by_tag(
+    tag_name: str,
+    entity_types: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> List[TaggedEntity]:
+    """
+    Get all entities that have a specific tag.
+
+    Args:
+        tag_name: The tag to search for
+        entity_types: Comma-separated list of entity types to filter by
+                     (e.g., "tools,resources,prompts,servers,gateways").
+                     If not provided, returns entities from all types.
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of TaggedEntity objects
+
+    Raises:
+        HTTPException: If entity retrieval fails
+    """
+    # Parse entity types parameter if provided
+    entity_types_list = None
+    if entity_types:
+        entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
+
+    logger.debug(f"User {user} is retrieving entities for tag '{tag_name}' with entity types: {entity_types_list}")
+
+    try:
+        entities = await tag_service.get_entities_by_tag(db, tag_name=tag_name, entity_types=entity_types_list)
+        return entities
+    except Exception as e:
+        logger.error(f"Failed to retrieve entities for tag '{tag_name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve entities: {str(e)}")
+
+
 # Mount static files
 # app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 
@@ -2317,6 +2519,7 @@ app.include_router(root_router)
 app.include_router(utility_router)
 app.include_router(server_router)
 app.include_router(metrics_router)
+app.include_router(tag_router)
 
 
 # Feature flags for admin UI and API

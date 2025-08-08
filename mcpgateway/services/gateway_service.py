@@ -418,6 +418,7 @@ class GatewayService:
                 slug=slugify(gateway.name),
                 url=gateway.url,
                 description=gateway.description,
+                tags=gateway.tags,
                 transport=gateway.transport,
                 capabilities=capabilities,
                 last_seen=datetime.now(timezone.utc),
@@ -530,6 +531,8 @@ class GatewayService:
             GatewayNotFoundError: If gateway not found
             GatewayError: For other update errors
             GatewayNameConflictError: If gateway name conflict occurs
+            IntegrityError: If there is a database integrity error
+            ValidationError: If validation fails
         """
         try:
             # Find gateway
@@ -559,6 +562,8 @@ class GatewayService:
                     gateway.description = gateway_update.description
                 if gateway_update.transport is not None:
                     gateway.transport = gateway_update.transport
+                if gateway_update.tags is not None:
+                    gateway.tags = gateway_update.tags
 
                 if getattr(gateway, "auth_type", None) is not None:
                     gateway.auth_type = gateway_update.auth_type
@@ -602,7 +607,6 @@ class GatewayService:
                                         auth_value=gateway.auth_value,
                                     )
                                 )
-
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                         gateway.last_seen = datetime.now(timezone.utc)
@@ -613,6 +617,10 @@ class GatewayService:
                     except Exception as e:
                         logger.warning(f"Failed to initialize updated gateway: {e}")
 
+                # Update tags if provided
+                if gateway_update.tags is not None:
+                    gateway.tags = gateway_update.tags
+
                 gateway.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(gateway)
@@ -621,8 +629,14 @@ class GatewayService:
                 await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {gateway.name}")
-                return GatewayRead.model_validate(gateway).masked()
 
+                return GatewayRead.model_validate(gateway)
+        except GatewayNameConflictError as ge:
+            logger.error(f"GatewayNameConflictError in group: {ge}")
+            raise ge
+        except IntegrityError as ie:
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie
         except Exception as e:
             db.rollback()
             raise GatewayError(f"Failed to update gateway: {str(e)}")
@@ -1255,26 +1269,23 @@ class GatewayService:
                     authentication = {}
                 # Store the context managers so they stay alive
                 decoded_auth = decode_auth(authentication)
-                if await self._validate_gateway_url(url=server_url, headers=decoded_auth, transport_type="STREAMABLEHTTP"):
-                    # Use async with for both streamablehttp_client and ClientSession
-                    async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, _get_session_id):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            # Initialize the session
-                            response = await session.initialize()
-                            # if get_session_id:
-                            #     session_id = get_session_id()
-                            #     if session_id:
-                            #         print(f"Session ID: {session_id}")
-                            capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                            response = await session.list_tools()
-                            tools = response.tools
-                            tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
-                            tools = [ToolCreate.model_validate(tool) for tool in tools]
-                            for tool in tools:
-                                tool.request_type = "STREAMABLEHTTP"
+                # The _validate_gateway_url logic is flawed for streamablehttp, so we bypass it
+                # and go straight to the client connection. The outer try/except in
+                # _initialize_gateway will handle any connection errors.
+                async with streamablehttp_client(url=server_url, headers=decoded_auth) as (read_stream, write_stream, _get_session_id):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        # Initialize the session
+                        response = await session.initialize()
+                        capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
 
-                    return capabilities, tools
-                raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
+                        response = await session.list_tools()
+                        tools = response.tools
+                        tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+
+                        tools = [ToolCreate.model_validate(tool) for tool in tools]
+                        for tool in tools:
+                            tool.request_type = "STREAMABLEHTTP"
+                return capabilities, tools
 
             capabilities = {}
             tools = []

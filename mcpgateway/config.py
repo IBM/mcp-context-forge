@@ -20,6 +20,7 @@ Environment variables:
 - AUTH_REQUIRED: Require authentication (default: True)
 - TRANSPORT_TYPE: Transport mechanisms (default: "all")
 - FEDERATION_ENABLED: Enable gateway federation (default: True)
+- DOCS_ALLOW_BASIC_AUTH: Allow basic auth for docs (default: False)
 - FEDERATION_DISCOVERY: Enable auto-discovery (default: False)
 - FEDERATION_PEERS: List of peer gateway URLs (default: [])
 - RESOURCE_CACHE_SIZE: Max cached resources (default: 1000)
@@ -99,6 +100,7 @@ class Settings(BaseSettings):
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
     port: int = 4444
+    docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
     templates_dir: Path = Path("mcpgateway/templates")
     # Absolute paths resolved at import-time (still override-able via env vars)
@@ -309,6 +311,10 @@ class Settings(BaseSettings):
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
+
+    # Core plugin settings
+    plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
+    plugin_config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file")
 
     # Development
     dev_mode: bool = False
@@ -554,6 +560,15 @@ class Settings(BaseSettings):
 
     # Masking value for all sensitive data
     masked_auth_value: str = "*****"
+
+    # passthrough headers
+    default_passthrough_headers: Any = os.environ.get("DEFAULT_PASSTHROUGH_HEADERS", ["Authorization", "X-Tenant-Id", "X-Trace-Id"])
+    if not isinstance(default_passthrough_headers, list):
+        try:
+            default_passthrough_headers = list(default_passthrough_headers)
+        except Exception as e:
+            logger.warning(f"Invalid DEFAULT_PASSTHROUGH_HEADERS format in .env. Must be a list of header names, e.g. ['Authorization', 'X-Tenant-Id'], error: {e}")
+            default_passthrough_headers = []
 
 
 def extract_using_jq(data, jq_filter=""):

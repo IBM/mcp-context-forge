@@ -71,7 +71,7 @@ def test_format_validation_error_letter_requirement():
     with pytest.raises(ValidationError) as exc:
         NameModel(name="Bobby")
     result = ErrorFormatter.format_validation_error(exc.value)
-    assert result["message"] == "Validation failed"
+    assert result["message"] == "Validation failed: Name must start with a letter and contain only letters, numbers, and underscores"
     assert result["success"] is False
     assert result["details"][0]["field"] == "name"
     assert "must start with a letter" in result["details"][0]["message"]

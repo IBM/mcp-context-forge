@@ -82,3 +82,24 @@ before submitting.
 ## Coding style guidelines
 **FIXME** Optional, but recommended: please share any specific style guidelines you might
 have for your project.
+
+### Python File Headers
+
+All Python source files (`.py`) must begin with the following standardized header. This ensures consistency and proper licensing across the codebase.
+
+The header format is as follows:
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./path/to/your/file.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: "Author One, Author Two"
+
+Your detailed module documentation begins here...
+"""
+```
+
+You can automatically check and fix file headers using the provided `make` targets. For detailed usage and examples, please see the [File Header Management section](../docs/docs/development/module-documentation.md) in our development documentation.

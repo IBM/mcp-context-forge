@@ -58,7 +58,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 * 7. [Quick Start (manual install)](#quick-start-manual-install)
     * 7.1. [Prerequisites](#prerequisites)
     * 7.2. [One-liner (dev)](#one-liner-dev)
-    * 7.3. [Containerised (self-signed TLS)](#containerised-self-signed-tls)
+    * 7.3. [Containerized (self-signed TLS)](#containerized-self-signed-tls)
     * 7.4. [Smoke-test the API](#smoke-test-the-api)
 * 8. [Installation](#installation)
     * 8.1. [Via Make](#via-make)
@@ -120,7 +120,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 **ContextForge MCP Gateway** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API-exposing a unified endpoint for all your AI clients.
 
-**⚠️ Caution**: The current release (0.4.0) is considered alpha / early beta. It is not production-ready and should only be used for local development, testing, or experimentation. Features, APIs, and behaviors are subject to change without notice. **Do not** deploy in production environments without thorough security review, validation and additional security mechanisms.  Many of the features required for secure, large-scale, or multi-tenant production deployments are still on the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) - which is itself evolving.
+**⚠️ Caution**: The current release (0.5.0) is considered alpha / early beta. It is not production-ready and should only be used for local development, testing, or experimentation. Features, APIs, and behaviors are subject to change without notice. **Do not** deploy in production environments without thorough security review, validation and additional security mechanisms.  Many of the features required for secure, large-scale, or multi-tenant production deployments are still on the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) - which is itself evolving.
 
 It currently supports:
 
@@ -386,13 +386,13 @@ docker run -d --name mcpgateway \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.4.0
+  ghcr.io/ibm/mcp-context-forge:0.5.0
 
 # Tail logs (Ctrl+C to quit)
 docker logs -f mcpgateway
 
 # Generating an API key
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.4.0 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.5.0 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
 ```
 
@@ -420,7 +420,7 @@ docker run -d --name mcpgateway \
   -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
-  ghcr.io/ibm/mcp-context-forge:0.4.0
+  ghcr.io/ibm/mcp-context-forge:0.5.0
 ```
 
 SQLite now lives on the host at `./data/mcp.db`.
@@ -444,7 +444,7 @@ docker run -d --name mcpgateway \
   -e PORT=4444 \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -v $(pwd)/data:/data \
-  ghcr.io/ibm/mcp-context-forge:0.4.0
+  ghcr.io/ibm/mcp-context-forge:0.5.0
 ```
 
 Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
@@ -460,7 +460,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.4.0
+  ghcr.io/ibm/mcp-context-forge:0.5.0
 ```
 
 #### 2 - Persist SQLite
@@ -479,7 +479,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.4.0
+  ghcr.io/ibm/mcp-context-forge:0.5.0
 ```
 
 #### 3 - Host networking (rootless)
@@ -497,7 +497,7 @@ podman run -d --name mcpgateway \
   --network=host \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.4.0
+  ghcr.io/ibm/mcp-context-forge:0.5.0
 ```
 
 ---
@@ -506,7 +506,7 @@ podman run -d --name mcpgateway \
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
 * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `v0.4.0`) instead of `latest` for reproducible builds.
+* **Pinned tags** - Use an explicit version (e.g. `v0.5.0`) instead of `latest` for reproducible builds.
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
@@ -552,7 +552,7 @@ docker run --rm -i \
   -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1 \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:0.4.0 \
+  ghcr.io/ibm/mcp-context-forge:0.5.0 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -600,7 +600,7 @@ python3 -m mcpgateway.wrapper
 <summary><strong>Expected responses from mcpgateway.wrapper</strong></summary>
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.4.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.5.0"}}}
 
 # When there's no tools
 {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
@@ -632,7 +632,7 @@ docker run -i --rm \
   -e MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
   -e MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
-  ghcr.io/ibm/mcp-context-forge:0.4.0 \
+  ghcr.io/ibm/mcp-context-forge:0.5.0 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -829,7 +829,7 @@ No local Docker? Use Codespaces:
 
 * **Python ≥ 3.10**
 * **GNU Make** (optional, but all common workflows are available as Make targets)
-* Optional: **Docker / Podman** for containerised runs
+* Optional: **Docker / Podman** for containerized runs
 
 ### One-liner (dev)
 
@@ -850,7 +850,7 @@ make install-dev # Install development dependencies, ex: linters and test harnes
 make lint          # optional: run style checks (ruff, mypy, etc.)
 ```
 
-### Containerised (self-signed TLS)
+### Containerized (self-signed TLS)
 
 ## Container Runtime Support
 
@@ -1000,13 +1000,19 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 ### Security
 
-| Setting           | Description                    | Default                                        | Options    |
-| ----------------- | ------------------------------ | ---------------------------------------------- | ---------- |
-| `SKIP_SSL_VERIFY` | Skip upstream TLS verification | `false`                                        | bool       |
-| `ALLOWED_ORIGINS` | CORS allow-list                | `["http://localhost","http://localhost:4444"]` | JSON array |
-| `CORS_ENABLED`    | Enable CORS                    | `true`                                         | bool       |
+| Setting                   | Description                    | Default                                        | Options    |
+| ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
+| `SKIP_SSL_VERIFY`         | Skip upstream TLS verification | `false`                                        | bool       |
+| `ALLOWED_ORIGINS`         | CORS allow-list                | `["http://localhost","http://localhost:4444"]` | JSON array |
+| `CORS_ENABLED`            | Enable CORS                    | `true`                                         | bool       |
+| `DOCS_ALLOW_BASIC_AUTH`   | Allow Basic Auth for docs (in addition to JWT)         | `false`                                        | bool       |
 
-> Note: do not quote the ALLOWED_ORIGINS values, this needs to be valid JSON, such as: `ALLOWED_ORIGINS=["http://localhost", "http://localhost:4444"]`
+> Note: do not quote the ALLOWED_ORIGINS values, this needs to be valid JSON, such as:
+> ALLOWED_ORIGINS=["http://localhost", "http://localhost:4444"]
+>
+> Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are always protected by authentication.
+> By default, they require Bearer token authentication. Setting `DOCS_ALLOW_BASIC_AUTH=true` enables HTTP Basic Authentication as an additional method using the same credentials as `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`.
+
 
 ### Logging
 
@@ -1922,8 +1928,8 @@ sonar-deps-podman    - Install podman-compose + supporting tools
 sonar-deps-docker    - Install docker-compose + supporting tools
 sonar-up-podman      - Launch SonarQube with podman-compose
 sonar-up-docker      - Launch SonarQube with docker-compose
-sonar-submit-docker  - Run containerised Sonar Scanner CLI with Docker
-sonar-submit-podman  - Run containerised Sonar Scanner CLI with Podman
+sonar-submit-docker  - Run containerized Sonar Scanner CLI with Docker
+sonar-submit-podman  - Run containerized Sonar Scanner CLI with Podman
 pysonar-scanner      - Run scan with Python wrapper (pysonar-scanner)
 sonar-info           - How to create a token & which env vars to export
 🛡️ SECURITY & PACKAGE SCANNING
@@ -1998,7 +2004,7 @@ minikube-start        - Start local Minikube cluster with Ingress + DNS + metric
 minikube-stop         - Stop the Minikube cluster
 minikube-delete       - Delete the Minikube cluster
 minikube-image-load   - Build and load ghcr.io/ibm/mcp-context-forge:latest into Minikube
-minikube-k8s-apply    - Apply Kubernetes manifests from k8s/
+minikube-k8s-apply    - Apply Kubernetes manifests from deployment/k8s/
 minikube-status       - Show status of Minikube and ingress pods
 🛠️ HELM CHART TASKS
 helm-lint            - Lint the Helm chart (static analysis)
