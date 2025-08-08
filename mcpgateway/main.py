@@ -92,6 +92,8 @@ from mcpgateway.schemas import (
     ServerCreate,
     ServerRead,
     ServerUpdate,
+    TaggedEntity,
+    TagInfo,
     ToolCreate,
     ToolRead,
     ToolUpdate,
@@ -118,6 +120,7 @@ from mcpgateway.services.server_service import (
     ServerNotFoundError,
     ServerService,
 )
+from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import (
     ToolError,
     ToolNameConflictError,
@@ -173,6 +176,7 @@ root_service = RootService()
 completion_service = CompletionService()
 sampling_handler = SamplingHandler()
 server_service = ServerService()
+tag_service = TagService()
 
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
@@ -551,6 +555,7 @@ root_router = APIRouter(prefix="/roots", tags=["Roots"])
 utility_router = APIRouter(tags=["Utilities"])
 server_router = APIRouter(prefix="/servers", tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
+tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 
 # Basic Auth setup
 
@@ -833,6 +838,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user:
 @server_router.get("/", response_model=List[ServerRead])
 async def list_servers(
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[ServerRead]:
@@ -841,14 +847,20 @@ async def list_servers(
 
     Args:
         include_inactive (bool): Whether to include inactive servers in the response.
+        tags (Optional[str]): Comma-separated list of tags to filter by.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
         List[ServerRead]: A list of server objects.
     """
-    logger.debug(f"User {user} requested server list")
-    return await server_service.list_servers(db, include_inactive=include_inactive)
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User {user} requested server list with tags={tags_list}")
+    return await server_service.list_servers(db, include_inactive=include_inactive, tags=tags_list)
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
@@ -1180,6 +1192,7 @@ async def server_get_prompts(
 async def list_tools(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
     _: str = Depends(require_auth),
@@ -1189,6 +1202,7 @@ async def list_tools(
     Args:
         cursor: Pagination cursor for fetching the next set of results
         include_inactive: Whether to include inactive tools in the results
+        tags: Comma-separated list of tags to filter by (e.g., "api,data")
         db: Database session
         apijsonpath: JSON path modifier to filter or transform the response
         _: Authenticated user
@@ -1197,8 +1211,13 @@ async def list_tools(
         List of tools or modified result based on jsonpath
     """
 
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
     # For now just pass the cursor parameter even if not used
-    data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive)
+    data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
 
     if apijsonpath is None:
         return data
@@ -1426,6 +1445,7 @@ async def toggle_resource_status(
 async def list_resources(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[ResourceRead]:
@@ -1435,17 +1455,23 @@ async def list_resources(
     Args:
         cursor (Optional[str]): Optional cursor for pagination.
         include_inactive (bool): Whether to include inactive resources.
+        tags (Optional[str]): Comma-separated list of tags to filter by.
         db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
         List[ResourceRead]: List of resources.
     """
-    logger.debug(f"User {user} requested resource list with cursor {cursor} and include_inactive={include_inactive}")
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User {user} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
     if cached := resource_cache.get("resource_list"):
         return cached
     # Pass the cursor parameter
-    resources = await resource_service.list_resources(db, include_inactive=include_inactive)
+    resources = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
     resource_cache.set("resource_list", resources)
     return resources
 
@@ -1638,6 +1664,7 @@ async def toggle_prompt_status(
 async def list_prompts(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
+    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> List[PromptRead]:
@@ -1647,14 +1674,20 @@ async def list_prompts(
     Args:
         cursor: Cursor for pagination.
         include_inactive: Include inactive prompts.
+        tags: Comma-separated list of tags to filter by.
         db: Database session.
         user: Authenticated user.
 
     Returns:
         List of prompt records.
     """
-    logger.debug(f"User: {user} requested prompt list with include_inactive={include_inactive}, cursor={cursor}")
-    return await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive)
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User: {user} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
+    return await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
 
 
 @prompt_router.post("", response_model=PromptRead)
@@ -1717,7 +1750,7 @@ async def get_prompt(
         return await prompt_service.get_prompt(db, name, args)
     except Exception as ex:
         logger.error(f"Could not retrieve prompt {name}: {ex}")
-        if isinstance(ex, ValueError) or isinstance(ex, PromptError):
+        if isinstance(ex, (ValueError, PromptError)):
             return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
         if isinstance(ex, PluginViolationError):
             return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues", "details": ex.message}, status_code=422)
@@ -2386,6 +2419,90 @@ async def readiness_check(db: Session = Depends(get_db)):
         return JSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
 
 
+####################
+# Tag Endpoints    #
+####################
+
+
+@tag_router.get("", response_model=List[TagInfo])
+@tag_router.get("/", response_model=List[TagInfo])
+async def list_tags(
+    entity_types: Optional[str] = None,
+    include_entities: bool = False,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> List[TagInfo]:
+    """
+    Retrieve all unique tags across specified entity types.
+
+    Args:
+        entity_types: Comma-separated list of entity types to filter by
+                     (e.g., "tools,resources,prompts,servers,gateways").
+                     If not provided, returns tags from all entity types.
+        include_entities: Whether to include the list of entities that have each tag
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of TagInfo objects containing tag names, statistics, and optionally entities
+
+    Raises:
+        HTTPException: If tag retrieval fails
+    """
+    # Parse entity types parameter if provided
+    entity_types_list = None
+    if entity_types:
+        entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
+
+    logger.debug(f"User {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
+
+    try:
+        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
+        return tags
+    except Exception as e:
+        logger.error(f"Failed to retrieve tags: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
+
+
+@tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
+async def get_entities_by_tag(
+    tag_name: str,
+    entity_types: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> List[TaggedEntity]:
+    """
+    Get all entities that have a specific tag.
+
+    Args:
+        tag_name: The tag to search for
+        entity_types: Comma-separated list of entity types to filter by
+                     (e.g., "tools,resources,prompts,servers,gateways").
+                     If not provided, returns entities from all types.
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of TaggedEntity objects
+
+    Raises:
+        HTTPException: If entity retrieval fails
+    """
+    # Parse entity types parameter if provided
+    entity_types_list = None
+    if entity_types:
+        entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
+
+    logger.debug(f"User {user} is retrieving entities for tag '{tag_name}' with entity types: {entity_types_list}")
+
+    try:
+        entities = await tag_service.get_entities_by_tag(db, tag_name=tag_name, entity_types=entity_types_list)
+        return entities
+    except Exception as e:
+        logger.error(f"Failed to retrieve entities for tag '{tag_name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve entities: {str(e)}")
+
+
 # Mount static files
 # app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 
@@ -2400,6 +2517,7 @@ app.include_router(root_router)
 app.include_router(utility_router)
 app.include_router(server_router)
 app.include_router(metrics_router)
+app.include_router(tag_router)
 
 
 # Feature flags for admin UI and API

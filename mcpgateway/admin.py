@@ -21,7 +21,7 @@ underlying data.
 import json
 import logging
 import time
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -63,6 +63,7 @@ from mcpgateway.services.prompt_service import PromptNotFoundError, PromptServic
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
+from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
@@ -411,6 +412,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     form = await request.form()
     # root_path = request.scope.get("root_path", "")
     # is_inactive_checked = form.get("is_inactive_checked", "false")
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
         server = ServerCreate(
@@ -420,6 +426,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             associated_tools=",".join(form.getlist("associatedTools")),
             associated_resources=form.get("associatedResources"),
             associated_prompts=form.get("associatedPrompts"),
+            tags=tags,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -576,6 +583,11 @@ async def admin_edit_server(
         >>> server_service.update_server = original_update_server
     """
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
@@ -585,6 +597,7 @@ async def admin_edit_server(
             associated_tools=",".join(form.getlist("associatedTools")),
             associated_resources=form.get("associatedResources"),
             associated_prompts=form.get("associatedPrompts"),
+            tags=tags,
         )
         await server_service.update_server(db, server_id, server)
 
@@ -845,7 +858,8 @@ async def admin_list_resources(
         ...         total_executions=5, successful_executions=5, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.1, max_response_time=0.5,
         ...         avg_response_time=0.3, last_execution_time=datetime.now(timezone.utc)
-        ...     )
+        ...     ),
+        ...     tags=[]
         ... )
         >>>
         >>> # Mock the resource_service.list_resources method
@@ -868,8 +882,8 @@ async def admin_list_resources(
         ...     is_active=False, metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
-        ...         avg_response_time=0.0, last_execution_time=None
-        ...     )
+        ...         avg_response_time=0.0, last_execution_time=None),
+        ...     tags=[]
         ... )
         >>> resource_service.list_resources = AsyncMock(return_value=[mock_resource, mock_inactive_resource])
         >>> async def test_admin_list_resources_all():
@@ -952,7 +966,8 @@ async def admin_list_prompts(
         ...         total_executions=10, successful_executions=10, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.01, max_response_time=0.1,
         ...         avg_response_time=0.05, last_execution_time=datetime.now(timezone.utc)
-        ...     )
+        ...     ),
+        ...     tags=[]
         ... )
         >>>
         >>> # Mock the prompt_service.list_prompts method
@@ -975,7 +990,8 @@ async def admin_list_prompts(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None
-        ...     )
+        ...     ),
+        ...     tags=[]
         ... )
         >>> prompt_service.list_prompts = AsyncMock(return_value=[mock_prompt, mock_inactive_prompt])
         >>> async def test_admin_list_prompts_all():
@@ -1317,7 +1333,8 @@ async def admin_ui(
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None
         ...     ),
-        ...     gateway_id=None
+        ...     gateway_id=None,
+        ...     tags=[]
         ... )
         >>> server_service.list_servers = AsyncMock(return_value=[mock_server])
         >>> tool_service.list_tools = AsyncMock(return_value=[mock_tool])
@@ -1441,7 +1458,8 @@ async def admin_list_tools(
         ...         avg_response_time=0.3, last_execution_time=datetime.now(timezone.utc)
         ...     ),
         ...     gateway_slug="default",
-        ...     original_name_slug="test-tool"
+        ...     original_name_slug="test-tool",
+        ...     tags=[]
         ... )  #  Added gateway_id=None
         >>>
         >>> # Mock the tool_service.list_tools method
@@ -1468,7 +1486,8 @@ async def admin_list_tools(
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None
         ...     ),
-        ...     gateway_slug="default", original_name_slug="inactive-tool"
+        ...     gateway_slug="default", original_name_slug="inactive-tool",
+        ...     tags=[]
         ... )
         >>> tool_service.list_tools = AsyncMock(return_value=[mock_tool, mock_inactive_tool])
         >>> async def test_admin_list_tools_all():
@@ -1553,7 +1572,8 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str 
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0,
         ...         last_execution_time=None
         ...     ),
-        ...     gateway_slug="default", original_name_slug="get-tool"
+        ...     gateway_slug="default", original_name_slug="get-tool",
+        ...     tags=[]
         ... )
         >>>
         >>> # Mock the tool_service.get_tool method
@@ -1738,6 +1758,10 @@ async def admin_add_tool(
     form = await request.form()
     logger.debug(f"Received form data: {dict(form)}")
 
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     tool_data = {
         "name": form.get("name"),
         "url": form.get("url"),
@@ -1753,6 +1777,7 @@ async def admin_add_tool(
         "auth_token": form.get("auth_token", ""),
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
+        "tags": tags,
     }
     logger.debug(f"Tool data built: {tool_data}")
     try:
@@ -1950,6 +1975,11 @@ async def admin_edit_tool(
     """
     logger.debug(f"User {user} is editing tool ID {tool_id}")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     tool_data = {
         "name": form.get("name"),
         "url": form.get("url"),
@@ -1965,6 +1995,7 @@ async def admin_edit_tool(
         "auth_token": form.get("auth_token", ""),
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
+        "tags": tags,
     }
     logger.debug(f"Tool update data built: {tool_data}")
     try:
@@ -2274,6 +2305,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
       - name
       - url
       - description (optional)
+      - tags (optional, comma-separated)
 
     Args:
         request: FastAPI request containing form data.
@@ -2379,10 +2411,15 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     logger.debug(f"User {user} is adding a new gateway")
     form = await request.form()
     try:
+        # Parse tags from comma-separated string
+        tags_str = form.get("tags", "")
+        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
         gateway = GatewayCreate(
             name=form["name"],
             url=form["url"],
             description=form.get("description"),
+            tags=tags,
             transport=form.get("transport", "SSE"),
             auth_type=form.get("auth_type", ""),
             auth_username=form.get("auth_username", ""),
@@ -2434,6 +2471,7 @@ async def admin_edit_gateway(
       - name
       - url
       - description (optional)
+      - tags (optional, comma-separated)
 
     Args:
         gateway_id: Gateway ID.
@@ -2529,10 +2567,15 @@ async def admin_edit_gateway(
     logger.debug(f"User {user} is editing gateway ID {gateway_id}")
     form = await request.form()
     try:
+        # Parse tags from comma-separated string
+        tags_str = form.get("tags", "")
+        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=form.get("name"),
             url=form["url"],
             description=form.get("description"),
+            tags=tags,
             transport=form.get("transport", "SSE"),
             auth_type=form.get("auth_type", None),
             auth_username=form.get("auth_username", None),
@@ -2683,7 +2726,8 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user: str 
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0,
         ...         last_execution_time=None
-        ...     )
+        ...     ),
+        ...     tags=[]
         ... )
         >>> mock_content = ResourceContent(type="resource", uri=resource_uri, mime_type="text/plain", text="Hello content")
         >>>
@@ -2795,6 +2839,11 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     """
     logger.debug(f"User {user} is adding a new resource")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         resource = ResourceCreate(
             uri=form["uri"],
@@ -2803,6 +2852,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             mime_type=form.get("mimeType"),
             template=form.get("template"),  # defaults to None if not provided
             content=form["content"],
+            tags=tags,
         )
         await resource_service.register_resource(db, resource)
         return JSONResponse(
@@ -2915,12 +2965,18 @@ async def admin_edit_resource(
     """
     logger.debug(f"User {user} is editing resource URI {uri}")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         resource = ResourceUpdate(
             name=form["name"],
             description=form.get("description"),
             mime_type=form.get("mimeType"),
             content=form["content"],
+            tags=tags,
         )
         await resource_service.update_resource(db, uri, resource)
         return JSONResponse(
@@ -3163,7 +3219,8 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user: str =
         ...     "created_at": datetime.now(timezone.utc),
         ...     "updated_at": datetime.now(timezone.utc),
         ...     "is_active": True,
-        ...     "metrics": mock_metrics
+        ...     "metrics": mock_metrics,
+        ...     "tags": []
         ... }
         >>>
         >>> original_get_prompt_details = prompt_service.get_prompt_details
@@ -3265,6 +3322,11 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     """
     logger.debug(f"User {user} is adding a new prompt")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     try:
         args_json = form.get("arguments") or "[]"
         arguments = json.loads(args_json)
@@ -3273,6 +3335,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             description=form.get("description"),
             template=form["template"],
             arguments=arguments,
+            tags=tags,
         )
         await prompt_service.register_prompt(db, prompt)
         return JSONResponse(
@@ -3365,6 +3428,11 @@ async def admin_edit_prompt(
     """
     logger.debug(f"User {user} is editing prompt name {name}")
     form = await request.form()
+
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
     args_json = form.get("arguments") or "[]"
     arguments = json.loads(args_json)
     try:
@@ -3373,6 +3441,7 @@ async def admin_edit_prompt(
             description=form.get("description"),
             template=form["template"],
             arguments=arguments,
+            tags=tags,
         )
         await prompt_service.update_prompt(db, name, prompt)
 
@@ -4014,3 +4083,77 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
         logger.warning(f"Gateway test failed: {e}")
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
+
+
+####################
+# Admin Tag Routes #
+####################
+
+
+@admin_router.get("/tags", response_model=List[Dict[str, Any]])
+async def admin_list_tags(
+    entity_types: Optional[str] = None,
+    include_entities: bool = False,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> List[Dict[str, Any]]:
+    """
+    List all unique tags with statistics for the admin UI.
+
+    Args:
+        entity_types: Comma-separated list of entity types to filter by
+                     (e.g., "tools,resources,prompts,servers,gateways").
+                     If not provided, returns tags from all entity types.
+        include_entities: Whether to include the list of entities that have each tag
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of tag information with statistics
+
+    Raises:
+        HTTPException: If tag retrieval fails
+    """
+    tag_service = TagService()
+
+    # Parse entity types parameter if provided
+    entity_types_list = None
+    if entity_types:
+        entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
+
+    logger.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
+
+    try:
+        tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
+
+        # Convert to list of dicts for admin UI
+        result = []
+        for tag in tags:
+            tag_dict = {
+                "name": tag.name,
+                "tools": tag.stats.tools,
+                "resources": tag.stats.resources,
+                "prompts": tag.stats.prompts,
+                "servers": tag.stats.servers,
+                "gateways": tag.stats.gateways,
+                "total": tag.stats.total,
+            }
+
+            # Include entities if requested
+            if include_entities and tag.entities:
+                tag_dict["entities"] = [
+                    {
+                        "id": entity.id,
+                        "name": entity.name,
+                        "type": entity.type,
+                        "description": entity.description,
+                    }
+                    for entity in tag.entities
+                ]
+
+            result.append(tag_dict)
+
+        return result
+    except Exception as e:
+        logger.error(f"Failed to retrieve tags for admin: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")

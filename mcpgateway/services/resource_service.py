@@ -151,6 +151,7 @@ class ResourceService:
             "avg_response_time": avg_rt,
             "last_execution_time": last_time,
         }
+        resource_dict["tags"] = resource.tags or []
         return ResourceRead.model_validate(resource_dict)
 
     async def register_resource(self, db: Session, resource: ResourceCreate) -> ResourceRead:
@@ -204,6 +205,7 @@ class ResourceService:
                 text_content=resource.content if is_text else None,
                 binary_content=(resource.content.encode() if is_text and isinstance(resource.content, str) else resource.content if isinstance(resource.content, bytes) else None),
                 size=len(resource.content) if resource.content else 0,
+                tags=resource.tags or [],
             )
 
             # Add to DB
@@ -223,7 +225,7 @@ class ResourceService:
             db.rollback()
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
-    async def list_resources(self, db: Session, include_inactive: bool = False) -> List[ResourceRead]:
+    async def list_resources(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ResourceRead]:
         """
         Retrieve a list of registered resources from the database.
 
@@ -236,6 +238,7 @@ class ResourceService:
             db (Session): The SQLAlchemy database session.
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
+            tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
 
         Returns:
             List[ResourceRead]: A list of resources represented as ResourceRead objects.
@@ -256,6 +259,16 @@ class ResourceService:
         query = select(DbResource)
         if not include_inactive:
             query = query.where(DbResource.is_active)
+
+        # Add tag filtering if tags are provided
+        if tags:
+            # Filter resources that have any of the specified tags
+            tag_conditions = []
+            for tag in tags:
+                tag_conditions.append(func.json_contains(DbResource.tags, f'"{tag}"'))
+            if tag_conditions:
+                query = query.where(func.or_(*tag_conditions))
+
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
         return [self._convert_resource_to_read(r) for r in resources]
@@ -552,6 +565,9 @@ class ResourceService:
                 )
                 resource.size = len(resource_update.content)
 
+            # Update tags if provided
+            if resource_update.tags is not None:
+                resource.tags = resource_update.tags
             resource.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(resource)
