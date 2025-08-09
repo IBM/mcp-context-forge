@@ -17,11 +17,10 @@ mcpgateway --host 0.0.0.0 --port 4444
 # Enable file logging for development without rotation
 export LOG_TO_FILE=true
 export LOG_LEVEL=DEBUG
-export LOG_FORMAT=text
 export LOG_FOLDER=./dev-logs
 export LOG_FILE=debug.log
 mcpgateway --host 0.0.0.0 --port 4444
-# Logs to both console AND ./dev-logs/debug.log (file grows indefinitely)
+# Logs to both console (text format) AND ./dev-logs/debug.log (JSON format, grows indefinitely)
 ```
 
 ### 3. Development with File Rotation
@@ -32,11 +31,10 @@ export LOG_ROTATION_ENABLED=true
 export LOG_MAX_SIZE_MB=1
 export LOG_BACKUP_COUNT=3
 export LOG_LEVEL=DEBUG
-export LOG_FORMAT=text
 export LOG_FOLDER=./dev-logs
 export LOG_FILE=debug.log
 mcpgateway --host 0.0.0.0 --port 4444
-# Logs rotate at 1MB with 3 backup files kept
+# Logs rotate at 1MB with 3 backup files kept (console: text, files: JSON)
 ```
 
 ### 4. Production with File Logging (No Rotation)
@@ -88,7 +86,7 @@ tail -f logs/mcpgateway.log | jq '.'
 ```env
 # Default: stdout/stderr only
 LOG_LEVEL=INFO
-LOG_FORMAT=text
+LOG_FORMAT=json
 
 # Optional: Enable file logging (no rotation)
 LOG_TO_FILE=true
