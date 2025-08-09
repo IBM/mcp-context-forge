@@ -1,3 +1,6 @@
+llms-full.txt
+aider*
+.aider*
 todo/
 *.sarif
 devskim-results.sarif
