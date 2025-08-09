@@ -634,6 +634,9 @@ class GatewayService:
         except GatewayNameConflictError as ge:
             logger.error(f"GatewayNameConflictError in group: {ge}")
             raise ge
+        except GatewayNotFoundError as gnfe:
+            logger.error(f"GatewayNotFoundError: {gnfe}")
+            raise gnfe
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie

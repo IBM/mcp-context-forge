@@ -99,7 +99,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import (
     PromptError,
@@ -124,6 +124,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import (
     ToolError,
     ToolNameConflictError,
+    ToolNotFoundError,
     ToolService,
 )
 from mcpgateway.transports.sse_transport import SSETransport
@@ -1247,15 +1248,25 @@ async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str
     try:
         logger.debug(f"User {user} is creating a new tool")
         return await tool_service.register_tool(db, tool)
-    except ToolNameConflictError as e:
-        if not e.enabled and e.tool_id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Tool name already exists but is inactive. Consider activating it with ID: {e.tool_id}",
-            )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except ToolError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as ex:
+        logger.error(f"Error while creating tool: {ex}")
+        if isinstance(ex, ToolNameConflictError):
+            if not ex.enabled and ex.tool_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Tool name already exists but is inactive. Consider activating it with ID: {ex.tool_id}",
+                )
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ex))
+        if isinstance(ex, (ValidationError, ValueError)):
+            logger.error(f"Validation error while creating tool: {ex}")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(ex))
+        if isinstance(ex, IntegrityError):
+            logger.error(f"Integrity error while creating tool: {ex}")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
+        if isinstance(ex, ToolError):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ex))
+        logger.error(f"Unexpected error while creating tool: {ex}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the tool")
 
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
@@ -1319,8 +1330,19 @@ async def update_tool(
     try:
         logger.debug(f"User {user} is updating tool with ID {tool_id}")
         return await tool_service.update_tool(db, tool_id, tool)
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as ex:
+        if isinstance(ex, ToolNotFoundError):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ex))
+        if isinstance(ex, ValidationError):
+            logger.error(f"Validation error while creating tool: {ex}")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(ex))
+        if isinstance(ex, IntegrityError):
+            logger.error(f"Integrity error while creating tool: {ex}")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
+        if isinstance(ex, ToolError):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ex))
+        logger.error(f"Unexpected error while creating tool: {ex}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the tool")
 
 
 @tool_router.delete("/{tool_id}")
@@ -1716,10 +1738,24 @@ async def create_prompt(
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
     try:
         return await prompt_service.register_prompt(db, prompt)
-    except PromptNameConflictError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except PromptError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if isinstance(e, PromptNameConflictError):
+            # If the prompt name already exists, return a 409 Conflict error
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        if isinstance(e, PromptError):
+            # If there is a general prompt error, return a 400 Bad Request error
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        if isinstance(e, ValidationError):
+            # If there is a validation error, return a 422 Unprocessable Entity error
+            logger.error(f"Validation error while creating prompt: {e}")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(e))
+        if isinstance(e, IntegrityError):
+            # If there is an integrity error, return a 409 Conflict error
+            logger.error(f"Integrity error while creating prompt: {e}")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(e))
+        # For any other unexpected errors, return a 500 Internal Server Error
+        logger.error(f"Unexpected error while creating prompt: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
 
 
 @prompt_router.post("/{name}")
@@ -1801,13 +1837,28 @@ async def update_prompt(
         HTTPException: * **409 Conflict** - a different prompt with the same *name* already exists and is still active.
             * **400 Bad Request** - validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
+    logger.info(f"User: {user} requested to update prompt: {name} with data={prompt}")
     logger.debug(f"User: {user} requested to update prompt: {name} with data={prompt}")
     try:
         return await prompt_service.update_prompt(db, name, prompt)
-    except PromptNameConflictError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except PromptError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if isinstance(e, PromptNotFoundError):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        if isinstance(e, ValidationError):
+            logger.error(f"Validation error while updating prompt: {e}")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(e))
+        if isinstance(e, IntegrityError):
+            logger.error(f"Integrity error while updating prompt: {e}")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(e))
+        if isinstance(e, PromptNameConflictError):
+            # If the prompt name already exists, return a 409 Conflict error
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        if isinstance(e, PromptError):
+            # If there is a general prompt error, return a 400 Bad Request error
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        # For any other unexpected errors, return a 500 Internal Server Error
+        logger.error(f"Unexpected error while updating prompt: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")
 
 
 @prompt_router.delete("/{name}")
@@ -1822,15 +1873,26 @@ async def delete_prompt(name: str, db: Session = Depends(get_db), user: str = De
 
     Returns:
         Status message.
+
+    Raises:
+        HTTPException: If the prompt is not found, a prompt error occurs, or an unexpected error occurs during deletion.
     """
     logger.debug(f"User: {user} requested deletion of prompt {name}")
     try:
         await prompt_service.delete_prompt(db, name)
         return {"status": "success", "message": f"Prompt {name} deleted"}
-    except PromptNotFoundError as e:
-        return {"status": "error", "message": str(e)}
-    except PromptError as e:
-        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        if isinstance(e, PromptNotFoundError):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        if isinstance(e, PromptError):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        logger.error(f"Unexpected error while deleting prompt {name}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while deleting the prompt")
+
+    # except PromptNotFoundError as e:
+    #     return {"status": "error", "message": str(e)}
+    # except PromptError as e:
+    #     return {"status": "error", "message": str(e)}
 
 
 ################
@@ -1919,18 +1981,18 @@ async def register_gateway(
         return await gateway_service.register_gateway(db, gateway)
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
-            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=502)
+            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
         if isinstance(ex, ValueError):
-            return JSONResponse(content={"message": "Unable to process input"}, status_code=400)
+            return JSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
-            return JSONResponse(content={"message": "Gateway name already exists"}, status_code=400)
+            return JSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
-            return JSONResponse(content={"message": "Error during execution"}, status_code=500)
+            return JSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
         if isinstance(ex, IntegrityError):
-            return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
-        return JSONResponse(content={"message": "Unexpected error"}, status_code=500)
+            return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+        return JSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
@@ -1970,7 +2032,24 @@ async def update_gateway(
         Updated gateway.
     """
     logger.debug(f"User '{user}' requested update on gateway {gateway_id} with data={gateway}")
-    return await gateway_service.update_gateway(db, gateway_id, gateway)
+    try:
+        return await gateway_service.update_gateway(db, gateway_id, gateway)
+    except Exception as ex:
+        if isinstance(ex, GatewayNotFoundError):
+            return JSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
+        if isinstance(ex, GatewayConnectionError):
+            return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+        if isinstance(ex, ValueError):
+            return JSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
+        if isinstance(ex, GatewayNameConflictError):
+            return JSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+        if isinstance(ex, RuntimeError):
+            return JSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if isinstance(ex, ValidationError):
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        if isinstance(ex, IntegrityError):
+            return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+        return JSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @gateway_router.delete("/{gateway_id}")
