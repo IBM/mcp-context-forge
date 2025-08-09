@@ -26,7 +26,7 @@ MCP Gateway uses dual-format logging:
 {
   "asctime": "2025-01-09 17:30:22,456",
   "name": "uvicorn.access",
-  "levelname": "INFO", 
+  "levelname": "INFO",
   "message": "127.0.0.1:43926 - \"GET /version HTTP/1.1\" 401"
 }
 ```

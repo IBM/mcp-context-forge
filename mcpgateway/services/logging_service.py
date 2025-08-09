@@ -239,7 +239,22 @@ class LoggingService:
 
         # Log through standard logging
         logger = self.get_logger(logger_name or "")
-        log_func = getattr(logger, level.lower())
+
+        # Map MCP log levels to Python logging levels
+        # NOTICE, ALERT, and EMERGENCY don't have direct Python equivalents
+        level_map = {
+            LogLevel.DEBUG: "debug",
+            LogLevel.INFO: "info",
+            LogLevel.NOTICE: "info",  # Map NOTICE to INFO
+            LogLevel.WARNING: "warning",
+            LogLevel.ERROR: "error",
+            LogLevel.CRITICAL: "critical",
+            LogLevel.ALERT: "critical",  # Map ALERT to CRITICAL
+            LogLevel.EMERGENCY: "critical",  # Map EMERGENCY to CRITICAL
+        }
+
+        log_method = level_map.get(level, "info")
+        log_func = getattr(logger, log_method)
         log_func(data)
 
         # Notify subscribers

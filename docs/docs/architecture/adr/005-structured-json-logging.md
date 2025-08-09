@@ -60,7 +60,7 @@ Use the Python standard `logging` module with centralized `LoggingService`:
 
 **✅ Implemented** - Structured logging is fully implemented in `LoggingService` with:
 
-- Centralized logging service integrated across all modules  
+- Centralized logging service integrated across all modules
 - Dual-format output (JSON to files, text to console)
 - HTTP access log capture (uvicorn.access and uvicorn.error loggers)
 - Optional log rotation with configurable size limits and retention
