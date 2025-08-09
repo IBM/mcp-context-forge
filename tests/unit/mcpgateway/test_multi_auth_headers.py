@@ -111,14 +111,25 @@ class TestMultiAuthHeaders:
         assert decoded["X-New-Header"] == "new_value"
 
     @pytest.mark.asyncio
-    async def test_special_characters_in_headers(self):
-        """Test headers with special characters."""
+    async def test_special_characters_in_headers_rejected(self):
+        """Test headers with invalid special characters are rejected."""
         auth_headers = [{"key": "X-Special-!@#", "value": "value-with-特殊字符"}, {"key": "Content-Type", "value": "application/json; charset=utf-8"}]
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(name="Test Gateway", url="http://example.com", auth_type="authheaders", auth_headers=auth_headers)
+
+        assert "Invalid header key format" in str(exc_info.value)
+        assert "X-Special-!@#" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_valid_special_characters_in_values(self):
+        """Test headers with special characters in values (allowed) but valid keys."""
+        auth_headers = [{"key": "X-Special-Header", "value": "value-with-特殊字符"}, {"key": "Content-Type", "value": "application/json; charset=utf-8"}]
 
         gateway = GatewayCreate(name="Test Gateway", url="http://example.com", auth_type="authheaders", auth_headers=auth_headers)
 
         decoded = decode_auth(gateway.auth_value)
-        assert decoded["X-Special-!@#"] == "value-with-特殊字符"
+        assert decoded["X-Special-Header"] == "value-with-特殊字符"
         assert decoded["Content-Type"] == "application/json; charset=utf-8"
 
     @pytest.mark.asyncio
@@ -169,3 +180,77 @@ class TestMultiAuthHeaders:
         decoded = decode_auth(gateway.auth_value)
         assert decoded["Authorization"] == "Bearer token123"
         assert decoded["X-API-Key"] == "secret"
+
+    @pytest.mark.asyncio
+    async def test_gateway_create_invalid_header_key_format(self):
+        """Test creating gateway with invalid header key format."""
+        auth_headers = [{"key": "Invalid@Key!", "value": "secret123"}]
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(name="Test Gateway", url="http://example.com", auth_type="authheaders", auth_headers=auth_headers)
+
+        assert "Invalid header key format" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_gateway_create_excessive_headers(self):
+        """Test creating gateway with more than 100 headers."""
+        auth_headers = [{"key": f"X-Header-{i}", "value": f"value-{i}"} for i in range(101)]
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(name="Test Gateway", url="http://example.com", auth_type="authheaders", auth_headers=auth_headers)
+
+        assert "Maximum of 100 headers allowed" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_gateway_create_duplicate_keys_with_warning(self, caplog):
+        """Test creating gateway with duplicate header keys logs warning."""
+        auth_headers = [
+            {"key": "X-API-Key", "value": "first_value"},
+            {"key": "X-API-Key", "value": "second_value"},  # Duplicate
+            {"key": "X-Client-ID", "value": "client123"}
+        ]
+
+        gateway = GatewayCreate(name="Test Gateway", url="http://example.com", auth_type="authheaders", auth_headers=auth_headers)
+
+        # Check that duplicate warning was logged
+        assert "Duplicate header keys detected" in caplog.text
+        assert "X-API-Key" in caplog.text
+
+        # Check that last value wins
+        decoded = decode_auth(gateway.auth_value)
+        assert decoded["X-API-Key"] == "second_value"
+        assert decoded["X-Client-ID"] == "client123"
+
+    @pytest.mark.asyncio
+    async def test_gateway_create_mixed_valid_invalid_keys(self):
+        """Test creating gateway with mixed valid and invalid header keys."""
+        auth_headers = [
+            {"key": "Valid-Header", "value": "test123"},
+            {"key": "Invalid@Key!", "value": "should_fail"}  # This should fail validation
+        ]
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(name="Test Gateway", url="http://example.com", auth_type="authheaders", auth_headers=auth_headers)
+
+        assert "Invalid header key format" in str(exc_info.value)
+        assert "Invalid@Key!" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_gateway_create_edge_case_header_keys(self):
+        """Test creating gateway with edge case header keys."""
+        # Test valid edge cases
+        auth_headers = [
+            {"key": "X-API-Key", "value": "test1"},  # Standard format
+            {"key": "X_API_KEY", "value": "test2"},  # Underscores allowed
+            {"key": "API-Key-123", "value": "test3"},  # Numbers and hyphens
+            {"key": "UPPERCASE", "value": "test4"},  # Uppercase
+            {"key": "lowercase", "value": "test5"}   # Lowercase
+        ]
+
+        gateway = GatewayCreate(name="Test Gateway", url="http://example.com", auth_type="authheaders", auth_headers=auth_headers)
+
+        decoded = decode_auth(gateway.auth_value)
+        assert len(decoded) == 5
+        assert decoded["X-API-Key"] == "test1"
+        assert decoded["X_API_KEY"] == "test2"
+        assert decoded["API-Key-123"] == "test3"
