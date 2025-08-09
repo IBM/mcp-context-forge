@@ -23,7 +23,7 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import delete, func, not_, select, desc, case
+from sqlalchemy import case, delete, desc, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -142,30 +142,32 @@ class PromptService:
     async def get_top_prompts(self, db: Session, limit: int = 5) -> List[TopPerformer]:
         """Retrieve the top-performing prompts based on execution count.
 
-    Queries the database to get prompts with their metrics, ordered by the number of executions
-    in descending order. Returns a list of TopPerformer objects containing prompt details and
-    performance metrics.
+        Queries the database to get prompts with their metrics, ordered by the number of executions
+        in descending order. Returns a list of TopPerformer objects containing prompt details and
+        performance metrics.
 
-    Args:
-        db (Session): Database session for querying prompt metrics.
-        limit (int, optional): Maximum number of prompts to return. Defaults to 5.
+        Args:
+            db (Session): Database session for querying prompt metrics.
+            limit (int): Maximum number of prompts to return. Defaults to 5.
 
-    Returns:
-        List[TopPerformer]: A list of TopPerformer objects, each containing:
-            - id: Prompt ID.
-            - name: Prompt name.
-            - execution_count: Total number of executions.
-            - avg_response_time: Average response time in seconds, or None if no metrics.
-            - success_rate: Success rate percentage, or None if no metrics.
-            - last_execution: Timestamp of the last execution, or None if no metrics.
-    """
+        Returns:
+            List[TopPerformer]: A list of TopPerformer objects, each containing:
+                - id: Prompt ID.
+                - name: Prompt name.
+                - execution_count: Total number of executions.
+                - avg_response_time: Average response time in seconds, or None if no metrics.
+                - success_rate: Success rate percentage, or None if no metrics.
+                - last_execution: Timestamp of the last execution, or None if no metrics.
+        """
         results = (
             db.query(
                 DbPrompt.id,
                 DbPrompt.name,
                 func.count(PromptMetric.id).label("execution_count"),  # pylint: disable=not-callable
                 func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                (func.sum(case((PromptMetric.is_success, 1), else_=0)) / func.count(PromptMetric.id) * 100).label("success_rate"),  # pylint: disable=not-callable
+                case((func.count(PromptMetric.id) > 0, func.sum(case((PromptMetric.is_success, 1), else_=0)) / func.count(PromptMetric.id) * 100), else_=None).label(
+                    "success_rate"
+                ),  # pylint: disable=not-callable
                 func.max(PromptMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(PromptMetric)

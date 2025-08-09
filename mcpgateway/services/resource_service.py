@@ -33,7 +33,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import parse
-from sqlalchemy import delete, func, not_, select, desc, case
+from sqlalchemy import case, delete, desc, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,14 +43,7 @@ from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
-from mcpgateway.schemas import (
-    ResourceCreate,
-    ResourceMetrics,
-    ResourceRead,
-    ResourceSubscription,
-    ResourceUpdate,
-    TopPerformer
-)
+from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -122,30 +115,32 @@ class ResourceService:
     async def get_top_resources(self, db: Session, limit: int = 5) -> List[TopPerformer]:
         """Retrieve the top-performing resources based on execution count.
 
-    Queries the database to get resources with their metrics, ordered by the number of executions
-    in descending order. Uses the resource URI as the name field for TopPerformer objects.
-    Returns a list of TopPerformer objects containing resource details and performance metrics.
+        Queries the database to get resources with their metrics, ordered by the number of executions
+        in descending order. Uses the resource URI as the name field for TopPerformer objects.
+        Returns a list of TopPerformer objects containing resource details and performance metrics.
 
-    Args:
-        db (Session): Database session for querying resource metrics.
-        limit (int, optional): Maximum number of resources to return. Defaults to 5.
+        Args:
+            db (Session): Database session for querying resource metrics.
+            limit (int): Maximum number of resources to return. Defaults to 5.
 
-    Returns:
-        List[TopPerformer]: A list of TopPerformer objects, each containing:
-            - id: Resource ID.
-            - name: Resource URI (used as the name field).
-            - execution_count: Total number of executions.
-            - avg_response_time: Average response time in seconds, or None if no metrics.
-            - success_rate: Success rate percentage, or None if no metrics.
-            - last_execution: Timestamp of the last execution, or None if no metrics.
-    """
+        Returns:
+            List[TopPerformer]: A list of TopPerformer objects, each containing:
+                - id: Resource ID.
+                - name: Resource URI (used as the name field).
+                - execution_count: Total number of executions.
+                - avg_response_time: Average response time in seconds, or None if no metrics.
+                - success_rate: Success rate percentage, or None if no metrics.
+                - last_execution: Timestamp of the last execution, or None if no metrics.
+        """
         results = (
             db.query(
                 DbResource.id,
                 DbResource.uri.label("name"),  # Using URI as the name field for TopPerformer
                 func.count(ResourceMetric.id).label("execution_count"),  # pylint: disable=not-callable
                 func.avg(ResourceMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                (func.sum(case((ResourceMetric.is_success, 1), else_=0)) / func.count(ResourceMetric.id) * 100).label("success_rate"),  # pylint: disable=not-callable
+                case((func.count(ResourceMetric.id) > 0, func.sum(case((ResourceMetric.is_success, 1), else_=0)) / func.count(ResourceMetric.id) * 100), else_=None).label(
+                    "success_rate"
+                ),  # pylint: disable=not-callable
                 func.max(ResourceMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(ResourceMetric)
