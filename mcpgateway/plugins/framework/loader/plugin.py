@@ -17,6 +17,7 @@ from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.models import PluginConfig
 from mcpgateway.plugins.framework.utils import import_module, parse_class_name
 
+# Use standard logging to avoid circular imports (plugins -> services -> plugins)
 logger = logging.getLogger(__name__)
 
 

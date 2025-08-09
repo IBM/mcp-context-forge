@@ -27,7 +27,6 @@ Examples:
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import logging
 import mimetypes
 import re
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
@@ -51,8 +50,11 @@ from mcpgateway.schemas import (
     ResourceSubscription,
     ResourceUpdate,
 )
+from mcpgateway.services.logging_service import LoggingService
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class ResourceError(Exception):

@@ -17,6 +17,7 @@ from typing import Optional
 from mcpgateway.plugins.framework.base import Plugin, PluginRef
 from mcpgateway.plugins.framework.models import HookType
 
+# Use standard logging to avoid circular imports (plugins -> services -> plugins)
 logger = logging.getLogger(__name__)
 
 

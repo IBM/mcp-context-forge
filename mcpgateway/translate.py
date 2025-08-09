@@ -77,7 +77,12 @@ try:
 except ImportError:
     httpx = None  # type: ignore[assignment]
 
-LOGGER = logging.getLogger("mcpgateway.translate")
+# First-Party
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+LOGGER = logging_service.get_logger("mcpgateway.translate")
 
 # Import settings for default keepalive interval
 try:

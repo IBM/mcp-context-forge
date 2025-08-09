@@ -37,11 +37,15 @@ Examples:
 # Standard
 import asyncio
 from dataclasses import dataclass
-import logging
 import time
 from typing import Any, Dict, Optional
 
-logger = logging.getLogger(__name__)
+# First-Party
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 @dataclass

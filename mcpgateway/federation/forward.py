@@ -22,7 +22,6 @@ Examples:
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import logging
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Third-Party
@@ -35,9 +34,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import ToolResult
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class ForwardingError(Exception):

@@ -18,7 +18,6 @@ Examples:
 """
 
 # Standard
-import logging
 from typing import Any, Dict, List
 
 # Third-Party
@@ -29,8 +28,11 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.models import CompleteResult
+from mcpgateway.services.logging_service import LoggingService
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class CompletionError(Exception):

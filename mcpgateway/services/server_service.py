@@ -15,7 +15,6 @@ It also publishes event notifications for server changes.
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
@@ -32,8 +31,11 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate
+from mcpgateway.services.logging_service import LoggingService
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class ServerError(Exception):

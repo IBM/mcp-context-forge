@@ -385,7 +385,7 @@ class SecurityValidator:
             hostname = result.hostname
             if hostname:
                 # Block 0.0.0.0 (all interfaces)
-                if hostname == "0.0.0.0":
+                if hostname == "0.0.0.0":  # nosec B104 - we're blocking this for security
                     raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
 
                 # Block AWS metadata service

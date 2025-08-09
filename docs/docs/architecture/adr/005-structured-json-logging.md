@@ -1,7 +1,7 @@
 # ADR-0005: Structured JSON Logging
 
-- *Status:* Accepted
-- *Date:* 2025-02-21
+- *Status:* Implemented
+- *Date:* 2025-01-09
 - *Deciders:* Core Engineering Team
 
 ## Context
@@ -14,27 +14,38 @@ The gateway must emit logs that:
 
 Our configuration supports:
 
-- `LOG_FORMAT`: `json` or `plain`
-- `LOG_LEVEL`: standard Python levels
-- `LOG_FILE`: optional log file destination
+- `LOG_FORMAT`: `json` or `text` (console format only)
+- `LOG_LEVEL`: standard Python levels (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`)
+- `LOG_TO_FILE`: enable file logging (default: `false` - stdout/stderr only)
+- `LOG_FILE`: log filename when file logging is enabled (default: `null`)
+- `LOG_FOLDER`: directory for log files when enabled (default: `null`)
+- `LOG_FILEMODE`: file write mode (default: `a+` for append)
+- `LOG_ROTATION_ENABLED`: enable automatic log rotation (default: `false`)
+- `LOG_MAX_SIZE_MB`: maximum file size before rotation in MB (default: `1`)
+- `LOG_BACKUP_COUNT`: number of backup files to keep (default: `5`)
 
-Logs are initialized at startup via `LoggingService`.
+Logs are initialized at startup via centralized `LoggingService`. By default, logs go only to stdout/stderr. File logging with dual-format output is optional via `LOG_TO_FILE=true`.
 
 ## Decision
 
-Use the Python standard `logging` module with:
+Use the Python standard `logging` module with centralized `LoggingService`:
 
-- A **custom JSON formatter** for structured logs (e.g. `{"level": "INFO", "msg": ..., "request_id": ...}`)
-- **Plain text output** when `LOG_FORMAT=plain`
-- Per-request context via filters or middleware
-- Global setup at app startup to avoid late binding issues
+- **JSON formatter** for file logs using `python-json-logger` library
+- **Text formatter** for console logs for human readability
+- **Dual output**: JSON to files, text to console
+- **Optional rotating file handler** for automatic log management (configurable)
+- **Centralized service** integrated across all 22+ modules
+- Global setup at app startup with lazy handler initialization
 
 ## Consequences
 
-- 📋 Easily parsed logs suitable for production observability pipelines
-- ⚙️ Compatible with `stdout`, file, or syslog targets
-- 🧪 Local development uses plain logs for readability
-- 🧱 Minimal dependency footprint (no third-party logging libraries)
+- 📋 **Structured JSON logs** suitable for production observability pipelines (ELK, Datadog, etc.)
+- ⚙️ **Dual format support**: JSON files for machines, text console for humans
+- 🔄 **Optional log rotation** prevents disk space issues when enabled
+- 🧪 **Development-friendly** with human-readable console output
+- 📁 **Organized storage** with configurable log directories and retention
+- 🧱 **Minimal dependencies**: Uses standard library + `python-json-logger`
+- 🎯 **Consistent logging** across all application modules
 
 ## Alternatives Considered
 
@@ -47,4 +58,15 @@ Use the Python standard `logging` module with:
 
 ## Status
 
-Structured logging is implemented in `LoggingService`, configurable via environment variables.
+**✅ Implemented** - Structured logging is fully implemented in `LoggingService` with:
+
+- Centralized logging service integrated across all modules
+- Dual-format output (JSON to files, text to console)
+- HTTP access log capture (uvicorn.access and uvicorn.error loggers)
+- Optional log rotation with configurable size limits and retention
+- Environment variable configuration support
+- Production-ready with proper error handling and lazy initialization
+
+**Files Modified**: 22 modules updated to use `LoggingService`
+**Dependencies Added**: `python-json-logger>=2.0.0`
+**Configuration**: Via `LOG_LEVEL`, `LOG_FORMAT`, `LOG_TO_FILE`, `LOG_FILE`, `LOG_FOLDER`, `LOG_FILEMODE`, `LOG_ROTATION_ENABLED`, `LOG_MAX_SIZE_MB`, `LOG_BACKUP_COUNT`

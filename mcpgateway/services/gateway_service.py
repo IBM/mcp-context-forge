@@ -71,13 +71,17 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
+
+# logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 
-# logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 GW_FAILURE_THRESHOLD = settings.unhealthy_threshold
