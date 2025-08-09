@@ -197,6 +197,8 @@ class Settings(BaseSettings):
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
     sse_retry_timeout: int = 5000  # milliseconds
+    sse_keepalive_enabled: bool = True  # Enable SSE keepalive events
+    sse_keepalive_interval: int = 30  # seconds between keepalive events
 
     # Federation
     federation_enabled: bool = True

@@ -346,20 +346,22 @@ class SSETransport(Transport):
                 "retry": settings.sse_retry_timeout,
             }
 
-            # Send keepalive immediately to help establish connection
-            yield {
-                "event": "keepalive",
-                "data": "{}",
-                "retry": settings.sse_retry_timeout,
-            }
+            # Send keepalive immediately to help establish connection (if enabled)
+            if settings.sse_keepalive_enabled:
+                yield {
+                    "event": "keepalive",
+                    "data": "{}",
+                    "retry": settings.sse_retry_timeout,
+                }
 
             try:
                 while not self._client_gone.is_set():
                     try:
                         # Wait for messages with a timeout for keepalives
+                        timeout = settings.sse_keepalive_interval if settings.sse_keepalive_enabled else None
                         message = await asyncio.wait_for(
                             self._message_queue.get(),
-                            timeout=30.0,  # 30 second timeout for keepalives (some tools require more timeout for execution)
+                            timeout=timeout,  # Configurable timeout for keepalives (some tools require more timeout for execution)
                         )
 
                         data = json.dumps(message, default=lambda obj: (obj.strftime("%Y-%m-%d %H:%M:%S") if isinstance(obj, datetime) else TypeError("Type not serializable")))
@@ -373,12 +375,13 @@ class SSETransport(Transport):
                             "retry": settings.sse_retry_timeout,
                         }
                     except asyncio.TimeoutError:
-                        # Send keepalive on timeout
-                        yield {
-                            "event": "keepalive",
-                            "data": "{}",
-                            "retry": settings.sse_retry_timeout,
-                        }
+                        # Send keepalive on timeout (if enabled)
+                        if settings.sse_keepalive_enabled:
+                            yield {
+                                "event": "keepalive",
+                                "data": "{}",
+                                "retry": settings.sse_retry_timeout,
+                            }
                     except Exception as e:
                         logger.error(f"Error processing SSE message: {e}")
                         yield {

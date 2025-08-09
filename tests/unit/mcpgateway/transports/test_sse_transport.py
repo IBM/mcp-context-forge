@@ -228,3 +228,75 @@ class TestSSETransport:
 
         # Cancel the generator to clean up
         sse_transport._client_gone.set()
+
+    @pytest.mark.asyncio
+    async def test_keepalive_disabled(self, sse_transport, mock_request):
+        """Test SSE response when keepalive is disabled."""
+        with patch("mcpgateway.transports.sse_transport.settings") as mock_settings:
+            mock_settings.sse_keepalive_enabled = False
+            mock_settings.sse_keepalive_interval = 30
+            mock_settings.sse_retry_timeout = 5000
+
+            await sse_transport.connect()
+            response = await sse_transport.create_sse_response(mock_request)
+            generator = response.body_iterator
+
+            # First event should be endpoint
+            event = await generator.__anext__()
+            assert event["event"] == "endpoint"
+
+            # No immediate keepalive should be sent
+            # Queue a test message
+            test_message = {"jsonrpc": "2.0", "result": "test", "id": 1}
+            await sse_transport._message_queue.put(test_message)
+
+            # Next event should be the message (no keepalive)
+            event = await generator.__anext__()
+            assert event["event"] == "message"
+
+            sse_transport._client_gone.set()
+
+    @pytest.mark.asyncio
+    async def test_keepalive_custom_interval(self, sse_transport, mock_request):
+        """Test SSE response with custom keepalive interval."""
+        with patch("mcpgateway.transports.sse_transport.settings") as mock_settings:
+            mock_settings.sse_keepalive_enabled = True
+            mock_settings.sse_keepalive_interval = 60  # Custom interval
+            mock_settings.sse_retry_timeout = 5000
+
+            await sse_transport.connect()
+            response = await sse_transport.create_sse_response(mock_request)
+            generator = response.body_iterator
+
+            # First event should be endpoint
+            event = await generator.__anext__()
+            assert event["event"] == "endpoint"
+
+            # Second event should be immediate keepalive
+            event = await generator.__anext__()
+            assert event["event"] == "keepalive"
+            assert event["data"] == "{}"
+
+            sse_transport._client_gone.set()
+
+    @pytest.mark.asyncio
+    async def test_keepalive_timeout_behavior(self, sse_transport, mock_request):
+        """Test timeout behavior respects keepalive settings."""
+        with patch("mcpgateway.transports.sse_transport.settings") as mock_settings:
+            mock_settings.sse_keepalive_enabled = True
+            mock_settings.sse_keepalive_interval = 1  # 1 second for quick test
+            mock_settings.sse_retry_timeout = 5000
+
+            await sse_transport.connect()
+            response = await sse_transport.create_sse_response(mock_request)
+            generator = response.body_iterator
+
+            # Skip endpoint and initial keepalive
+            await generator.__anext__()  # endpoint
+            await generator.__anext__()  # initial keepalive
+
+            # Wait for timeout keepalive (should happen after 1 second)
+            event = await asyncio.wait_for(generator.__anext__(), timeout=2.0)
+            assert event["event"] == "keepalive"
+
+            sse_transport._client_gone.set()
