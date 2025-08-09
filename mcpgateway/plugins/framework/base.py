@@ -27,6 +27,10 @@ from mcpgateway.plugins.framework.plugin_types import (
     PromptPosthookResult,
     PromptPrehookPayload,
     PromptPrehookResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
 )
 
 
@@ -165,6 +169,46 @@ class Plugin:
                                     of plugin type {type(self)}
                                    """
         )
+
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Plugin hook run before a tool is invoked.
+
+        Args:
+            payload: The tool payload to be analyzed.
+            context: Contextual information about the hook call.
+
+        Returns:
+            ToolPreInvokeResult with processing status and modified payload.
+
+        Examples:
+            >>> from mcpgateway.plugins.framework.plugin_types import ToolPreInvokePayload, PluginContext, GlobalContext
+            >>> payload = ToolPreInvokePayload("calculator", {"operation": "add", "a": 5, "b": 3})
+            >>> context = PluginContext(GlobalContext(request_id="123"))
+            >>> # In async context:
+            >>> # result = await plugin.tool_pre_invoke(payload, context)
+        """
+        # Default pass-through implementation
+        return ToolPreInvokeResult(continue_processing=True, modified_payload=payload)
+
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Plugin hook run after a tool is invoked.
+
+        Args:
+            payload: The tool result payload to be analyzed.
+            context: Contextual information about the hook call.
+
+        Returns:
+            ToolPostInvokeResult with processing status and modified result.
+
+        Examples:
+            >>> from mcpgateway.plugins.framework.plugin_types import ToolPostInvokePayload, PluginContext, GlobalContext
+            >>> payload = ToolPostInvokePayload("calculator", {"result": 8, "status": "success"})
+            >>> context = PluginContext(GlobalContext(request_id="123"))
+            >>> # In async context:
+            >>> # result = await plugin.tool_post_invoke(payload, context)
+        """
+        # Default pass-through implementation
+        return ToolPostInvokeResult(continue_processing=True, modified_payload=payload)
 
     async def shutdown(self) -> None:
         """Plugin cleanup code."""

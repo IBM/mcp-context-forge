@@ -1,0 +1,37 @@
+plugins:
+  # Test plugin for tool hooks
+  - name: "ToolTestPlugin"
+    kind: "plugins.regex_filter.search_replace.SearchReplacePlugin"
+    description: "A plugin for testing tool hooks."
+    version: "0.1"
+    author: "MCP Context Forge Team"
+    hooks: ["tool_pre_invoke", "tool_post_invoke"]
+    tags: ["plugin", "transformer", "regex", "search-and-replace", "tool-hooks"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 150
+    conditions:
+      # Apply to specific tools
+      - tools: ["test_tool"]
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      words:
+        - search: bad
+          replace: good
+        - search: wrong
+          replace: right
+
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"      # Built-in plugins
+  - "plugins/custom"      # Custom organization plugins
+  - "/etc/mcpgateway/plugins"  # System-wide plugins
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

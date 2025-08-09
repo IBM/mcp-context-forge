@@ -16,7 +16,7 @@ from pydantic import BaseModel
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.models import PluginConfig
-from mcpgateway.plugins.framework.plugin_types import PluginContext, PromptPosthookPayload, PromptPosthookResult, PromptPrehookPayload, PromptPrehookResult
+from mcpgateway.plugins.framework.plugin_types import PluginContext, PromptPosthookPayload, PromptPosthookResult, PromptPrehookPayload, PromptPrehookResult, ToolPreInvokePayload, ToolPreInvokeResult, ToolPostInvokePayload, ToolPostInvokeResult
 
 
 class SearchReplace(BaseModel):
@@ -82,3 +82,54 @@ class SearchReplacePlugin(Plugin):
                         )
                   payload.result.messages[index].content.text = value
         return PromptPosthookResult(modified_payload=payload)
+
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Plugin hook run before a tool is invoked.
+
+        Args:
+            payload: The tool payload to be analyzed.
+            context: Contextual information about the hook call.
+
+        Returns:
+            The result of the plugin's analysis, including whether the tool can proceed.
+        """
+        if payload.args:
+            for pattern in self.__patterns:
+                for key in payload.args:
+                    if isinstance(payload.args[key], str):
+                        value = re.sub(
+                            pattern[0],
+                            pattern[1],
+                            payload.args[key]
+                        )
+                        payload.args[key] = value
+        return ToolPreInvokeResult(modified_payload=payload)
+
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Plugin hook run after a tool is invoked.
+
+        Args:
+            payload: The tool result payload to be analyzed.
+            context: Contextual information about the hook call.
+
+        Returns:
+            The result of the plugin's analysis, including whether the tool result should proceed.
+        """
+        if payload.result and isinstance(payload.result, dict):
+            for pattern in self.__patterns:
+                for key in payload.result:
+                    if isinstance(payload.result[key], str):
+                        value = re.sub(
+                            pattern[0],
+                            pattern[1],
+                            payload.result[key]
+                        )
+                        payload.result[key] = value
+        elif payload.result and isinstance(payload.result, str):
+            for pattern in self.__patterns:
+                payload.result = re.sub(
+                    pattern[0],
+                    pattern[1],
+                    payload.result
+                )
+        return ToolPostInvokeResult(modified_payload=payload)

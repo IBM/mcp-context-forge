@@ -7,7 +7,7 @@ plugins:
     description: "Detects and masks Personally Identifiable Information"
     version: "0.1.0"
     author: "Mihai Criveti"
-    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
     mode: "permissive"  # enforce | permissive | disabled
     priority: 50  # Lower number = higher priority (runs first)
@@ -41,7 +41,7 @@ plugins:
     description: "A plugin for finding and replacing words."
     version: "0.1.0"
     author: "MCP Context Forge Team"
-    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
     mode: "enforce"  # enforce | permissive | disabled
     priority: 150

@@ -131,6 +131,71 @@ PromptPrehookResult = PluginResult[PromptPrehookPayload]
 PromptPosthookResult = PluginResult[PromptPosthookPayload]
 
 
+class ToolPreInvokePayload:
+    """A tool payload for a tool pre-invoke hook.
+
+    Examples:
+        >>> payload = ToolPreInvokePayload("test_tool", {"input": "data"})
+        >>> payload.name
+        'test_tool'
+        >>> payload.args
+        {'input': 'data'}
+        >>> payload2 = ToolPreInvokePayload("empty", None)
+        >>> payload2.args
+        {}
+    """
+
+    def __init__(self, name: str, args: Optional[dict[str, Any]]):
+        """Initialize a tool pre-invoke payload.
+
+        Args:
+            name: The tool name.
+            args: The tool arguments for invocation.
+
+        Examples:
+            >>> p = ToolPreInvokePayload("calculator", {"operation": "add", "a": 5, "b": 3})
+            >>> p.name
+            'calculator'
+            >>> p.args["operation"]
+            'add'
+        """
+        self.name = name
+        self.args = args or {}
+
+
+class ToolPostInvokePayload:
+    """A tool payload for a tool post-invoke hook.
+
+    Examples:
+        >>> payload = ToolPostInvokePayload("calculator", {"result": 8, "status": "success"})
+        >>> payload.name
+        'calculator'
+        >>> payload.result
+        {'result': 8, 'status': 'success'}
+    """
+
+    def __init__(self, name: str, result: Any):
+        """Initialize a tool post-invoke payload.
+
+        Args:
+            name: The tool name.
+            result: The tool invocation result.
+
+        Examples:
+            >>> p = ToolPostInvokePayload("analyzer", {"confidence": 0.95, "sentiment": "positive"})
+            >>> p.name
+            'analyzer'
+            >>> p.result["confidence"]
+            0.95
+        """
+        self.name = name
+        self.result = result
+
+
+ToolPreInvokeResult = PluginResult[ToolPreInvokePayload]
+ToolPostInvokeResult = PluginResult[ToolPostInvokePayload]
+
+
 class GlobalContext:
     """The global context, which shared across all plugins.
 

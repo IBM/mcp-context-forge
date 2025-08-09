@@ -23,6 +23,7 @@ import logging
 import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
+import uuid
 
 # Third-Party
 from mcp import ClientSession
@@ -39,6 +40,8 @@ from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.models import TextContent, ToolResult
+from mcpgateway.plugins.framework.manager import PluginManager
+from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.schemas import (
     ToolCreate,
     ToolRead,
@@ -163,6 +166,7 @@ class ToolService:
         """
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
+        self._plugin_manager: PluginManager | None = PluginManager() if settings.plugins_enabled else None
 
     async def initialize(self) -> None:
         """Initialize the service.
@@ -572,6 +576,7 @@ class ToolService:
         Raises:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
+            PluginViolationError: If plugin blocks tool invocation.
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
@@ -599,6 +604,40 @@ class ToolService:
 
         if not is_reachable:
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+
+        # Plugin hook: tool pre-invoke
+        context_table = None
+        request_id = uuid.uuid4().hex
+        # Use gateway_id if available, otherwise use a generic server identifier
+        server_id = getattr(tool, "gateway_id", None) or "unknown"
+        global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None)
+
+        if self._plugin_manager:
+            try:
+                pre_result, context_table = await self._plugin_manager.tool_pre_invoke(payload=ToolPreInvokePayload(name, arguments), global_context=global_context, local_contexts=None)
+
+                if not pre_result.continue_processing:
+                    # Plugin blocked the request
+                    if pre_result.violation:
+                        plugin_name = pre_result.violation.plugin_name
+                        violation_reason = pre_result.violation.reason
+                        violation_desc = pre_result.violation.description
+                        violation_code = pre_result.violation.code
+                        raise PluginViolationError(f"Tool invocation blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", pre_result.violation)
+                    raise PluginViolationError("Tool invocation blocked by plugin")
+
+                # Use modified payload if provided
+                if pre_result.modified_payload:
+                    payload = pre_result.modified_payload
+                    name = payload.name
+                    arguments = payload.args
+            except PluginViolationError:
+                raise
+            except Exception as e:
+                logger.error(f"Error in pre-tool invoke plugin hook: {e}")
+                # Only fail if configured to do so
+                if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                    raise
 
         start_time = time.monotonic()
         success = False
@@ -714,7 +753,41 @@ class ToolService:
                 filtered_response = extract_using_jq(content, tool.jsonpath_filter)
                 tool_result = ToolResult(content=filtered_response)
             else:
-                return ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
+                tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
+
+            # Plugin hook: tool post-invoke
+            if self._plugin_manager:
+                try:
+                    post_result, _ = await self._plugin_manager.tool_post_invoke(
+                        payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)), global_context=global_context, local_contexts=context_table
+                    )
+                    if not post_result.continue_processing:
+                        # Plugin blocked the request
+                        if post_result.violation:
+                            plugin_name = post_result.violation.plugin_name
+                            violation_reason = post_result.violation.reason
+                            violation_desc = post_result.violation.description
+                            violation_code = post_result.violation.code
+                            raise PluginViolationError(f"Tool result blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", post_result.violation)
+                        raise PluginViolationError("Tool result blocked by plugin")
+
+                    # Use modified payload if provided
+                    if post_result.modified_payload:
+                        # Reconstruct ToolResult from modified result
+                        modified_result = post_result.modified_payload.result
+                        if isinstance(modified_result, dict) and "content" in modified_result:
+                            tool_result = ToolResult(content=modified_result["content"])
+                        else:
+                            # If result is not in expected format, convert it to text content
+                            tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
+
+                except PluginViolationError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error in post-tool invoke plugin hook: {e}")
+                    # Only fail if configured to do so
+                    if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                        raise
 
             return tool_result
         except Exception as e:

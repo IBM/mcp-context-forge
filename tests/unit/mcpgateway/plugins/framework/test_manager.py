@@ -11,7 +11,7 @@ import pytest
 
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.plugin_types import GlobalContext, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework.plugin_types import GlobalContext, PromptPosthookPayload, PromptPrehookPayload, ToolPreInvokePayload, ToolPostInvokePayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig
 
 
@@ -129,4 +129,100 @@ async def test_manager_multi_filter_plugins():
     result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
     assert not result.continue_processing
     assert result.violation
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manager_tool_hooks_empty():
+    """Test tool hooks with no plugins configured."""
+    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
+    await manager.initialize()
+    assert manager.initialized
+
+    # Test tool pre-invoke with no plugins
+    tool_payload = ToolPreInvokePayload(name="calculator", args={"operation": "add", "a": 5, "b": 3})
+    global_context = GlobalContext(request_id="1", server_id="2")
+    result, contexts = await manager.tool_pre_invoke(tool_payload, global_context=global_context)
+
+    # Should continue processing with no modifications
+    assert result.continue_processing
+    assert result.modified_payload is None
+    assert result.violation is None
+    assert contexts is None
+
+    # Test tool post-invoke with no plugins
+    tool_result_payload = ToolPostInvokePayload(name="calculator", result={"result": 8, "status": "success"})
+    result, contexts = await manager.tool_post_invoke(tool_result_payload, global_context=global_context)
+
+    # Should continue processing with no modifications
+    assert result.continue_processing
+    assert result.modified_payload is None
+    assert result.violation is None
+    assert contexts is None
+
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manager_tool_hooks_with_transformer_plugin():
+    """Test tool hooks with a transformer plugin that doesn't have tool hooks configured."""
+    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+    await manager.initialize()
+    assert manager.initialized
+
+    # Test tool pre-invoke - no plugins configured for tool hooks
+    tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is crap data"})
+    global_context = GlobalContext(request_id="1", server_id="2")
+    result, contexts = await manager.tool_pre_invoke(tool_payload, global_context=global_context)
+
+    # Should continue processing with no modifications (no plugins for tool hooks)
+    assert result.continue_processing
+    assert result.modified_payload is None  # No plugins = no modifications
+    assert result.violation is None
+    assert contexts is None
+
+    # Test tool post-invoke - no plugins configured for tool hooks
+    tool_result_payload = ToolPostInvokePayload(name="test_tool", result={"output": "Result with crap in it"})
+    result, _ = await manager.tool_post_invoke(tool_result_payload, global_context=global_context, local_contexts=contexts)
+
+    # Should continue processing with no modifications (no plugins for tool hooks)
+    assert result.continue_processing
+    assert result.modified_payload is None  # No plugins = no modifications
+    assert result.violation is None
+
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manager_tool_hooks_with_actual_plugin():
+    """Test tool hooks with a real plugin configured for tool processing."""
+    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_tool_hooks.yaml")
+    await manager.initialize()
+    assert manager.initialized
+
+    # Test tool pre-invoke with transformation - use correct tool name from config
+    tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is bad data", "quality": "wrong"})
+    global_context = GlobalContext(request_id="1", server_id="2")
+    result, contexts = await manager.tool_pre_invoke(tool_payload, global_context=global_context)
+
+    # Should continue processing with transformations applied
+    assert result.continue_processing
+    assert result.modified_payload is not None
+    assert result.modified_payload.name == "test_tool"
+    assert result.modified_payload.args["input"] == "This is good data"  # bad -> good
+    assert result.modified_payload.args["quality"] == "right"  # wrong -> right
+    assert result.violation is None
+
+    # Test tool post-invoke with transformation
+    tool_result_payload = ToolPostInvokePayload(name="test_tool", result={"output": "Result was bad", "status": "wrong format"})
+    result, _ = await manager.tool_post_invoke(tool_result_payload, global_context=global_context, local_contexts=contexts)
+
+    # Should continue processing with transformations applied
+    assert result.continue_processing
+    assert result.modified_payload is not None
+    assert result.modified_payload.name == "test_tool"
+    assert result.modified_payload.result["output"] == "Result was good"  # bad -> good
+    assert result.modified_payload.result["status"] == "right format"  # wrong -> right
+    assert result.violation is None
+
     await manager.shutdown()
