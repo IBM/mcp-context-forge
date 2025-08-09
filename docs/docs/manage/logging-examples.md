@@ -1,31 +1,49 @@
 # Logging Examples for MCP Gateway
 
-This document provides practical examples of using the new logging features in MCP Gateway.
+This document provides practical examples of using the logging features in MCP Gateway.
 
 ## Quick Start Examples
 
-### 1. Basic Development Setup
+### 1. Default Setup (Recommended)
 ```bash
-# Enable debug logging for development
+# Default: logs only to stdout/stderr (great for containers)
+export LOG_LEVEL=INFO
+mcpgateway --host 0.0.0.0 --port 4444
+# Logs appear in console only - no files created
+```
+
+### 2. Development with File Logging
+```bash
+# Enable file logging for development
+export LOG_TO_FILE=true
 export LOG_LEVEL=DEBUG
 export LOG_FORMAT=text
 export LOG_FOLDER=./dev-logs
+export LOG_FILE=debug.log
 mcpgateway --host 0.0.0.0 --port 4444
+# Logs to both console AND ./dev-logs/debug.log
 ```
 
-### 2. Production Configuration
+### 3. Production with File Logging
 ```bash
-# Production logging with JSON format
+# Production logging with JSON format to files
+export LOG_TO_FILE=true
 export LOG_LEVEL=INFO
 export LOG_FOLDER=/var/log/mcpgateway
-export LOG_FILE=gateway.log  
+export LOG_FILE=gateway.log
 export LOG_FILEMODE=a+
 mcpgateway --host 0.0.0.0 --port 4444
+# Logs to both console AND /var/log/mcpgateway/gateway.log
 ```
 
-### 3. Monitoring Specific Components
+### 4. Monitoring Specific Components (requires file logging)
 ```bash
-# Monitor tool service activities
+# First enable file logging
+export LOG_TO_FILE=true
+export LOG_FILE=mcpgateway.log
+export LOG_FOLDER=logs
+
+# Then monitor tool service activities
 tail -f logs/mcpgateway.log | grep "tool_service"
 
 # Watch for errors across all services
@@ -39,9 +57,12 @@ tail -f logs/mcpgateway.log | jq '.'
 
 ### .env File Configuration
 ```env
-# Complete logging configuration
+# Default: stdout/stderr only
 LOG_LEVEL=INFO
-LOG_FORMAT=json
+LOG_FORMAT=text
+
+# Optional: Enable file logging
+LOG_TO_FILE=true
 LOG_FILE=mcpgateway.log
 LOG_FOLDER=logs
 LOG_FILEMODE=a+
@@ -55,10 +76,13 @@ services:
     image: ghcr.io/ibm/mcp-context-forge:latest
     environment:
       - LOG_LEVEL=INFO
-      - LOG_FOLDER=/app/logs  
-      - LOG_FILE=gateway.log
-    volumes:
-      - ./logs:/app/logs
+      # Default: logs to stdout/stderr only (recommended for containers)
+      # Optional: Enable file logging
+      # - LOG_TO_FILE=true
+      # - LOG_FOLDER=/app/logs
+      # - LOG_FILE=gateway.log
+    # volumes:
+    #   - ./logs:/app/logs  # Only needed if LOG_TO_FILE=true
 ```
 
 ### Kubernetes Configuration
@@ -75,16 +99,22 @@ spec:
         env:
         - name: LOG_LEVEL
           value: "INFO"
-        - name: LOG_FOLDER
-          value: "/var/log/mcpgateway"
-        - name: LOG_FILE
-          value: "gateway.log"
-        volumeMounts:
-        - name: log-storage
-          mountPath: /var/log/mcpgateway
+        # Default: logs to stdout/stderr (recommended for Kubernetes)
+        # Optional: Enable file logging
+        # - name: LOG_TO_FILE
+        #   value: "true"
+        # - name: LOG_FOLDER
+        #   value: "/var/log/mcpgateway"
+        # - name: LOG_FILE
+        #   value: "gateway.log"
+        # volumeMounts:  # Only needed if LOG_TO_FILE=true
+        # - name: log-storage
+        #   mountPath: /var/log/mcpgateway
 ```
 
 ## Log Analysis Examples
+
+**Note**: The following examples require file logging to be enabled with `LOG_TO_FILE=true`. For stdout/stderr logs, use standard shell redirection and pipes instead.
 
 ### 1. Finding Errors and Issues
 ```bash
@@ -128,7 +158,7 @@ grep -E "HTTP|request" logs/mcpgateway.log
 ```json
 {
   "asctime": "2025-01-09 17:30:15,123",
-  "name": "mcpgateway.gateway_service", 
+  "name": "mcpgateway.gateway_service",
   "levelname": "INFO",
   "message": "Gateway peer-gateway-1 registered successfully",
   "funcName": "register_gateway",
@@ -159,13 +189,13 @@ filebeat.inputs:
   json.add_error_key: true
 ```
 
-### 2. Datadog Integration  
+### 2. Datadog Integration
 ```bash
 # Configure Datadog agent
 # datadog.yaml
 logs_config:
   logs_dd_url: intake.logs.datadoghq.com:10516
-  
+
 logs:
   - type: file
     path: "/var/log/mcpgateway/*.log"
@@ -207,7 +237,7 @@ scrape_configs:
    ```
 
 3. **Too many log files**
-   ```bash  
+   ```bash
    # Clean up old rotated logs
    find logs/ -name "*.log.[6-9]" -delete
    find logs/ -name "*.log.1[0-9]" -delete
@@ -217,9 +247,9 @@ scrape_configs:
    ```bash
    # Validate JSON format
    cat logs/mcpgateway.log | jq empty
-   
+
    # Show only invalid JSON lines
-   cat logs/mcpgateway.log | while read line; do 
+   cat logs/mcpgateway.log | while read line; do
      echo "$line" | jq empty 2>/dev/null || echo "Invalid: $line"
    done
    ```
@@ -228,7 +258,7 @@ scrape_configs:
 
 1. **Production Logging**
    - Use `INFO` level for production
-   - Enable JSON format for log aggregation  
+   - Enable JSON format for log aggregation
    - Configure proper log rotation
    - Monitor disk space usage
 

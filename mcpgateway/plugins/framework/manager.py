@@ -54,6 +54,7 @@ from mcpgateway.plugins.framework.plugin_types import (
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
 from mcpgateway.plugins.framework.utils import post_prompt_matches, post_tool_matches, pre_prompt_matches, pre_tool_matches
 
+# Use standard logging to avoid circular imports (plugins -> services -> plugins)
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")

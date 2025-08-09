@@ -42,9 +42,20 @@ _text_handler: Optional[logging.StreamHandler] = None
 
 
 def _get_file_handler() -> RotatingFileHandler:
-    """Get or create the file handler."""
-    global _file_handler
+    """Get or create the file handler.
+
+    Returns:
+        RotatingFileHandler: The file handler for JSON logging.
+
+    Raises:
+        ValueError: If file logging is disabled or no log file specified.
+    """
+    global _file_handler  # pylint: disable=global-statement
     if _file_handler is None:
+        # Only create if file logging is enabled and file is specified
+        if not settings.log_to_file or not settings.log_file:
+            raise ValueError("File logging is disabled or no log file specified")
+
         # Ensure log folder exists
         if settings.log_folder:
             os.makedirs(settings.log_folder, exist_ok=True)
@@ -58,8 +69,12 @@ def _get_file_handler() -> RotatingFileHandler:
 
 
 def _get_text_handler() -> logging.StreamHandler:
-    """Get or create the text handler."""
-    global _text_handler
+    """Get or create the text handler.
+
+    Returns:
+        logging.StreamHandler: The stream handler for console logging.
+    """
+    global _text_handler  # pylint: disable=global-statement
     if _text_handler is None:
         _text_handler = logging.StreamHandler()
         _text_handler.setFormatter(text_formatter)
@@ -92,9 +107,20 @@ class LoggingService:
             >>> asyncio.run(service.initialize())
         """
         self._loggers[""] = logging.getLogger()
-        # Add the handlers to the logger
-        self._loggers[""].addHandler(_get_file_handler())
+
+        # Always add console/text handler for stdout/stderr
         self._loggers[""].addHandler(_get_text_handler())
+
+        # Only add file handler if enabled
+        if settings.log_to_file and settings.log_file:
+            try:
+                self._loggers[""].addHandler(_get_file_handler())
+                logging.info(f"File logging enabled: {settings.log_folder or '.'}/{settings.log_file}")
+            except Exception as e:
+                logging.warning(f"Failed to initialize file logging: {e}")
+        else:
+            logging.info("File logging disabled - logging to stdout/stderr only")
+
         logging.info("Logging service initialized")
 
     async def shutdown(self) -> None:
@@ -129,8 +155,19 @@ class LoggingService:
         """
         if name not in self._loggers:
             logger = logging.getLogger(name)
-            logger.addHandler(_get_file_handler())
+
+            # Always add console/text handler for stdout/stderr
             logger.addHandler(_get_text_handler())
+
+            # Only add file handler if enabled
+            if settings.log_to_file and settings.log_file:
+                try:
+                    logger.addHandler(_get_file_handler())
+                except Exception as e:
+                    # Log the error but don't fail logger creation
+                    # Use module-level logging to avoid circular reference
+                    logging.getLogger(__name__).warning(f"Failed to add file handler to logger {name}: {e}")
+
             # Set level to match service level
             log_level = getattr(logging, self._level.upper())
             logger.setLevel(log_level)

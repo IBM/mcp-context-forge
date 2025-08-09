@@ -1016,35 +1016,43 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 ### Logging
 
-MCP Gateway provides comprehensive file-based logging with JSON formatting for structured logs and text formatting for console output. Logs automatically rotate when they reach 1MB with 5 backup files retained.
+MCP Gateway provides flexible logging with **stdout/stderr output by default** and **optional file-based logging**. When file logging is enabled, it provides JSON formatting for structured logs and text formatting for console output.
 
 | Setting        | Description                    | Default           | Options                    |
 | -------------- | ------------------------------ | ----------------- | -------------------------- |
 | `LOG_LEVEL`    | Minimum log level              | `INFO`            | `DEBUG`...`CRITICAL`       |
 | `LOG_FORMAT`   | Console log format             | `json`            | `json`, `text`             |
-| `LOG_FILE`     | Log filename                   | `mcpgateway.log`  | Any filename or empty      |
-| `LOG_FOLDER`   | Directory for log files        | `logs`            | Any directory path or empty|
+| `LOG_TO_FILE`  | **Enable file logging**        | **`false`**       | **`true`, `false`**        |
+| `LOG_FILE`     | Log filename (when enabled)    | `null`            | `mcpgateway.log`           |
+| `LOG_FOLDER`   | Directory for log files        | `null`            | `logs`, `/var/log/gateway` |
 | `LOG_FILEMODE` | File write mode                | `a+`              | `a+` (append), `w` (overwrite)|
 
-**Log File Features:**
-- **Dual Output**: JSON-formatted logs to file, human-readable text to console
+**Logging Behavior:**
+- **Default**: Logs only to **stdout/stderr** with human-readable text format
+- **File Logging**: When `LOG_TO_FILE=true`, logs to **both** file (JSON format) and console (text format)
 - **Automatic Rotation**: Files rotate at 1MB with 5 backup files (`.log.1`, `.log.2`, etc.)
 - **Directory Creation**: Log folder is automatically created if it doesn't exist
 - **Centralized Service**: All modules use the unified `LoggingService` for consistent formatting
 
-**Example Configuration:**
+**Example Configurations:**
+
 ```bash
-# Custom log configuration
-LOG_LEVEL=DEBUG
+# Default: stdout/stderr only (recommended for containers)
+LOG_LEVEL=INFO
+# No additional config needed - logs to stdout/stderr
+
+# Optional: Enable file logging for production
+LOG_TO_FILE=true
+LOG_LEVEL=INFO
 LOG_FOLDER=/var/log/mcpgateway
 LOG_FILE=gateway.log
 LOG_FILEMODE=a+
 ```
 
 **Default Behavior:**
-- Logs are written to `./logs/mcpgateway.log` in JSON format
-- Console output remains in readable text format
-- Both file and console respect the `LOG_LEVEL` setting
+- Logs are written **only to stdout/stderr** in human-readable text format
+- File logging is **disabled by default** (no files created)
+- Set `LOG_TO_FILE=true` to enable optional file logging with JSON format
 
 ### Transport
 

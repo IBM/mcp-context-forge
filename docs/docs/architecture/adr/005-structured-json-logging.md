@@ -16,11 +16,12 @@ Our configuration supports:
 
 - `LOG_FORMAT`: `json` or `text` (console format only)
 - `LOG_LEVEL`: standard Python levels (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`)
-- `LOG_FILE`: log filename (default: `mcpgateway.log`)
-- `LOG_FOLDER`: directory for log files (default: `logs`)
+- `LOG_TO_FILE`: enable file logging (default: `false` - stdout/stderr only)
+- `LOG_FILE`: log filename when file logging is enabled (default: `null`)
+- `LOG_FOLDER`: directory for log files when enabled (default: `null`)
 - `LOG_FILEMODE`: file write mode (default: `a+` for append)
 
-Logs are initialized at startup via centralized `LoggingService` with dual-format output.
+Logs are initialized at startup via centralized `LoggingService`. By default, logs go only to stdout/stderr. File logging with dual-format output is optional via `LOG_TO_FILE=true`.
 
 ## Decision
 
@@ -64,4 +65,4 @@ Use the Python standard `logging` module with centralized `LoggingService`:
 
 **Files Modified**: 22 modules updated to use `LoggingService`
 **Dependencies Added**: `python-json-logger>=2.0.0`
-**Configuration**: Via `LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`, `LOG_FOLDER`, `LOG_FILEMODE`
+**Configuration**: Via `LOG_LEVEL`, `LOG_FORMAT`, `LOG_TO_FILE`, `LOG_FILE`, `LOG_FOLDER`, `LOG_FILEMODE`

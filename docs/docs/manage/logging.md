@@ -32,33 +32,41 @@ MCP Gateway uses dual-format logging:
 
 ## 🔧 Configuring Logs
 
-You can control logging behavior using `.env` settings or environment variables:
+MCP Gateway provides flexible logging with **stdout/stderr by default** and **optional file logging**. You can control logging behavior using `.env` settings or environment variables:
 
 | Variable       | Description                    | Default           | Example                     |
 | -------------- | ------------------------------ | ----------------- | --------------------------- |
 | `LOG_LEVEL`    | Minimum log level              | `INFO`            | `DEBUG`, `INFO`, `WARNING`  |
 | `LOG_FORMAT`   | Console log format             | `json`            | `json` or `text`            |
-| `LOG_FILE`     | Log filename                   | `mcpgateway.log`  | `gateway.log`               |
-| `LOG_FOLDER`   | Directory for log files        | `logs`            | `/var/log/mcpgateway`       |
+| `LOG_TO_FILE`  | **Enable file logging**        | **`false`**       | **`true`, `false`**         |
+| `LOG_FILE`     | Log filename (when enabled)    | `null`            | `gateway.log`               |
+| `LOG_FOLDER`   | Directory for log files        | `null`            | `/var/log/mcpgateway`       |
 | `LOG_FILEMODE` | File write mode                | `a+`              | `a+` (append), `w` (overwrite) |
 
-### File Management Features
+### Logging Behavior
 
-- **Automatic Rotation**: Log files rotate when they reach 1MB
-- **Backup Retention**: 5 backup files are kept (`.log.1`, `.log.2`, etc.)
+- **Default**: Logs **only to stdout/stderr** with human-readable text format (recommended for containers)
+- **File Logging**: When `LOG_TO_FILE=true`, logs to **both** file (JSON format) and console (text format)
+- **Automatic Rotation**: File logs rotate when they reach 1MB with 5 backup files retained
 - **Directory Creation**: Log folder is created automatically if it doesn't exist
-- **Dual Output**: JSON logs to file, text logs to console simultaneously
+- **Dual Output**: JSON logs to file, text logs to console simultaneously (when file logging enabled)
 
-### Example Configuration
+### Example Configurations
 
 ```bash
-# Production logging
+# Default: stdout/stderr only (recommended for containers)
+LOG_LEVEL=INFO
+# No additional config needed - logs to stdout/stderr only
+
+# Optional: Enable file logging for production
+LOG_TO_FILE=true
 LOG_LEVEL=INFO
 LOG_FOLDER=/var/log/mcpgateway
 LOG_FILE=gateway.log
 LOG_FILEMODE=a+
 
-# Development logging
+# Development with file logging
+LOG_TO_FILE=true
 LOG_LEVEL=DEBUG
 LOG_FOLDER=./logs
 LOG_FILE=debug.log
@@ -68,6 +76,8 @@ LOG_FORMAT=text
 ---
 
 ## 📂 Log File Management
+
+**Note**: This section applies only when file logging is enabled with `LOG_TO_FILE=true`. By default, MCP Gateway logs only to stdout/stderr.
 
 ### Viewing Log Files
 

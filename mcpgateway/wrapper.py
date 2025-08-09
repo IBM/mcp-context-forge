@@ -51,6 +51,7 @@ from pydantic import AnyUrl
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
 # -----------------------------------------------------------------------------
@@ -148,7 +149,9 @@ else:
         stream=sys.stderr,
     )
 
-logger = logging.getLogger("mcpgateway.wrapper")
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger("mcpgateway.wrapper")
 logger.info(f"Starting MCP wrapper {__version__}: base_url={BASE_URL}, timeout={TOOL_CALL_TIMEOUT}")
 
 
