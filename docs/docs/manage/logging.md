@@ -17,9 +17,17 @@ MCP Gateway uses dual-format logging:
   "asctime": "2025-01-09 17:30:15,123",
   "name": "mcpgateway.gateway_service",
   "levelname": "INFO",
-  "message": "Registered gateway: peer-gateway-1",
-  "funcName": "register_gateway",
-  "lineno": 245
+  "message": "Registered gateway: peer-gateway-1"
+}
+```
+
+#### HTTP Access Logs (JSON)
+```json
+{
+  "asctime": "2025-01-09 17:30:22,456",
+  "name": "uvicorn.access",
+  "levelname": "INFO", 
+  "message": "127.0.0.1:43926 - \"GET /version HTTP/1.1\" 401"
 }
 ```
 
@@ -194,7 +202,8 @@ DEBUG=true
 
 ### Debug Features
 
-- **Detailed Request Traces**: HTTP request/response logging
+- **HTTP Access Logs**: All HTTP requests with IP, method, path, status code (via `uvicorn.access`)
+- **HTTP Error Logs**: Server errors, invalid requests (via `uvicorn.error`)
 - **Internal Service Logs**: Database queries, cache operations, federation
 - **Transport Layer Logs**: WebSocket, SSE, and stdio communication
 - **Plugin System Logs**: Hook execution and plugin lifecycle events

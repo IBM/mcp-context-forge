@@ -30,11 +30,8 @@ text_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(m
 # Create a JSON formatter
 json_formatter = jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
 
-# Configure root logger
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Note: Don't use basicConfig here as it conflicts with our custom dual logging setup
+# The LoggingService.initialize() method will properly configure all handlers
 
 # Global handlers will be created lazily
 _file_handler: Optional[logging.Handler] = None
@@ -112,15 +109,19 @@ class LoggingService:
             >>> service = LoggingService()
             >>> asyncio.run(service.initialize())
         """
-        self._loggers[""] = logging.getLogger()
+        root_logger = logging.getLogger()
+        self._loggers[""] = root_logger
+
+        # Clear existing handlers to avoid duplicates
+        root_logger.handlers.clear()
 
         # Always add console/text handler for stdout/stderr
-        self._loggers[""].addHandler(_get_text_handler())
+        root_logger.addHandler(_get_text_handler())
 
         # Only add file handler if enabled
         if settings.log_to_file and settings.log_file:
             try:
-                self._loggers[""].addHandler(_get_file_handler())
+                root_logger.addHandler(_get_file_handler())
                 if settings.log_rotation_enabled:
                     logging.info(f"File logging enabled with rotation: {settings.log_folder or '.'}/{settings.log_file} " f"(max: {settings.log_max_size_mb}MB, backups: {settings.log_backup_count})")
                 else:
@@ -129,6 +130,10 @@ class LoggingService:
                 logging.warning(f"Failed to initialize file logging: {e}")
         else:
             logging.info("File logging disabled - logging to stdout/stderr only")
+
+        # Configure uvicorn loggers to use our handlers (for access logs)
+        # Note: This needs to be done both at init and dynamically as uvicorn creates loggers later
+        self._configure_uvicorn_loggers()
 
         logging.info("Logging service initialized")
 
@@ -165,17 +170,9 @@ class LoggingService:
         if name not in self._loggers:
             logger = logging.getLogger(name)
 
-            # Always add console/text handler for stdout/stderr
-            logger.addHandler(_get_text_handler())
-
-            # Only add file handler if enabled
-            if settings.log_to_file and settings.log_file:
-                try:
-                    logger.addHandler(_get_file_handler())
-                except Exception as e:
-                    # Log the error but don't fail logger creation
-                    # Use module-level logging to avoid circular reference
-                    logging.getLogger(__name__).warning(f"Failed to add file handler to logger {name}: {e}")
+            # Don't add handlers to child loggers - let them inherit from root
+            # This prevents duplicate logging while maintaining dual output (console + file)
+            logger.propagate = True
 
             # Set level to match service level
             log_level = getattr(logging, self._level.upper())
@@ -293,3 +290,37 @@ class LoggingService:
         }
 
         return level_values[level] >= level_values[self._level]
+
+    def _configure_uvicorn_loggers(self) -> None:
+        """Configure uvicorn loggers to use our dual logging setup.
+
+        This method handles uvicorn's logging setup which can happen after our initialization.
+        Uvicorn creates its own loggers and handlers, so we need to redirect them to our setup.
+        """
+        uvicorn_loggers = ["uvicorn", "uvicorn.access", "uvicorn.error", "uvicorn.asgi"]
+
+        for logger_name in uvicorn_loggers:
+            uvicorn_logger = logging.getLogger(logger_name)
+
+            # Clear any handlers that uvicorn may have added
+            uvicorn_logger.handlers.clear()
+
+            # Make sure they propagate to root (which has our dual handlers)
+            uvicorn_logger.propagate = True
+
+            # Set level to match our logging service level
+            if hasattr(self, "_level"):
+                log_level = getattr(logging, self._level.upper())
+                uvicorn_logger.setLevel(log_level)
+
+            # Track the logger
+            self._loggers[logger_name] = uvicorn_logger
+
+    def configure_uvicorn_after_startup(self) -> None:
+        """Public method to reconfigure uvicorn loggers after server startup.
+
+        Call this after uvicorn has started to ensure access logs go to dual output.
+        This handles the case where uvicorn creates loggers after our initialization.
+        """
+        self._configure_uvicorn_loggers()
+        logging.info("Uvicorn loggers reconfigured for dual logging")
