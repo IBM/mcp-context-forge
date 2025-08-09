@@ -65,11 +65,14 @@ from jsonpath_ng.jsonpath import JSONPath
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%H:%M:%S",
-)
+# Only configure basic logging if no handlers exist yet
+# This prevents conflicts with LoggingService while ensuring config logging works
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +194,15 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     log_format: str = "json"  # json or text
-    log_file: Optional[Path] = None
+    log_to_file: bool = False  # Enable file logging (default: stdout/stderr only)
+    log_filemode: str = "a+"  # append or overwrite
+    log_file: Optional[str] = None  # Only used if log_to_file=True
+    log_folder: Optional[str] = None  # Only used if log_to_file=True
+
+    # Log Rotation (optional - only used if log_to_file=True)
+    log_rotation_enabled: bool = False  # Enable log file rotation
+    log_max_size_mb: int = 1  # Max file size in MB before rotation (default: 1MB)
+    log_backup_count: int = 5  # Number of backup files to keep (default: 5)
 
     # Transport
     transport_type: str = "all"  # http, ws, sse, all

@@ -17,8 +17,11 @@ from pydantic import BaseModel
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.models import PluginConfig, PluginViolation
 from mcpgateway.plugins.framework.plugin_types import PluginContext, PromptPrehookPayload, PromptPrehookResult
+from mcpgateway.services.logging_service import LoggingService
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class DenyListConfig(BaseModel):

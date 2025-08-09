@@ -46,7 +46,7 @@ def upgrade() -> None:
         op.create_index("idx_prompts_tags", "prompts", ["tags"], postgresql_using="gin")
         op.create_index("idx_servers_tags", "servers", ["tags"], postgresql_using="gin")
         op.create_index("idx_gateways_tags", "gateways", ["tags"], postgresql_using="gin")
-    except Exception:
+    except Exception:  # nosec B110 - database compatibility
         # SQLite doesn't support GIN indexes, skip silently
         pass
 
@@ -60,7 +60,7 @@ def downgrade() -> None:
         op.drop_index("idx_prompts_tags", "prompts")
         op.drop_index("idx_servers_tags", "servers")
         op.drop_index("idx_gateways_tags", "gateways")
-    except Exception:
+    except Exception:  # nosec B110 - database compatibility
         # Indexes might not exist on SQLite
         pass
 

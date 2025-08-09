@@ -2,6 +2,7 @@ nav:
   - index.md
   - backup.md
   - logging.md
+  - logging-examples.md
   - upgrade.md
   - tuning.md
   - securing.md

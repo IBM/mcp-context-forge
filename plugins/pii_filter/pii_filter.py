@@ -32,8 +32,11 @@ from mcpgateway.plugins.framework.plugin_types import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
+from mcpgateway.services.logging_service import LoggingService
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class PIIType(str, Enum):

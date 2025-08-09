@@ -29,7 +29,6 @@ Structure:
 import asyncio
 from contextlib import asynccontextmanager
 import json
-import logging
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
 
@@ -148,11 +147,8 @@ from mcpgateway.version import router as version_router
 logging_service = LoggingService()
 logger = logging_service.get_logger("mcpgateway")
 
-# Configure root logger level
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Note: Logging configuration is handled by LoggingService during startup
+# Don't use basicConfig here as it conflicts with our dual logging setup
 
 # Wait for database to be ready before creating tables
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
@@ -220,6 +216,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         Exception: Any unhandled error that occurs during service
             initialisation or shutdown is re-raised to the caller.
     """
+    # Initialize logging service FIRST to ensure all logging goes to dual output
+    await logging_service.initialize()
     logger.info("Starting MCP Gateway services")
     try:
         if plugin_manager:
@@ -231,13 +229,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await gateway_service.initialize()
         await root_service.initialize()
         await completion_service.initialize()
-        await logging_service.initialize()
         await sampling_handler.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
         refresh_slugs_on_startup()
 
         logger.info("All services initialized successfully")
+
+        # Reconfigure uvicorn loggers after startup to capture access logs in dual output
+        logging_service.configure_uvicorn_after_startup()
+
         yield
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")

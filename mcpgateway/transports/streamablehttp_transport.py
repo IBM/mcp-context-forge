@@ -34,7 +34,6 @@ from collections import deque
 from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
-import logging
 import re
 from typing import List, Union
 from uuid import uuid4
@@ -60,11 +59,13 @@ from starlette.types import Receive, Scope, Send
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.verify_credentials import verify_credentials
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 # Initialize ToolService and MCP Server
 tool_service = ToolService()

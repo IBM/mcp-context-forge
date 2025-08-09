@@ -31,14 +31,16 @@ Note:
 # Standard
 import asyncio
 import json
-import logging
 import sys
 from typing import Any, AsyncGenerator, Dict, Optional
 
 # First-Party
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports.base import Transport
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class StdioTransport(Transport):

@@ -13,7 +13,6 @@ providing server-to-client streaming with proper session management.
 import asyncio
 from datetime import datetime
 import json
-import logging
 from typing import Any, AsyncGenerator, Dict
 import uuid
 
@@ -23,9 +22,12 @@ from sse_starlette.sse import EventSourceResponse
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports.base import Transport
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class SSETransport(Transport):

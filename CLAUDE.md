@@ -139,8 +139,22 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 MCPGATEWAY_ENABLE_MDNS_DISCOVERY=true
 MCPGATEWAY_ENABLE_FEDERATION=true
 
-# Development
+# Logging (Dual Output Support)
 LOG_LEVEL=INFO
+LOG_TO_FILE=false  # Enable file logging (default: stdout/stderr only)
+LOG_ROTATION_ENABLED=false  # Enable log rotation when file logging is enabled
+LOG_MAX_SIZE_MB=1  # Max file size before rotation (MB)
+LOG_BACKUP_COUNT=5  # Number of backup files to keep
+LOG_FILE=mcpgateway.log  # Log filename (when file logging enabled)
+LOG_FOLDER=logs  # Log directory (when file logging enabled)
+
+# Dual Logging Features:
+# - Console logs: Human-readable text format (always enabled)
+# - File logs: Structured JSON format (when LOG_TO_FILE=true)
+# - All logs appear in both outputs: application, services, HTTP access logs
+# - File rotation: Configurable size-based rotation with backup retention
+
+# Development
 RELOAD=true  # For development hot-reload
 ```
 

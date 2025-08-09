@@ -22,7 +22,6 @@ directly with ``python3 mcpgateway/bootstrap_db.py``.
 # Standard
 import asyncio
 from importlib.resources import files
-import logging
 
 # Third-Party
 from alembic import command
@@ -32,8 +31,11 @@ from sqlalchemy import create_engine, inspect
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Base
+from mcpgateway.services.logging_service import LoggingService
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 async def main() -> None:

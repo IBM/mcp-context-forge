@@ -42,7 +42,6 @@ Examples:
 """
 
 # Standard
-import logging
 from typing import Any, Dict, List
 
 # Third-Party
@@ -50,8 +49,11 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.models import CreateMessageResult, ModelPreferences, Role, TextContent
+from mcpgateway.services.logging_service import LoggingService
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class SamplingError(Exception):

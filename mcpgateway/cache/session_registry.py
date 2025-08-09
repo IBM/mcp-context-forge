@@ -64,10 +64,13 @@ from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
 from mcpgateway.models import Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.services import PromptService, ResourceService, ToolService
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
-logger = logging.getLogger(__name__)
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 tool_service = ToolService()
 resource_service = ResourceService()

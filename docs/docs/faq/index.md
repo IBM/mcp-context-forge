@@ -66,7 +66,7 @@
 ???+ example "🪛 What are some advanced environment variables I can configure?"
     - Basic: `HOST`, `PORT`, `APP_ROOT_PATH`
     - Auth: `AUTH_REQUIRED`, `BASIC_AUTH_*`, `JWT_SECRET_KEY`
-    - Logging: `LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`
+    - Logging: `LOG_LEVEL`, `LOG_FORMAT`, `LOG_TO_FILE`, `LOG_FILE`, `LOG_FOLDER`, `LOG_ROTATION_ENABLED`, `LOG_MAX_SIZE_MB`, `LOG_BACKUP_COUNT`
     - Transport: `TRANSPORT_TYPE`, `WEBSOCKET_PING_INTERVAL`, `SSE_RETRY_TIMEOUT`
     - Tools: `TOOL_TIMEOUT`, `MAX_TOOL_RETRIES`, `TOOL_RATE_LIMIT`, `TOOL_CONCURRENT_LIMIT`
     - Federation: `FEDERATION_ENABLED`, `FEDERATION_PEERS`, `FEDERATION_SYNC_INTERVAL`
