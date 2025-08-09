@@ -78,7 +78,20 @@ except ImportError:
     httpx = None  # type: ignore[assignment]
 
 LOGGER = logging.getLogger("mcpgateway.translate")
-KEEP_ALIVE_INTERVAL = 30  # seconds - matches the reference implementation
+
+# Import settings for default keepalive interval
+try:
+    # First-Party
+    from mcpgateway.config import settings
+
+    DEFAULT_KEEP_ALIVE_INTERVAL = settings.sse_keepalive_interval
+    DEFAULT_KEEPALIVE_ENABLED = settings.sse_keepalive_enabled
+except ImportError:
+    # Fallback if config not available
+    DEFAULT_KEEP_ALIVE_INTERVAL = 30
+    DEFAULT_KEEPALIVE_ENABLED = True
+
+KEEP_ALIVE_INTERVAL = DEFAULT_KEEP_ALIVE_INTERVAL  # seconds - from config or fallback to 30
 __all__ = ["main"]  # for console-script entry-point
 
 
@@ -571,8 +584,9 @@ def _build_fastapi(
                 "retry": int(keep_alive * 1000),
             }
 
-            # 2️⃣ Immediate keepalive so clients know the stream is alive
-            yield {"event": "keepalive", "data": "{}", "retry": keep_alive * 1000}
+            # 2️⃣ Immediate keepalive so clients know the stream is alive (if enabled in config)
+            if DEFAULT_KEEPALIVE_ENABLED:
+                yield {"event": "keepalive", "data": "{}", "retry": keep_alive * 1000}
 
             try:
                 while True:
@@ -580,14 +594,16 @@ def _build_fastapi(
                         break
 
                     try:
-                        msg = await asyncio.wait_for(queue.get(), keep_alive)
+                        timeout = keep_alive if DEFAULT_KEEPALIVE_ENABLED else None
+                        msg = await asyncio.wait_for(queue.get(), timeout)
                         yield {"event": "message", "data": msg.rstrip()}
                     except asyncio.TimeoutError:
-                        yield {
-                            "event": "keepalive",
-                            "data": "{}",
-                            "retry": keep_alive * 1000,
-                        }
+                        if DEFAULT_KEEPALIVE_ENABLED:
+                            yield {
+                                "event": "keepalive",
+                                "data": "{}",
+                                "retry": keep_alive * 1000,
+                            }
             finally:
                 pubsub.unsubscribe(queue)
 
