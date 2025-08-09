@@ -12,21 +12,36 @@ mcpgateway --host 0.0.0.0 --port 4444
 # Logs appear in console only - no files created
 ```
 
-### 2. Development with File Logging
+### 2. Development with File Logging (No Rotation)
 ```bash
-# Enable file logging for development
+# Enable file logging for development without rotation
 export LOG_TO_FILE=true
 export LOG_LEVEL=DEBUG
 export LOG_FORMAT=text
 export LOG_FOLDER=./dev-logs
 export LOG_FILE=debug.log
 mcpgateway --host 0.0.0.0 --port 4444
-# Logs to both console AND ./dev-logs/debug.log
+# Logs to both console AND ./dev-logs/debug.log (file grows indefinitely)
 ```
 
-### 3. Production with File Logging
+### 3. Development with File Rotation
 ```bash
-# Production logging with JSON format to files
+# Enable file logging with small rotation for development
+export LOG_TO_FILE=true
+export LOG_ROTATION_ENABLED=true
+export LOG_MAX_SIZE_MB=1
+export LOG_BACKUP_COUNT=3
+export LOG_LEVEL=DEBUG
+export LOG_FORMAT=text
+export LOG_FOLDER=./dev-logs
+export LOG_FILE=debug.log
+mcpgateway --host 0.0.0.0 --port 4444
+# Logs rotate at 1MB with 3 backup files kept
+```
+
+### 4. Production with File Logging (No Rotation)
+```bash
+# Production logging with JSON format, no rotation (managed externally)
 export LOG_TO_FILE=true
 export LOG_LEVEL=INFO
 export LOG_FOLDER=/var/log/mcpgateway
@@ -36,7 +51,21 @@ mcpgateway --host 0.0.0.0 --port 4444
 # Logs to both console AND /var/log/mcpgateway/gateway.log
 ```
 
-### 4. Monitoring Specific Components (requires file logging)
+### 5. Production with File Rotation
+```bash
+# Production logging with automatic rotation
+export LOG_TO_FILE=true
+export LOG_ROTATION_ENABLED=true
+export LOG_MAX_SIZE_MB=50
+export LOG_BACKUP_COUNT=7
+export LOG_LEVEL=INFO
+export LOG_FOLDER=/var/log/mcpgateway
+export LOG_FILE=gateway.log
+mcpgateway --host 0.0.0.0 --port 4444
+# Files rotate at 50MB with 7 backup files (weekly retention)
+```
+
+### 6. Monitoring Specific Components (requires file logging)
 ```bash
 # First enable file logging
 export LOG_TO_FILE=true
@@ -61,11 +90,19 @@ tail -f logs/mcpgateway.log | jq '.'
 LOG_LEVEL=INFO
 LOG_FORMAT=text
 
-# Optional: Enable file logging
+# Optional: Enable file logging (no rotation)
 LOG_TO_FILE=true
 LOG_FILE=mcpgateway.log
 LOG_FOLDER=logs
 LOG_FILEMODE=a+
+
+# Optional: Enable file logging with rotation
+LOG_TO_FILE=true
+LOG_ROTATION_ENABLED=true
+LOG_MAX_SIZE_MB=10
+LOG_BACKUP_COUNT=5
+LOG_FILE=mcpgateway.log
+LOG_FOLDER=logs
 ```
 
 ### Docker/Container Configuration
@@ -77,8 +114,15 @@ services:
     environment:
       - LOG_LEVEL=INFO
       # Default: logs to stdout/stderr only (recommended for containers)
-      # Optional: Enable file logging
+      # Optional: Enable file logging (no rotation)
       # - LOG_TO_FILE=true
+      # - LOG_FOLDER=/app/logs
+      # - LOG_FILE=gateway.log
+      # Optional: Enable file logging with rotation
+      # - LOG_TO_FILE=true
+      # - LOG_ROTATION_ENABLED=true
+      # - LOG_MAX_SIZE_MB=10
+      # - LOG_BACKUP_COUNT=3
       # - LOG_FOLDER=/app/logs
       # - LOG_FILE=gateway.log
     # volumes:
@@ -100,9 +144,22 @@ spec:
         - name: LOG_LEVEL
           value: "INFO"
         # Default: logs to stdout/stderr (recommended for Kubernetes)
-        # Optional: Enable file logging
+        # Optional: Enable file logging (no rotation)
         # - name: LOG_TO_FILE
         #   value: "true"
+        # - name: LOG_FOLDER
+        #   value: "/var/log/mcpgateway"
+        # - name: LOG_FILE
+        #   value: "gateway.log"
+        # Optional: Enable file logging with rotation
+        # - name: LOG_TO_FILE
+        #   value: "true"
+        # - name: LOG_ROTATION_ENABLED
+        #   value: "true"
+        # - name: LOG_MAX_SIZE_MB
+        #   value: "20"
+        # - name: LOG_BACKUP_COUNT
+        #   value: "5"
         # - name: LOG_FOLDER
         #   value: "/var/log/mcpgateway"
         # - name: LOG_FILE
@@ -224,9 +281,17 @@ scrape_configs:
 
 1. **Log files not rotating**
    ```bash
+   # Check if rotation is enabled
+   echo "LOG_ROTATION_ENABLED: $LOG_ROTATION_ENABLED"
+   echo "LOG_MAX_SIZE_MB: $LOG_MAX_SIZE_MB"
+   echo "LOG_BACKUP_COUNT: $LOG_BACKUP_COUNT"
+
    # Check file permissions and available disk space
    ls -la logs/
    df -h
+
+   # Check current file size (should be under LOG_MAX_SIZE_MB)
+   ls -lh logs/mcpgateway.log
    ```
 
 2. **Missing log directory**
@@ -236,14 +301,35 @@ scrape_configs:
    chmod 755 logs
    ```
 
-3. **Too many log files**
+3. **Too many log files (with rotation disabled)**
    ```bash
-   # Clean up old rotated logs
+   # Clean up old rotated logs beyond LOG_BACKUP_COUNT
+   # For LOG_BACKUP_COUNT=5, remove .log.6 and higher
    find logs/ -name "*.log.[6-9]" -delete
    find logs/ -name "*.log.1[0-9]" -delete
    ```
 
-4. **JSON parsing errors**
+4. **Files not rotating despite size limit**
+   ```bash
+   # Check if rotation is properly enabled
+   grep -i "rotation" logs/mcpgateway.log | tail -5
+
+   # Force check file size vs limit
+   actual_size=$(stat -c%s logs/mcpgateway.log)
+   limit_bytes=$((LOG_MAX_SIZE_MB * 1024 * 1024))
+   echo "Actual: $actual_size bytes, Limit: $limit_bytes bytes"
+   ```
+
+5. **Rotation happening too frequently**
+   ```bash
+   # Increase LOG_MAX_SIZE_MB if files rotate too often
+   export LOG_MAX_SIZE_MB=50  # Increase from default 1MB to 50MB
+
+   # Or disable rotation for external log management
+   export LOG_ROTATION_ENABLED=false
+   ```
+
+6. **JSON parsing errors**
    ```bash
    # Validate JSON format
    cat logs/mcpgateway.log | jq empty
@@ -259,12 +345,16 @@ scrape_configs:
 1. **Production Logging**
    - Use `INFO` level for production
    - Enable JSON format for log aggregation
-   - Configure proper log rotation
+   - Configure log rotation based on expected volume:
+     - High traffic: `LOG_MAX_SIZE_MB=50`, `LOG_BACKUP_COUNT=7`
+     - Medium traffic: `LOG_MAX_SIZE_MB=10`, `LOG_BACKUP_COUNT=5`
+     - Low traffic: Consider disabling rotation
    - Monitor disk space usage
 
 2. **Development Logging**
    - Use `DEBUG` level for detailed troubleshooting
    - Use text format for human readability
+   - Enable rotation with small files: `LOG_MAX_SIZE_MB=1`, `LOG_BACKUP_COUNT=3`
    - Keep log files local for quick access
 
 3. **Security Considerations**

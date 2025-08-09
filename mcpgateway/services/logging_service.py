@@ -37,15 +37,15 @@ logging.basicConfig(
 )
 
 # Global handlers will be created lazily
-_file_handler: Optional[RotatingFileHandler] = None
+_file_handler: Optional[logging.Handler] = None
 _text_handler: Optional[logging.StreamHandler] = None
 
 
-def _get_file_handler() -> RotatingFileHandler:
+def _get_file_handler() -> logging.Handler:
     """Get or create the file handler.
 
     Returns:
-        RotatingFileHandler: The file handler for JSON logging.
+        logging.Handler: Either a RotatingFileHandler or regular FileHandler for JSON logging.
 
     Raises:
         ValueError: If file logging is disabled or no log file specified.
@@ -63,7 +63,13 @@ def _get_file_handler() -> RotatingFileHandler:
         else:
             log_path = settings.log_file
 
-        _file_handler = RotatingFileHandler(log_path, maxBytes=1024 * 1024, backupCount=5)
+        # Create appropriate handler based on rotation settings
+        if settings.log_rotation_enabled:
+            max_bytes = settings.log_max_size_mb * 1024 * 1024  # Convert MB to bytes
+            _file_handler = RotatingFileHandler(log_path, maxBytes=max_bytes, backupCount=settings.log_backup_count, mode=settings.log_filemode)
+        else:
+            _file_handler = logging.FileHandler(log_path, mode=settings.log_filemode)
+
         _file_handler.setFormatter(json_formatter)
     return _file_handler
 
@@ -115,7 +121,10 @@ class LoggingService:
         if settings.log_to_file and settings.log_file:
             try:
                 self._loggers[""].addHandler(_get_file_handler())
-                logging.info(f"File logging enabled: {settings.log_folder or '.'}/{settings.log_file}")
+                if settings.log_rotation_enabled:
+                    logging.info(f"File logging enabled with rotation: {settings.log_folder or '.'}/{settings.log_file} " f"(max: {settings.log_max_size_mb}MB, backups: {settings.log_backup_count})")
+                else:
+                    logging.info(f"File logging enabled (no rotation): {settings.log_folder or '.'}/{settings.log_file}")
             except Exception as e:
                 logging.warning(f"Failed to initialize file logging: {e}")
         else:

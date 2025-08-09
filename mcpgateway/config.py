@@ -196,6 +196,11 @@ class Settings(BaseSettings):
     log_file: Optional[str] = None  # Only used if log_to_file=True
     log_folder: Optional[str] = None  # Only used if log_to_file=True
 
+    # Log Rotation (optional - only used if log_to_file=True)
+    log_rotation_enabled: bool = False  # Enable log file rotation
+    log_max_size_mb: int = 1  # Max file size in MB before rotation (default: 1MB)
+    log_backup_count: int = 5  # Number of backup files to keep (default: 5)
+
     # Transport
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds

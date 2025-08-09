@@ -1018,19 +1018,22 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 MCP Gateway provides flexible logging with **stdout/stderr output by default** and **optional file-based logging**. When file logging is enabled, it provides JSON formatting for structured logs and text formatting for console output.
 
-| Setting        | Description                    | Default           | Options                    |
-| -------------- | ------------------------------ | ----------------- | -------------------------- |
-| `LOG_LEVEL`    | Minimum log level              | `INFO`            | `DEBUG`...`CRITICAL`       |
-| `LOG_FORMAT`   | Console log format             | `json`            | `json`, `text`             |
-| `LOG_TO_FILE`  | **Enable file logging**        | **`false`**       | **`true`, `false`**        |
-| `LOG_FILE`     | Log filename (when enabled)    | `null`            | `mcpgateway.log`           |
-| `LOG_FOLDER`   | Directory for log files        | `null`            | `logs`, `/var/log/gateway` |
-| `LOG_FILEMODE` | File write mode                | `a+`              | `a+` (append), `w` (overwrite)|
+| Setting                 | Description                        | Default           | Options                    |
+| ----------------------- | ---------------------------------- | ----------------- | -------------------------- |
+| `LOG_LEVEL`             | Minimum log level                  | `INFO`            | `DEBUG`...`CRITICAL`       |
+| `LOG_FORMAT`            | Console log format                 | `json`            | `json`, `text`             |
+| `LOG_TO_FILE`           | **Enable file logging**            | **`false`**       | **`true`, `false`**        |
+| `LOG_FILE`              | Log filename (when enabled)        | `null`            | `mcpgateway.log`           |
+| `LOG_FOLDER`            | Directory for log files            | `null`            | `logs`, `/var/log/gateway` |
+| `LOG_FILEMODE`          | File write mode                    | `a+`              | `a+` (append), `w` (overwrite)|
+| `LOG_ROTATION_ENABLED`  | **Enable log file rotation**       | **`false`**       | **`true`, `false`**        |
+| `LOG_MAX_SIZE_MB`       | Max file size before rotation (MB) | `1`               | Any positive integer       |
+| `LOG_BACKUP_COUNT`      | Number of backup files to keep     | `5`               | Any non-negative integer   |
 
 **Logging Behavior:**
 - **Default**: Logs only to **stdout/stderr** with human-readable text format
 - **File Logging**: When `LOG_TO_FILE=true`, logs to **both** file (JSON format) and console (text format)
-- **Automatic Rotation**: Files rotate at 1MB with 5 backup files (`.log.1`, `.log.2`, etc.)
+- **Log Rotation**: When `LOG_ROTATION_ENABLED=true`, files rotate at `LOG_MAX_SIZE_MB` with `LOG_BACKUP_COUNT` backup files (e.g., `.log.1`, `.log.2`)
 - **Directory Creation**: Log folder is automatically created if it doesn't exist
 - **Centralized Service**: All modules use the unified `LoggingService` for consistent formatting
 
@@ -1041,12 +1044,19 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 LOG_LEVEL=INFO
 # No additional config needed - logs to stdout/stderr
 
-# Optional: Enable file logging for production
+# Optional: Enable file logging (no rotation)
 LOG_TO_FILE=true
-LOG_LEVEL=INFO
 LOG_FOLDER=/var/log/mcpgateway
 LOG_FILE=gateway.log
 LOG_FILEMODE=a+
+
+# Optional: Enable file logging with rotation
+LOG_TO_FILE=true
+LOG_ROTATION_ENABLED=true
+LOG_MAX_SIZE_MB=10
+LOG_BACKUP_COUNT=3
+LOG_FOLDER=/var/log/mcpgateway
+LOG_FILE=gateway.log
 ```
 
 **Default Behavior:**
