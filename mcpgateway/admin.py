@@ -1835,8 +1835,8 @@ async def admin_add_tool(
         >>> form_data_success = FormData([
         ...     ("name", "New_Tool"),
         ...     ("url", "http://new.tool.com"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP"),
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST"),
         ...     ("headers", '{"X-Api-Key": "abc"}')
         ... ])
         >>> mock_request_success = MagicMock(spec=Request)
@@ -1855,8 +1855,8 @@ async def admin_add_tool(
         >>> form_data_conflict = FormData([
         ...     ("name", "Existing_Tool"),
         ...     ("url", "http://existing.com"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP")
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST")
         ... ])
         >>> mock_request_conflict = MagicMock(spec=Request)
         >>> mock_request_conflict.form = AsyncMock(return_value=form_data_conflict)
@@ -1873,8 +1873,8 @@ async def admin_add_tool(
         >>> # Error path: Missing required field (Pydantic ValidationError)
         >>> form_data_missing = FormData([
         ...     ("url", "http://missing.com"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP")
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST")
         ... ])
         >>> mock_request_missing = MagicMock(spec=Request)
         >>> mock_request_missing.form = AsyncMock(return_value=form_data_missing)
@@ -1890,8 +1890,8 @@ async def admin_add_tool(
         >>> form_data_generic_error = FormData([
         ...     ("name", "Generic_Error_Tool"),
         ...     ("url", "http://generic.com"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP")
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST")
         ... ])
         >>> mock_request_generic_error = MagicMock(spec=Request)
         >>> mock_request_generic_error.form = AsyncMock(return_value=form_data_generic_error)
@@ -1912,6 +1912,17 @@ async def admin_add_tool(
     form = await request.form()
     logger.debug(f"Received form data: {dict(form)}")
 
+    integration_type = form.get("integrationType", "REST")
+    request_type = form.get("requestType")
+
+    if request_type is None:
+        if integration_type == "REST":
+            request_type = "GET"  # or any valid REST method default
+        elif integration_type == "MCP":
+            request_type = "SSE"
+        else:
+            request_type = "GET"
+
     # Parse tags from comma-separated string
     tags_str = form.get("tags", "")
     tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -1920,8 +1931,8 @@ async def admin_add_tool(
         "name": form.get("name"),
         "url": form.get("url"),
         "description": form.get("description"),
-        "request_type": form.get("requestType", "SSE"),
-        "integration_type": form.get("integrationType", "MCP"),
+        "request_type": request_type,
+        "integration_type": integration_type,
         "headers": json.loads(form.get("headers") or "{}"),
         "input_schema": json.loads(form.get("input_schema") or "{}"),
         "jsonpath_filter": form.get("jsonpath_filter", ""),
@@ -1949,6 +1960,7 @@ async def admin_add_tool(
     except ToolError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # This block should catch ValidationError
+
         logger.error(f"ValidationError in admin_add_tool: {str(ex)}")
         return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:
@@ -2018,9 +2030,11 @@ async def admin_edit_tool(
         >>> form_data_success = FormData([
         ...     ("name", "Updated_Tool"),
         ...     ("url", "http://updated.com"),
-        ...     ("is_inactive_checked", "false"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP")
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST"),
+        ...     ("headers", '{"X-Api-Key": "abc"}'),
+        ...     ("input_schema", '{}'),  # ✅ Required field
+        ...     ("description", "Sample tool")
         ... ])
         >>> mock_request_success = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_success.form = AsyncMock(return_value=form_data_success)
@@ -2039,8 +2053,8 @@ async def admin_edit_tool(
         ...     ("name", "Inactive_Edit"),
         ...     ("url", "http://inactive.com"),
         ...     ("is_inactive_checked", "true"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP")
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST")
         ... ])
         >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": "/api"})
         >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
@@ -2056,8 +2070,8 @@ async def admin_edit_tool(
         >>> form_data_conflict = FormData([
         ...     ("name", "Conflicting_Name"),
         ...     ("url", "http://conflict.com"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP")
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST")
         ... ])
         >>> mock_request_conflict = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_conflict.form = AsyncMock(return_value=form_data_conflict)
@@ -2074,8 +2088,8 @@ async def admin_edit_tool(
         >>> form_data_tool_error = FormData([
         ...     ("name", "Tool_Error"),
         ...     ("url", "http://toolerror.com"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP")
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST")
         ... ])
         >>> mock_request_tool_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_tool_error.form = AsyncMock(return_value=form_data_tool_error)
@@ -2092,8 +2106,8 @@ async def admin_edit_tool(
         >>> form_data_validation_error = FormData([
         ...     ("name", "Bad_URL"),
         ...     ("url", "not-a-valid-url"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP")
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST")
         ... ])
         >>> mock_request_validation_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_validation_error.form = AsyncMock(return_value=form_data_validation_error)
@@ -2109,8 +2123,8 @@ async def admin_edit_tool(
         >>> form_data_unexpected = FormData([
         ...     ("name", "Crash_Tool"),
         ...     ("url", "http://crash.com"),
-        ...     ("requestType", "SSE"),
-        ...     ("integrationType", "MCP")
+        ...     ("requestType", "GET"),
+        ...     ("integrationType", "REST")
         ... ])
         >>> mock_request_unexpected = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_unexpected.form = AsyncMock(return_value=form_data_unexpected)
@@ -2139,7 +2153,7 @@ async def admin_edit_tool(
         "url": form.get("url"),
         "description": form.get("description"),
         "request_type": form.get("requestType", "SSE"),
-        "integration_type": form.get("integrationType", "MCP"),
+        "integration_type": form.get("integrationType", "REST"),
         "headers": json.loads(form.get("headers") or "{}"),
         "input_schema": json.loads(form.get("input_schema") or "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
