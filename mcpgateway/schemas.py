@@ -294,8 +294,8 @@ class ToolCreate(BaseModel):
         name (str): Unique name for the tool.
         url (Union[str, AnyHttpUrl]): Tool endpoint URL.
         description (Optional[str]): Tool description.
-        integration_type (Literal["MCP", "REST"]): Tool integration type. 'MCP' for MCP-compliant tools, 'REST' for REST integrations.
-        request_type (Literal["GET", "POST", "PUT", "DELETE", "SSE", "STDIO", "STREAMABLEHTTP"]): HTTP method to be used for invoking the tool.
+        integration_type (Literal["REST"]): Tool integration type for REST integrations.
+        request_type (Literal["GET", "POST", "PUT", "DELETE", "PATCH"]): HTTP method to be used for invoking the tool.
         headers (Optional[Dict[str, str]]): Additional headers to send when invoking the tool.
         input_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool parameters. Alias 'inputSchema'.
         annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints such as title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint.
@@ -309,7 +309,7 @@ class ToolCreate(BaseModel):
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Literal["MCP", "REST"] = Field("MCP", description="Tool integration type: 'MCP' for MCP-compliant tools, 'REST' for REST integrations")
+    integration_type: Literal["REST"] = Field("REST", description="'REST' for REST integrations")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
@@ -447,11 +447,11 @@ class ToolCreate(BaseModel):
             ValueError: When value is unsafe
 
         Examples:
-            >>> # Test MCP integration types
+            >>> # Test REST integration types with valid method
             >>> from pydantic import ValidationInfo
-            >>> info = type('obj', (object,), {'data': {'integration_type': 'MCP'}})
-            >>> ToolCreate.validate_request_type('SSE', info)
-            'SSE'
+            >>> info = type('obj', (object,), {'data': {'integration_type': 'REST'}})
+            >>> ToolCreate.validate_request_type('POST', info)
+            'POST'
 
             >>> # Test REST integration types
             >>> info = type('obj', (object,), {'data': {'integration_type': 'REST'}})
@@ -467,24 +467,24 @@ class ToolCreate(BaseModel):
             ...     "not allowed for REST" in str(e)
             True
 
-            >>> # Test invalid MCP type
-            >>> info = type('obj', (object,), {'data': {'integration_type': 'MCP'}})
+            >>> # Test invalid integration type
+            >>> info = type('obj', (object,), {'data': {'integration_type': 'INVALID'}})
             >>> try:
             ...     ToolCreate.validate_request_type('GET', info)
             ... except ValueError as e:
-            ...     "not allowed for MCP" in str(e)
+            ...     "Unknown integration type" in str(e)
             True
         """
-        data = info.data
-        integration_type = data.get("integration_type")
 
-        if integration_type == "MCP":
-            allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
-        else:  # REST
-            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+        integration_type = info.data.get("integration_type")
 
+        if integration_type != "REST":
+            raise ValueError(f"Unknown integration type: {integration_type}")
+
+        allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
         if v not in allowed:
-            raise ValueError(f"Request type '{v}' not allowed for {integration_type} integration")
+            raise ValueError(f"Request type '{v}' not allowed for REST. Only {allowed} methods are accepted.")
+
         return v
 
     @model_validator(mode="before")
@@ -565,8 +565,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Optional[Literal["MCP", "REST"]] = Field(None, description="Tool integration type")
-    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"]] = Field(None, description="HTTP method to be used for invoking the tool")
+    integration_type: Optional[Literal["REST"]] = Field(None, description="Tool integration type")
+    request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
     annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
@@ -677,11 +677,8 @@ class ToolUpdate(BaseModelWithConfigDict):
             ValueError: When value is unsafe
         """
 
-        integration_type = values.data.get("integration_type", "MCP")
-        if integration_type == "MCP":
-            allowed = ["SSE", "STREAMABLEHTTP", "STDIO"]
-        else:  # REST
-            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+        integration_type = values.data.get("integration_type", "REST")
+        allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
         if v not in allowed:
             raise ValueError(f"Request type '{v}' not allowed for {integration_type} integration")

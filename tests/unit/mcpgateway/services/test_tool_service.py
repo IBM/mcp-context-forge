@@ -205,7 +205,7 @@ class TestToolService:
                 name="test-gateway-test-tool",
                 url="http://example.com/tools/test",
                 description="A test tool",
-                integration_type="MCP",
+                integration_type="REST",
                 request_type="POST",
                 headers={"Content-Type": "application/json"},
                 input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
@@ -236,8 +236,8 @@ class TestToolService:
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
-            integration_type="MCP",
-            request_type="SSE",
+            integration_type="REST",
+            request_type="POST",
             headers={"Content-Type": "application/json"},
             input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         )
@@ -253,7 +253,7 @@ class TestToolService:
         # Verify result
         assert result.name == "test-gateway-test-tool"
         assert result.url == "http://example.com/tools/test"
-        assert result.integration_type == "MCP"
+        assert result.integration_type == "REST"
         assert result.enabled is True
 
         # Verify notification
@@ -272,8 +272,8 @@ class TestToolService:
             name="test_tool",  # Same name as mock_tool
             url="http://example.com/tools/new",
             description="A new tool",
-            integration_type="MCP",
-            request_type="SSE",
+            integration_type="REST",
+            request_type="POST",
             gateway_id="1",
         )
 
@@ -320,8 +320,8 @@ class TestToolService:
             name="test_tool",  # Same name as mock_tool
             url="http://example.com/tools/new",
             description="A new tool",
-            integration_type="MCP",
-            request_type="SSE",
+            integration_type="REST",
+            request_type="POST",
         )
 
         # Should raise IntegrityError due to UNIQUE constraint failure
@@ -346,8 +346,8 @@ class TestToolService:
             name="test_tool",  # Same name as mock_tool
             url="http://example.com/tools/new",
             description="A new tool",
-            integration_type="MCP",
-            request_type="SSE",
+            integration_type="REST",
+            request_type="POST",
         )
 
         # Should raise IntegrityError due to UNIQUE constraint failure
@@ -374,8 +374,8 @@ class TestToolService:
             name="test_tool",
             url="http://example.com/tools/test",
             description="A test tool",
-            integration_type="MCP",
-            request_type="SSE",
+            integration_type="REST",
+            request_type="POST",
         )
 
         # Should raise IntegrityError
@@ -1033,14 +1033,14 @@ class TestToolService:
 
         # Create update request
         tool_update = ToolUpdate(
-            integration_type="MCP", request_type="STREAMABLEHTTP", headers={"key": "value"}, input_schema={"key2": "value2"}, annotations={"key3": "value3"}, jsonpath_filter="test_filter"
+            integration_type="REST", request_type="POST", headers={"key": "value"}, input_schema={"key2": "value2"}, annotations={"key3": "value3"}, jsonpath_filter="test_filter"
         )
 
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
 
-        assert result.integration_type == "MCP"
-        assert result.request_type == "STREAMABLEHTTP"
+        assert result.integration_type == "REST"
+        assert result.request_type == "POST"
         assert result.headers == {"key": "value"}
         assert result.input_schema == {"key2": "value2"}
         assert result.annotations == {"key3": "value3"}

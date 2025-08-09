@@ -387,11 +387,23 @@ class TestAdminToolRoutes:
     async def test_admin_add_tool_with_tool_error(self, mock_register_tool, mock_request, mock_db):
         """Test adding tool with ToolError."""
         mock_register_tool.side_effect = ToolError("Tool service error")
+        mock_form = {
+        "name": "test-tool",
+        "url": "http://example.com",
+        "description": "Test tool",
+        "requestType": "GET",
+        "integrationType": "REST",
+        "headers": "{}",  # must be a valid JSON string
+        "input_schema": "{}",
+         }
+
+        mock_request.form = AsyncMock(return_value=mock_form)
 
         result = await admin_add_tool(mock_request, mock_db, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
+
         assert json.loads(result.body)["success"] is False
 
     @patch.object(ToolService, "register_tool")
@@ -412,6 +424,7 @@ class TestAdminToolRoutes:
         assert result.status_code == 422
 
     @patch.object(ToolService, "update_tool")
+    # @pytest.mark.skip("Need to investigate")
     async def test_admin_edit_tool_all_error_paths(self, mock_update_tool, mock_request, mock_db):
         """Test editing tool with all possible error paths."""
         tool_id = "tool-1"
@@ -419,26 +432,38 @@ class TestAdminToolRoutes:
         # IntegrityError should return 409 with JSON body
         # Third-Party
         from sqlalchemy.exc import IntegrityError
+        from starlette.datastructures import FormData
 
+        mock_request.form = AsyncMock(return_value=FormData([
+        ("name", "Tool_Name_1"),
+        ("url", "http://example.com"),
+        ("requestType", "GET"),
+        ("integrationType", "REST"),
+        ("headers", "{}"),
+        ("input_schema", "{}")
+        ]))
         mock_update_tool.side_effect = IntegrityError("Integrity constraint", {}, Exception("Duplicate key"))
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
+
         assert result.status_code == 409
 
         # ToolError should return 500 with JSON body
         mock_update_tool.side_effect = ToolError("Tool configuration error")
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
         assert result.status_code == 500
-        data = result.body
-        assert b"Tool configuration error" in data
+        assert b"Tool configuration error" in result.body
+
 
         # Generic Exception should return 500 with JSON body
         mock_update_tool.side_effect = Exception("Unexpected error")
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
+
         assert result.status_code == 500
-        data = result.body
-        assert b"Unexpected error" in data
+        assert b"Unexpected error" in result.body
 
     @patch.object(ToolService, "update_tool")
+
+    # @pytest.mark.skip("Need to investigate")
     async def test_admin_edit_tool_with_empty_optional_fields(self, mock_update_tool, mock_request, mock_db):
         """Test editing tool with empty optional fields."""
         # Override form with empty optional fields and valid name
@@ -451,6 +476,8 @@ class TestAdminToolRoutes:
                 "input_schema": "",
                 "jsonpathFilter": "",
                 "auth_type": "",
+                "requestType": "GET",
+                "integrationType": "REST"
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
