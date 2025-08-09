@@ -128,7 +128,8 @@ class ErrorFormatter:
         errors = []
 
         for err in error.errors():
-            field = err.get("loc", ["field"])[-1]
+            loc = err.get("loc", ["field"])
+            field = loc[-1] if loc else "field"
             msg = err.get("msg", "Invalid value")
 
             # Map technical messages to user-friendly ones

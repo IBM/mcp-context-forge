@@ -22,11 +22,11 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
 examples = []
 readme_path = Path(__file__).parent / "README.md"
 if readme_path.exists():
-    with open(readme_path, "r") as f:
+    with open(readme_path, "r", encoding="utf-8") as f:
         readme = f.read()
 
     # Find and parse example code blocks
-    # TODO: Parse code blocks when they exist in README.md
+    # FIXME: Parse code blocks when they exist in README.md
     # For now, this is a placeholder file
 
 

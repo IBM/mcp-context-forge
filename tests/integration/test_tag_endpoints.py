@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """Integration tests for tag endpoints."""
 
+# Standard
 from unittest.mock import AsyncMock, patch
-import pytest
-from fastapi.testclient import TestClient
 
+# Third-Party
+from fastapi.testclient import TestClient
+import pytest
+
+# First-Party
 from mcpgateway.main import app, require_auth
 from mcpgateway.schemas import TaggedEntity, TagInfo, TagStats
 
@@ -22,18 +26,9 @@ def test_list_tags_all_entities(test_client):
     """Test listing all tags across all entity types."""
     # Mock the tag service to return test data
     mock_tags = [
-        TagInfo(
-            name="api",
-            stats=TagStats(tools=2, resources=1, prompts=0, servers=1, gateways=0, total=4)
-        ),
-        TagInfo(
-            name="data",
-            stats=TagStats(tools=2, resources=1, prompts=0, servers=0, gateways=0, total=3)
-        ),
-        TagInfo(
-            name="test",
-            stats=TagStats(tools=1, resources=0, prompts=1, servers=0, gateways=1, total=3)
-        ),
+        TagInfo(name="api", stats=TagStats(tools=2, resources=1, prompts=0, servers=1, gateways=0, total=4)),
+        TagInfo(name="data", stats=TagStats(tools=2, resources=1, prompts=0, servers=0, gateways=0, total=3)),
+        TagInfo(name="test", stats=TagStats(tools=1, resources=0, prompts=1, servers=0, gateways=1, total=3)),
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
@@ -60,14 +55,8 @@ def test_list_tags_all_entities(test_client):
 def test_list_tags_filtered_by_tools(test_client):
     """Test listing tags filtered by tools only."""
     mock_tags = [
-        TagInfo(
-            name="api",
-            stats=TagStats(tools=2, resources=0, prompts=0, servers=0, gateways=0, total=2)
-        ),
-        TagInfo(
-            name="data",
-            stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1)
-        ),
+        TagInfo(name="api", stats=TagStats(tools=2, resources=0, prompts=0, servers=0, gateways=0, total=2)),
+        TagInfo(name="data", stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1)),
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
@@ -85,14 +74,8 @@ def test_list_tags_filtered_by_tools(test_client):
 def test_list_tags_filtered_by_multiple_types(test_client):
     """Test listing tags filtered by multiple entity types."""
     mock_tags = [
-        TagInfo(
-            name="api",
-            stats=TagStats(tools=2, resources=1, prompts=0, servers=0, gateways=0, total=3)
-        ),
-        TagInfo(
-            name="resource",
-            stats=TagStats(tools=0, resources=2, prompts=0, servers=0, gateways=0, total=2)
-        ),
+        TagInfo(name="api", stats=TagStats(tools=2, resources=1, prompts=0, servers=0, gateways=0, total=3)),
+        TagInfo(name="resource", stats=TagStats(tools=0, resources=2, prompts=0, servers=0, gateways=0, total=2)),
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
@@ -129,14 +112,8 @@ def test_list_tags_empty_database(test_client):
 def test_admin_list_tags(test_client):
     """Test admin endpoint for listing tags."""
     mock_tags = [
-        TagInfo(
-            name="api",
-            stats=TagStats(tools=2, resources=1, prompts=1, servers=1, gateways=0, total=5)
-        ),
-        TagInfo(
-            name="test",
-            stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=1, total=2)
-        ),
+        TagInfo(name="api", stats=TagStats(tools=2, resources=1, prompts=1, servers=1, gateways=0, total=5)),
+        TagInfo(name="test", stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=1, total=2)),
     ]
 
     # Need to patch the TagService instance created in admin.py
@@ -167,14 +144,8 @@ def test_admin_list_tags(test_client):
 def test_admin_list_tags_filtered(test_client):
     """Test admin endpoint with entity type filtering."""
     mock_tags = [
-        TagInfo(
-            name="server",
-            stats=TagStats(tools=0, resources=0, prompts=0, servers=2, gateways=0, total=2)
-        ),
-        TagInfo(
-            name="gateway",
-            stats=TagStats(tools=0, resources=0, prompts=0, servers=0, gateways=1, total=1)
-        ),
+        TagInfo(name="server", stats=TagStats(tools=0, resources=0, prompts=0, servers=2, gateways=0, total=2)),
+        TagInfo(name="gateway", stats=TagStats(tools=0, resources=0, prompts=0, servers=0, gateways=1, total=1)),
     ]
 
     with patch("mcpgateway.admin.TagService") as MockTagService:
@@ -201,11 +172,7 @@ def test_list_tags_with_entities(test_client):
     ]
 
     mock_tags = [
-        TagInfo(
-            name="api",
-            stats=TagStats(tools=1, resources=1, prompts=0, servers=0, gateways=0, total=2),
-            entities=mock_entities
-        ),
+        TagInfo(name="api", stats=TagStats(tools=1, resources=1, prompts=0, servers=0, gateways=0, total=2), entities=mock_entities),
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
@@ -277,11 +244,7 @@ def test_list_tags_with_entities_filtered_by_type(test_client):
     ]
 
     mock_tags = [
-        TagInfo(
-            name="development",
-            stats=TagStats(tools=2, resources=0, prompts=0, servers=0, gateways=0, total=2),
-            entities=mock_entities
-        ),
+        TagInfo(name="development", stats=TagStats(tools=2, resources=0, prompts=0, servers=0, gateways=0, total=2), entities=mock_entities),
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
@@ -339,14 +302,8 @@ def test_get_entities_by_tag_multiple_types(test_client):
 def test_list_tags_statistics_accuracy(test_client):
     """Test that tag statistics are calculated correctly."""
     mock_tags = [
-        TagInfo(
-            name="api",
-            stats=TagStats(tools=3, resources=2, prompts=1, servers=1, gateways=0, total=7)
-        ),
-        TagInfo(
-            name="database",
-            stats=TagStats(tools=2, resources=1, prompts=2, servers=0, gateways=1, total=6)
-        ),
+        TagInfo(name="api", stats=TagStats(tools=3, resources=2, prompts=1, servers=1, gateways=0, total=7)),
+        TagInfo(name="database", stats=TagStats(tools=2, resources=1, prompts=2, servers=0, gateways=1, total=6)),
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
@@ -372,11 +329,7 @@ def test_admin_tags_with_entities(test_client):
     ]
 
     mock_tags = [
-        TagInfo(
-            name="admin",
-            stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1),
-            entities=mock_entities
-        ),
+        TagInfo(name="admin", stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1), entities=mock_entities),
     ]
 
     with patch("mcpgateway.admin.TagService") as MockTagService:
@@ -453,11 +406,7 @@ def test_get_entities_by_tag_case_sensitive(test_client):
 def test_list_tags_empty_include_entities_false(test_client):
     """Test that entities array is empty when include_entities=false."""
     mock_tags = [
-        TagInfo(
-            name="test",
-            stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1),
-            entities=[]  # Should be empty when include_entities=False
-        ),
+        TagInfo(name="test", stats=TagStats(tools=1, resources=0, prompts=0, servers=0, gateways=0, total=1), entities=[]),  # Should be empty when include_entities=False
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):

@@ -14,18 +14,16 @@ detection, case sensitivity, and security features.
 import logging
 from unittest.mock import Mock, patch
 
-# Third-Party
-import pytest
-
 # First-Party
-from mcpgateway.db import Gateway as DbGateway, GlobalConfig
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import GlobalConfig
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
 
 class TestPassthroughHeaders:
     """Test suite for HTTP header passthrough functionality."""
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_basic_header_passthrough_global_config(self, mock_settings):
         """Test basic header passthrough with global configuration."""
         mock_settings.enable_header_passthrough = True
@@ -36,23 +34,15 @@ class TestPassthroughHeaders:
         mock_global_config.passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
         mock_db.query.return_value.first.return_value = mock_global_config
 
-        request_headers = {
-            "x-tenant-id": "acme-corp",
-            "x-trace-id": "trace-456",
-            "user-agent": "TestClient/1.0"  # Not in allowed headers
-        }
+        request_headers = {"x-tenant-id": "acme-corp", "x-trace-id": "trace-456", "user-agent": "TestClient/1.0"}  # Not in allowed headers
         base_headers = {"Content-Type": "application/json"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
-        expected = {
-            "Content-Type": "application/json",
-            "X-Tenant-Id": "acme-corp",
-            "X-Trace-Id": "trace-456"
-        }
+        expected = {"Content-Type": "application/json", "X-Tenant-Id": "acme-corp", "X-Trace-Id": "trace-456"}
         assert result == expected
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_gateway_specific_override(self, mock_settings):
         """Test that gateway-specific headers override global configuration."""
         mock_settings.enable_header_passthrough = True
@@ -67,22 +57,15 @@ class TestPassthroughHeaders:
         mock_gateway.passthrough_headers = ["X-Custom-Header"]
         mock_gateway.auth_type = None
 
-        request_headers = {
-            "x-custom-header": "custom-value",
-            "x-tenant-id": "should-be-ignored",  # Not in gateway config
-            "x-trace-id": "also-ignored"
-        }
+        request_headers = {"x-custom-header": "custom-value", "x-tenant-id": "should-be-ignored", "x-trace-id": "also-ignored"}  # Not in gateway config
         base_headers = {"Content-Type": "application/json"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
-        expected = {
-            "Content-Type": "application/json",
-            "X-Custom-Header": "custom-value"
-        }
+        expected = {"Content-Type": "application/json", "X-Custom-Header": "custom-value"}
         assert result == expected
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_authorization_conflict_basic_auth(self, mock_settings, caplog):
         """Test that Authorization header is blocked when gateway uses basic auth."""
         mock_settings.enable_header_passthrough = True
@@ -97,27 +80,20 @@ class TestPassthroughHeaders:
         mock_gateway.auth_type = "basic"
         mock_gateway.name = "test-gateway"
 
-        request_headers = {
-            "authorization": "Bearer should-be-blocked",
-            "x-tenant-id": "acme-corp"
-        }
+        request_headers = {"authorization": "Bearer should-be-blocked", "x-tenant-id": "acme-corp"}
         base_headers = {"Content-Type": "application/json"}
 
         with caplog.at_level(logging.WARNING):
             result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
         # Authorization should be blocked, X-Tenant-Id should pass through
-        expected = {
-            "Content-Type": "application/json",
-            "X-Tenant-Id": "acme-corp"
-        }
+        expected = {"Content-Type": "application/json", "X-Tenant-Id": "acme-corp"}
         assert result == expected
 
         # Check warning was logged
-        assert any("Skipping Authorization header passthrough due to basic auth" in record.message
-                  for record in caplog.records)
+        assert any("Skipping Authorization header passthrough due to basic auth" in record.message for record in caplog.records)
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_authorization_conflict_bearer_auth(self, mock_settings, caplog):
         """Test that Authorization header is blocked when gateway uses bearer auth."""
         mock_settings.enable_header_passthrough = True
@@ -143,8 +119,7 @@ class TestPassthroughHeaders:
         assert result == expected
 
         # Check warning was logged
-        assert any("Skipping Authorization header passthrough due to bearer auth" in record.message
-                  for record in caplog.records)
+        assert any("Skipping Authorization header passthrough due to bearer auth" in record.message for record in caplog.records)
 
     def test_feature_disabled_by_default(self):
         """Test that feature is disabled by default."""
@@ -160,7 +135,7 @@ class TestPassthroughHeaders:
         # Database should not be queried when feature is disabled
         mock_db.query.assert_not_called()
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_case_insensitive_header_matching(self, mock_settings):
         """Test that header matching works with lowercase request headers."""
         mock_settings.enable_header_passthrough = True
@@ -171,17 +146,11 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = mock_global_config
 
         # Request headers are expected to be normalized to lowercase
-        request_headers = {
-            "x-tenant-id": "mixed-case-value",  # Lowercase key
-            "authorization": "bearer lowercase-header"
-        }
+        request_headers = {"x-tenant-id": "mixed-case-value", "authorization": "bearer lowercase-header"}  # Lowercase key
         base_headers = {}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Headers should preserve config case in output keys
-        expected = {
-            "X-Tenant-ID": "mixed-case-value",
-            "Authorization": "bearer lowercase-header"
-        }
+        expected = {"X-Tenant-ID": "mixed-case-value", "Authorization": "bearer lowercase-header"}
         assert result == expected

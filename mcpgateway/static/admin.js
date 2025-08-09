@@ -2856,9 +2856,19 @@ function handleAuthTypeSelection(
         case "bearer":
             bearerFields.style.display = "block";
             break;
-        case "authheaders":
+        case "authheaders": {
             headersFields.style.display = "block";
+            // Ensure at least one header row is present
+            const containerId =
+                headersFields.querySelector('[id$="-container"]')?.id;
+            if (containerId) {
+                const container = document.getElementById(containerId);
+                if (container && container.children.length === 0) {
+                    addAuthHeader(containerId);
+                }
+            }
             break;
+        }
         default:
             // All fields already hidden
             break;
@@ -4653,6 +4663,24 @@ async function handleGatewayFormSubmit(e) {
             );
         }
 
+        // Handle auth_headers JSON field
+        const authHeadersJson = formData.get("auth_headers");
+        if (authHeadersJson) {
+            try {
+                const authHeaders = JSON.parse(authHeadersJson);
+                if (Array.isArray(authHeaders) && authHeaders.length > 0) {
+                    // Remove the JSON string and add as parsed data for backend processing
+                    formData.delete("auth_headers");
+                    formData.append(
+                        "auth_headers",
+                        JSON.stringify(authHeaders),
+                    );
+                }
+            } catch (e) {
+                console.error("Invalid auth_headers JSON:", e);
+            }
+        }
+
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/gateways`,
             {
@@ -6237,5 +6265,219 @@ document.addEventListener("DOMContentLoaded", function () {
 window.filterEntitiesByTags = filterEntitiesByTags;
 window.clearTagFilter = clearTagFilter;
 window.updateAvailableTags = updateAvailableTags;
+
+// ===================================================================
+// MULTI-HEADER AUTHENTICATION MANAGEMENT
+// ===================================================================
+
+/**
+ * Global counter for unique header IDs
+ */
+let headerCounter = 0;
+
+/**
+ * Add a new authentication header row to the specified container
+ * @param {string} containerId - ID of the container to add the header row to
+ */
+function addAuthHeader(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        console.error(`Container with ID ${containerId} not found`);
+        return;
+    }
+
+    const headerId = `auth-header-${++headerCounter}`;
+
+    const headerRow = document.createElement("div");
+    headerRow.className = "flex items-center space-x-2";
+    headerRow.id = headerId;
+
+    headerRow.innerHTML = `
+        <div class="flex-1">
+            <input
+                type="text"
+                placeholder="Header Key (e.g., X-API-Key)"
+                class="auth-header-key block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+                oninput="updateAuthHeadersJSON('${containerId}')"
+            />
+        </div>
+        <div class="flex-1">
+            <input
+                type="password"
+                placeholder="Header Value"
+                class="auth-header-value block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+                oninput="updateAuthHeadersJSON('${containerId}')"
+            />
+        </div>
+        <button
+            type="button"
+            onclick="removeAuthHeader('${headerId}', '${containerId}')"
+            class="inline-flex items-center px-2 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
+            title="Remove header"
+        >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+        </button>
+    `;
+
+    container.appendChild(headerRow);
+    updateAuthHeadersJSON(containerId);
+
+    // Focus on the key input of the new header
+    const keyInput = headerRow.querySelector(".auth-header-key");
+    if (keyInput) {
+        keyInput.focus();
+    }
+}
+
+/**
+ * Remove an authentication header row
+ * @param {string} headerId - ID of the header row to remove
+ * @param {string} containerId - ID of the container to update
+ */
+function removeAuthHeader(headerId, containerId) {
+    const headerRow = document.getElementById(headerId);
+    if (headerRow) {
+        headerRow.remove();
+        updateAuthHeadersJSON(containerId);
+    }
+}
+
+/**
+ * Update the JSON representation of authentication headers
+ * @param {string} containerId - ID of the container with headers
+ */
+function updateAuthHeadersJSON(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return;
+    }
+
+    const headers = [];
+    const headerRows = container.querySelectorAll('[id^="auth-header-"]');
+    const duplicateKeys = new Set();
+    const seenKeys = new Set();
+    let hasValidationErrors = false;
+
+    headerRows.forEach((row) => {
+        const keyInput = row.querySelector(".auth-header-key");
+        const valueInput = row.querySelector(".auth-header-value");
+
+        if (keyInput && valueInput) {
+            const key = keyInput.value.trim();
+            const value = valueInput.value.trim();
+
+            // Skip completely empty rows
+            if (!key && !value) {
+                return;
+            }
+
+            // Require key but allow empty values
+            if (!key) {
+                keyInput.setCustomValidity("Header key is required");
+                keyInput.reportValidity();
+                hasValidationErrors = true;
+                return;
+            }
+
+            // Validate header key format (letters, numbers, hyphens, underscores)
+            if (!/^[a-zA-Z0-9\-_]+$/.test(key)) {
+                keyInput.setCustomValidity(
+                    "Header keys should contain only letters, numbers, hyphens, and underscores",
+                );
+                keyInput.reportValidity();
+                hasValidationErrors = true;
+                return;
+            } else {
+                keyInput.setCustomValidity("");
+            }
+
+            // Track duplicate keys
+            if (seenKeys.has(key.toLowerCase())) {
+                duplicateKeys.add(key);
+            }
+            seenKeys.add(key.toLowerCase());
+
+            headers.push({
+                key,
+                value, // Allow empty values
+            });
+        }
+    });
+
+    // Find the corresponding JSON input field
+    let jsonInput = null;
+    if (containerId === "auth-headers-container") {
+        jsonInput = document.getElementById("auth-headers-json");
+    } else if (containerId === "auth-headers-container-gw") {
+        jsonInput = document.getElementById("auth-headers-json-gw");
+    } else if (containerId === "edit-auth-headers-container") {
+        jsonInput = document.getElementById("edit-auth-headers-json");
+    } else if (containerId === "auth-headers-container-gw-edit") {
+        jsonInput = document.getElementById("auth-headers-json-gw-edit");
+    }
+
+    // Warn about duplicate keys in console
+    if (duplicateKeys.size > 0 && !hasValidationErrors) {
+        console.warn(
+            "Duplicate header keys detected (last value will be used):",
+            Array.from(duplicateKeys),
+        );
+    }
+
+    // Check for excessive headers
+    if (headers.length > 100) {
+        console.error("Maximum of 100 headers allowed per gateway");
+        return;
+    }
+
+    if (jsonInput) {
+        jsonInput.value = headers.length > 0 ? JSON.stringify(headers) : "";
+    }
+}
+
+/**
+ * Load existing authentication headers for editing
+ * @param {string} containerId - ID of the container to populate
+ * @param {Array} headers - Array of header objects with key and value properties
+ */
+function loadAuthHeaders(containerId, headers) {
+    const container = document.getElementById(containerId);
+    if (!container || !headers || !Array.isArray(headers)) {
+        return;
+    }
+
+    // Clear existing headers
+    container.innerHTML = "";
+
+    // Add each header
+    headers.forEach((header) => {
+        if (header.key && header.value) {
+            addAuthHeader(containerId);
+            // Find the last added header row and populate it
+            const headerRows = container.querySelectorAll(
+                '[id^="auth-header-"]',
+            );
+            const lastRow = headerRows[headerRows.length - 1];
+            if (lastRow) {
+                const keyInput = lastRow.querySelector(".auth-header-key");
+                const valueInput = lastRow.querySelector(".auth-header-value");
+                if (keyInput && valueInput) {
+                    keyInput.value = header.key;
+                    valueInput.value = header.value;
+                }
+            }
+        }
+    });
+
+    updateAuthHeadersJSON(containerId);
+}
+
+// Expose authentication header functions to global scope
+window.addAuthHeader = addAuthHeader;
+window.removeAuthHeader = removeAuthHeader;
+window.updateAuthHeadersJSON = updateAuthHeadersJSON;
+window.loadAuthHeaders = loadAuthHeaders;
 
 console.log("🛡️ ContextForge MCP Gateway admin.js initialized");

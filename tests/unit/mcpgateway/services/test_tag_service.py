@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """Tests for Tag Service."""
 
+# Standard
+from unittest.mock import MagicMock
+
+# Third-Party
 import pytest
 from sqlalchemy.orm import Session
-from unittest.mock import MagicMock, patch
 
+# First-Party
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.schemas import TaggedEntity, TagInfo, TagStats
 
 
 @pytest.fixture
@@ -39,11 +42,13 @@ async def test_get_all_tags_with_tools(tag_service, mock_db):
     """Test getting tags from tools only."""
     # Mock database query for tools
     mock_result = MagicMock()
-    mock_result.__iter__ = lambda self: iter([
-        (["api", "data"],),
-        (["api", "auth"],),
-        (["data"],),
-    ])
+    mock_result.__iter__ = lambda self: iter(
+        [
+            (["api", "data"],),
+            (["api", "auth"],),
+            (["data"],),
+        ]
+    )
     mock_db.execute.return_value = mock_result
 
     tags = await tag_service.get_all_tags(mock_db, entity_types=["tools"])
@@ -108,19 +113,31 @@ async def test_get_all_tags_multiple_entity_types(tag_service, mock_db):
     call_count = 0
     results = [
         # Tools results
-        MagicMock(__iter__=lambda self: iter([
-            (["api", "tool"],),
-            (["api"],),
-        ])),
+        MagicMock(
+            __iter__=lambda self: iter(
+                [
+                    (["api", "tool"],),
+                    (["api"],),
+                ]
+            )
+        ),
         # Resources results
-        MagicMock(__iter__=lambda self: iter([
-            (["api", "resource"],),
-            (["data"],),
-        ])),
+        MagicMock(
+            __iter__=lambda self: iter(
+                [
+                    (["api", "resource"],),
+                    (["data"],),
+                ]
+            )
+        ),
         # Prompts results
-        MagicMock(__iter__=lambda self: iter([
-            (["prompt", "api"],),
-        ])),
+        MagicMock(
+            __iter__=lambda self: iter(
+                [
+                    (["prompt", "api"],),
+                ]
+            )
+        ),
     ]
 
     def side_effect(*args):
@@ -148,12 +165,14 @@ async def test_get_all_tags_with_empty_tags(tag_service, mock_db):
     """Test handling entities with empty tag arrays."""
     # Mock database query with some empty tag arrays
     mock_result = MagicMock()
-    mock_result.__iter__ = lambda self: iter([
-        (["api"],),
-        ([],),  # Empty tags array
-        (None,),  # Null tags
-        (["data"],),
-    ])
+    mock_result.__iter__ = lambda self: iter(
+        [
+            (["api"],),
+            ([],),  # Empty tags array
+            (None,),  # Null tags
+            (["data"],),
+        ]
+    )
     mock_db.execute.return_value = mock_result
 
     tags = await tag_service.get_all_tags(mock_db, entity_types=["tools"])
@@ -182,10 +201,12 @@ async def test_get_all_tags_sorted(tag_service, mock_db):
     """Test that tags are returned in sorted order."""
     # Mock database query
     mock_result = MagicMock()
-    mock_result.__iter__ = lambda self: iter([
-        (["zebra", "beta", "alpha"],),
-        (["gamma", "alpha"],),
-    ])
+    mock_result.__iter__ = lambda self: iter(
+        [
+            (["zebra", "beta", "alpha"],),
+            (["gamma", "alpha"],),
+        ]
+    )
     mock_db.execute.return_value = mock_result
 
     tags = await tag_service.get_all_tags(mock_db, entity_types=["tools"])
@@ -356,9 +377,9 @@ async def test_get_tag_counts(tag_service, mock_db):
     call_count = 0
     tag_counts = [
         [2, 1, 3],  # tools: 3 entities with 2, 1, 3 tags = 6 total
-        [1, 2],     # resources: 2 entities with 1, 2 tags = 3 total
-        [4],        # prompts: 1 entity with 4 tags = 4 total
-        [],         # servers: no entities = 0 total
+        [1, 2],  # resources: 2 entities with 1, 2 tags = 3 total
+        [4],  # prompts: 1 entity with 4 tags = 4 total
+        [],  # servers: no entities = 0 total
         [1, 1, 1],  # gateways: 3 entities with 1 tag each = 3 total
     ]
 
@@ -384,6 +405,7 @@ async def test_get_tag_counts(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_update_stats(tag_service):
     """Test the _update_stats helper method."""
+    # First-Party
     from mcpgateway.schemas import TagStats
 
     stats = TagStats(tools=0, resources=0, prompts=0, servers=0, gateways=0, total=0)

@@ -6,11 +6,12 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
+# Third-Party
 import pytest
-from typing import Dict, Any
 
+# First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework.models import PluginConfig, PluginMode, HookType
+from mcpgateway.plugins.framework.models import HookType, PluginConfig, PluginMode
 from mcpgateway.plugins.framework.plugin_types import (
     GlobalContext,
     PluginContext,
@@ -20,11 +21,11 @@ from mcpgateway.plugins.framework.plugin_types import (
 
 # Import the PII Filter plugin
 from plugins.pii_filter.pii_filter import (
-    PIIFilterPlugin,
-    PIIFilterConfig,
-    PIIDetector,
-    PIIType,
     MaskingStrategy,
+    PIIDetector,
+    PIIFilterConfig,
+    PIIFilterPlugin,
+    PIIType,
 )
 
 
@@ -150,10 +151,7 @@ class TestPIIDetector:
 
     def test_whitelist_functionality(self):
         """Test that whitelisted patterns are not detected."""
-        config = PIIFilterConfig(
-            detect_email=True,
-            whitelist_patterns=["test@example.com", "admin@localhost"]
-        )
+        config = PIIFilterConfig(detect_email=True, whitelist_patterns=["test@example.com", "admin@localhost"])
         detector = PIIDetector(config)
 
         # Whitelisted emails should not be detected
@@ -168,11 +166,7 @@ class TestPIIDetector:
 
     def test_masking_strategies(self):
         """Test different masking strategies."""
-        config = PIIFilterConfig(
-            detect_ssn=True,
-            detect_phone=False,  # Disable phone detection
-            detect_bank_account=False  # Disable bank account detection
-        )
+        config = PIIFilterConfig(detect_ssn=True, detect_phone=False, detect_bank_account=False)  # Disable phone detection  # Disable bank account detection
         detector = PIIDetector(config)
 
         # Test REDACT strategy (SSN uses PARTIAL by default in the pattern)
@@ -183,13 +177,7 @@ class TestPIIDetector:
         assert "123-45-6789" not in masked
 
         # Test PARTIAL strategy
-        config = PIIFilterConfig(
-            detect_email=True,
-            detect_ssn=False,  # Disable SSN for email test
-            detect_phone=False,
-            detect_bank_account=False,
-            default_mask_strategy=MaskingStrategy.PARTIAL
-        )
+        config = PIIFilterConfig(detect_email=True, detect_ssn=False, detect_phone=False, detect_bank_account=False, default_mask_strategy=MaskingStrategy.PARTIAL)  # Disable SSN for email test
         detector = PIIDetector(config)
         text = "Email: john.doe@example.com"
         detections = detector.detect(text)
@@ -199,10 +187,7 @@ class TestPIIDetector:
 
         # Test REMOVE strategy
         config = PIIFilterConfig(
-            detect_ssn=True,
-            detect_phone=False,  # Disable phone detection
-            detect_bank_account=False,  # Disable bank account detection
-            default_mask_strategy=MaskingStrategy.REMOVE
+            detect_ssn=True, detect_phone=False, detect_bank_account=False, default_mask_strategy=MaskingStrategy.REMOVE  # Disable phone detection  # Disable bank account detection
         )
         detector = PIIDetector(config)
         text = "SSN: 123-45-6789"
@@ -214,11 +199,7 @@ class TestPIIDetector:
 
     def test_multiple_pii_detection(self):
         """Test detection of multiple PII types in one text."""
-        config = PIIFilterConfig(
-            detect_ssn=True,
-            detect_email=True,
-            detect_phone=True
-        )
+        config = PIIFilterConfig(detect_ssn=True, detect_email=True, detect_phone=True)
         detector = PIIDetector(config)
 
         text = "Contact John at john@example.com or 555-123-4567. SSN: 123-45-6789"
@@ -257,7 +238,7 @@ class TestPIIFilterPlugin:
                 "block_on_detection": False,
                 "log_detections": True,
                 "include_detection_details": True,
-            }
+            },
         )
 
     @pytest.mark.asyncio
@@ -267,13 +248,7 @@ class TestPIIFilterPlugin:
         context = PluginContext(GlobalContext(request_id="test-1"))
 
         # Create payload with PII
-        payload = PromptPrehookPayload(
-            name="test_prompt",
-            args={
-                "user_input": "My email is john@example.com and SSN is 123-45-6789",
-                "safe_input": "This has no PII"
-            }
-        )
+        payload = PromptPrehookPayload(name="test_prompt", args={"user_input": "My email is john@example.com and SSN is 123-45-6789", "safe_input": "This has no PII"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -296,10 +271,7 @@ class TestPIIFilterPlugin:
         plugin = PIIFilterPlugin(plugin_config)
         context = PluginContext(GlobalContext(request_id="test-2"))
 
-        payload = PromptPrehookPayload(
-            name="test_prompt",
-            args={"input": "My SSN is 123-45-6789"}
-        )
+        payload = PromptPrehookPayload(name="test_prompt", args={"input": "My SSN is 123-45-6789"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -317,26 +289,11 @@ class TestPIIFilterPlugin:
 
         # Create messages with PII
         messages = [
-            Message(
-                role=Role.USER,
-                content=TextContent(
-                    type="text",
-                    text="Contact me at john@example.com or 555-123-4567"
-                )
-            ),
-            Message(
-                role=Role.ASSISTANT,
-                content=TextContent(
-                    type="text",
-                    text="I'll reach you at the provided contact: AKIAIOSFODNN7EXAMPLE"
-                )
-            )
+            Message(role=Role.USER, content=TextContent(type="text", text="Contact me at john@example.com or 555-123-4567")),
+            Message(role=Role.ASSISTANT, content=TextContent(type="text", text="I'll reach you at the provided contact: AKIAIOSFODNN7EXAMPLE")),
         ]
 
-        payload = PromptPosthookPayload(
-            name="test_prompt",
-            result=PromptResult(messages=messages)
-        )
+        payload = PromptPosthookPayload(name="test_prompt", result=PromptResult(messages=messages))
 
         result = await plugin.prompt_post_fetch(payload, context)
 
@@ -359,10 +316,7 @@ class TestPIIFilterPlugin:
         plugin = PIIFilterPlugin(plugin_config)
         context = PluginContext(GlobalContext(request_id="test-4"))
 
-        payload = PromptPrehookPayload(
-            name="test_prompt",
-            args={"input": "This text has no sensitive information"}
-        )
+        payload = PromptPrehookPayload(name="test_prompt", args={"input": "This text has no sensitive information"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -374,23 +328,12 @@ class TestPIIFilterPlugin:
     async def test_custom_patterns(self, plugin_config):
         """Test custom PII pattern detection."""
         # Add custom pattern
-        plugin_config.config["custom_patterns"] = [
-            {
-                "type": "custom",
-                "pattern": r"\bEMP\d{6}\b",
-                "description": "Employee ID",
-                "mask_strategy": "redact",
-                "enabled": True
-            }
-        ]
+        plugin_config.config["custom_patterns"] = [{"type": "custom", "pattern": r"\bEMP\d{6}\b", "description": "Employee ID", "mask_strategy": "redact", "enabled": True}]
 
         plugin = PIIFilterPlugin(plugin_config)
         context = PluginContext(GlobalContext(request_id="test-5"))
 
-        payload = PromptPrehookPayload(
-            name="test_prompt",
-            args={"input": "Employee ID: EMP123456"}
-        )
+        payload = PromptPrehookPayload(name="test_prompt", args={"input": "Employee ID: EMP123456"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -408,10 +351,7 @@ class TestPIIFilterPlugin:
         plugin = PIIFilterPlugin(plugin_config)
         context = PluginContext(GlobalContext(request_id="test-6"))
 
-        payload = PromptPrehookPayload(
-            name="test_prompt",
-            args={"input": "SSN: 123-45-6789"}
-        )
+        payload = PromptPrehookPayload(name="test_prompt", args={"input": "SSN: 123-45-6789"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -425,6 +365,7 @@ class TestPIIFilterPlugin:
 @pytest.mark.asyncio
 async def test_integration_with_manager():
     """Test the PII Filter plugin with the plugin manager."""
+    # First-Party
     from mcpgateway.plugins.framework.manager import PluginManager
 
     # Create a test configuration
@@ -440,38 +381,22 @@ async def test_integration_with_manager():
                 "tags": ["security", "pii"],
                 "mode": "enforce",
                 "priority": 10,
-                "conditions": [
-                    {
-                        "prompts": ["test_prompt"],
-                        "server_ids": [],
-                        "tenant_ids": []
-                    }
-                ],
-                "config": {
-                    "detect_ssn": True,
-                    "detect_email": True,
-                    "default_mask_strategy": "partial",
-                    "block_on_detection": False,
-                    "log_detections": True,
-                    "include_detection_details": True
-                }
+                "conditions": [{"prompts": ["test_prompt"], "server_ids": [], "tenant_ids": []}],
+                "config": {"detect_ssn": True, "detect_email": True, "default_mask_strategy": "partial", "block_on_detection": False, "log_detections": True, "include_detection_details": True},
             }
         ],
         "plugin_dirs": [],
-        "plugin_settings": {
-            "parallel_execution_within_band": False,
-            "plugin_timeout": 30,
-            "fail_on_plugin_error": False,
-            "enable_plugin_api": True,
-            "plugin_health_check_interval": 60
-        }
+        "plugin_settings": {"parallel_execution_within_band": False, "plugin_timeout": 30, "fail_on_plugin_error": False, "enable_plugin_api": True, "plugin_health_check_interval": 60},
     }
 
     # Save config to a temp file and initialize manager
+    # Standard
     import tempfile
+
+    # Third-Party
     import yaml
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.dump(config_dict, f)
         config_path = f.name
 
@@ -480,10 +405,7 @@ async def test_integration_with_manager():
         await manager.initialize()
 
         # Test with PII in prompt
-        payload = PromptPrehookPayload(
-            name="test_prompt",
-            args={"input": "Email: test@example.com, SSN: 123-45-6789"}
-        )
+        payload = PromptPrehookPayload(name="test_prompt", args={"input": "Email: test@example.com, SSN: 123-45-6789"})
 
         global_context = GlobalContext(request_id="test-manager")
         result, contexts = await manager.prompt_pre_fetch(payload, global_context)
@@ -495,7 +417,9 @@ async def test_integration_with_manager():
 
         await manager.shutdown()
     finally:
+        # Standard
         import os
+
         os.unlink(config_path)
 
 

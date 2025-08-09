@@ -16,22 +16,15 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
-from typing import Dict, Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-import httpx
 import pytest
 
 # First-Party
-from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayCreate, GatewayUpdate, ToolCreate
+from mcpgateway.schemas import ToolCreate
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
-    GatewayError,
-    GatewayNameConflictError,
-    GatewayNotFoundError,
     GatewayService,
 )
 
@@ -49,7 +42,9 @@ def _make_execute_result(*, scalar=None, scalars_list=None):
 @pytest.fixture(autouse=True)
 def _bypass_validation(monkeypatch):
     """Bypass Pydantic validation for mock objects."""
+    # First-Party
     from mcpgateway.schemas import GatewayRead
+
     monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: x))
 
 
@@ -61,9 +56,11 @@ class TestGatewayServiceExtended:
         """Test _initialize_gateway with SSE transport."""
         service = GatewayService()
 
-        with patch('mcpgateway.services.gateway_service.sse_client') as mock_sse_client, \
-             patch('mcpgateway.services.gateway_service.ClientSession') as mock_session, \
-             patch('mcpgateway.services.gateway_service.decode_auth') as mock_decode:
+        with (
+            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
+            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
+        ):
 
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
@@ -89,11 +86,7 @@ class TestGatewayServiceExtended:
 
             mock_tools_response = MagicMock()
             mock_tool = MagicMock()
-            mock_tool.model_dump.return_value = {
-                "name": "test_tool",
-                "description": "Test tool",
-                "inputSchema": {}
-            }
+            mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
@@ -101,11 +94,7 @@ class TestGatewayServiceExtended:
             service._validate_gateway_url = AsyncMock(return_value=True)
 
             # Execute
-            capabilities, tools = await service._initialize_gateway(
-                "http://test.example.com",
-                {"Authorization": "Bearer token"},
-                "SSE"
-            )
+            capabilities, tools = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
@@ -117,9 +106,11 @@ class TestGatewayServiceExtended:
         """Test _initialize_gateway with StreamableHTTP transport."""
         service = GatewayService()
 
-        with patch('mcpgateway.services.gateway_service.streamablehttp_client') as mock_http_client, \
-             patch('mcpgateway.services.gateway_service.ClientSession') as mock_session, \
-             patch('mcpgateway.services.gateway_service.decode_auth') as mock_decode:
+        with (
+            patch("mcpgateway.services.gateway_service.streamablehttp_client") as mock_http_client,
+            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
+        ):
 
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
@@ -145,20 +136,12 @@ class TestGatewayServiceExtended:
 
             mock_tools_response = MagicMock()
             mock_tool = MagicMock()
-            mock_tool.model_dump.return_value = {
-                "name": "test_tool",
-                "description": "Test tool",
-                "inputSchema": {}
-            }
+            mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Execute
-            capabilities, tools = await service._initialize_gateway(
-                "http://test.example.com",
-                {"Authorization": "Bearer token"},
-                "streamablehttp"
-            )
+            capabilities, tools = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
@@ -170,17 +153,13 @@ class TestGatewayServiceExtended:
         """Test _initialize_gateway with connection error."""
         service = GatewayService()
 
-        with patch('mcpgateway.services.gateway_service.sse_client') as mock_sse_client:
+        with patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client:
             # Make SSE client raise an exception
             mock_sse_client.side_effect = Exception("Connection failed")
 
             # Execute and expect error
             with pytest.raises(GatewayConnectionError) as exc_info:
-                await service._initialize_gateway(
-                    "http://test.example.com",
-                    None,
-                    "SSE"
-                )
+                await service._initialize_gateway("http://test.example.com", None, "SSE")
 
             assert "Failed to initialize gateway" in str(exc_info.value)
 
@@ -317,8 +296,8 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Just test that the method exists and is callable
-        assert hasattr(service, '_get_auth_headers')
-        assert callable(getattr(service, '_get_auth_headers'))
+        assert hasattr(service, "_get_auth_headers")
+        assert callable(getattr(service, "_get_auth_headers"))
 
     @pytest.mark.asyncio
     async def test_run_health_checks(self):
@@ -352,7 +331,7 @@ class TestGatewayServiceExtended:
         service._file_lock = mock_file_lock
 
         # Use cache_type="none" to avoid file lock complexity
-        with patch('mcpgateway.services.gateway_service.settings') as mock_settings:
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
             mock_settings.cache_type = "none"
 
             # Run health checks for a short time
@@ -374,8 +353,8 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Just test that the method exists and is callable
-        assert hasattr(service, '_handle_gateway_failure')
-        assert callable(getattr(service, '_handle_gateway_failure'))
+        assert hasattr(service, "_handle_gateway_failure")
+        assert callable(getattr(service, "_handle_gateway_failure"))
 
     @pytest.mark.asyncio
     async def test_subscribe_events(self):
@@ -422,16 +401,16 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Just test that the method exists and is callable
-        assert hasattr(service, 'aggregate_capabilities')
-        assert callable(getattr(service, 'aggregate_capabilities'))
+        assert hasattr(service, "aggregate_capabilities")
+        assert callable(getattr(service, "aggregate_capabilities"))
 
     def test_get_gateways(self):
         """Test _get_gateways method exists."""
         service = GatewayService()
 
         # Just test that the method exists and is callable
-        assert hasattr(service, '_get_gateways')
-        assert callable(getattr(service, '_get_gateways'))
+        assert hasattr(service, "_get_gateways")
+        assert callable(getattr(service, "_get_gateways"))
 
     @pytest.mark.asyncio
     async def test_validate_gateway_url_exists(self):
@@ -439,5 +418,5 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Just test that the method exists and is callable
-        assert hasattr(service, '_validate_gateway_url')
-        assert callable(getattr(service, '_validate_gateway_url'))
+        assert hasattr(service, "_validate_gateway_url")
+        assert callable(getattr(service, "_validate_gateway_url"))

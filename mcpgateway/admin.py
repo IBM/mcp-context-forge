@@ -2585,6 +2585,26 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         tags_str = form.get("tags", "")
         tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
+        # Parse auth_headers JSON if present
+        auth_headers_json = form.get("auth_headers")
+        auth_headers = []
+        if auth_headers_json:
+            try:
+                auth_headers = json.loads(auth_headers_json)
+            except (json.JSONDecodeError, ValueError):
+                auth_headers = []
+
+        # Handle passthrough_headers
+        passthrough_headers = form.get("passthrough_headers")
+        if passthrough_headers and passthrough_headers.strip():
+            try:
+                passthrough_headers = json.loads(passthrough_headers)
+            except (json.JSONDecodeError, ValueError):
+                # Fallback to comma-separated parsing
+                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
+        else:
+            passthrough_headers = None
+
         gateway = GatewayCreate(
             name=form["name"],
             url=form["url"],
@@ -2597,6 +2617,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             auth_token=form.get("auth_token", ""),
             auth_header_key=form.get("auth_header_key", ""),
             auth_header_value=form.get("auth_header_value", ""),
+            auth_headers=auth_headers if auth_headers else None,
+            passthrough_headers=passthrough_headers,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -2741,6 +2763,26 @@ async def admin_edit_gateway(
         tags_str = form.get("tags", "")
         tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
+        # Parse auth_headers JSON if present
+        auth_headers_json = form.get("auth_headers")
+        auth_headers = []
+        if auth_headers_json:
+            try:
+                auth_headers = json.loads(auth_headers_json)
+            except (json.JSONDecodeError, ValueError):
+                auth_headers = []
+
+        # Handle passthrough_headers
+        passthrough_headers = form.get("passthrough_headers")
+        if passthrough_headers and passthrough_headers.strip():
+            try:
+                passthrough_headers = json.loads(passthrough_headers)
+            except (json.JSONDecodeError, ValueError):
+                # Fallback to comma-separated parsing
+                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
+        else:
+            passthrough_headers = None
+
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=form.get("name"),
             url=form["url"],
@@ -2753,6 +2795,8 @@ async def admin_edit_gateway(
             auth_token=form.get("auth_token", None),
             auth_header_key=form.get("auth_header_key", None),
             auth_header_value=form.get("auth_header_value", None),
+            auth_headers=auth_headers if auth_headers else None,
+            passthrough_headers=passthrough_headers,
         )
         await gateway_service.update_gateway(db, gateway_id, gateway)
         return JSONResponse(
