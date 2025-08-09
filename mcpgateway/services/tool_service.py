@@ -28,7 +28,7 @@ import uuid
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import delete, func, not_, select, case, desc
+from sqlalchemy import case, delete, desc, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -41,12 +41,7 @@ from mcpgateway.db import ToolMetric
 from mcpgateway.models import TextContent, ToolResult
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
-from mcpgateway.schemas import (
-    ToolCreate,
-    ToolRead,
-    ToolUpdate,
-    TopPerformer
-)
+from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
@@ -197,30 +192,32 @@ class ToolService:
     async def get_top_tools(self, db: Session, limit: int = 5) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
-    Queries the database to get tools with their metrics, ordered by the number of executions
-    in descending order. Returns a list of TopPerformer objects containing tool details and
-    performance metrics.
+        Queries the database to get tools with their metrics, ordered by the number of executions
+        in descending order. Returns a list of TopPerformer objects containing tool details and
+        performance metrics.
 
-    Args:
-        db (Session): Database session for querying tool metrics.
-        limit (int, optional): Maximum number of tools to return. Defaults to 5.
+        Args:
+            db (Session): Database session for querying tool metrics.
+            limit (int): Maximum number of tools to return. Defaults to 5.
 
-    Returns:
-        List[TopPerformer]: A list of TopPerformer objects, each containing:
-            - id: Tool ID.
-            - name: Tool name.
-            - execution_count: Total number of executions.
-            - avg_response_time: Average response time in seconds, or None if no metrics.
-            - success_rate: Success rate percentage, or None if no metrics.
-            - last_execution: Timestamp of the last execution, or None if no metrics.
-    """
+        Returns:
+            List[TopPerformer]: A list of TopPerformer objects, each containing:
+                - id: Tool ID.
+                - name: Tool name.
+                - execution_count: Total number of executions.
+                - avg_response_time: Average response time in seconds, or None if no metrics.
+                - success_rate: Success rate percentage, or None if no metrics.
+                - last_execution: Timestamp of the last execution, or None if no metrics.
+        """
         results = (
             db.query(
                 DbTool.id,
                 DbTool.name,
                 func.count(ToolMetric.id).label("execution_count"),  # pylint: disable=not-callable
                 func.avg(ToolMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                (func.sum(case((ToolMetric.is_success, 1), else_=0)) / func.count(ToolMetric.id) * 100).label("success_rate"),  # pylint: disable=not-callable
+                case((func.count(ToolMetric.id) > 0, func.sum(case((ToolMetric.is_success, 1), else_=0)) / func.count(ToolMetric.id) * 100), else_=None).label(
+                    "success_rate"
+                ),  # pylint: disable=not-callable
                 func.max(ToolMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(ToolMetric)

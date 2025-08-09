@@ -4014,7 +4014,10 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 
 
 @admin_router.get("/metrics")
-async def get_aggregated_metrics(db: Session = Depends(get_db)) -> Dict[str, Any]:
+async def get_aggregated_metrics(
+    db: Session = Depends(get_db),
+    _user: str = Depends(require_auth),
+) -> Dict[str, Any]:
     """Retrieve aggregated metrics and top performers for all entity types.
 
     This endpoint collects usage metrics and top-performing entities for tools,
@@ -4045,7 +4048,6 @@ async def get_aggregated_metrics(db: Session = Depends(get_db)) -> Dict[str, Any
             "prompts": await prompt_service.get_top_prompts(db, limit=5),
             "servers": await server_service.get_top_servers(db, limit=5),
         },
-    }
     }
     return metrics
 

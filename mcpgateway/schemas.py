@@ -2952,6 +2952,7 @@ class TopPerformer(BaseModelWithConfigDict):
         success_rate (Optional[float]): Success rate percentage, or None if no metrics.
         last_execution (Optional[datetime]): Timestamp of the last execution, or None if no metrics.
     """
+
     id: Union[str, int] = Field(..., description="Entity ID")
     name: str = Field(..., description="Entity name")
     execution_count: int = Field(..., description="Number of executions")

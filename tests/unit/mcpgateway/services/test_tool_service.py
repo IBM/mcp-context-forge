@@ -324,13 +324,13 @@ class TestToolService:
             request_type="POST",
         )
 
-        # Should raise IntegrityError due to UNIQUE constraint failure
+        # Should raise ToolError due to UNIQUE constraint failure (wrapped IntegrityError)
         test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name", None, None))
-        with pytest.raises(IntegrityError) as exc_info:
+        with pytest.raises(ToolError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
 
-        # Check the error message for UNIQUE constraint failure
-        assert "UNIQUE constraint failed: tools.name" in str(exc_info.value)
+        # Check the error message for tool name conflict
+        assert "Tool already exists: test_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_inactive_tool_name_conflict(self, tool_service, mock_tool, test_db):
@@ -350,13 +350,13 @@ class TestToolService:
             request_type="POST",
         )
 
-        # Should raise IntegrityError due to UNIQUE constraint failure
+        # Should raise ToolError due to UNIQUE constraint failure (wrapped IntegrityError)
         test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name", None, None))
-        with pytest.raises(IntegrityError) as exc_info:
+        with pytest.raises(ToolError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
 
-        # Check the error message for UNIQUE constraint failure
-        assert "UNIQUE constraint failed: tools.name" in str(exc_info.value)
+        # Check the error message for tool name conflict
+        assert "Tool already exists: test_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_tool_db_integrity_error(self, tool_service, test_db):
@@ -378,13 +378,13 @@ class TestToolService:
             request_type="POST",
         )
 
-        # Should raise IntegrityError
-        with pytest.raises(IntegrityError) as exc_info:
+        # Should raise ToolError (wrapped IntegrityError)
+        with pytest.raises(ToolError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
-            # After exception, rollback should be called
-            test_db.rollback.assert_called_once()
 
-        assert "orig" in str(exc_info.value)
+        # Verify rollback was called
+        test_db.rollback.assert_called_once()
+        assert "Tool already exists: test_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_list_tools(self, tool_service, mock_tool, test_db):
