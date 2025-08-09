@@ -33,7 +33,7 @@ async def test_file_handler_creation_with_rotation():
     with tempfile.TemporaryDirectory() as tmpdir:
         log_file = "test.log"
         log_folder = tmpdir
-        
+
         with patch("mcpgateway.services.logging_service.settings") as mock_settings:
             mock_settings.log_to_file = True
             mock_settings.log_file = log_file
@@ -42,7 +42,7 @@ async def test_file_handler_creation_with_rotation():
             mock_settings.log_max_size_mb = 1
             mock_settings.log_backup_count = 3
             mock_settings.log_filemode = "a"
-            
+
             handler = _get_file_handler()
             assert handler is not None
             assert handler.maxBytes == 1 * 1024 * 1024  # 1MB
@@ -55,18 +55,18 @@ async def test_file_handler_creation_without_rotation():
     with tempfile.TemporaryDirectory() as tmpdir:
         log_file = "test.log"
         log_folder = tmpdir
-        
+
         with patch("mcpgateway.services.logging_service.settings") as mock_settings:
             mock_settings.log_to_file = True
             mock_settings.log_file = log_file
             mock_settings.log_folder = log_folder
             mock_settings.log_rotation_enabled = False
             mock_settings.log_filemode = "a"
-            
+
             # Reset global handler
             import mcpgateway.services.logging_service as ls
             ls._file_handler = None
-            
+
             handler = _get_file_handler()
             assert handler is not None
             assert not hasattr(handler, 'maxBytes')  # Regular FileHandler doesn't have this
@@ -77,11 +77,11 @@ async def test_file_handler_raises_when_disabled():
     """Test that file handler raises ValueError when file logging is disabled."""
     with patch("mcpgateway.services.logging_service.settings") as mock_settings:
         mock_settings.log_to_file = False
-        
+
         # Reset global handler
         import mcpgateway.services.logging_service as ls
         ls._file_handler = None
-        
+
         with pytest.raises(ValueError, match="File logging is disabled"):
             _get_file_handler()
 
@@ -112,16 +112,16 @@ async def test_initialize_with_file_logging_enabled():
             mock_settings.log_max_size_mb = 2
             mock_settings.log_backup_count = 3
             mock_settings.log_filemode = "a"
-            
+
             service = LoggingService()
             await service.initialize()
-            
+
             root_logger = logging.getLogger()
             # Should have both text and file handlers
             handler_types = [type(h).__name__ for h in root_logger.handlers]
             assert 'StreamHandler' in handler_types
             assert 'RotatingFileHandler' in handler_types
-            
+
             await service.shutdown()
 
 
@@ -131,15 +131,15 @@ async def test_initialize_with_file_logging_disabled():
     with patch("mcpgateway.services.logging_service.settings") as mock_settings:
         mock_settings.log_to_file = False
         mock_settings.log_file = None
-        
+
         service = LoggingService()
         await service.initialize()
-        
+
         root_logger = logging.getLogger()
         # Should only have text handler
         handler_types = [type(h).__name__ for h in root_logger.handlers]
         assert 'StreamHandler' in handler_types
-        
+
         await service.shutdown()
 
 
@@ -152,12 +152,12 @@ async def test_initialize_with_file_logging_error():
         mock_settings.log_folder = "/invalid/path"
         mock_settings.log_rotation_enabled = False
         mock_settings.log_filemode = "a"
-        
+
         # Mock the file handler to raise an exception
         with patch("mcpgateway.services.logging_service._get_file_handler", side_effect=Exception("Cannot create file")):
             service = LoggingService()
             await service.initialize()  # Should not raise, just log warning
-            
+
             await service.shutdown()
 
 
@@ -171,7 +171,7 @@ async def test_configure_uvicorn_loggers():
     """Test that uvicorn loggers are configured properly."""
     service = LoggingService()
     service._configure_uvicorn_loggers()
-    
+
     uvicorn_loggers = ['uvicorn', 'uvicorn.access', 'uvicorn.error', 'uvicorn.asgi']
     for logger_name in uvicorn_loggers:
         logger = logging.getLogger(logger_name)
@@ -184,7 +184,7 @@ async def test_configure_uvicorn_loggers():
 async def test_configure_uvicorn_after_startup():
     """Test public method to reconfigure uvicorn loggers after startup."""
     service = LoggingService()
-    
+
     with patch.object(service, '_configure_uvicorn_loggers') as mock_config:
         service.configure_uvicorn_after_startup()
         mock_config.assert_called_once()
@@ -199,14 +199,14 @@ async def test_configure_uvicorn_after_startup():
 async def test_set_level_updates_all_loggers():
     """Test that set_level updates all registered loggers."""
     service = LoggingService()
-    
+
     # Create some loggers
     logger1 = service.get_logger("test1")
     logger2 = service.get_logger("test2")
-    
+
     # Change level to ERROR
     await service.set_level(LogLevel.ERROR)
-    
+
     # All loggers should be updated
     assert logger1.level == logging.ERROR
     assert logger2.level == logging.ERROR
@@ -217,7 +217,7 @@ async def test_set_level_updates_all_loggers():
 async def test_should_log_all_levels():
     """Test _should_log for all log levels."""
     service = LoggingService()
-    
+
     # Test each level (NOTICE, ALERT, EMERGENCY are also valid levels)
     test_cases = [
         (LogLevel.DEBUG, [LogLevel.DEBUG, LogLevel.INFO, LogLevel.NOTICE, LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL, LogLevel.ALERT, LogLevel.EMERGENCY]),
@@ -227,10 +227,10 @@ async def test_should_log_all_levels():
         (LogLevel.ERROR, [LogLevel.ERROR, LogLevel.CRITICAL, LogLevel.ALERT, LogLevel.EMERGENCY]),
         (LogLevel.CRITICAL, [LogLevel.CRITICAL, LogLevel.ALERT, LogLevel.EMERGENCY]),
     ]
-    
+
     for min_level, should_pass in test_cases:
         service._level = min_level
-        for level in [LogLevel.DEBUG, LogLevel.INFO, LogLevel.NOTICE, LogLevel.WARNING, 
+        for level in [LogLevel.DEBUG, LogLevel.INFO, LogLevel.NOTICE, LogLevel.WARNING,
                       LogLevel.ERROR, LogLevel.CRITICAL, LogLevel.ALERT, LogLevel.EMERGENCY]:
             if level in should_pass:
                 assert service._should_log(level), f"{level} should log at {min_level}"
@@ -247,13 +247,13 @@ async def test_should_log_all_levels():
 async def test_notify_with_logger_name():
     """Test notify with a specific logger name."""
     service = LoggingService()
-    
+
     with patch.object(service, 'get_logger') as mock_get_logger:
         mock_logger = MagicMock()
         mock_get_logger.return_value = mock_logger
-        
+
         await service.notify("test message", LogLevel.INFO, logger_name="custom.logger")
-        
+
         mock_get_logger.assert_called_with("custom.logger")
         mock_logger.info.assert_called_with("test message")
 
@@ -262,13 +262,13 @@ async def test_notify_with_logger_name():
 async def test_notify_without_logger_name():
     """Test notify without a specific logger name uses root logger."""
     service = LoggingService()
-    
+
     with patch.object(service, 'get_logger') as mock_get_logger:
         mock_logger = MagicMock()
         mock_get_logger.return_value = mock_logger
-        
+
         await service.notify("test message", LogLevel.WARNING)
-        
+
         mock_get_logger.assert_called_with("")
         mock_logger.warning.assert_called_with("test message")
 
@@ -277,12 +277,12 @@ async def test_notify_without_logger_name():
 async def test_notify_with_failed_subscriber():
     """Test notify handles failed subscriber gracefully."""
     service = LoggingService()
-    
+
     # Create a mock queue that raises an exception
     mock_queue = MagicMock()
     mock_queue.put = MagicMock(side_effect=Exception("Queue error"))
     service._subscribers.append(mock_queue)
-    
+
     # Should not raise, just log the error
     await service.notify("test message", LogLevel.ERROR)
 
@@ -300,13 +300,13 @@ async def test_get_logger_with_file_handler_error():
             mock_settings.log_to_file = True
             mock_settings.log_file = "test.log"
             mock_settings.log_folder = tmpdir
-            
+
             service = LoggingService()
-            
+
             # Mock file handler to raise exception
             with patch("mcpgateway.services.logging_service._get_file_handler", side_effect=Exception("File error")):
                 logger = service.get_logger("test.logger")
-                
+
                 # Logger should still be created despite file handler error
                 assert logger is not None
                 assert logger.name == "test.logger"
@@ -316,10 +316,10 @@ async def test_get_logger_with_file_handler_error():
 async def test_get_logger_reuses_existing():
     """Test get_logger returns existing logger instance."""
     service = LoggingService()
-    
+
     logger1 = service.get_logger("test.app")
     logger2 = service.get_logger("test.app")
-    
+
     assert logger1 is logger2
     assert len(service._loggers) == 1
 
@@ -333,15 +333,15 @@ async def test_get_logger_reuses_existing():
 async def test_shutdown_clears_subscribers():
     """Test shutdown clears all subscribers."""
     service = LoggingService()
-    
+
     # Add some mock subscribers
     service._subscribers.append(MagicMock())
     service._subscribers.append(MagicMock())
-    
+
     assert len(service._subscribers) == 2
-    
+
     await service.shutdown()
-    
+
     assert len(service._subscribers) == 0
 
 
@@ -355,34 +355,34 @@ async def test_dual_logging_integration():
     """Integration test for dual logging to console and file."""
     with tempfile.TemporaryDirectory() as tmpdir:
         log_file = os.path.join(tmpdir, "integration.log")
-        
+
         with patch("mcpgateway.services.logging_service.settings") as mock_settings:
             mock_settings.log_to_file = True
             mock_settings.log_file = "integration.log"
             mock_settings.log_folder = tmpdir
             mock_settings.log_rotation_enabled = False
             mock_settings.log_filemode = "w"
-            
+
             # Reset global handlers
             import mcpgateway.services.logging_service as ls
             ls._file_handler = None
             ls._text_handler = None
-            
+
             service = LoggingService()
             await service.initialize()
-            
+
             # Log some messages
             logger = service.get_logger("integration.test")
             logger.info("Integration test message")
             logger.error("Integration error message")
-            
+
             # Configure uvicorn loggers
             service.configure_uvicorn_after_startup()
             uvicorn_logger = logging.getLogger("uvicorn.access")
             uvicorn_logger.info("127.0.0.1:8000 - \"GET /test HTTP/1.1\" 200")
-            
+
             await service.shutdown()
-            
+
             # Check file was created and contains expected content
             assert os.path.exists(log_file)
             with open(log_file, 'r') as f:
@@ -402,7 +402,7 @@ async def test_dual_logging_integration():
 async def test_get_logger_with_empty_name():
     """Test get_logger with empty name returns root logger."""
     service = LoggingService()
-    
+
     logger = service.get_logger("")
     assert logger.name == "root"
 
@@ -411,7 +411,7 @@ async def test_get_logger_with_empty_name():
 async def test_notify_with_all_log_levels():
     """Test notify works with all log level values including special ones."""
     service = LoggingService()
-    
+
     # Test all levels including NOTICE, ALERT, EMERGENCY
     # which are now mapped to appropriate Python levels
     for level in [LogLevel.DEBUG, LogLevel.INFO, LogLevel.NOTICE, LogLevel.WARNING,
@@ -425,18 +425,18 @@ async def test_file_handler_creates_directory():
     """Test that file handler creates log directory if it doesn't exist."""
     with tempfile.TemporaryDirectory() as tmpdir:
         log_folder = os.path.join(tmpdir, "new_logs")
-        
+
         with patch("mcpgateway.services.logging_service.settings") as mock_settings:
             mock_settings.log_to_file = True
             mock_settings.log_file = "test.log"
             mock_settings.log_folder = log_folder
             mock_settings.log_rotation_enabled = False
             mock_settings.log_filemode = "a"
-            
+
             # Reset global handler
             import mcpgateway.services.logging_service as ls
             ls._file_handler = None
-            
+
             handler = _get_file_handler()
             assert handler is not None
             assert os.path.exists(log_folder)

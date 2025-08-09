@@ -18,7 +18,7 @@ Examples:
     >>> cache.get('a')
     1
     >>> import time
-    >>> time.sleep(1.2)
+    >>> time.sleep(1.5)  # Use 1.5s to ensure expiration
     >>> cache.get('a') is None
     True
     >>> cache.set('a', 1)
@@ -74,7 +74,7 @@ class ResourceCache:
         >>> cache.get('a')
         1
         >>> import time
-        >>> time.sleep(1.2)
+        >>> time.sleep(1.5)  # Use 1.5s to ensure expiration
         >>> cache.get('a') is None
         True
         >>> cache.set('a', 1)
@@ -135,7 +135,7 @@ class ResourceCache:
             >>> short_cache.get('b')
             2
             >>> import time
-            >>> time.sleep(1.2)
+            >>> time.sleep(0.2)  # Sleep longer than TTL (0.1s) to ensure expiration
             >>> short_cache.get('b') is None
             True
         """
