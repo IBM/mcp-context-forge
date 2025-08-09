@@ -485,7 +485,7 @@ class PluginManager:
         loaded_count = 0
 
         for plugin_config in plugins:
-            if plugin_config.mode != PluginMode.DISABLED:
+            if plugin_config.enabled and plugin_config.mode != PluginMode.DISABLED:
                 try:
                     plugin = await self._loader.load_and_instantiate_plugin(plugin_config)
                     if plugin:
@@ -498,7 +498,10 @@ class PluginManager:
                     logger.error(f"Failed to load plugin {plugin_config.name}: {str(e)}")
                     raise ValueError(f"Unable to register and initialize plugin: {plugin_config.name}") from e
             else:
-                logger.debug(f"Skipping disabled plugin: {plugin_config.name}")
+                if not plugin_config.enabled:
+                    logger.debug(f"Skipping disabled plugin: {plugin_config.name} (enabled=false)")
+                else:
+                    logger.debug(f"Skipping disabled plugin: {plugin_config.name} (mode=disabled)")
 
         self._initialized = True
         logger.info(f"Plugin manager initialized with {loaded_count} plugins")
