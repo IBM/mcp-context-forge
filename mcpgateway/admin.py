@@ -3975,118 +3975,81 @@ async def admin_delete_root(uri: str, request: Request, user: str = Depends(requ
 MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, PromptMetrics]]
 
 
-@admin_router.get("/metrics", response_model=MetricsDict)
-async def admin_get_metrics(
-    db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
-) -> MetricsDict:
-    """
-    Retrieve aggregate metrics for all entity types via the admin UI.
+# @admin_router.get("/metrics", response_model=MetricsDict)
+# async def admin_get_metrics(
+#     db: Session = Depends(get_db),
+#     user: str = Depends(require_auth),
+# ) -> MetricsDict:
+#     """
+#     Retrieve aggregate metrics for all entity types via the admin UI.
 
-    This endpoint collects and returns usage metrics for tools, resources, servers,
-    and prompts. The metrics are retrieved by calling the aggregate_metrics method
-    on each respective service, which compiles statistics about usage patterns,
-    success rates, and other relevant metrics for administrative monitoring
-    and analysis purposes.
+#     This endpoint collects and returns usage metrics for tools, resources, servers,
+#     and prompts. The metrics are retrieved by calling the aggregate_metrics method
+#     on each respective service, which compiles statistics about usage patterns,
+#     success rates, and other relevant metrics for administrative monitoring
+#     and analysis purposes.
+
+#     Args:
+#         db (Session): Database session dependency.
+#         user (str): Authenticated user dependency.
+
+#     Returns:
+#         MetricsDict: A dictionary containing the aggregated metrics for tools,
+#         resources, servers, and prompts. Each value is a Pydantic model instance
+#         specific to the entity type.
+#     """
+#     logger.debug(f"User {user} requested aggregate metrics")
+#     tool_metrics = await tool_service.aggregate_metrics(db)
+#     resource_metrics = await resource_service.aggregate_metrics(db)
+#     server_metrics = await server_service.aggregate_metrics(db)
+#     prompt_metrics = await prompt_service.aggregate_metrics(db)
+
+#     # Return actual Pydantic model instances
+#     return {
+#         "tools": tool_metrics,
+#         "resources": resource_metrics,
+#         "servers": server_metrics,
+#         "prompts": prompt_metrics,
+#     }
+
+
+@admin_router.get("/metrics")
+async def get_aggregated_metrics(
+    db: Session = Depends(get_db),
+    _user: str = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Retrieve aggregated metrics and top performers for all entity types.
+
+    This endpoint collects usage metrics and top-performing entities for tools,
+    resources, prompts, and servers by calling the respective service methods.
+    The results are compiled into a dictionary for administrative monitoring.
 
     Args:
-        db (Session): Database session dependency.
-        user (str): Authenticated user dependency.
+        db (Session): Database session dependency for querying metrics.
 
     Returns:
-        MetricsDict: A dictionary containing the aggregated metrics for tools,
-        resources, servers, and prompts. Each value is a Pydantic model instance
-        specific to the entity type.
-
-    Examples:
-        >>> import asyncio
-        >>> from unittest.mock import AsyncMock, MagicMock
-        >>> from mcpgateway.schemas import ToolMetrics, ResourceMetrics, ServerMetrics, PromptMetrics
-        >>>
-        >>> mock_db = MagicMock()
-        >>> mock_user = "test_user"
-        >>>
-        >>> mock_tool_metrics = ToolMetrics(
-        ...     total_executions=10,
-        ...     successful_executions=9,
-        ...     failed_executions=1,
-        ...     failure_rate=0.1,
-        ...     min_response_time=0.05,
-        ...     max_response_time=1.0,
-        ...     avg_response_time=0.3,
-        ...     last_execution_time=None
-        ... )
-        >>> mock_resource_metrics = ResourceMetrics(
-        ...     total_executions=5,
-        ...     successful_executions=5,
-        ...     failed_executions=0,
-        ...     failure_rate=0.0,
-        ...     min_response_time=0.1,
-        ...     max_response_time=0.5,
-        ...     avg_response_time=0.2,
-        ...     last_execution_time=None
-        ... )
-        >>> mock_server_metrics = ServerMetrics(
-        ...     total_executions=7,
-        ...     successful_executions=7,
-        ...     failed_executions=0,
-        ...     failure_rate=0.0,
-        ...     min_response_time=0.2,
-        ...     max_response_time=0.7,
-        ...     avg_response_time=0.4,
-        ...     last_execution_time=None
-        ... )
-        >>> mock_prompt_metrics = PromptMetrics(
-        ...     total_executions=3,
-        ...     successful_executions=3,
-        ...     failed_executions=0,
-        ...     failure_rate=0.0,
-        ...     min_response_time=0.15,
-        ...     max_response_time=0.6,
-        ...     avg_response_time=0.35,
-        ...     last_execution_time=None
-        ... )
-        >>>
-        >>> original_aggregate_metrics_tool = tool_service.aggregate_metrics
-        >>> original_aggregate_metrics_resource = resource_service.aggregate_metrics
-        >>> original_aggregate_metrics_server = server_service.aggregate_metrics
-        >>> original_aggregate_metrics_prompt = prompt_service.aggregate_metrics
-        >>>
-        >>> tool_service.aggregate_metrics = AsyncMock(return_value=mock_tool_metrics)
-        >>> resource_service.aggregate_metrics = AsyncMock(return_value=mock_resource_metrics)
-        >>> server_service.aggregate_metrics = AsyncMock(return_value=mock_server_metrics)
-        >>> prompt_service.aggregate_metrics = AsyncMock(return_value=mock_prompt_metrics)
-        >>>
-        >>> async def test_admin_get_metrics():
-        ...     result = await admin_get_metrics(mock_db, mock_user)
-        ...     return (
-        ...         isinstance(result, dict) and
-        ...         result.get("tools") == mock_tool_metrics and
-        ...         result.get("resources") == mock_resource_metrics and
-        ...         result.get("servers") == mock_server_metrics and
-        ...         result.get("prompts") == mock_prompt_metrics
-        ...     )
-        >>>
-        >>> import asyncio; asyncio.run(test_admin_get_metrics())
-        True
-        >>>
-        >>> tool_service.aggregate_metrics = original_aggregate_metrics_tool
-        >>> resource_service.aggregate_metrics = original_aggregate_metrics_resource
-        >>> server_service.aggregate_metrics = original_aggregate_metrics_server
-        >>> prompt_service.aggregate_metrics = original_aggregate_metrics_prompt
+        Dict[str, Any]: A dictionary containing aggregated metrics and top performers
+            for tools, resources, prompts, and servers. The structure includes:
+            - 'tools': Metrics for tools.
+            - 'resources': Metrics for resources.
+            - 'prompts': Metrics for prompts.
+            - 'servers': Metrics for servers.
+            - 'topPerformers': A nested dictionary with top 5 tools, resources, prompts,
+              and servers.
     """
-    logger.debug(f"User {user} requested aggregate metrics")
-    tool_metrics = await tool_service.aggregate_metrics(db)
-    resource_metrics = await resource_service.aggregate_metrics(db)
-    server_metrics = await server_service.aggregate_metrics(db)
-    prompt_metrics = await prompt_service.aggregate_metrics(db)
-
-    return {
-        "tools": tool_metrics,
-        "resources": resource_metrics,
-        "servers": server_metrics,
-        "prompts": prompt_metrics,
+    metrics = {
+        "tools": await tool_service.aggregate_metrics(db),
+        "resources": await resource_service.aggregate_metrics(db),
+        "prompts": await prompt_service.aggregate_metrics(db),
+        "servers": await server_service.aggregate_metrics(db),
+        "topPerformers": {
+            "tools": await tool_service.get_top_tools(db, limit=5),
+            "resources": await resource_service.get_top_resources(db, limit=5),
+            "prompts": await prompt_service.get_top_prompts(db, limit=5),
+            "servers": await server_service.get_top_servers(db, limit=5),
+        },
     }
+    return metrics
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])

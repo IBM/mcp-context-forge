@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import delete, func, not_, select
+from sqlalchemy import case, delete, desc, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,7 +30,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate
+from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -125,6 +125,57 @@ class ServerService:
         """Shutdown the server service."""
         await self._http_client.aclose()
         logger.info("Server service shutdown complete")
+
+    # get_top_server
+    async def get_top_servers(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+        """Retrieve the top-performing servers based on execution count.
+
+        Queries the database to get servers with their metrics, ordered by the number of executions
+        in descending order. Returns a list of TopPerformer objects containing server details and
+        performance metrics.
+
+        Args:
+            db (Session): Database session for querying server metrics.
+            limit (int): Maximum number of servers to return. Defaults to 5.
+
+        Returns:
+            List[TopPerformer]: A list of TopPerformer objects, each containing:
+                - id: Server ID.
+                - name: Server name.
+                - execution_count: Total number of executions.
+                - avg_response_time: Average response time in seconds, or None if no metrics.
+                - success_rate: Success rate percentage, or None if no metrics.
+                - last_execution: Timestamp of the last execution, or None if no metrics.
+        """
+        results = (
+            db.query(
+                DbServer.id,
+                DbServer.name,
+                func.count(ServerMetric.id).label("execution_count"),  # pylint: disable=not-callable
+                func.avg(ServerMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                case((func.count(ServerMetric.id) > 0, func.sum(case((ServerMetric.is_success, 1), else_=0)) / func.count(ServerMetric.id) * 100), else_=None).label(
+                    "success_rate"
+                ),  # pylint: disable=not-callable
+                func.max(ServerMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
+            )
+            .outerjoin(ServerMetric)
+            .group_by(DbServer.id, DbServer.name)
+            .order_by(desc("execution_count"))
+            .limit(limit)
+            .all()
+        )
+
+        return [
+            TopPerformer(
+                id=result.id,
+                name=result.name,
+                execution_count=result.execution_count or 0,
+                avg_response_time=float(result.avg_response_time) if result.avg_response_time else None,
+                success_rate=float(result.success_rate) if result.success_rate else None,
+                last_execution=result.last_execution,
+            )
+            for result in results
+        ]
 
     def _convert_server_to_read(self, server: DbServer) -> ServerRead:
         """
