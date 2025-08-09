@@ -13,7 +13,6 @@ providing server-to-client streaming with proper session management.
 import asyncio
 from datetime import datetime
 import json
-import logging
 from typing import Any, AsyncGenerator, Dict
 import uuid
 

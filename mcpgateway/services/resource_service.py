@@ -27,7 +27,6 @@ Examples:
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import logging
 import mimetypes
 import re
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union

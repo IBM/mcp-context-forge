@@ -1,7 +1,7 @@
 # ADR-0005: Structured JSON Logging
 
 - *Status:* Implemented
-- *Date:* 2025-01-09  
+- *Date:* 2025-01-09
 - *Deciders:* Core Engineering Team
 
 ## Context
@@ -27,7 +27,7 @@ Logs are initialized at startup via centralized `LoggingService` with dual-forma
 Use the Python standard `logging` module with centralized `LoggingService`:
 
 - **JSON formatter** for file logs using `python-json-logger` library
-- **Text formatter** for console logs for human readability  
+- **Text formatter** for console logs for human readability
 - **Dual output**: JSON to rotating files (1MB max, 5 backups), text to console
 - **Rotating file handler** for automatic log management
 - **Centralized service** integrated across all 22+ modules
@@ -38,7 +38,7 @@ Use the Python standard `logging` module with centralized `LoggingService`:
 - 📋 **Structured JSON logs** suitable for production observability pipelines (ELK, Datadog, etc.)
 - ⚙️ **Dual format support**: JSON files for machines, text console for humans
 - 🔄 **Automatic log rotation** prevents disk space issues in production
-- 🧪 **Development-friendly** with human-readable console output  
+- 🧪 **Development-friendly** with human-readable console output
 - 📁 **Organized storage** with configurable log directories and retention
 - 🧱 **Minimal dependencies**: Uses standard library + `python-json-logger`
 - 🎯 **Consistent logging** across all application modules
@@ -57,7 +57,7 @@ Use the Python standard `logging` module with centralized `LoggingService`:
 **✅ Implemented** - Structured logging is fully implemented in `LoggingService` with:
 
 - Centralized logging service integrated across all modules
-- Dual-format output (JSON to files, text to console)  
+- Dual-format output (JSON to files, text to console)
 - Automatic log rotation with configurable retention
 - Environment variable configuration support
 - Production-ready with proper error handling and lazy initialization

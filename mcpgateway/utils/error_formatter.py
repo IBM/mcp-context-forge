@@ -25,7 +25,6 @@ Examples:
 """
 
 # Standard
-import logging
 from typing import Any, Dict
 
 # Third-Party

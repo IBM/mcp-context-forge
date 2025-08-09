@@ -22,7 +22,6 @@ directly with ``python3 mcpgateway/bootstrap_db.py``.
 # Standard
 import asyncio
 from importlib.resources import files
-import logging
 
 # Third-Party
 from alembic import command

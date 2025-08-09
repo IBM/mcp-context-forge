@@ -22,7 +22,6 @@ Examples:
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import logging
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Third-Party

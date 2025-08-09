@@ -34,7 +34,6 @@ from collections import deque
 from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
-import logging
 import re
 from typing import List, Union
 from uuid import uuid4

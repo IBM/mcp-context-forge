@@ -31,7 +31,6 @@ Note:
 # Standard
 import asyncio
 import json
-import logging
 import sys
 from typing import Any, AsyncGenerator, Dict, Optional
 

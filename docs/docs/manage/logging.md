@@ -75,7 +75,7 @@ LOG_FORMAT=text
 # View current log file
 cat logs/mcpgateway.log
 
-# Follow log file in real-time  
+# Follow log file in real-time
 tail -f logs/mcpgateway.log
 
 # View with JSON formatting (requires jq)
@@ -93,7 +93,7 @@ Files automatically rotate based on size:
 ```
 logs/
 ├── mcpgateway.log      (current, active log)
-├── mcpgateway.log.1    (most recent backup)  
+├── mcpgateway.log.1    (most recent backup)
 ├── mcpgateway.log.2    (second backup)
 ├── mcpgateway.log.3    (third backup)
 ├── mcpgateway.log.4    (fourth backup)

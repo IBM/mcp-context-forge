@@ -17,7 +17,6 @@ It handles:
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import logging
 from string import Formatter
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 import uuid

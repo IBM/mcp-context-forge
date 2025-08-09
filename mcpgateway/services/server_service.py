@@ -15,7 +15,6 @@ It also publishes event notifications for server changes.
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party

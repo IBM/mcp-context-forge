@@ -11,7 +11,6 @@ It handles root registration, validation, and change notifications.
 
 # Standard
 import asyncio
-import logging
 import os
 from typing import AsyncGenerator, Dict, List, Optional
 from urllib.parse import urlparse

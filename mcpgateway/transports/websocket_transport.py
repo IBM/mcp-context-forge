@@ -11,7 +11,6 @@ full-duplex communication between client and server.
 
 # Standard
 import asyncio
-import logging
 from typing import Any, AsyncGenerator, Dict, Optional
 
 # Third-Party
