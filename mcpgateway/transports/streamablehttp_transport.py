@@ -60,10 +60,9 @@ from starlette.types import Receive, Scope, Send
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.verify_credentials import verify_credentials
-
-from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
 logging_service = LoggingService()

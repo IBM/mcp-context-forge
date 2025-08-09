@@ -160,11 +160,7 @@ import httpx
 from mcpgateway.config import settings
 
 # Configure logger
-from mcpgateway.services.logging_service import LoggingService
-
-# Initialize logging service first
-logging_service = LoggingService()
-logger = logging_service.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 RETRYABLE_STATUS_CODES = {
     429,  # Too Many Requests

@@ -32,7 +32,6 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate
-
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

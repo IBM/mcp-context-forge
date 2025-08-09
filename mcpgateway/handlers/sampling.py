@@ -50,7 +50,6 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.models import CreateMessageResult, ModelPreferences, Role, TextContent
-
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

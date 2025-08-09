@@ -47,6 +47,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -54,8 +55,6 @@ from mcpgateway.utils.services_auth import decode_auth
 
 # Local
 from ..config import extract_using_jq
-
-from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
 logging_service = LoggingService()

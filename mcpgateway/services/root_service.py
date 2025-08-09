@@ -19,7 +19,6 @@ from urllib.parse import urlparse
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.models import Root
-
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

@@ -21,7 +21,6 @@ underlying data.
 from collections import defaultdict
 from functools import wraps
 import json
-import logging
 import time
 from typing import Any, Dict, List, Optional, Union
 
@@ -63,6 +62,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
@@ -73,8 +73,6 @@ from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
-
-from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
 logging_service = LoggingService()

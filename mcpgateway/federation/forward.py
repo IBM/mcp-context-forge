@@ -35,9 +35,8 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import ToolResult
-from mcpgateway.utils.passthrough_headers import get_passthrough_headers
-
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 
 # Initialize logging service first
 logging_service = LoggingService()

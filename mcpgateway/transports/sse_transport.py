@@ -23,9 +23,8 @@ from sse_starlette.sse import EventSourceResponse
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.transports.base import Transport
-
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.transports.base import Transport
 
 # Initialize logging service first
 logging_service = LoggingService()

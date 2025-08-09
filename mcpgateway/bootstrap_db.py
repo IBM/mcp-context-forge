@@ -32,7 +32,6 @@ from sqlalchemy import create_engine, inspect
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Base
-
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

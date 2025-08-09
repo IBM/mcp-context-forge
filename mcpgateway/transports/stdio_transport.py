@@ -36,9 +36,8 @@ import sys
 from typing import Any, AsyncGenerator, Dict, Optional
 
 # First-Party
-from mcpgateway.transports.base import Transport
-
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.transports.base import Transport
 
 # Initialize logging service first
 logging_service = LoggingService()

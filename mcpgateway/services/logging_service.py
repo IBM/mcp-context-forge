@@ -10,18 +10,19 @@ It supports RFC 5424 severity levels, log level management, and log event subscr
 """
 
 # Standard
-import os
 import asyncio
 from datetime import datetime, timezone
 import logging
+from logging.handlers import RotatingFileHandler
+import os
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-# First-Party
-from mcpgateway.models import LogLevel
-from mcpgateway.config import settings
-
-from logging.handlers import RotatingFileHandler
+# Third-Party
 from pythonjsonlogger import jsonlogger  # You may need to install python-json-logger package
+
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.models import LogLevel
 
 # Create a text formatter
 text_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -33,14 +34,36 @@ json_formatter = jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    filemode=settings.log_filemode if settings.log_filemode else None,
-    filename=settings.log_file if settings.log_file else None,
 )
 
-file_handler = RotatingFileHandler(os.path.join(settings.log_folder, settings.log_file), maxBytes=1024 * 1024, backupCount=5)
-file_handler.setFormatter(json_formatter)
-text_handler = logging.StreamHandler()  # For console output
-text_handler.setFormatter(text_formatter)
+# Global handlers will be created lazily
+_file_handler: Optional[RotatingFileHandler] = None
+_text_handler: Optional[logging.StreamHandler] = None
+
+
+def _get_file_handler() -> RotatingFileHandler:
+    """Get or create the file handler."""
+    global _file_handler
+    if _file_handler is None:
+        # Ensure log folder exists
+        if settings.log_folder:
+            os.makedirs(settings.log_folder, exist_ok=True)
+            log_path = os.path.join(settings.log_folder, settings.log_file)
+        else:
+            log_path = settings.log_file
+
+        _file_handler = RotatingFileHandler(log_path, maxBytes=1024 * 1024, backupCount=5)
+        _file_handler.setFormatter(json_formatter)
+    return _file_handler
+
+
+def _get_text_handler() -> logging.StreamHandler:
+    """Get or create the text handler."""
+    global _text_handler
+    if _text_handler is None:
+        _text_handler = logging.StreamHandler()
+        _text_handler.setFormatter(text_formatter)
+    return _text_handler
 
 
 class LoggingService:
@@ -69,8 +92,9 @@ class LoggingService:
             >>> asyncio.run(service.initialize())
         """
         self._loggers[""] = logging.getLogger()
-        # Add the handler to the logger
-        self._loggers[""].addHandler(file_handler)
+        # Add the handlers to the logger
+        self._loggers[""].addHandler(_get_file_handler())
+        self._loggers[""].addHandler(_get_text_handler())
         logging.info("Logging service initialized")
 
     async def shutdown(self) -> None:
@@ -105,8 +129,8 @@ class LoggingService:
         """
         if name not in self._loggers:
             logger = logging.getLogger(name)
-            logger.addHandler(file_handler)
-            logger.addHandler(text_handler)
+            logger.addHandler(_get_file_handler())
+            logger.addHandler(_get_text_handler())
             # Set level to match service level
             log_level = getattr(logging, self._level.upper())
             logger.setLevel(log_level)

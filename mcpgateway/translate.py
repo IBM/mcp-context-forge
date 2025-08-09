@@ -77,6 +77,7 @@ try:
 except ImportError:
     httpx = None  # type: ignore[assignment]
 
+# First-Party
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

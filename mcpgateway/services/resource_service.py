@@ -51,7 +51,6 @@ from mcpgateway.schemas import (
     ResourceSubscription,
     ResourceUpdate,
 )
-
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
