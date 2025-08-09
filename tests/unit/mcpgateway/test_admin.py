@@ -400,7 +400,7 @@ class TestAdminToolRoutes:
         mock_request.form = AsyncMock(return_value=mock_form)
 
         result = await admin_add_tool(mock_request, mock_db, "test-user")
-        
+
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
 
@@ -441,10 +441,10 @@ class TestAdminToolRoutes:
         ("integrationType", "REST"),
         ("headers", "{}"),
         ("input_schema", "{}")
-        ])) 
+        ]))
         mock_update_tool.side_effect = IntegrityError("Integrity constraint", {}, Exception("Duplicate key"))
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
-        
+
         assert result.status_code == 409
 
         # ToolError should return 500 with JSON body
@@ -452,18 +452,18 @@ class TestAdminToolRoutes:
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
         assert result.status_code == 500
         assert b"Tool configuration error" in result.body
-        
-        
+
+
         # Generic Exception should return 500 with JSON body
         mock_update_tool.side_effect = Exception("Unexpected error")
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
-        
+
         assert result.status_code == 500
         assert b"Unexpected error" in result.body
 
     @patch.object(ToolService, "update_tool")
-    
-    # @pytest.mark.skip("Need to investigate") 
+
+    # @pytest.mark.skip("Need to investigate")
     async def test_admin_edit_tool_with_empty_optional_fields(self, mock_update_tool, mock_request, mock_db):
         """Test editing tool with empty optional fields."""
         # Override form with empty optional fields and valid name

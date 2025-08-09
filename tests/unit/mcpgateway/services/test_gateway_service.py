@@ -311,8 +311,8 @@ class TestGatewayService:
             ToolCreate(
                 name="test_tool",
                 description="A test tool",
-                integration_type="MCP",
-                request_type="SSE",
+                integration_type="REST",
+                request_type="POST",
                 input_schema={"type": "object"}
             )
         ]
@@ -555,8 +555,8 @@ class TestGatewayService:
             ToolCreate(
                 name="existing_tool",  # This tool already exists
                 description="An existing tool",
-                integration_type="MCP",
-                request_type="SSE",
+                integration_type="REST",
+                request_type="POST",
                 input_schema={"type": "object"}
             )
         ]
@@ -1010,15 +1010,15 @@ class TestGatewayService:
             ToolCreate(
                 name="existing_tool",
                 description="Updated tool",
-                integration_type="MCP",
-                request_type="SSE",
+                integration_type="REST",
+                request_type="POST",
                 input_schema={"type": "object"}
             ),
             ToolCreate(
                 name="new_tool",
                 description="Brand new tool",
-                integration_type="MCP",
-                request_type="SSE",
+                integration_type="REST",
+                request_type="POST",
                 input_schema={"type": "object"}
             )
         ]
