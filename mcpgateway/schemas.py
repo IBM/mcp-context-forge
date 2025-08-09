@@ -1818,20 +1818,7 @@ class GatewayCreate(BaseModel):
         if (auth_type is None) or (auth_type == ""):
             return v  # If no auth_type is provided, no need to create auth_value
 
-        # If custom headers, use all headers
-        if auth_type == "authheaders":
-            auth_headers = data.get("auth_headers")
-            if auth_headers and isinstance(auth_headers, list):
-                # Convert list of {key, value} to dict
-                header_dict = {h["key"]: h["value"] for h in auth_headers if h.get("key")}
-                return encode_auth(header_dict)
-            # Fallback to old single key/value
-            header_key = data.get("auth_header_key")
-            header_value = data.get("auth_header_value")
-            if header_key and header_value:
-                return encode_auth({header_key: header_value})
-
-        # Otherwise, use the default logic
+        # Process the auth fields and generate auth_value based on auth_type
         auth_value = cls._process_auth_fields(info)
         return auth_value
 
@@ -1902,10 +1889,44 @@ class GatewayCreate(BaseModel):
             # Support both new multi-headers format and legacy single header format
             auth_headers = data.get("auth_headers")
             if auth_headers and isinstance(auth_headers, list):
-                # New multi-headers format
-                header_dict = {h["key"]: h["value"] for h in auth_headers if h.get("key")}
+                # New multi-headers format with enhanced validation
+                header_dict = {}
+                duplicate_keys = set()
+
+                for header in auth_headers:
+                    if not isinstance(header, dict):
+                        continue
+
+                    key = header.get("key")
+                    value = header.get("value", "")
+
+                    # Skip headers without keys
+                    if not key:
+                        continue
+
+                    # Track duplicate keys (last value wins)
+                    if key in header_dict:
+                        duplicate_keys.add(key)
+
+                    # Validate header key format (basic HTTP header validation)
+                    if not all(c.isalnum() or c in "-_" for c in key.replace(" ", "")):
+                        raise ValueError(f"Invalid header key format: '{key}'. Header keys should contain only alphanumeric characters, hyphens, and underscores.")
+
+                    # Store header (empty values are allowed)
+                    header_dict[key] = value
+
+                # Ensure at least one valid header
                 if not header_dict:
-                    raise ValueError("For 'headers' auth, at least one header must be provided.")
+                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+
+                # Warn about duplicate keys (optional - could log this instead)
+                if duplicate_keys:
+                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+
+                # Check for excessive headers (prevent abuse)
+                if len(header_dict) > 100:
+                    raise ValueError("Maximum of 100 headers allowed per gateway.")
+
                 return encode_auth(header_dict)
 
             # Legacy single header format (backward compatibility)
@@ -2027,17 +2048,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         if (auth_type is None) or (auth_type == ""):
             return v  # If no auth_type is provided, no need to create auth_value
 
-        # If custom headers, use all headers
-        if auth_type == "authheaders":
-            auth_headers = data.get("auth_headers")
-            if auth_headers and isinstance(auth_headers, list):
-                header_dict = {h["key"]: h["value"] for h in auth_headers if h.get("key")}
-                return encode_auth(header_dict)
-            header_key = data.get("auth_header_key")
-            header_value = data.get("auth_header_value")
-            if header_key and header_value:
-                return encode_auth({header_key: header_value})
-
+        # Process the auth fields and generate auth_value based on auth_type
         auth_value = cls._process_auth_fields(info)
         return auth_value
 
