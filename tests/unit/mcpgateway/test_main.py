@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+
+# -*- coding: utf-8 -*-
 """
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -11,11 +13,14 @@ Comprehensive tests for the main API endpoints with full coverage.
 from copy import deepcopy
 import json
 import os
+import datetime
 from unittest.mock import ANY, MagicMock, patch
 
 # Third-Party
-from fastapi.testclient import TestClient
 import pytest
+import jwt
+from fastapi.testclient import TestClient
+
 
 # First-Party
 from mcpgateway.config import settings
@@ -174,11 +179,13 @@ def test_client(app):
     yield client
     app.dependency_overrides.pop(require_auth, None)
 
-
 @pytest.fixture
 def mock_jwt_token():
-    """Create a mock JWT token (kept for backwards-compat)."""
-    return "123.123.this_is_a_test_token"
+    """Create a valid JWT token for testing."""
+    payload = {"sub": "test_user"}
+    secret = settings.jwt_secret_key
+    algorithm = settings.jwt_algorithm
+    return jwt.encode(payload, secret, algorithm=algorithm)
 
 
 @pytest.fixture
@@ -338,6 +345,22 @@ class TestProtocolEndpoints:
 # Server Management Tests                               #
 # ----------------------------------------------------- #
 class TestServerEndpoints:
+    @patch("mcpgateway.main.server_service.update_server")
+    def test_update_server_not_found(self, mock_update, test_client, auth_headers):
+        """Test update_server returns 404 if server not found."""
+        from mcpgateway.services.server_service import ServerNotFoundError
+        mock_update.side_effect = ServerNotFoundError("Server not found")
+        req = {"description": "Updated description"}
+        response = test_client.put("/servers/999", json=req, headers=auth_headers)
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.server_service.register_server")
+    def test_create_server_validation_error(self, mock_create, test_client, auth_headers):
+        """Test create_server returns 422 for missing required fields."""
+        mock_create.side_effect = None  # Let validation error happen
+        req = {"description": "Missing name"}
+        response = test_client.post("/servers/", json=req, headers=auth_headers)
+        assert response.status_code == 422
     """Tests for virtual server management: CRUD operations, status toggles, etc."""
 
     @patch("mcpgateway.main.server_service.list_servers")
@@ -441,6 +464,22 @@ class TestServerEndpoints:
 # Tool Management Tests                                 #
 # ----------------------------------------------------- #
 class TestToolEndpoints:
+    @patch("mcpgateway.main.tool_service.update_tool")
+    def test_update_tool_not_found(self, mock_update, test_client, auth_headers):
+        """Test update_tool returns 404 if tool not found."""
+        from mcpgateway.services.tool_service import ToolNotFoundError
+        mock_update.side_effect = ToolNotFoundError("Tool not found")
+        req = {"description": "Updated description"}
+        response = test_client.put("/tools/999", json=req, headers=auth_headers)
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.create_tool")
+    def test_create_tool_validation_error(self, mock_create, test_client, auth_headers):
+        """Test create_tool returns 422 for missing required fields."""
+        mock_create.side_effect = None  # Let validation error happen
+        req = {"description": "Missing name and url"}
+        response = test_client.post("/tools/", json=req, headers=auth_headers)
+        assert response.status_code == 422
     """Tests for tool management: registration, invocation, updates, etc."""
 
     @patch("mcpgateway.main.tool_service.list_tools")
@@ -501,6 +540,22 @@ class TestToolEndpoints:
 # Resource Management Tests                             #
 # ----------------------------------------------------- #
 class TestResourceEndpoints:
+    @patch("mcpgateway.main.resource_service.update_resource")
+    def test_update_resource_not_found(self, mock_update, test_client, auth_headers):
+        """Test update_resource returns 404 if resource not found."""
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+        mock_update.side_effect = ResourceNotFoundError("Resource not found")
+        req = {"description": "Updated description"}
+        response = test_client.put("/resources/nonexistent", json=req, headers=auth_headers)
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.resource_service.register_resource")
+    def test_create_resource_validation_error(self, mock_create, test_client, auth_headers):
+        """Test create_resource returns 422 for missing required fields."""
+        mock_create.side_effect = None  # Let validation error happen
+        req = {"description": "Missing uri and name"}
+        response = test_client.post("/resources/", json=req, headers=auth_headers)
+        assert response.status_code == 422
     """Tests for resource management: reading, creation, caching, etc."""
 
     @patch("mcpgateway.main.resource_service.list_resources")
@@ -589,6 +644,29 @@ class TestResourceEndpoints:
 # Prompt Management Tests                               #
 # ----------------------------------------------------- #
 class TestPromptEndpoints:
+    @patch("mcpgateway.main.prompt_service.delete_prompt")
+    def test_delete_prompt_not_found(self, mock_delete, test_client, auth_headers):
+        """Test delete_prompt returns 404 if prompt not found."""
+        from mcpgateway.services.prompt_service import PromptNotFoundError
+        mock_delete.side_effect = PromptNotFoundError("Prompt not found")
+        response = test_client.delete("/prompts/nonexistent", headers=auth_headers)
+        assert response.status_code == 404
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_not_found(self, mock_update, test_client, auth_headers):
+        """Test update_prompt returns 404 if prompt not found."""
+        from mcpgateway.services.prompt_service import PromptNotFoundError
+        mock_update.side_effect = PromptNotFoundError("Prompt not found")
+        req = {"description": "Updated description"}
+        response = test_client.put("/prompts/nonexistent", json=req, headers=auth_headers)
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.prompt_service.register_prompt")
+    def test_create_prompt_validation_error(self, mock_create, test_client, auth_headers):
+        """Test create_prompt returns 422 for missing required fields."""
+        mock_create.side_effect = None  # Let validation error happen
+        req = {"description": "Missing name and template"}
+        response = test_client.post("/prompts/", json=req, headers=auth_headers)
+        assert response.status_code == 422
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_no_args(self, mock_get, test_client, auth_headers):
         """Test getting a prompt without arguments."""
@@ -1116,7 +1194,37 @@ class TestMiddlewareAndSecurity:
 # Error Handling & Edge Cases                           #
 # ----------------------------------------------------- #
 class TestErrorHandling:
-    """Tests for error scenarios, validation failures, and edge cases."""
+    def test_docs_with_invalid_jwt(self, test_client):
+        """Test /docs with an invalid JWT returns 401."""
+        headers = {"Authorization": "Bearer invalid.token.value"}
+        response = test_client.get("/docs", headers=headers)
+        assert response.status_code == 401
+
+    def test_docs_with_expired_jwt(self, test_client):
+        """Test /docs with an expired JWT returns 401."""
+        expired_payload = {"sub": "test_user", "exp": datetime.datetime.utcnow() - datetime.timedelta(hours=1)}
+        from mcpgateway.config import settings
+        expired_token = jwt.encode(expired_payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+        headers = {"Authorization": f"Bearer {expired_token}"}
+        response = test_client.get("/docs", headers=headers)
+        assert response.status_code == 401
+
+    def test_post_on_get_only_endpoint(self, test_client, auth_headers):
+        """Test POST on a GET-only endpoint returns 405."""
+        response = test_client.post("/health", headers=auth_headers)
+        assert response.status_code == 405
+
+    def test_delete_on_docs(self, test_client, auth_headers):
+        """Test DELETE on /docs returns 405."""
+        response = test_client.delete("/docs", headers=auth_headers)
+        assert response.status_code == 405
+
+    def test_missing_query_param(self, test_client, auth_headers):
+        """Test endpoint requiring query param returns 422 if missing."""
+        # /message?session_id=... requires session_id
+        message = {"type": "test", "data": "hello"}
+        response = test_client.post("/message", json=message, headers=auth_headers)
+        assert response.status_code == 400
 
     def test_invalid_json_body(self, test_client, auth_headers):
         """Test handling of malformed JSON in request bodies."""
@@ -1164,3 +1272,19 @@ class TestErrorHandling:
         req = {"description": "Missing required name field"}
         response = test_client.post("/tools/", json=req, headers=auth_headers)
         assert response.status_code == 422  # Validation error
+
+    def test_openapi_json_with_auth(self, test_client, auth_headers):
+        """Test GET /openapi.json with authentication returns 200 and OpenAPI spec."""
+        response = test_client.get("/openapi.json", headers=auth_headers)
+        assert response.status_code == 200
+        assert "openapi" in response.json()
+
+    def test_docs_with_auth(self, test_client, auth_headers):
+        """Test GET /docs with authentication returns 200 or redirect."""
+        response = test_client.get("/docs", headers=auth_headers)
+        assert response.status_code == 200
+
+    def test_redoc_with_auth(self, test_client, auth_headers):
+        """Test GET /redoc with authentication returns 200 or redirect."""
+        response = test_client.get("/redoc", headers=auth_headers)
+        assert response.status_code == 200

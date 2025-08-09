@@ -527,6 +527,7 @@ class PromptService:
             prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(DbPrompt.is_active)).scalar_one_or_none()
             if not prompt:
                 inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
+
                 if inactive_prompt:
                     raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
 
@@ -568,6 +569,10 @@ class PromptService:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
+        except PromptNotFoundError as e:
+            db.rollback()
+            logger.error(f"Prompt not found: {e}")
+            raise e
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to update prompt: {str(e)}")

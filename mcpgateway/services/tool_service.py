@@ -875,6 +875,9 @@ class ToolService:
         except IntegrityError as ie:
             logger.error(f"IntegrityError during tool update: {ie}")
             raise ie
+        except ToolNotFoundError as tnfe:
+            logger.error(f"Tool not found during update: {tnfe}")
+            raise tnfe
         except Exception as ex:
             db.rollback()
             raise ToolError(f"Failed to update tool: {str(ex)}")
