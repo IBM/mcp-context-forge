@@ -46,9 +46,13 @@ from mcpgateway.plugins.framework.plugin_types import (
     PromptPosthookResult,
     PromptPrehookPayload,
     PromptPrehookResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
 )
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
-from mcpgateway.plugins.framework.utils import post_prompt_matches, pre_prompt_matches
+from mcpgateway.plugins.framework.utils import post_prompt_matches, post_tool_matches, pre_prompt_matches, pre_tool_matches
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +307,54 @@ async def post_prompt_fetch(plugin: PluginRef, payload: PromptPosthookPayload, c
     return await plugin.plugin.prompt_post_fetch(payload, context)
 
 
+async def pre_tool_invoke(plugin: PluginRef, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+    """Call plugin's tool pre-invoke hook.
+
+    Args:
+        plugin: The plugin to execute.
+        payload: The tool payload to be analyzed.
+        context: Contextual information about the hook call.
+
+    Returns:
+        The result of the plugin execution.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
+        >>> from mcpgateway.plugins.framework.plugin_types import ToolPreInvokePayload, PluginContext, GlobalContext
+        >>> # Assuming you have a plugin instance:
+        >>> # plugin_ref = PluginRef(my_plugin)
+        >>> payload = ToolPreInvokePayload(name="calculator", args={"operation": "add", "a": 5, "b": 3})
+        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> # In async context:
+        >>> # result = await pre_tool_invoke(plugin_ref, payload, context)
+    """
+    return await plugin.plugin.tool_pre_invoke(payload, context)
+
+
+async def post_tool_invoke(plugin: PluginRef, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+    """Call plugin's tool post-invoke hook.
+
+    Args:
+        plugin: The plugin to execute.
+        payload: The tool result payload to be analyzed.
+        context: Contextual information about the hook call.
+
+    Returns:
+        The result of the plugin execution.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
+        >>> from mcpgateway.plugins.framework.plugin_types import ToolPostInvokePayload, PluginContext, GlobalContext
+        >>> # Assuming you have a plugin instance:
+        >>> # plugin_ref = PluginRef(my_plugin)
+        >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8, "status": "success"})
+        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> # In async context:
+        >>> # result = await post_tool_invoke(plugin_ref, payload, context)
+    """
+    return await plugin.plugin.tool_post_invoke(payload, context)
+
+
 class PluginManager:
     """Plugin manager for managing the plugin lifecycle.
 
@@ -343,6 +395,8 @@ class PluginManager:
     _config: Config | None = None
     _pre_prompt_executor: PluginExecutor[PromptPrehookPayload] = PluginExecutor[PromptPrehookPayload]()
     _post_prompt_executor: PluginExecutor[PromptPosthookPayload] = PluginExecutor[PromptPosthookPayload]()
+    _pre_tool_executor: PluginExecutor[ToolPreInvokePayload] = PluginExecutor[ToolPreInvokePayload]()
+    _post_tool_executor: PluginExecutor[ToolPostInvokePayload] = PluginExecutor[ToolPostInvokePayload]()
 
     # Context cleanup tracking
     _context_store: Dict[str, Tuple[PluginContextTable, float]] = {}
@@ -369,6 +423,8 @@ class PluginManager:
         # Update executor timeouts
         self._pre_prompt_executor.timeout = timeout
         self._post_prompt_executor.timeout = timeout
+        self._pre_tool_executor.timeout = timeout
+        self._post_tool_executor.timeout = timeout
 
         # Initialize context tracking if not already done
         if not hasattr(self, "_context_store"):
@@ -610,6 +666,115 @@ class PluginManager:
         result = await self._post_prompt_executor.execute(plugins, payload, global_context, post_prompt_fetch, post_prompt_matches, local_contexts)
 
         # Clean up stored context after post-fetch
+        if global_context.request_id in self._context_store:
+            del self._context_store[global_context.request_id]
+
+        return result
+
+    async def tool_pre_invoke(
+        self,
+        payload: ToolPreInvokePayload,
+        global_context: GlobalContext,
+        local_contexts: Optional[PluginContextTable] = None,
+    ) -> tuple[ToolPreInvokeResult, PluginContextTable | None]:
+        """Execute pre-invoke hooks before a tool is invoked.
+
+        Args:
+            payload: The tool payload containing name and arguments.
+            global_context: Shared context for all plugins with request metadata.
+            local_contexts: Optional existing contexts from previous executions.
+
+        Returns:
+            A tuple containing:
+            - ToolPreInvokeResult with processing status and modified payload
+            - PluginContextTable with updated contexts for post-invoke hook
+
+        Raises:
+            PayloadSizeError: If payload exceeds size limits.
+
+        Examples:
+            >>> manager = PluginManager("plugins/config.yaml")
+            >>> # In async context:
+            >>> # await manager.initialize()
+            >>>
+            >>> from mcpgateway.plugins.framework.plugin_types import ToolPreInvokePayload, GlobalContext
+            >>> payload = ToolPreInvokePayload(
+            ...     name="calculator",
+            ...     args={"operation": "add", "a": 5, "b": 3}
+            ... )
+            >>> context = GlobalContext(
+            ...     request_id="req-123",
+            ...     user="alice@example.com"
+            ... )
+            >>>
+            >>> # In async context:
+            >>> # result, contexts = await manager.tool_pre_invoke(payload, context)
+            >>> # if result.continue_processing:
+            >>> #     # Proceed with tool invocation
+            >>> #     modified_payload = result.modified_payload or payload
+        """
+        # Cleanup old contexts periodically
+        await self._cleanup_old_contexts()
+
+        # Get plugins configured for this hook
+        plugins = self._registry.get_plugins_for_hook(HookType.TOOL_PRE_INVOKE)
+
+        # Execute plugins
+        result = await self._pre_tool_executor.execute(plugins, payload, global_context, pre_tool_invoke, pre_tool_matches, local_contexts)
+
+        # Store contexts for potential reuse
+        if result[1]:
+            self._context_store[global_context.request_id] = (result[1], time.time())
+
+        return result
+
+    async def tool_post_invoke(
+        self, payload: ToolPostInvokePayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None
+    ) -> tuple[ToolPostInvokeResult, PluginContextTable | None]:
+        """Execute post-invoke hooks after a tool is invoked.
+
+        Args:
+            payload: The tool result payload containing invocation results.
+            global_context: Shared context for all plugins with request metadata.
+            local_contexts: Optional contexts from pre-invoke hook execution.
+
+        Returns:
+            A tuple containing:
+            - ToolPostInvokeResult with processing status and modified result
+            - PluginContextTable with final contexts
+
+        Raises:
+            PayloadSizeError: If payload exceeds size limits.
+
+        Examples:
+            >>> # Continuing from tool_pre_invoke example
+            >>> from mcpgateway.plugins.framework.plugin_types import ToolPostInvokePayload, GlobalContext
+            >>>
+            >>> post_payload = ToolPostInvokePayload(
+            ...     name="calculator",
+            ...     result={"result": 8, "status": "success"}
+            ... )
+            >>>
+            >>> manager = PluginManager("plugins/config.yaml")
+            >>> context = GlobalContext(request_id="req-123")
+            >>>
+            >>> # In async context:
+            >>> # result, _ = await manager.tool_post_invoke(
+            >>> #     post_payload,
+            >>> #     context,
+            >>> #     contexts  # From pre_invoke
+            >>> # )
+            >>> # if result.modified_payload:
+            >>> #     # Use modified result
+            >>> #     final_result = result.modified_payload.result
+        """
+        # Get plugins configured for this hook
+        plugins = self._registry.get_plugins_for_hook(HookType.TOOL_POST_INVOKE)
+
+        # Execute plugins
+        result = await self._post_tool_executor.execute(plugins, payload, global_context, post_tool_invoke, post_tool_matches, local_contexts)
+
+        # Clean up stored context after post-invoke
         if global_context.request_id in self._context_store:
             del self._context_store[global_context.request_id]
 

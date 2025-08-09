@@ -23,6 +23,8 @@ class HookType(str, Enum):
     Attributes:
         prompt_pre_fetch: The prompt pre hook.
         prompt_post_fetch: The prompt post hook.
+        tool_pre_invoke: The tool pre invoke hook.
+        tool_post_invoke: The tool post invoke hook.
 
     Examples:
         >>> HookType.PROMPT_PRE_FETCH
@@ -32,11 +34,13 @@ class HookType(str, Enum):
         >>> HookType('prompt_post_fetch')
         <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>
         >>> list(HookType)
-        [<HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>, <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>]
+        [<HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>, <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>, <HookType.TOOL_PRE_INVOKE: 'tool_pre_invoke'>, <HookType.TOOL_POST_INVOKE: 'tool_post_invoke'>]
     """
 
     PROMPT_PRE_FETCH = "prompt_pre_fetch"
     PROMPT_POST_FETCH = "prompt_post_fetch"
+    TOOL_PRE_INVOKE = "tool_pre_invoke"
+    TOOL_POST_INVOKE = "tool_post_invoke"
 
 
 class PluginMode(str, Enum):

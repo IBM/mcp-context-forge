@@ -16,7 +16,7 @@ from types import ModuleType
 
 # First-Party
 from mcpgateway.plugins.framework.models import PluginCondition
-from mcpgateway.plugins.framework.plugin_types import GlobalContext, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework.plugin_types import GlobalContext, PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
 
 
 @cache  # noqa
@@ -158,6 +158,80 @@ def post_prompt_matches(payload: PromptPosthookPayload, conditions: list[PluginC
             current_result = False
 
         if condition.prompts and payload.name not in condition.prompts:
+            current_result = False
+        if current_result:
+            return True
+        elif index < len(conditions) - 1:
+            current_result = True
+    return current_result
+
+
+def pre_tool_matches(payload: ToolPreInvokePayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+    """Check for a match on pre-tool hooks.
+
+    Args:
+        payload: the tool pre-invoke payload.
+        conditions: the conditions on the plugin that are required for execution.
+        context: the global context.
+
+    Returns:
+        True if the plugin matches criteria.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.models import PluginCondition
+        >>> from mcpgateway.plugins.framework.plugin_types import ToolPreInvokePayload, GlobalContext
+        >>> payload = ToolPreInvokePayload("calculator", {})
+        >>> cond = PluginCondition(tools={"calculator"})
+        >>> ctx = GlobalContext("req1")
+        >>> pre_tool_matches(payload, [cond], ctx)
+        True
+        >>> payload2 = ToolPreInvokePayload("other", {})
+        >>> pre_tool_matches(payload2, [cond], ctx)
+        False
+    """
+    current_result = True
+    for index, condition in enumerate(conditions):
+        if not matches(condition, context):
+            current_result = False
+
+        if condition.tools and payload.name not in condition.tools:
+            current_result = False
+        if current_result:
+            return True
+        elif index < len(conditions) - 1:
+            current_result = True
+    return current_result
+
+
+def post_tool_matches(payload: ToolPostInvokePayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+    """Check for a match on post-tool hooks.
+
+    Args:
+        payload: the tool post-invoke payload.
+        conditions: the conditions on the plugin that are required for execution.
+        context: the global context.
+
+    Returns:
+        True if the plugin matches criteria.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.models import PluginCondition
+        >>> from mcpgateway.plugins.framework.plugin_types import ToolPostInvokePayload, GlobalContext
+        >>> payload = ToolPostInvokePayload("calculator", {"result": 8})
+        >>> cond = PluginCondition(tools={"calculator"})
+        >>> ctx = GlobalContext("req1")
+        >>> post_tool_matches(payload, [cond], ctx)
+        True
+        >>> payload2 = ToolPostInvokePayload("other", {"result": 8})
+        >>> post_tool_matches(payload2, [cond], ctx)
+        False
+    """
+    current_result = True
+    for index, condition in enumerate(conditions):
+        if not matches(condition, context):
+            current_result = False
+
+        if condition.tools and payload.name not in condition.tools:
             current_result = False
         if current_result:
             return True

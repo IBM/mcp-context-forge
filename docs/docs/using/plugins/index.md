@@ -94,7 +94,7 @@ are defined as follows:
 | **description** | The description of the plugin configuration. | A plugin for replacing bad words. |
 | **version** | The version of the plugin configuration. | 0.1 |
 | **author** | The team that wrote the plugin. | MCP Context Forge |
-| **hooks** | A list of hooks for which the plugin will be executed. **Note**: currently supports two hooks: "prompt_pre_fetch", "prompt_post_fetch"  | ["prompt_pre_fetch", "prompt_post_fetch"] |
+| **hooks** | A list of hooks for which the plugin will be executed. Supported hooks: "prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"  | ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"] |
 | **tags** | Descriptive keywords that make the configuration searchable. | ["security", "filter"] |
 | **mode** | Mode of operation of the plugin. - enforce (stops during a violation), permissive (audits a violation but doesn't stop), disabled (disabled) | permissive |
 | **priority** | The priority in which the plugin will run - 0 is higher priority | 100 |
@@ -163,10 +163,25 @@ Currently implemented hooks:
 |------|-------------|-----------|
 | `prompt_pre_fetch` | Before prompt retrieval | Validate/modify prompt arguments |
 | `prompt_post_fetch` | After prompt rendering | Filter/transform rendered prompts |
+| `tool_pre_invoke` | Before tool invocation | Validate/modify tool arguments, block dangerous operations |
+| `tool_post_invoke` | After tool execution | Filter/transform tool results, audit tool usage |
+
+### Tool Hooks Details
+
+The tool hooks enable plugins to intercept and modify tool invocations:
+
+- **`tool_pre_invoke`**: Receives the tool name and arguments before execution. Can modify arguments or block the invocation entirely.
+- **`tool_post_invoke`**: Receives the tool result after execution. Can modify the result or block it from being returned.
+
+Example use cases:
+- PII detection and masking in tool inputs/outputs
+- Rate limiting specific tools
+- Audit logging of tool usage
+- Input validation and sanitization
+- Output filtering and transformation
 
 Planned hooks (not yet implemented):
 
-- `tool_pre_invoke` / `tool_post_invoke` - Tool execution guardrails
 - `resource_pre_fetch` / `resource_post_fetch` - Resource content filtering
 - `server_pre_register` / `server_post_register` - Server validation
 - `auth_pre_check` / `auth_post_check` - Custom authentication
@@ -179,12 +194,16 @@ Planned hooks (not yet implemented):
 ```python
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.models import PluginConfig
-from mcpgateway.plugins.framework.types import (
+from mcpgateway.plugins.framework.plugin_types import (
     PluginContext,
     PromptPrehookPayload,
     PromptPrehookResult,
     PromptPosthookPayload,
-    PromptPosthookResult
+    PromptPosthookResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult
 )
 
 class MyPlugin(Plugin):
@@ -250,6 +269,62 @@ class MyPlugin(Plugin):
         return PromptPosthookResult(
             modified_payload=payload
         )
+
+    async def tool_pre_invoke(
+        self,
+        payload: ToolPreInvokePayload,
+        context: PluginContext
+    ) -> ToolPreInvokeResult:
+        """Process tool before invocation."""
+
+        # Access tool name and arguments
+        tool_name = payload.name
+        args = payload.args
+
+        # Example: Block dangerous operations
+        if tool_name == "file_delete" and "system" in str(args):
+            return ToolPreInvokeResult(
+                continue_processing=False,
+                violation=PluginViolation(
+                    plugin_name=self.name,
+                    description="Dangerous operation blocked",
+                    violation_code="DANGEROUS_OP",
+                    details={"tool": tool_name}
+                )
+            )
+
+        # Example: Modify arguments
+        if "sanitize_me" in args:
+            args["sanitize_me"] = self.sanitize_input(args["sanitize_me"])
+            return ToolPreInvokeResult(
+                modified_payload=ToolPreInvokePayload(tool_name, args)
+            )
+
+        return ToolPreInvokeResult()
+
+    async def tool_post_invoke(
+        self,
+        payload: ToolPostInvokePayload,
+        context: PluginContext
+    ) -> ToolPostInvokeResult:
+        """Process tool after invocation."""
+
+        # Access tool result
+        tool_name = payload.name
+        result = payload.result
+
+        # Example: Filter sensitive data from results
+        if isinstance(result, dict) and "sensitive_data" in result:
+            result["sensitive_data"] = "[REDACTED]"
+            return ToolPostInvokeResult(
+                modified_payload=ToolPostInvokePayload(tool_name, result)
+            )
+
+        # Example: Add audit metadata
+        context.metadata["tool_executed"] = tool_name
+        context.metadata["execution_time"] = time.time()
+
+        return ToolPostInvokeResult()
 
     async def shutdown(self):
         """Cleanup when plugin shuts down."""

@@ -4,6 +4,8 @@ version: "0.1.0"
 available_hooks:
   - "prompt_pre_fetch"
   - "prompt_post_fetch"
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
 default_configs:
   detect_ssn: true
   detect_credit_card: true
