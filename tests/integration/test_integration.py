@@ -90,7 +90,7 @@ MOCK_TOOL = ToolRead(
     metrics=ToolMetrics(**MOCK_METRICS),
     gateway_slug="default",
     original_name_slug="test-tool",
-        tags=[],
+    tags=[],
 )
 
 MOCK_SERVER = ServerRead(

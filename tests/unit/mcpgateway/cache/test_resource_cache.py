@@ -10,7 +10,6 @@ Unit tests for ResourceCache.
 
 # Standard
 import asyncio
-import logging
 import time
 
 # Third-Party
@@ -41,11 +40,11 @@ def test_expiration(cache):
     """Test that cache entry expires after TTL."""
     # Use a more generous sleep duration to account for timing variability
     cache.set("foo", "bar")
-    
+
     # Sleep for 1.5 seconds (50% longer than TTL) to ensure expiration
     # This accounts for system load, clock precision, and floating point issues
     time.sleep(1.5)
-    
+
     # Entry should definitely be expired now
     assert cache.get("foo") is None
 

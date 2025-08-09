@@ -7,11 +7,14 @@ Authors: Teryl Taylor
 
 Unit tests for plugin registry.
 """
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
+
 
 @pytest.mark.asyncio
 async def test_registry_register():

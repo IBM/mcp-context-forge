@@ -1780,8 +1780,9 @@ class TestSecurityBestPractices:
         """Test that validation doesn't leak timing information."""
         logger.debug("Testing constant-time validation")
 
-        import time
+        # Standard
         import statistics
+        import time
 
         valid_times = []
         invalid_times = []

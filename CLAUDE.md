@@ -228,7 +228,7 @@ pytest -m "not slow"
 # To test everything:
 
 make autoflake isort black pre-commit
-make doctest test smoketest lint-web flake8 pylint
+make interrogate doctest test smoketest lint-web flake8 bandit pylint
 
 # Rules
 - When using git commit always add a -s to sign commits

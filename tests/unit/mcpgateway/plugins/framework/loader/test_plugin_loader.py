@@ -8,8 +8,10 @@ Authors: Teryl Taylor
 Unit tests for config and plugin loaders.
 """
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
@@ -36,6 +38,7 @@ def test_config_loader_load():
     assert srconfig.words[0].search == "crap"
     assert srconfig.words[0].replace == "crud"
 
+
 @pytest.mark.asyncio
 async def test_plugin_loader_load():
     """Load a plugin with the plugin loader."""
@@ -51,21 +54,22 @@ async def test_plugin_loader_load():
     assert plugin.hooks[1] == "prompt_post_fetch"
 
     context = PluginContext(GlobalContext(request_id="1", server_id="2"))
-    prompt = PromptPrehookPayload(name="test_prompt", args = {"user": "What a crapshow!"})
+    prompt = PromptPrehookPayload(name="test_prompt", args={"user": "What a crapshow!"})
     result = await plugin.prompt_pre_fetch(prompt, context=context)
     assert len(result.modified_payload.args) == 1
     assert result.modified_payload.args["user"] == "What a yikesshow!"
 
-    message=Message(content=TextContent(type="text", text="What the crud?"), role=Role.USER)
+    message = Message(content=TextContent(type="text", text="What the crud?"), role=Role.USER)
     prompt_result = PromptResult(messages=[message])
 
     payload_result = PromptPosthookPayload(name="test_prompt", result=prompt_result)
 
     result = await plugin.prompt_post_fetch(payload_result, context)
     assert len(result.modified_payload.result.messages) == 1
-    assert result.modified_payload.result.messages[0].content.text == 'What the yikes?'
+    assert result.modified_payload.result.messages[0].content.text == "What the yikes?"
 
     await loader.shutdown()
+
 
 @pytest.mark.asyncio
 async def test_plugin_loader_invalid_plugin_load():
@@ -73,4 +77,4 @@ async def test_plugin_loader_invalid_plugin_load():
     config = ConfigLoader.load_config(config="./tests/unit/mcpgateway/plugins/fixtures/configs/invalid_single_plugin.yaml", use_jinja=False)
     loader = PluginLoader()
     with pytest.raises(ModuleNotFoundError):
-        plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
+        await loader.load_and_instantiate_plugin(config.plugins[0])

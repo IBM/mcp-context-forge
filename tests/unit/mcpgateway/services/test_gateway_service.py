@@ -278,15 +278,9 @@ class TestGatewayService:
             lambda x: mock_model,
         )
 
-        gateway_create = GatewayCreate(
-            name="auth_gateway",
-            url="http://example.com/gateway",
-            description="Gateway with auth",
-            auth_type="bearer",
-            auth_token="test-token"
-        )
+        gateway_create = GatewayCreate(name="auth_gateway", url="http://example.com/gateway", description="Gateway with auth", auth_type="bearer", auth_token="test-token")
 
-        result = await gateway_service.register_gateway(test_db, gateway_create)
+        await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
@@ -306,16 +300,10 @@ class TestGatewayService:
         test_db.refresh = Mock()
 
         # Mock tools returned from gateway
+        # First-Party
         from mcpgateway.schemas import ToolCreate
-        mock_tools = [
-            ToolCreate(
-                name="test_tool",
-                description="A test tool",
-                integration_type="REST",
-                request_type="POST",
-                input_schema={"type": "object"}
-            )
-        ]
+
+        mock_tools = [ToolCreate(name="test_tool", description="A test tool", integration_type="REST", request_type="POST", input_schema={"type": "object"})]
 
         gateway_service._initialize_gateway = AsyncMock(
             return_value=(
@@ -344,7 +332,7 @@ class TestGatewayService:
             description="Gateway with tools",
         )
 
-        result = await gateway_service.register_gateway(test_db, gateway_create)
+        await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
         # Verify that tools were created and added to the gateway
@@ -386,9 +374,7 @@ class TestGatewayService:
         test_db.commit = Mock(side_effect=Exception("Database error"))
         test_db.rollback = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
 
         gateway_create = GatewayCreate(
             name="test_gateway",
@@ -406,9 +392,7 @@ class TestGatewayService:
         """Test ValueError during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
-        gateway_service._initialize_gateway = AsyncMock(
-            side_effect=ValueError("Invalid gateway configuration")
-        )
+        gateway_service._initialize_gateway = AsyncMock(side_effect=ValueError("Invalid gateway configuration"))
 
         gateway_create = GatewayCreate(
             name="test_gateway",
@@ -426,9 +410,7 @@ class TestGatewayService:
         """Test RuntimeError during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
-        gateway_service._initialize_gateway = AsyncMock(
-            side_effect=RuntimeError("Runtime error occurred")
-        )
+        gateway_service._initialize_gateway = AsyncMock(side_effect=RuntimeError("Runtime error occurred"))
 
         gateway_create = GatewayCreate(
             name="test_gateway",
@@ -444,15 +426,14 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_register_gateway_integrity_error(self, gateway_service, test_db):
         """Test IntegrityError during gateway registration."""
+        # Third-Party
         from sqlalchemy.exc import IntegrityError as SQLIntegrityError
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
         test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", "orig"))
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
 
         gateway_create = GatewayCreate(
             name="test_gateway",
@@ -476,9 +457,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
         gateway_service._notify_gateway_added = AsyncMock()
 
         mock_model = Mock()
@@ -493,14 +472,10 @@ class TestGatewayService:
         # Mock settings for masked auth value
         with patch("mcpgateway.services.gateway_service.settings.masked_auth_value", "***MASKED***"):
             gateway_create = GatewayCreate(
-                name="auth_gateway",
-                url="http://example.com/gateway",
-                description="Gateway with masked auth",
-                auth_type="bearer",
-                auth_token="***MASKED***"  # This should not update the auth_value
+                name="auth_gateway", url="http://example.com/gateway", description="Gateway with masked auth", auth_type="bearer", auth_token="***MASKED***"  # This should not update the auth_value
             )
 
-            result = await gateway_service.register_gateway(test_db, gateway_create)
+            await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
@@ -514,9 +489,7 @@ class TestGatewayService:
         test_db.commit = Mock(side_effect=Exception("Commit failed"))
         test_db.rollback = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
 
         gateway_create = GatewayCreate(
             name="test_gateway",
@@ -550,20 +523,12 @@ class TestGatewayService:
         test_db.refresh = Mock()
 
         # Mock tools returned from gateway
+        # First-Party
         from mcpgateway.schemas import ToolCreate
-        mock_tools = [
-            ToolCreate(
-                name="existing_tool",  # This tool already exists
-                description="An existing tool",
-                integration_type="REST",
-                request_type="POST",
-                input_schema={"type": "object"}
-            )
-        ]
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, mock_tools)
-        )
+        mock_tools = [ToolCreate(name="existing_tool", description="An existing tool", integration_type="REST", request_type="POST", input_schema={"type": "object"})]  # This tool already exists
+
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, mock_tools))
         gateway_service._notify_gateway_added = AsyncMock()
 
         mock_model = Mock()
@@ -581,7 +546,7 @@ class TestGatewayService:
             description="Gateway with existing tools",
         )
 
-        result = await gateway_service.register_gateway(test_db, gateway_create)
+        await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
         # Verify that a tool was created for the gateway (the service creates new tools, not reuse existing ones)
@@ -936,23 +901,18 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         # Mock settings for auth value checking
         with patch("mcpgateway.services.gateway_service.settings.masked_auth_value", "***MASKED***"):
-            gateway_update = GatewayUpdate(
-                auth_type="bearer",
-                auth_token="new-token"
-            )
+            gateway_update = GatewayUpdate(auth_type="bearer", auth_token="new-token")
 
             mock_gateway_read = MagicMock()
             mock_gateway_read.masked.return_value = mock_gateway_read
 
             with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-                result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
 
             # Check that auth_type was updated
             assert mock_gateway.auth_type == "bearer"
@@ -969,9 +929,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(auth_type="")
@@ -980,7 +938,7 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         assert mock_gateway.auth_type == ""
         assert mock_gateway.auth_value == ""
@@ -1005,27 +963,15 @@ class TestGatewayService:
         test_db.refresh = Mock()
 
         # Mock new tools from gateway
+        # First-Party
         from mcpgateway.schemas import ToolCreate
+
         new_tools = [
-            ToolCreate(
-                name="existing_tool",
-                description="Updated tool",
-                integration_type="REST",
-                request_type="POST",
-                input_schema={"type": "object"}
-            ),
-            ToolCreate(
-                name="new_tool",
-                description="Brand new tool",
-                integration_type="REST",
-                request_type="POST",
-                input_schema={"type": "object"}
-            )
+            ToolCreate(name="existing_tool", description="Updated tool", integration_type="REST", request_type="POST", input_schema={"type": "object"}),
+            ToolCreate(name="new_tool", description="Brand new tool", integration_type="REST", request_type="POST", input_schema={"type": "object"}),
         ]
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, new_tools)
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, new_tools))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(url="http://example.com/new-url")
@@ -1034,7 +980,7 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         assert mock_gateway.url == "http://example.com/new-url"
         gateway_service._initialize_gateway.assert_called_once()
@@ -1049,9 +995,7 @@ class TestGatewayService:
         test_db.refresh = Mock()
 
         # Mock initialization failure
-        gateway_service._initialize_gateway = AsyncMock(
-            side_effect=GatewayConnectionError("Connection failed")
-        )
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Connection failed"))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(url="http://example.com/bad-url")
@@ -1061,7 +1005,7 @@ class TestGatewayService:
 
         # Should not raise exception, just log warning
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         assert mock_gateway.url == "http://example.com/bad-url"
         test_db.commit.assert_called_once()
@@ -1083,7 +1027,7 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         # Only description should be updated
         assert mock_gateway.description == "New description only"
@@ -1142,18 +1086,13 @@ class TestGatewayService:
 
         # Mock settings for masked auth value
         with patch("mcpgateway.services.gateway_service.settings.masked_auth_value", "***MASKED***"):
-            gateway_update = GatewayUpdate(
-                auth_type="bearer",
-                auth_token="***MASKED***",  # This should not update the auth_value
-                auth_password="***MASKED***",
-                auth_header_value="***MASKED***"
-            )
+            gateway_update = GatewayUpdate(auth_type="bearer", auth_token="***MASKED***", auth_password="***MASKED***", auth_header_value="***MASKED***")  # This should not update the auth_value
 
             mock_gateway_read = MagicMock()
             mock_gateway_read.masked.return_value = mock_gateway_read
 
             with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-                result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
 
             # Auth value should remain unmodified since all values were masked
             assert mock_gateway.auth_value == "existing-token"
@@ -1162,6 +1101,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway_integrity_error(self, gateway_service, mock_gateway, test_db):
         """Test IntegrityError during gateway update."""
+        # Third-Party
         from sqlalchemy.exc import IntegrityError as SQLIntegrityError
 
         test_db.get = Mock(return_value=mock_gateway)
@@ -1183,9 +1123,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(transport="STREAMABLEHTTP")
@@ -1194,7 +1132,7 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         assert mock_gateway.transport == "STREAMABLEHTTP"
         test_db.commit.assert_called_once()
@@ -1222,7 +1160,7 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            result = await gateway_service.update_gateway(test_db, 1, gateway_update)
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         assert mock_gateway_no_auth.description == "New description"
         test_db.commit.assert_called_once()

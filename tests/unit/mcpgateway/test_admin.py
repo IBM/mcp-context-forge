@@ -388,14 +388,14 @@ class TestAdminToolRoutes:
         """Test adding tool with ToolError."""
         mock_register_tool.side_effect = ToolError("Tool service error")
         mock_form = {
-        "name": "test-tool",
-        "url": "http://example.com",
-        "description": "Test tool",
-        "requestType": "GET",
-        "integrationType": "REST",
-        "headers": "{}",  # must be a valid JSON string
-        "input_schema": "{}",
-         }
+            "name": "test-tool",
+            "url": "http://example.com",
+            "description": "Test tool",
+            "requestType": "GET",
+            "integrationType": "REST",
+            "headers": "{}",  # must be a valid JSON string
+            "input_schema": "{}",
+        }
 
         mock_request.form = AsyncMock(return_value=mock_form)
 
@@ -434,14 +434,9 @@ class TestAdminToolRoutes:
         from sqlalchemy.exc import IntegrityError
         from starlette.datastructures import FormData
 
-        mock_request.form = AsyncMock(return_value=FormData([
-        ("name", "Tool_Name_1"),
-        ("url", "http://example.com"),
-        ("requestType", "GET"),
-        ("integrationType", "REST"),
-        ("headers", "{}"),
-        ("input_schema", "{}")
-        ]))
+        mock_request.form = AsyncMock(
+            return_value=FormData([("name", "Tool_Name_1"), ("url", "http://example.com"), ("requestType", "GET"), ("integrationType", "REST"), ("headers", "{}"), ("input_schema", "{}")])
+        )
         mock_update_tool.side_effect = IntegrityError("Integrity constraint", {}, Exception("Duplicate key"))
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
 
@@ -452,7 +447,6 @@ class TestAdminToolRoutes:
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
         assert result.status_code == 500
         assert b"Tool configuration error" in result.body
-
 
         # Generic Exception should return 500 with JSON body
         mock_update_tool.side_effect = Exception("Unexpected error")
@@ -477,7 +471,7 @@ class TestAdminToolRoutes:
                 "jsonpathFilter": "",
                 "auth_type": "",
                 "requestType": "GET",
-                "integrationType": "REST"
+                "integrationType": "REST",
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)

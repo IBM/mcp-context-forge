@@ -7,20 +7,17 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
-import asyncio
 import logging
 import os
 import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
 
 # First-Party
 from mcpgateway.models import LogLevel
-from mcpgateway.services.logging_service import LoggingService, _get_file_handler, _get_text_handler
-
+from mcpgateway.services.logging_service import _get_file_handler, _get_text_handler, LoggingService
 
 # ---------------------------------------------------------------------------
 # Test file handler creation
@@ -64,12 +61,14 @@ async def test_file_handler_creation_without_rotation():
             mock_settings.log_filemode = "a"
 
             # Reset global handler
+            # First-Party
             import mcpgateway.services.logging_service as ls
+
             ls._file_handler = None
 
             handler = _get_file_handler()
             assert handler is not None
-            assert not hasattr(handler, 'maxBytes')  # Regular FileHandler doesn't have this
+            assert not hasattr(handler, "maxBytes")  # Regular FileHandler doesn't have this
 
 
 @pytest.mark.asyncio
@@ -79,7 +78,9 @@ async def test_file_handler_raises_when_disabled():
         mock_settings.log_to_file = False
 
         # Reset global handler
+        # First-Party
         import mcpgateway.services.logging_service as ls
+
         ls._file_handler = None
 
         with pytest.raises(ValueError, match="File logging is disabled"):
@@ -119,8 +120,8 @@ async def test_initialize_with_file_logging_enabled():
             root_logger = logging.getLogger()
             # Should have both text and file handlers
             handler_types = [type(h).__name__ for h in root_logger.handlers]
-            assert 'StreamHandler' in handler_types
-            assert 'RotatingFileHandler' in handler_types
+            assert "StreamHandler" in handler_types
+            assert "RotatingFileHandler" in handler_types
 
             await service.shutdown()
 
@@ -138,7 +139,7 @@ async def test_initialize_with_file_logging_disabled():
         root_logger = logging.getLogger()
         # Should only have text handler
         handler_types = [type(h).__name__ for h in root_logger.handlers]
-        assert 'StreamHandler' in handler_types
+        assert "StreamHandler" in handler_types
 
         await service.shutdown()
 
@@ -172,7 +173,7 @@ async def test_configure_uvicorn_loggers():
     service = LoggingService()
     service._configure_uvicorn_loggers()
 
-    uvicorn_loggers = ['uvicorn', 'uvicorn.access', 'uvicorn.error', 'uvicorn.asgi']
+    uvicorn_loggers = ["uvicorn", "uvicorn.access", "uvicorn.error", "uvicorn.asgi"]
     for logger_name in uvicorn_loggers:
         logger = logging.getLogger(logger_name)
         assert logger.propagate == True
@@ -185,7 +186,7 @@ async def test_configure_uvicorn_after_startup():
     """Test public method to reconfigure uvicorn loggers after startup."""
     service = LoggingService()
 
-    with patch.object(service, '_configure_uvicorn_loggers') as mock_config:
+    with patch.object(service, "_configure_uvicorn_loggers") as mock_config:
         service.configure_uvicorn_after_startup()
         mock_config.assert_called_once()
 
@@ -230,8 +231,7 @@ async def test_should_log_all_levels():
 
     for min_level, should_pass in test_cases:
         service._level = min_level
-        for level in [LogLevel.DEBUG, LogLevel.INFO, LogLevel.NOTICE, LogLevel.WARNING,
-                      LogLevel.ERROR, LogLevel.CRITICAL, LogLevel.ALERT, LogLevel.EMERGENCY]:
+        for level in [LogLevel.DEBUG, LogLevel.INFO, LogLevel.NOTICE, LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL, LogLevel.ALERT, LogLevel.EMERGENCY]:
             if level in should_pass:
                 assert service._should_log(level), f"{level} should log at {min_level}"
             else:
@@ -248,7 +248,7 @@ async def test_notify_with_logger_name():
     """Test notify with a specific logger name."""
     service = LoggingService()
 
-    with patch.object(service, 'get_logger') as mock_get_logger:
+    with patch.object(service, "get_logger") as mock_get_logger:
         mock_logger = MagicMock()
         mock_get_logger.return_value = mock_logger
 
@@ -263,7 +263,7 @@ async def test_notify_without_logger_name():
     """Test notify without a specific logger name uses root logger."""
     service = LoggingService()
 
-    with patch.object(service, 'get_logger') as mock_get_logger:
+    with patch.object(service, "get_logger") as mock_get_logger:
         mock_logger = MagicMock()
         mock_get_logger.return_value = mock_logger
 
@@ -364,7 +364,9 @@ async def test_dual_logging_integration():
             mock_settings.log_filemode = "w"
 
             # Reset global handlers
+            # First-Party
             import mcpgateway.services.logging_service as ls
+
             ls._file_handler = None
             ls._text_handler = None
 
@@ -379,13 +381,13 @@ async def test_dual_logging_integration():
             # Configure uvicorn loggers
             service.configure_uvicorn_after_startup()
             uvicorn_logger = logging.getLogger("uvicorn.access")
-            uvicorn_logger.info("127.0.0.1:8000 - \"GET /test HTTP/1.1\" 200")
+            uvicorn_logger.info('127.0.0.1:8000 - "GET /test HTTP/1.1" 200')
 
             await service.shutdown()
 
             # Check file was created and contains expected content
             assert os.path.exists(log_file)
-            with open(log_file, 'r') as f:
+            with open(log_file, "r") as f:
                 content = f.read()
                 assert "Integration test message" in content
                 assert "Integration error message" in content
@@ -414,8 +416,7 @@ async def test_notify_with_all_log_levels():
 
     # Test all levels including NOTICE, ALERT, EMERGENCY
     # which are now mapped to appropriate Python levels
-    for level in [LogLevel.DEBUG, LogLevel.INFO, LogLevel.NOTICE, LogLevel.WARNING,
-                  LogLevel.ERROR, LogLevel.CRITICAL, LogLevel.ALERT, LogLevel.EMERGENCY]:
+    for level in [LogLevel.DEBUG, LogLevel.INFO, LogLevel.NOTICE, LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL, LogLevel.ALERT, LogLevel.EMERGENCY]:
         await service.notify(f"Test {level}", level)
         # Should not raise any exceptions now that we have proper mapping
 
@@ -434,7 +435,9 @@ async def test_file_handler_creates_directory():
             mock_settings.log_filemode = "a"
 
             # Reset global handler
+            # First-Party
             import mcpgateway.services.logging_service as ls
+
             ls._file_handler = None
 
             handler = _get_file_handler()

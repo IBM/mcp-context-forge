@@ -325,7 +325,7 @@ def test_invalid_cli_params(monkeypatch):
 
     monkeypatch.setattr(redis_isready_mod, "wait_for_redis_ready", fail)
     monkeypatch.setattr(redis_isready_mod.settings, "cache_type", "redis")
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit):
         try:
             redis_isready_mod.main()
         except RuntimeError:

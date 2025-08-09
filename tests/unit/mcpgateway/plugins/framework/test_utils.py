@@ -7,10 +7,10 @@ Authors: Teryl Taylor
 
 Unit tests for utilities.
 """
-from mcpgateway.plugins.framework.utils import pre_prompt_matches, matches, post_prompt_matches
+# First-Party
 from mcpgateway.plugins.framework.models import PluginCondition
-from mcpgateway.plugins.framework.plugin_types import GlobalContext, PromptPosthookPayload, PromptPrehookPayload
-
+from mcpgateway.plugins.framework.plugin_types import GlobalContext, PromptPrehookPayload
+from mcpgateway.plugins.framework.utils import matches, pre_prompt_matches
 
 
 def test_server_ids():

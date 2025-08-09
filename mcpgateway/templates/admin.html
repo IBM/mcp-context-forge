@@ -1131,26 +1131,26 @@
                 </div>
               </div>
               <div id="auth-headers-fields" style="display: none">
-                <div>
-                  <label class="block text-sm font-medium text-gray-700"
-                    >Header Key</label
-                  >
-                  <input
-                    type="text"
-                    name="auth_header_key"
-                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                  />
-                </div>
-                <div>
-                  <label class="block text-sm font-medium text-gray-700"
-                    >Header Value</label
-                  >
-                  <input
-                    type="password"
-                    name="auth_header_value"
-                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                    placeholder="********"
-                  />
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Custom Headers
+                    </label>
+                    <button
+                      type="button"
+                      onclick="addAuthHeader('auth-headers-container')"
+                      class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    >
+                      <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                      </svg>
+                      Add Header
+                    </button>
+                  </div>
+                  <div id="auth-headers-container" class="space-y-2">
+                    <!-- Headers will be added dynamically here -->
+                  </div>
+                  <input type="hidden" name="auth_headers" id="auth-headers-json" />
                 </div>
               </div>
             </div>
@@ -2193,26 +2193,26 @@
                 </div>
               </div>
               <div id="auth-headers-fields-gw" style="display: none">
-                <div>
-                  <label class="block text-sm font-medium text-gray-700"
-                    >Header Key</label
-                  >
-                  <input
-                    type="text"
-                    name="auth_header_key"
-                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                  />
-                </div>
-                <div>
-                  <label class="block text-sm font-medium text-gray-700"
-                    >Header Value</label
-                  >
-                  <input
-                    type="password"
-                    name="auth_header_value"
-                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                    placeholder="********"
-                  />
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Custom Headers
+                    </label>
+                    <button
+                      type="button"
+                      onclick="addAuthHeader('auth-headers-container-gw')"
+                      class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    >
+                      <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                      </svg>
+                      Add Header
+                    </button>
+                  </div>
+                  <div id="auth-headers-container-gw" class="space-y-2">
+                    <!-- Headers will be added dynamically here -->
+                  </div>
+                  <input type="hidden" name="auth_headers" id="auth-headers-json-gw" />
                 </div>
               </div>
               <div>
@@ -2794,30 +2794,26 @@
                     </div>
                   </div>
                   <div id="edit-auth-headers-fields" style="display: none">
-                    <div>
-                      <label
-                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                        >Header Key</label
-                      >
-                      <input
-                        type="text"
-                        name="auth_header_key"
-                        id="edit-auth-key"
-                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                        >Header Value</label
-                      >
-                      <input
-                        type="password"
-                        name="auth_header_value"
-                        id="edit-auth-value"
-                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                        placeholder="********"
-                      />
+                    <div class="space-y-3">
+                      <div class="flex items-center justify-between">
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Custom Headers
+                        </label>
+                        <button
+                          type="button"
+                          onclick="addAuthHeader('edit-auth-headers-container')"
+                          class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        >
+                          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                          </svg>
+                          Add Header
+                        </button>
+                      </div>
+                      <div id="edit-auth-headers-container" class="space-y-2">
+                        <!-- Headers will be added dynamically here -->
+                      </div>
+                      <input type="hidden" name="auth_headers" id="edit-auth-headers-json" />
                     </div>
                   </div>
                   <!-- Tags Section -->
@@ -3472,26 +3468,26 @@
                       </div>
                     </div>
                     <div id="auth-headers-fields-gw-edit" style="display: none">
-                      <div>
-                        <label class="block text-sm font-medium text-gray-700"
-                          >Header Key</label
-                        >
-                        <input
-                          type="text"
-                          name="auth_header_key"
-                          class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                        />
-                      </div>
-                      <div>
-                        <label class="block text-sm font-medium text-gray-700"
-                          >Header Value</label
-                        >
-                        <input
-                          type="password"
-                          name="auth_header_value"
-                          class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                          placeholder="********"
-                        />
+                      <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Custom Headers
+                          </label>
+                          <button
+                            type="button"
+                            onclick="addAuthHeader('auth-headers-container-gw-edit')"
+                            class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                          >
+                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                            </svg>
+                            Add Header
+                          </button>
+                        </div>
+                        <div id="auth-headers-container-gw-edit" class="space-y-2">
+                          <!-- Headers will be added dynamically here -->
+                        </div>
+                        <input type="hidden" name="auth_headers" id="auth-headers-json-gw-edit" />
                       </div>
                     </div>
                     <div>

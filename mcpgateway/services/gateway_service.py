@@ -77,7 +77,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -394,7 +394,12 @@ class GatewayService:
                 )
 
             auth_type = getattr(gateway, "auth_type", None)
+            # Support multiple custom headers
             auth_value = getattr(gateway, "auth_value", {})
+            if hasattr(gateway, "auth_headers") and gateway.auth_headers:
+                # Convert list of {key, value} to dict
+                header_dict = {h["key"]: h["value"] for h in gateway.auth_headers if h.get("key")}
+                auth_value = encode_auth(header_dict)  # Encode the dict for consistency
 
             capabilities, tools = await self._initialize_gateway(gateway.url, auth_value, gateway.transport)
 
@@ -577,15 +582,19 @@ class GatewayService:
                         gateway.auth_value = ""
 
                     # if auth_type is not None and only then check auth_value
-                    if getattr(gateway, "auth_value", "") != "":
-                        token = gateway_update.auth_token
-                        password = gateway_update.auth_password
-                        header_value = gateway_update.auth_header_value
+                if getattr(gateway, "auth_value", "") != "":
+                    token = gateway_update.auth_token
+                    password = gateway_update.auth_password
+                    header_value = gateway_update.auth_header_value
 
-                        if settings.masked_auth_value not in (token, password, header_value):
-                            # Check if values differ from existing ones
-                            if gateway.auth_value != gateway_update.auth_value:
-                                gateway.auth_value = gateway_update.auth_value
+                    # Support multiple custom headers on update
+                    if hasattr(gateway_update, "auth_headers") and gateway_update.auth_headers:
+                        header_dict = {h["key"]: h["value"] for h in gateway_update.auth_headers if h.get("key")}
+                        gateway.auth_value = encode_auth(header_dict)  # Encode the dict for consistency
+                    elif settings.masked_auth_value not in (token, password, header_value):
+                        # Check if values differ from existing ones
+                        if gateway.auth_value != gateway_update.auth_value:
+                            gateway.auth_value = gateway_update.auth_value
 
                 # Try to reinitialize connection if URL changed
                 if gateway_update.url is not None:

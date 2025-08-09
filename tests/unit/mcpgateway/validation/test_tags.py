@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
-import pytest
 
+# First-Party
 from mcpgateway.validation.tags import TagValidator, validate_tags_field
 
 

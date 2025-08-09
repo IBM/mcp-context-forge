@@ -6,22 +6,22 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
-import pytest
+# Standard
 from unittest.mock import Mock, patch
 
+# First-Party
 from mcpgateway.utils.passthrough_headers import (
     get_passthrough_headers,
+    MAX_HEADER_VALUE_LENGTH,
     sanitize_header_value,
     validate_header_name,
-    HEADER_NAME_REGEX,
-    MAX_HEADER_VALUE_LENGTH,
 )
 
 
 class TestHeaderSecurity:
     """Test security features of header passthrough."""
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_feature_flag_disabled_by_default(self, mock_settings):
         """Test that the feature is disabled by default for security."""
         mock_settings.enable_header_passthrough = False
@@ -72,14 +72,14 @@ class TestHeaderSecurity:
         """Test that header name validation prevents injection."""
         malicious_names = [
             "Valid-Name\r\nX-Injected: value",  # Newline injection
-            "Name With Spaces",                  # Spaces not allowed
-            "Name_With_Underscores",            # Underscores not allowed
-            "Name.With.Dots",                   # Dots not allowed
-            "Name:With:Colons",                 # Colons not allowed
-            "Name/With/Slashes",                # Slashes not allowed
-            "Name@With@Symbols",                # Special chars not allowed
-            "",                                 # Empty string
-            "Name\x00WithNull",                 # Null byte
+            "Name With Spaces",  # Spaces not allowed
+            "Name_With_Underscores",  # Underscores not allowed
+            "Name.With.Dots",  # Dots not allowed
+            "Name:With:Colons",  # Colons not allowed
+            "Name/With/Slashes",  # Slashes not allowed
+            "Name@With@Symbols",  # Special chars not allowed
+            "",  # Empty string
+            "Name\x00WithNull",  # Null byte
         ]
 
         for malicious_name in malicious_names:
@@ -100,7 +100,7 @@ class TestHeaderSecurity:
         for safe_name in safe_names:
             assert validate_header_name(safe_name), f"Should allow: {safe_name!r}"
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_header_validation_applied_in_passthrough(self, mock_settings, caplog):
         """Test that header validation is applied during passthrough."""
         mock_settings.enable_header_passthrough = True
@@ -109,27 +109,23 @@ class TestHeaderSecurity:
         mock_db.query.return_value.first.return_value = None  # No global config
         mock_settings.default_passthrough_headers = ["Invalid Header Name", "Valid-Header"]
 
-        request_headers = {
-            "invalid header name": "should-be-rejected",
-            "valid-header": "should-pass"
-        }
+        request_headers = {"invalid header name": "should-be-rejected", "valid-header": "should-pass"}
         base_headers = {"Content-Type": "application/json"}
 
+        # Standard
         import logging
+
         with caplog.at_level(logging.WARNING):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Only valid header should pass through
-        expected = {
-            "Content-Type": "application/json",
-            "Valid-Header": "should-pass"
-        }
+        expected = {"Content-Type": "application/json", "Valid-Header": "should-pass"}
         assert result == expected
 
         # Should log warning about invalid header name
         assert any("Invalid header name" in record.message for record in caplog.records)
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_header_sanitization_applied_in_passthrough(self, mock_settings, caplog):
         """Test that header sanitization is applied during passthrough."""
         mock_settings.enable_header_passthrough = True
@@ -139,21 +135,16 @@ class TestHeaderSecurity:
         mock_settings.default_passthrough_headers = ["X-Test"]
 
         # Request with dangerous header value
-        request_headers = {
-            "x-test": "value\r\nwith\x01dangerous\x02chars"
-        }
+        request_headers = {"x-test": "value\r\nwith\x01dangerous\x02chars"}
         base_headers = {"Content-Type": "application/json"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Header value should be sanitized
-        expected = {
-            "Content-Type": "application/json",
-            "X-Test": "valuewithdangerouschars"  # Sanitized
-        }
+        expected = {"Content-Type": "application/json", "X-Test": "valuewithdangerouschars"}  # Sanitized
         assert result == expected
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_empty_sanitized_header_skipped(self, mock_settings, caplog):
         """Test that headers that become empty after sanitization are skipped."""
         mock_settings.enable_header_passthrough = True
@@ -163,12 +154,12 @@ class TestHeaderSecurity:
         mock_settings.default_passthrough_headers = ["X-Test"]
 
         # Header with only dangerous characters
-        request_headers = {
-            "x-test": "\r\n\x01\x02\x03   "  # Only control chars and whitespace
-        }
+        request_headers = {"x-test": "\r\n\x01\x02\x03   "}  # Only control chars and whitespace
         base_headers = {"Content-Type": "application/json"}
 
+        # Standard
         import logging
+
         with caplog.at_level(logging.WARNING):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
@@ -182,7 +173,7 @@ class TestHeaderSecurity:
     def test_sanitization_exception_handling(self, caplog):
         """Test that sanitization handles edge cases gracefully."""
         # Test with non-string input (should not happen in practice)
-        with patch('mcpgateway.utils.passthrough_headers.sanitize_header_value') as mock_sanitize:
+        with patch("mcpgateway.utils.passthrough_headers.sanitize_header_value") as mock_sanitize:
             mock_sanitize.side_effect = Exception("Test error")
 
             mock_settings = Mock()
@@ -192,14 +183,12 @@ class TestHeaderSecurity:
             mock_db = Mock()
             mock_db.query.return_value.first.return_value = None
 
-            with patch('mcpgateway.utils.passthrough_headers.settings', mock_settings):
+            with patch("mcpgateway.utils.passthrough_headers.settings", mock_settings):
+                # Standard
                 import logging
+
                 with caplog.at_level(logging.WARNING):
-                    result = get_passthrough_headers(
-                        {"x-test": "value"},
-                        {"Content-Type": "application/json"},
-                        mock_db
-                    )
+                    result = get_passthrough_headers({"x-test": "value"}, {"Content-Type": "application/json"}, mock_db)
 
                 # Should skip the header due to sanitization error
                 expected = {"Content-Type": "application/json"}
@@ -209,15 +198,17 @@ class TestHeaderSecurity:
         """Test that the regex pattern is secure against ReDoS attacks."""
         # Test with potentially problematic input
         problematic_inputs = [
-            "A" * 1000,                    # Very long string
-            "A-" * 500,                    # Repeated pattern
-            "A" + "-" * 1000 + "B",       # Long middle section
+            "A" * 1000,  # Very long string
+            "A-" * 500,  # Repeated pattern
+            "A" + "-" * 1000 + "B",  # Long middle section
         ]
 
+        # Standard
         import time
+
         for test_input in problematic_inputs:
             start_time = time.time()
-            result = validate_header_name(test_input)
+            validate_header_name(test_input)
             end_time = time.time()
 
             # Should complete quickly (less than 1 second)
@@ -226,7 +217,7 @@ class TestHeaderSecurity:
             # Our regex doesn't restrict length, so long valid patterns will pass
             # This is by design - length limiting is handled by sanitization
 
-    @patch('mcpgateway.utils.passthrough_headers.settings')
+    @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_authorization_header_security(self, mock_settings, caplog):
         """Test security around Authorization header handling."""
         mock_settings.enable_header_passthrough = True
@@ -244,7 +235,9 @@ class TestHeaderSecurity:
         request_headers = {"authorization": "Bearer potentially-leaked-token"}
         base_headers = {}
 
+        # Standard
         import logging
+
         with caplog.at_level(logging.WARNING):
             result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
@@ -272,12 +265,8 @@ class TestHeaderSecurity:
             mock_db = Mock()
             mock_db.query.return_value.first.return_value = None
 
-            with patch('mcpgateway.utils.passthrough_headers.settings', mock_settings):
-                result = get_passthrough_headers(
-                    {request_case: "test-value"},
-                    {},
-                    mock_db
-                )
+            with patch("mcpgateway.utils.passthrough_headers.settings", mock_settings):
+                result = get_passthrough_headers({request_case: "test-value"}, {}, mock_db)
 
                 # Should match and use config case
                 assert config_case in result
@@ -296,7 +285,7 @@ class TestHeaderSecurity:
         mock_db = Mock()
         mock_db.query.return_value.first.return_value = None
 
-        with patch('mcpgateway.utils.passthrough_headers.settings', mock_settings):
+        with patch("mcpgateway.utils.passthrough_headers.settings", mock_settings):
             # Should handle large inputs without crashing
             result = get_passthrough_headers(large_request_headers, {}, mock_db)
 
@@ -328,33 +317,37 @@ class TestConfigSecurity:
 
     def test_environment_variable_json_parsing(self):
         """Test JSON parsing of environment variables."""
-        from mcpgateway.config import Settings
-        import os
+        # Standard
         import json
+
+        # First-Party
+        from mcpgateway.config import Settings
 
         # Test with valid JSON
         test_headers = ["X-Test-1", "X-Test-2"]
         # Test JSON parsing through direct instantiation
-        with patch('os.environ.get', return_value=json.dumps(test_headers)):
+        with patch("os.environ.get", return_value=json.dumps(test_headers)):
             settings = Settings()
             assert settings.default_passthrough_headers == test_headers
 
     def test_environment_variable_csv_fallback(self):
         """Test CSV fallback for environment variables."""
+        # First-Party
         from mcpgateway.config import Settings
-        import os
 
         # Test CSV parsing by simulating the __init__ logic directly
         # since pydantic tries JSON first and fails
-        settings = Settings()
+        Settings()
 
         # Manually call the parsing logic that would be triggered by env var
-        with patch('os.environ.get', return_value='X-Test-1,X-Test-2,X-Test-3'):
+        with patch("os.environ.get", return_value="X-Test-1,X-Test-2,X-Test-3"):
             # Simulate what happens in Settings.__init__
-            default_value = 'X-Test-1,X-Test-2,X-Test-3'
+            default_value = "X-Test-1,X-Test-2,X-Test-3"
             try:
                 # Try JSON parsing first - this should fail
+                # Standard
                 import json
+
                 parsed = json.loads(default_value)
             except json.JSONDecodeError:
                 # Fallback to comma-separated parsing - this should work
@@ -364,15 +357,17 @@ class TestConfigSecurity:
 
     def test_environment_variable_security_validation(self):
         """Test that environment variable parsing validates header names."""
-        from mcpgateway.config import Settings
-        import os
+        # Standard
         import json
+
+        # First-Party
+        from mcpgateway.config import Settings
 
         # Test with malicious header names
         malicious_headers = ["Valid-Header", "Invalid Header Name", "Another@Bad#Name"]
 
         # Test with malicious headers through direct instantiation
-        with patch.dict('os.environ', {'DEFAULT_PASSTHROUGH_HEADERS': json.dumps(malicious_headers)}, clear=False):
+        with patch.dict("os.environ", {"DEFAULT_PASSTHROUGH_HEADERS": json.dumps(malicious_headers)}, clear=False):
             settings = Settings()
 
             # Should include all headers (validation happens during use, not config)
