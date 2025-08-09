@@ -1016,11 +1016,35 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 ### Logging
 
-| Setting      | Description       | Default | Options            |
-| ------------ | ----------------- | ------- | ------------------ |
-| `LOG_LEVEL`  | Minimum log level | `INFO`  | `DEBUG`...`CRITICAL` |
-| `LOG_FORMAT` | Log format        | `json`  | `json`, `text`     |
-| `LOG_FILE`   | Log output file   | (none)  | path or empty      |
+MCP Gateway provides comprehensive file-based logging with JSON formatting for structured logs and text formatting for console output. Logs automatically rotate when they reach 1MB with 5 backup files retained.
+
+| Setting        | Description                    | Default           | Options                    |
+| -------------- | ------------------------------ | ----------------- | -------------------------- |
+| `LOG_LEVEL`    | Minimum log level              | `INFO`            | `DEBUG`...`CRITICAL`       |
+| `LOG_FORMAT`   | Console log format             | `json`            | `json`, `text`             |
+| `LOG_FILE`     | Log filename                   | `mcpgateway.log`  | Any filename or empty      |
+| `LOG_FOLDER`   | Directory for log files        | `logs`            | Any directory path or empty|
+| `LOG_FILEMODE` | File write mode                | `a+`              | `a+` (append), `w` (overwrite)|
+
+**Log File Features:**
+- **Dual Output**: JSON-formatted logs to file, human-readable text to console
+- **Automatic Rotation**: Files rotate at 1MB with 5 backup files (`.log.1`, `.log.2`, etc.)
+- **Directory Creation**: Log folder is automatically created if it doesn't exist
+- **Centralized Service**: All modules use the unified `LoggingService` for consistent formatting
+
+**Example Configuration:**
+```bash
+# Custom log configuration
+LOG_LEVEL=DEBUG
+LOG_FOLDER=/var/log/mcpgateway
+LOG_FILE=gateway.log
+LOG_FILEMODE=a+
+```
+
+**Default Behavior:**
+- Logs are written to `./logs/mcpgateway.log` in JSON format
+- Console output remains in readable text format
+- Both file and console respect the `LOG_LEVEL` setting
 
 ### Transport
 
