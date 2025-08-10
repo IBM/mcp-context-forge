@@ -1782,6 +1782,9 @@ async def get_prompt(
 
     Returns:
         Rendered prompt or metadata.
+
+    Raises:
+        Exception: Re-raised if not a handled exception type.
     """
     logger.debug(f"User: {user} requested prompt: {name} with args={args}")
     start_time = time.monotonic()
@@ -1841,6 +1844,9 @@ async def get_prompt_no_args(
 
     Returns:
         The prompt template information
+
+    Raises:
+        Exception: Re-raised from prompt service.
     """
     logger.debug(f"User: {user} requested prompt: {name} with no arguments")
     start_time = time.monotonic()
