@@ -21,6 +21,7 @@
 //   - sse: Server-Sent Events for web-based MCP clients
 //   - http: HTTP streaming for REST-like interactions
 //   - dual: Both SSE and HTTP on the same port (SSE at /sse, HTTP at /http)
+//   - rest: REST API endpoints for direct HTTP access (no MCP protocol)
 //
 // Authentication:
 //   Optional Bearer token authentication for SSE and HTTP transports.
@@ -59,7 +60,11 @@
 //
 //   # 4) DUAL mode (both SSE and HTTP)
 //   ./fast-time-server -transport=dual -port=8080
-//   # SSE will be at /sse, HTTP at /http
+//   # SSE will be at /sse, HTTP at /http, REST at /api/v1
+//
+//   # 5) REST API mode (direct HTTP REST endpoints)
+//   ./fast-time-server -transport=rest -port=8080
+//   # REST API at /api/v1/* with OpenAPI docs at /api/v1/docs
 //
 // Endpoint URLs:
 //
@@ -78,6 +83,15 @@
 //     SSE Events:    http://localhost:8080/sse
 //     SSE Messages:  http://localhost:8080/messages and http://localhost:8080/message
 //     HTTP MCP:      http://localhost:8080/http
+//     REST API:      http://localhost:8080/api/v1/*
+//     API Docs:      http://localhost:8080/api/v1/docs
+//     Health:        http://localhost:8080/health
+//     Version:       http://localhost:8080/version
+//
+//   REST Transport:
+//     REST API:      http://localhost:8080/api/v1/*
+//     API Docs:      http://localhost:8080/api/v1/docs
+//     OpenAPI:       http://localhost:8080/api/v1/openapi.json
 //     Health:        http://localhost:8080/health
 //     Version:       http://localhost:8080/version
 //
@@ -391,7 +405,7 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 func main() {
     /* ---------------------------- flags --------------------------- */
     var (
-        transport  = flag.String("transport", "stdio", "Transport: stdio | sse | http | dual")
+        transport  = flag.String("transport", "stdio", "Transport: stdio | sse | http | dual | rest")
         addrFlag   = flag.String("addr", "", "Full listen address (host:port) - overrides -listen/-port")
         listenHost = flag.String("listen", defaultListen, "Listen interface for sse/http")
         port       = flag.Int("port", defaultPort, "TCP port for sse/http")
@@ -418,14 +432,16 @@ func main() {
                 ind+"%s -transport=stdio -log-level=none\n"+
                 ind+"%s -transport=sse -listen=0.0.0.0 -port=8080\n"+
                 ind+"%s -transport=http -addr=127.0.0.1:9090\n"+
-                ind+"%s -transport=dual -port=8080 -auth-token=secret123\n\n"+
+                ind+"%s -transport=dual -port=8080 -auth-token=secret123\n"+
+                ind+"%s -transport=rest -port=8080\n\n"+
                 "MCP Protocol Endpoints:\n"+
                 ind+"SSE:  /sse (events), /messages (messages)\n"+
                 ind+"HTTP: / (single endpoint)\n"+
-                ind+"DUAL: /sse & /messages (SSE), /http (HTTP)\n\n"+
+                ind+"DUAL: /sse & /messages (SSE), /http (HTTP), /api/v1/* (REST)\n"+
+                ind+"REST: /api/v1/* (REST API only, no MCP)\n\n"+
                 "Environment Variables:\n"+
                 ind+"AUTH_TOKEN - Bearer token for authentication (overrides -auth-token flag)\n",
-            os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+            os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
     }
 
     flag.Parse()
@@ -613,6 +629,9 @@ func main() {
         mux.Handle("/message", sseHandler)  // Support singular (MCP Gateway compatibility)
         mux.Handle("/http", httpHandler)
 
+        // Register REST API handlers
+        registerRESTHandlers(mux)
+
         // Register health and version endpoints
         registerHealthAndVersion(mux)
 
@@ -620,6 +639,8 @@ func main() {
         logAt(logInfo, "  SSE events:       /sse")
         logAt(logInfo, "  SSE messages:     /messages (plural) and /message (singular)")
         logAt(logInfo, "  HTTP endpoint:    /http")
+        logAt(logInfo, "  REST API:         /api/v1/*")
+        logAt(logInfo, "  API Docs:         /api/v1/docs")
         logAt(logInfo, "  Health check:     /health")
         logAt(logInfo, "  Version info:     /version")
 
@@ -633,6 +654,7 @@ func main() {
 
         // Create handler chain
         var handler http.Handler = mux
+        handler = corsMiddleware(handler) // Add CORS support for REST API
         handler = loggingHTTPMiddleware(handler)
         if *authToken != "" {
             handler = authMiddleware(*authToken, handler)
@@ -641,6 +663,47 @@ func main() {
         // Start server
         if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("DUAL server error: %v", err)
+        }
+
+    /* ---------------------------- rest --------------------------- */
+    case "rest":
+        addr := effectiveAddr(*addrFlag, *listenHost, *port)
+        mux := http.NewServeMux()
+
+        // Register REST API handlers
+        registerRESTHandlers(mux)
+
+        // Register health and version endpoints
+        registerHealthAndVersion(mux)
+
+        logAt(logInfo, "REST API server ready on http://%s", addr)
+        logAt(logInfo, "  API Base:         /api/v1")
+        logAt(logInfo, "  API Docs:         /api/v1/docs")
+        logAt(logInfo, "  OpenAPI Spec:     /api/v1/openapi.json")
+        logAt(logInfo, "  Health check:     /health")
+        logAt(logInfo, "  Version info:     /version")
+
+        if *authToken != "" {
+            logAt(logInfo, "  Authentication:   Bearer token required")
+        }
+
+        // Example commands
+        logAt(logInfo, "Test commands:")
+        logAt(logInfo, "  Get time:    curl http://%s/api/v1/time?timezone=UTC", addr)
+        logAt(logInfo, "  List zones:  curl http://%s/api/v1/timezones", addr)
+        logAt(logInfo, "  Echo test:   curl http://%s/api/v1/test/echo", addr)
+
+        // Create handler chain
+        var handler http.Handler = mux
+        handler = corsMiddleware(handler) // Add CORS support
+        handler = loggingHTTPMiddleware(handler)
+        if *authToken != "" {
+            handler = authMiddleware(*authToken, handler)
+        }
+
+        // Start server
+        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+            logger.Fatalf("REST server error: %v", err)
         }
 
     default:
