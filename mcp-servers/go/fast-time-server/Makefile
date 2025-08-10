@@ -120,6 +120,7 @@ coverage:
 # help: run-http              - Run HTTP  transport on :8080  (POST JSON-RPC)
 # help: run-sse               - Run SSE   transport on :8080  (/sse, /messages)
 # help: run-dual              - Run BOTH  SSE & HTTP on :8080 (/sse, /messages, /http)
+# help: run-rest              - Run REST API on :8080  (/api/v1/*)
 
 build: tidy
 	@mkdir -p $(DIST_DIR)
@@ -148,6 +149,9 @@ run-sse: build
 
 run-dual: build
 	@$(DIST_DIR)/$(BIN_NAME) -transport=dual -port=8080
+
+run-rest: build
+	@$(DIST_DIR)/$(BIN_NAME) -transport=rest -port=8080
 
 # =============================================================================
 # 🐳 DOCKER
