@@ -28,7 +28,7 @@ import uuid
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import case, delete, desc, func, not_, select, Float
+from sqlalchemy import case, delete, desc, Float, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -219,7 +219,7 @@ class ToolService:
                 case(
                     (
                         func.count(ToolMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,  # pylint: disable=not-callable
+                        func.sum(case((ToolMetric.is_success == 1, 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,  # pylint: disable=not-callable
                     ),
                     else_=None,
                 ).label("success_rate"),
@@ -1111,8 +1111,8 @@ class ToolService:
         """
 
         total = db.execute(select(func.count(ToolMetric.id))).scalar() or 0  # pylint: disable=not-callable
-        successful = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success)).scalar() or 0  # pylint: disable=not-callable
-        failed = db.execute(select(func.count(ToolMetric.id)).where(not_(ToolMetric.is_success))).scalar() or 0  # pylint: disable=not-callable
+        successful = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success == 1)).scalar() or 0  # pylint: disable=not-callable
+        failed = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success == 0)).scalar() or 0  # pylint: disable=not-callable
         failure_rate = failed / total if total > 0 else 0.0
         min_rt = db.execute(select(func.min(ToolMetric.response_time))).scalar()
         max_rt = db.execute(select(func.max(ToolMetric.response_time))).scalar()
