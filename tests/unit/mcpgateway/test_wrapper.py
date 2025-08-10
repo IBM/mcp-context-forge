@@ -43,6 +43,29 @@ def _install_fake_mcp(monkeypatch) -> None:
     stdio_mod = ModuleType("mcp.server.stdio")
     models_mod = ModuleType("mcp.server.models")
     types_mod = ModuleType("mcp.types")
+    client_mod = ModuleType("mcp.client")
+    sse_mod = ModuleType("mcp.client.sse")
+    streamable_http_mod = ModuleType("mcp.client.streamable_http")
+
+    # Add missing ClientSession class that gateway_service.py needs
+    class _FakeClientSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    mcp.ClientSession = _FakeClientSession
+
+    # Add missing sse_client function that gateway_service.py needs
+    def _fake_sse_client(*args, **kwargs):
+        pass
+
+    def _fake_streamablehttp_client(*args, **kwargs):
+        pass
+
+    sse_mod.sse_client = _fake_sse_client
+    streamable_http_mod.streamablehttp_client = _fake_streamablehttp_client
+    client_mod.sse = sse_mod
+    client_mod.streamable_http = streamable_http_mod
+    mcp.client = client_mod
 
     # --- minimalist Server façade ---------------------------------------- #
     class _FakeServer:
@@ -143,6 +166,9 @@ def _install_fake_mcp(monkeypatch) -> None:
             "mcp.server.stdio": stdio_mod,
             "mcp.server.models": models_mod,
             "mcp.types": types_mod,
+            "mcp.client": client_mod,
+            "mcp.client.sse": sse_mod,
+            "mcp.client.streamable_http": streamable_http_mod,
         }
     )
     monkeypatch.syspath_prepend(".")
@@ -307,7 +333,7 @@ async def test_fetch_url_request_error(monkeypatch, wrapper):
         async def get(self, *_a, **_k):
             raise httpx.RequestError("net", request=httpx.Request("GET", "u"))
 
-    monkeypatch.setattr(wrapper.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(wrapper, "ResilientHttpClient", _Client)
     with pytest.raises(httpx.RequestError):
         await wrapper.fetch_url("u")
 
