@@ -23,7 +23,7 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import delete, func, not_, select
+from sqlalchemy import case, delete, desc, Float, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -33,8 +33,9 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
-from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
+from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.metrics_common import build_top_performers
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -138,6 +139,50 @@ class PromptService:
         """
         self._event_subscribers.clear()
         logger.info("Prompt service shutdown complete")
+
+    async def get_top_prompts(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+        """Retrieve the top-performing prompts based on execution count.
+
+        Queries the database to get prompts with their metrics, ordered by the number of executions
+        in descending order. Returns a list of TopPerformer objects containing prompt details and
+        performance metrics.
+
+        Args:
+            db (Session): Database session for querying prompt metrics.
+            limit (int): Maximum number of prompts to return. Defaults to 5.
+
+        Returns:
+            List[TopPerformer]: A list of TopPerformer objects, each containing:
+                - id: Prompt ID.
+                - name: Prompt name.
+                - execution_count: Total number of executions.
+                - avg_response_time: Average response time in seconds, or None if no metrics.
+                - success_rate: Success rate percentage, or None if no metrics.
+                - last_execution: Timestamp of the last execution, or None if no metrics.
+        """
+        results = (
+            db.query(
+                DbPrompt.id,
+                DbPrompt.name,
+                func.count(PromptMetric.id).label("execution_count"),  # pylint: disable=not-callable
+                func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                case(
+                    (
+                        func.count(PromptMetric.id) > 0,  # pylint: disable=not-callable
+                        func.sum(case((PromptMetric.is_success == 1, 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,  # pylint: disable=not-callable
+                    ),
+                    else_=None,
+                ).label("success_rate"),
+                func.max(PromptMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
+            )
+            .outerjoin(PromptMetric)
+            .group_by(DbPrompt.id, DbPrompt.name)
+            .order_by(desc("execution_count"))
+            .limit(limit)
+            .all()
+        )
+
+        return build_top_performers(results)
 
     def _convert_db_prompt(self, db_prompt: DbPrompt) -> Dict[str, Any]:
         """
@@ -1005,8 +1050,8 @@ class PromptService:
         """
 
         total = db.execute(select(func.count(PromptMetric.id))).scalar() or 0  # pylint: disable=not-callable
-        successful = db.execute(select(func.count(PromptMetric.id)).where(PromptMetric.is_success)).scalar() or 0  # pylint: disable=not-callable
-        failed = db.execute(select(func.count(PromptMetric.id)).where(not_(PromptMetric.is_success))).scalar() or 0  # pylint: disable=not-callable
+        successful = db.execute(select(func.count(PromptMetric.id)).where(PromptMetric.is_success == 1)).scalar() or 0  # pylint: disable=not-callable
+        failed = db.execute(select(func.count(PromptMetric.id)).where(PromptMetric.is_success == 0)).scalar() or 0  # pylint: disable=not-callable
         failure_rate = failed / total if total > 0 else 0.0
         min_rt = db.execute(select(func.min(PromptMetric.response_time))).scalar()
         max_rt = db.execute(select(func.max(PromptMetric.response_time))).scalar()

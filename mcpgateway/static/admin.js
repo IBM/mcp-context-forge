@@ -890,7 +890,9 @@ function displayMetrics(data) {
         // Top Performers section (before individual metrics)
         if (data.topPerformers || data.top) {
             const topData = data.topPerformers || data.top;
-            const topSection = createTopPerformersSection(topData);
+            // const topSection = createTopPerformersSection(topData);
+            const topSection = createEnhancedTopPerformersSection(topData);
+
             mainContainer.appendChild(topSection);
         }
 
@@ -1198,7 +1200,54 @@ function extractKPIData(data) {
 /**
  * SECURITY: Create top performers section with safe display
  */
-function createTopPerformersSection(topData) {
+// function createTopPerformersSection(topData) {
+//     try {
+//         const section = document.createElement("div");
+//         section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
+
+//         const title = document.createElement("h3");
+//         title.className = "text-lg font-medium mb-4 dark:text-gray-200";
+//         title.textContent = "Top Performers";
+//         section.appendChild(title);
+
+//         const grid = document.createElement("div");
+//         grid.className = "grid grid-cols-1 md:grid-cols-2 gap-4";
+
+//         // Top Tools
+//         if (topData.tools && Array.isArray(topData.tools)) {
+//             const toolsCard = createTopItemCard("Tools", topData.tools);
+//             grid.appendChild(toolsCard);
+//         }
+
+//         // Top Resources
+//         if (topData.resources && Array.isArray(topData.resources)) {
+//             const resourcesCard = createTopItemCard(
+//                 "Resources",
+//                 topData.resources,
+//             );
+//             grid.appendChild(resourcesCard);
+//         }
+
+//         // Top Prompts
+//         if (topData.prompts && Array.isArray(topData.prompts)) {
+//             const promptsCard = createTopItemCard("Prompts", topData.prompts);
+//             grid.appendChild(promptsCard);
+//         }
+
+//         // Top Servers
+//         if (topData.servers && Array.isArray(topData.servers)) {
+//             const serversCard = createTopItemCard("Servers", topData.servers);
+//             grid.appendChild(serversCard);
+//         }
+
+//         section.appendChild(grid);
+//         return section;
+//     } catch (error) {
+//         console.error("Error creating top performers section:", error);
+//         return document.createElement("div"); // Safe fallback
+//     }
+// }
+function createEnhancedTopPerformersSection(topData) {
     try {
         const section = document.createElement("div");
         section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
@@ -1206,86 +1255,452 @@ function createTopPerformersSection(topData) {
         const title = document.createElement("h3");
         title.className = "text-lg font-medium mb-4 dark:text-gray-200";
         title.textContent = "Top Performers";
+        title.setAttribute("aria-label", "Top Performers Section");
         section.appendChild(title);
 
-        const grid = document.createElement("div");
-        grid.className = "grid grid-cols-1 md:grid-cols-2 gap-4";
+        // Loading skeleton
+        const skeleton = document.createElement("div");
+        skeleton.className = "animate-pulse space-y-4";
+        skeleton.innerHTML = `
+            <div class="h-4 bg-gray-200 rounded w-1/4 dark:bg-gray-700"></div>
+            <div class="space-y-2">
+                <div class="h-10 bg-gray-200 rounded dark:bg-gray-700"></div>
+                <div class="h-32 bg-gray-200 rounded dark:bg-gray-700"></div>
+            </div>`;
+        section.appendChild(skeleton);
 
-        // Top Tools
-        if (topData.tools && Array.isArray(topData.tools)) {
-            const toolsCard = createTopItemCard("Tools", topData.tools);
-            grid.appendChild(toolsCard);
-        }
+        // Tabs
+        const tabsContainer = document.createElement("div");
+        tabsContainer.className =
+            "border-b border-gray-200 dark:border-gray-700";
+        const tabList = document.createElement("nav");
+        tabList.className = "-mb-px flex space-x-8 overflow-x-auto";
+        tabList.setAttribute("aria-label", "Top Performers Tabs");
 
-        // Top Resources
-        if (topData.resources && Array.isArray(topData.resources)) {
-            const resourcesCard = createTopItemCard(
-                "Resources",
-                topData.resources,
-            );
-            grid.appendChild(resourcesCard);
-        }
+        const entityTypes = [
+            "tools",
+            "resources",
+            "prompts",
+            "gateways",
+            "servers",
+        ];
+        entityTypes.forEach((type, index) => {
+            if (topData[type] && Array.isArray(topData[type])) {
+                const tab = createTab(type, index === 0);
+                tabList.appendChild(tab);
+            }
+        });
 
-        // Top Prompts
-        if (topData.prompts && Array.isArray(topData.prompts)) {
-            const promptsCard = createTopItemCard("Prompts", topData.prompts);
-            grid.appendChild(promptsCard);
-        }
+        tabsContainer.appendChild(tabList);
+        section.appendChild(tabsContainer);
 
-        // Top Servers
-        if (topData.servers && Array.isArray(topData.servers)) {
-            const serversCard = createTopItemCard("Servers", topData.servers);
-            grid.appendChild(serversCard);
-        }
+        // Content panels
+        const contentContainer = document.createElement("div");
+        contentContainer.className = "mt-4";
 
-        section.appendChild(grid);
+        entityTypes.forEach((type, index) => {
+            if (topData[type] && Array.isArray(topData[type])) {
+                const panel = createTopPerformersTable(
+                    type,
+                    topData[type],
+                    index === 0,
+                );
+                contentContainer.appendChild(panel);
+            }
+        });
+
+        section.appendChild(contentContainer);
+
+        // Remove skeleton once data is loaded
+        setTimeout(() => skeleton.remove(), 500); // Simulate async data load
+
+        // Export button
+        const exportButton = document.createElement("button");
+        exportButton.className =
+            "mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600";
+        exportButton.textContent = "Export Metrics";
+        exportButton.onclick = () => exportMetricsToCSV(topData);
+        section.appendChild(exportButton);
+
         return section;
     } catch (error) {
-        console.error("Error creating top performers section:", error);
-        return document.createElement("div"); // Safe fallback
+        console.error("Error creating enhanced top performers section:", error);
+        showErrorMessage("Failed to load top performers section");
+        return document.createElement("div");
     }
+}
+function calculateSuccessRate(item) {
+    // API returns successRate directly as a percentage
+    if (item.successRate !== undefined && item.successRate !== null) {
+        return Math.round(item.successRate);
+    }
+    // Fallback for legacy format (if needed)
+    const total =
+        item.execution_count || item.executions || item.executionCount || 0;
+    const successful = item.successful_count || item.successfulExecutions || 0;
+    return total > 0 ? Math.round((successful / total) * 100) : 0;
+}
+
+function formatNumber(num) {
+    return new Intl.NumberFormat().format(num);
+}
+
+function formatLastUsed(timestamp) {
+    if (!timestamp) {
+        return "Never";
+    }
+
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) {
+        return "Just now";
+    }
+    if (diffMins < 60) {
+        return `${diffMins} min ago`;
+    }
+    if (diffMins < 1440) {
+        return `${Math.floor(diffMins / 60)} hours ago`;
+    }
+    if (diffMins < 10080) {
+        return `${Math.floor(diffMins / 1440)} days ago`;
+    }
+
+    return date.toLocaleDateString();
+}
+function createTopPerformersTable(entityType, data, isActive) {
+    const panel = document.createElement("div");
+    panel.id = `top-${entityType}-panel`;
+    panel.className = `transition-opacity duration-300 ${isActive ? "opacity-100" : "hidden opacity-0"}`;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", `top-${entityType}-tab`);
+
+    if (data.length === 0) {
+        const emptyState = document.createElement("p");
+        emptyState.className =
+            "text-gray-500 dark:text-gray-400 text-center py-4";
+        emptyState.textContent = `No ${entityType} data available`;
+        panel.appendChild(emptyState);
+        return panel;
+    }
+
+    // Responsive table wrapper
+    const tableWrapper = document.createElement("div");
+    tableWrapper.className = "overflow-x-auto sm:overflow-x-visible";
+
+    const table = document.createElement("table");
+    table.className =
+        "min-w-full divide-y divide-gray-200 dark:divide-gray-700";
+
+    // Table header
+    const thead = document.createElement("thead");
+    thead.className =
+        "bg-gray-50 dark:bg-gray-700 hidden sm:table-header-group";
+    const headerRow = document.createElement("tr");
+    const headers = [
+        "Rank",
+        "Name",
+        "Executions",
+        "Avg Response Time",
+        "Success Rate",
+        "Last Used",
+    ];
+
+    headers.forEach((headerText, index) => {
+        const th = document.createElement("th");
+        th.className =
+            "px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider";
+        th.setAttribute("scope", "col");
+        th.textContent = headerText;
+        if (index === 0) {
+            th.setAttribute("aria-sort", "ascending");
+        }
+        headerRow.appendChild(th);
+    });
+
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    // Table body
+    const tbody = document.createElement("tbody");
+    tbody.className =
+        "bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700";
+
+    // Pagination (if > 5 items)
+    const paginatedData = data.slice(0, 5); // Limit to top 5
+    paginatedData.forEach((item, index) => {
+        const row = document.createElement("tr");
+        row.className =
+            "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200";
+
+        // Rank
+        const rankCell = document.createElement("td");
+        rankCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sm:px-6 sm:py-4";
+        const rankBadge = document.createElement("span");
+        rankBadge.className = `inline-flex items-center justify-center w-6 h-6 rounded-full ${
+            index === 0
+                ? "bg-yellow-400 text-yellow-900"
+                : index === 1
+                  ? "bg-gray-300 text-gray-900"
+                  : index === 2
+                    ? "bg-orange-400 text-orange-900"
+                    : "bg-gray-100 text-gray-600"
+        }`;
+        rankBadge.textContent = index + 1;
+        rankBadge.setAttribute("aria-label", `Rank ${index + 1}`);
+        rankCell.appendChild(rankBadge);
+        row.appendChild(rankCell);
+
+        // Name (clickable for drill-down)
+        const nameCell = document.createElement("td");
+        nameCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-indigo-600 dark:text-indigo-400 cursor-pointer";
+        nameCell.textContent = escapeHtml(item.name || "Unknown");
+        // nameCell.onclick = () => showDetailedMetrics(entityType, item.id);
+        nameCell.setAttribute("role", "button");
+        nameCell.setAttribute(
+            "aria-label",
+            `View details for ${item.name || "Unknown"}`,
+        );
+        row.appendChild(nameCell);
+
+        // Executions
+        const execCell = document.createElement("td");
+        execCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+        execCell.textContent = formatNumber(
+            item.executionCount || item.execution_count || item.executions || 0,
+        );
+        row.appendChild(execCell);
+
+        // Avg Response Time
+        const avgTimeCell = document.createElement("td");
+        avgTimeCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+        const avgTime = item.avg_response_time || item.avgResponseTime;
+        avgTimeCell.textContent = avgTime ? `${Math.round(avgTime)}ms` : "N/A";
+        row.appendChild(avgTimeCell);
+
+        // Success Rate
+        const successCell = document.createElement("td");
+        successCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm sm:px-6 sm:py-4";
+        const successRate = calculateSuccessRate(item);
+        const successBadge = document.createElement("span");
+        successBadge.className = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+            successRate >= 95
+                ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
+                : successRate >= 80
+                  ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100"
+                  : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
+        }`;
+        successBadge.textContent = `${successRate}%`;
+        successBadge.setAttribute(
+            "aria-label",
+            `Success rate: ${successRate}%`,
+        );
+        successCell.appendChild(successBadge);
+        row.appendChild(successCell);
+
+        // Last Used
+        const lastUsedCell = document.createElement("td");
+        lastUsedCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+        lastUsedCell.textContent = formatLastUsed(
+            item.last_execution || item.lastExecution,
+        );
+        row.appendChild(lastUsedCell);
+
+        tbody.appendChild(row);
+    });
+
+    table.appendChild(tbody);
+    tableWrapper.appendChild(table);
+    panel.appendChild(tableWrapper);
+
+    // Pagination controls (if needed)
+    if (data.length > 5) {
+        const pagination = createPaginationControls(data.length, 5, (page) => {
+            updateTableRows(panel, entityType, data, page);
+        });
+        panel.appendChild(pagination);
+    }
+
+    return panel;
+}
+
+function createTab(type, isActive) {
+    const tab = document.createElement("a");
+    tab.href = "#";
+    tab.id = `top-${type}-tab`;
+    tab.className = `${
+        isActive
+            ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
+            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
+    } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm capitalize transition-colors duration-200 sm:py-4 sm:px-1`;
+    tab.textContent = type;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-controls", `top-${type}-panel`);
+    tab.setAttribute("aria-selected", isActive.toString());
+    tab.onclick = (e) => {
+        e.preventDefault();
+        showTopPerformerTab(type);
+    };
+    return tab;
+}
+
+function showTopPerformerTab(activeType) {
+    const entityTypes = [
+        "tools",
+        "resources",
+        "prompts",
+        "gateways",
+        "servers",
+    ];
+    entityTypes.forEach((type) => {
+        const panel = document.getElementById(`top-${type}-panel`);
+        const tab = document.getElementById(`top-${type}-tab`);
+        if (panel) {
+            panel.classList.toggle("hidden", type !== activeType);
+            panel.classList.toggle("opacity-100", type === activeType);
+            panel.classList.toggle("opacity-0", type !== activeType);
+            panel.setAttribute("aria-hidden", type !== activeType);
+        }
+        if (tab) {
+            tab.classList.toggle("border-indigo-500", type === activeType);
+            tab.classList.toggle("text-indigo-600", type === activeType);
+            tab.classList.toggle("dark:text-indigo-400", type === activeType);
+            tab.classList.toggle("border-transparent", type !== activeType);
+            tab.classList.toggle("text-gray-500", type !== activeType);
+            tab.setAttribute("aria-selected", type === activeType);
+        }
+    });
+}
+
+function createPaginationControls(totalItems, itemsPerPage, onPageChange) {
+    const pagination = document.createElement("div");
+    pagination.className = "mt-4 flex justify-end space-x-2";
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+
+    for (let page = 1; page <= totalPages; page++) {
+        const button = document.createElement("button");
+        button.className = `px-3 py-1 rounded ${page === 1 ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"}`;
+        button.textContent = page;
+        button.onclick = () => {
+            onPageChange(page);
+            pagination.querySelectorAll("button").forEach((btn) => {
+                btn.className = `px-3 py-1 rounded ${btn === button ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"}`;
+            });
+        };
+        pagination.appendChild(button);
+    }
+
+    return pagination;
+}
+
+function updateTableRows(panel, entityType, data, page) {
+    const tbody = panel.querySelector("tbody");
+    tbody.innerHTML = "";
+    const start = (page - 1) * 5;
+    const paginatedData = data.slice(start, start + 5);
+
+    paginatedData.forEach((item, index) => {
+        const row = document.createElement("tr");
+        // ... (same row creation logic as in createTopPerformersTable)
+        tbody.appendChild(row);
+    });
+}
+
+function exportMetricsToCSV(topData) {
+    const headers = [
+        "Entity Type",
+        "Rank",
+        "Name",
+        "Executions",
+        "Avg Response Time",
+        "Success Rate",
+        "Last Used",
+    ];
+    const rows = [];
+
+    ["tools", "resources", "prompts", "gateways", "servers"].forEach((type) => {
+        if (topData[type] && Array.isArray(topData[type])) {
+            topData[type].forEach((item, index) => {
+                rows.push([
+                    type,
+                    index + 1,
+                    `"${escapeHtml(item.name || "Unknown")}"`,
+                    formatNumber(
+                        item.executionCount ||
+                            item.execution_count ||
+                            item.executions ||
+                            0,
+                    ),
+                    item.avg_response_time || item.avgResponseTime
+                        ? `${Math.round(item.avg_response_time || item.avgResponseTime)}ms`
+                        : "N/A",
+                    `${calculateSuccessRate(item)}%`,
+                    formatLastUsed(item.last_execution || item.lastExecution),
+                ]);
+            });
+        }
+    });
+
+    const csv = [headers.join(","), ...rows.map((row) => row.join(","))].join(
+        "\n",
+    );
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `top_performers_${new Date().toISOString()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
 /**
  * SECURITY: Create top item card with safe content handling
  */
-function createTopItemCard(title, items) {
-    try {
-        const card = document.createElement("div");
-        card.className = "bg-gray-50 rounded p-4 dark:bg-gray-700";
+// function createTopItemCard(title, items) {
+//     try {
+//         const card = document.createElement("div");
+//         card.className = "bg-gray-50 rounded p-4 dark:bg-gray-700";
 
-        const cardTitle = document.createElement("h4");
-        cardTitle.className = "font-medium mb-2 dark:text-gray-200";
-        cardTitle.textContent = `Top ${title}`;
-        card.appendChild(cardTitle);
+//         const cardTitle = document.createElement("h4");
+//         cardTitle.className = "font-medium mb-2 dark:text-gray-200";
+//         cardTitle.textContent = `Top ${title}`;
+//         card.appendChild(cardTitle);
 
-        const list = document.createElement("ul");
-        list.className = "space-y-1";
+//         const list = document.createElement("ul");
+//         list.className = "space-y-1";
 
-        items.slice(0, 5).forEach((item) => {
-            const listItem = document.createElement("li");
-            listItem.className =
-                "text-sm text-gray-600 dark:text-gray-300 flex justify-between";
+//         items.slice(0, 5).forEach((item) => {
+//             const listItem = document.createElement("li");
+//             listItem.className =
+//                 "text-sm text-gray-600 dark:text-gray-300 flex justify-between";
 
-            const nameSpan = document.createElement("span");
-            nameSpan.textContent = item.name || "Unknown";
+//             const nameSpan = document.createElement("span");
+//             nameSpan.textContent = item.name || "Unknown";
 
-            const countSpan = document.createElement("span");
-            countSpan.className = "font-medium";
-            countSpan.textContent = String(item.executions || 0);
+//             const countSpan = document.createElement("span");
+//             countSpan.className = "font-medium";
+//             countSpan.textContent = String(item.executions || 0);
 
-            listItem.appendChild(nameSpan);
-            listItem.appendChild(countSpan);
-            list.appendChild(listItem);
-        });
+//             listItem.appendChild(nameSpan);
+//             listItem.appendChild(countSpan);
+//             list.appendChild(listItem);
+//         });
 
-        card.appendChild(list);
-        return card;
-    } catch (error) {
-        console.error("Error creating top item card:", error);
-        return document.createElement("div"); // Safe fallback
-    }
-}
+//         card.appendChild(list);
+//         return card;
+//     } catch (error) {
+//         console.error("Error creating top item card:", error);
+//         return document.createElement("div"); // Safe fallback
+//     }
+// }
 
 /**
  * SECURITY: Create performance metrics card with safe display

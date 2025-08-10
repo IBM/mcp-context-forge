@@ -28,7 +28,7 @@ import uuid
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import delete, func, not_, select
+from sqlalchemy import case, delete, desc, Float, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -41,13 +41,10 @@ from mcpgateway.db import ToolMetric
 from mcpgateway.models import TextContent, ToolResult
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
-from mcpgateway.schemas import (
-    ToolCreate,
-    ToolRead,
-    ToolUpdate,
-)
+from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
@@ -193,6 +190,50 @@ class ToolService:
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
 
+    async def get_top_tools(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+        """Retrieve the top-performing tools based on execution count.
+
+        Queries the database to get tools with their metrics, ordered by the number of executions
+        in descending order. Returns a list of TopPerformer objects containing tool details and
+        performance metrics.
+
+        Args:
+            db (Session): Database session for querying tool metrics.
+            limit (int): Maximum number of tools to return. Defaults to 5.
+
+        Returns:
+            List[TopPerformer]: A list of TopPerformer objects, each containing:
+                - id: Tool ID.
+                - name: Tool name.
+                - execution_count: Total number of executions.
+                - avg_response_time: Average response time in seconds, or None if no metrics.
+                - success_rate: Success rate percentage, or None if no metrics.
+                - last_execution: Timestamp of the last execution, or None if no metrics.
+        """
+        results = (
+            db.query(
+                DbTool.id,
+                DbTool.name,
+                func.count(ToolMetric.id).label("execution_count"),  # pylint: disable=not-callable
+                func.avg(ToolMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                case(
+                    (
+                        func.count(ToolMetric.id) > 0,  # pylint: disable=not-callable
+                        func.sum(case((ToolMetric.is_success == 1, 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,  # pylint: disable=not-callable
+                    ),
+                    else_=None,
+                ).label("success_rate"),
+                func.max(ToolMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
+            )
+            .outerjoin(ToolMetric)
+            .group_by(DbTool.id, DbTool.name)
+            .order_by(desc("execution_count"))
+            .limit(limit)
+            .all()
+        )
+
+        return build_top_performers(results)
+
     def _convert_tool_to_read(self, tool: DbTool) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
@@ -334,10 +375,12 @@ class ToolService:
             logger.info(f"Registered tool: {db_tool.name}")
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
+            db.rollback()
             logger.error(f"IntegrityError during tool registration: {ie}")
-            raise ie
-        except Exception as ex:
-            raise ToolError(f"Failed to register tool: {str(ex)}")
+            raise ToolError(f"Tool already exists: {tool.name}")
+        except Exception as e:
+            db.rollback()
+            raise ToolError(f"Failed to register tool: {str(e)}")
 
     async def list_tools(
         self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, _request_headers: Optional[Dict[str, str]] = None
@@ -686,18 +729,21 @@ class ToolService:
                 # Handle 204 No Content responses that have no body
                 if response.status_code == 204:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                    # Mark as successful only after all operations complete successfully
+                    success = True
                 elif response.status_code not in [200, 201, 202, 206]:
                     result = response.json()
                     tool_result = ToolResult(
                         content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
                         is_error=True,
                     )
+                    # Don't mark as successful for error responses - success remains False
                 else:
                     result = response.json()
                     filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                     tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
-
-                success = True
+                    # Mark as successful only after all operations complete successfully
+                    success = True
             elif tool.integration_type == "MCP":
                 transport = tool.request_type.lower()
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
@@ -747,9 +793,10 @@ class ToolService:
                     tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url)
                 content = tool_call_result.model_dump(by_alias=True).get("content", [])
 
-                success = True
                 filtered_response = extract_using_jq(content, tool.jsonpath_filter)
                 tool_result = ToolResult(content=filtered_response)
+                # Mark as successful only after all operations complete successfully
+                success = True
             else:
                 tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
@@ -1064,8 +1111,8 @@ class ToolService:
         """
 
         total = db.execute(select(func.count(ToolMetric.id))).scalar() or 0  # pylint: disable=not-callable
-        successful = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success)).scalar() or 0  # pylint: disable=not-callable
-        failed = db.execute(select(func.count(ToolMetric.id)).where(not_(ToolMetric.is_success))).scalar() or 0  # pylint: disable=not-callable
+        successful = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success == 1)).scalar() or 0  # pylint: disable=not-callable
+        failed = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success == 0)).scalar() or 0  # pylint: disable=not-callable
         failure_rate = failed / total if total > 0 else 0.0
         min_rt = db.execute(select(func.min(ToolMetric.response_time))).scalar()
         max_rt = db.execute(select(func.max(ToolMetric.response_time))).scalar()

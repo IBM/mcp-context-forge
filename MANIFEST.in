@@ -13,6 +13,7 @@ include Containerfile.lite
 include __init__
 include alembic.ini
 include tox.ini
+include alembic/README
 
 # 2️⃣  Top-level config, examples and helper scripts
 include *.py

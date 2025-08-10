@@ -590,7 +590,7 @@ class ToolCreate(BaseModel):
         """
         integration_type = values.get("integration_type")
         if integration_type == "MCP":
-            raise ValueError("Cannot manually create MCP tools. Add MCP servers via the Gateways interface - " "tools will be auto-discovered and registered with integration_type='MCP'.")
+            raise ValueError("Cannot manually create MCP tools. Add MCP servers via the Gateways interface - tools will be auto-discovered and registered with integration_type='MCP'.")
         return values
 
 
@@ -2936,3 +2936,26 @@ class TagInfo(BaseModelWithConfigDict):
     name: str = Field(..., description="The tag name")
     stats: TagStats = Field(..., description="Statistics for this tag")
     entities: Optional[List[TaggedEntity]] = Field(default_factory=list, description="Entities that have this tag")
+
+
+class TopPerformer(BaseModelWithConfigDict):
+    """Schema for representing top-performing entities with performance metrics.
+
+    Used to encapsulate metrics for entities such as prompts, resources, servers, or tools,
+    including execution count, average response time, success rate, and last execution timestamp.
+
+    Attributes:
+        id (Union[str, int]): Unique identifier for the entity.
+        name (str): Name of the entity (e.g., prompt name, resource URI, server name, or tool name).
+        execution_count (int): Total number of executions for the entity.
+        avg_response_time (Optional[float]): Average response time in seconds, or None if no metrics.
+        success_rate (Optional[float]): Success rate percentage, or None if no metrics.
+        last_execution (Optional[datetime]): Timestamp of the last execution, or None if no metrics.
+    """
+
+    id: Union[str, int] = Field(..., description="Entity ID")
+    name: str = Field(..., description="Entity name")
+    execution_count: int = Field(..., description="Number of executions")
+    avg_response_time: Optional[float] = Field(None, description="Average response time in seconds")
+    success_rate: Optional[float] = Field(None, description="Success rate percentage")
+    last_execution: Optional[datetime] = Field(None, description="Timestamp of last execution")
