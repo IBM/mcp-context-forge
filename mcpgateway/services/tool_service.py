@@ -650,11 +650,14 @@ class ToolService:
             headers = tool.headers or {}
             if tool.integration_type == "REST":
                 credentials = decode_auth(tool.auth_value)
-                headers.update(credentials)
+                # Filter out empty header names/values to avoid "Illegal header name" errors
+                filtered_credentials = {k: v for k, v in credentials.items() if k and v}
+                headers.update(filtered_credentials)
 
                 # Only call get_passthrough_headers if we actually have request headers to pass through
                 if request_headers:
                     headers = get_passthrough_headers(request_headers, headers, db)
+
                 # Build the payload based on integration type
                 payload = arguments.copy()
 
@@ -698,45 +701,38 @@ class ToolService:
             elif tool.integration_type == "MCP":
                 transport = tool.request_type.lower()
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
-                headers = decode_auth(gateway.auth_value)
+                headers = decode_auth(gateway.auth_value if gateway else None)
 
                 # Get combined headers including gateway auth and passthrough
-                # base_headers = decode_auth(gateway.auth_value) if gateway and gateway.auth_value else {}
                 if request_headers:
                     headers = get_passthrough_headers(request_headers, headers, db, gateway)
 
-                async def connect_to_sse_server(server_url: str) -> str:
-                    """
-                    Connect to an MCP server running with SSE transport
+                async def connect_to_sse_server(server_url: str):
+                    """Connect to an MCP server running with SSE transport.
 
                     Args:
-                        server_url (str): MCP Server SSE URL
+                        server_url: MCP Server SSE URL
 
                     Returns:
-                        str: Result of tool call
+                        ToolResult: Result of tool call
                     """
-                    # Use async with directly to manage the context
                     async with sse_client(url=server_url, headers=headers) as streams:
                         async with ClientSession(*streams) as session:
-                            # Initialize the session
                             await session.initialize()
                             tool_call_result = await session.call_tool(tool.original_name, arguments)
                     return tool_call_result
 
-                async def connect_to_streamablehttp_server(server_url: str) -> str:
-                    """
-                    Connect to an MCP server running with Streamable HTTP transport
+                async def connect_to_streamablehttp_server(server_url: str):
+                    """Connect to an MCP server running with Streamable HTTP transport.
 
                     Args:
-                        server_url (str): MCP Server URL
+                        server_url: MCP Server URL
 
                     Returns:
-                        str: Result of tool call
+                        ToolResult: Result of tool call
                     """
-                    # Use async with directly to manage the context
                     async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, _get_session_id):
                         async with ClientSession(read_stream, write_stream) as session:
-                            # Initialize the session
                             await session.initialize()
                             tool_call_result = await session.call_tool(tool.original_name, arguments)
                     return tool_call_result

@@ -409,7 +409,7 @@ class GatewayService:
                     original_name_slug=slugify(tool.name),
                     url=gateway.url,
                     description=tool.description,
-                    integration_type=tool.integration_type,
+                    integration_type="MCP",  # Gateway-discovered tools are MCP type
                     request_type=tool.request_type,
                     headers=tool.headers,
                     input_schema=tool.input_schema,
@@ -611,7 +611,7 @@ class GatewayService:
                                         original_name_slug=slugify(tool.name),
                                         url=gateway.url,
                                         description=tool.description,
-                                        integration_type=tool.integration_type,
+                                        integration_type="MCP",  # Gateway-discovered tools are MCP type
                                         request_type=tool.request_type,
                                         headers=tool.headers,
                                         input_schema=tool.input_schema,
@@ -765,7 +765,7 @@ class GatewayService:
                                         original_name_slug=slugify(tool.name),
                                         url=gateway.url,
                                         description=tool.description,
-                                        integration_type=tool.integration_type,
+                                        integration_type="MCP",  # Gateway-discovered tools are MCP type
                                         request_type=tool.request_type,
                                         headers=tool.headers,
                                         input_schema=tool.input_schema,

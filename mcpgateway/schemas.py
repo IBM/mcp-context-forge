@@ -278,11 +278,11 @@ class AuthenticationValues(BaseModelWithConfigDict):
     auth_value: Optional[str] = Field(None, description="Encoded Authentication values")
 
     # Only For tool read and view tool
-    username: str = Field("", description="Username for basic authentication")
-    password: str = Field("", description="Password for basic authentication")
-    token: str = Field("", description="Bearer token for authentication")
-    auth_header_key: str = Field("", description="Key for custom headers authentication")
-    auth_header_value: str = Field("", description="Value for custom headers authentication")
+    username: Optional[str] = Field("", description="Username for basic authentication")
+    password: Optional[str] = Field("", description="Password for basic authentication")
+    token: Optional[str] = Field("", description="Bearer token for authentication")
+    auth_header_key: Optional[str] = Field("", description="Key for custom headers authentication")
+    auth_header_value: Optional[str] = Field("", description="Value for custom headers authentication")
 
 
 class ToolCreate(BaseModel):
@@ -294,7 +294,7 @@ class ToolCreate(BaseModel):
         name (str): Unique name for the tool.
         url (Union[str, AnyHttpUrl]): Tool endpoint URL.
         description (Optional[str]): Tool description.
-        integration_type (Literal["REST"]): Tool integration type for REST integrations.
+        integration_type (Literal["REST", "MCP"]): Tool integration type - REST for individual endpoints, MCP for gateway-discovered tools.
         request_type (Literal["GET", "POST", "PUT", "DELETE", "PATCH"]): HTTP method to be used for invoking the tool.
         headers (Optional[Dict[str, str]]): Additional headers to send when invoking the tool.
         input_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool parameters. Alias 'inputSchema'.
@@ -309,7 +309,7 @@ class ToolCreate(BaseModel):
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Literal["REST"] = Field("REST", description="'REST' for REST integrations")
+    integration_type: Literal["REST", "MCP"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
@@ -457,12 +457,16 @@ class ToolCreate(BaseModel):
             >>> info = type('obj', (object,), {'data': {'integration_type': 'REST'}})
             >>> ToolCreate.validate_request_type('GET', info)
             'GET'
-            >>> ToolCreate.validate_request_type('POST', info)
-            'POST'
+
+            >>> # Test MCP integration types with valid transport
+            >>> info = type('obj', (object,), {'data': {'integration_type': 'MCP'}})
+            >>> ToolCreate.validate_request_type('SSE', info)
+            'SSE'
 
             >>> # Test invalid REST type
+            >>> info_rest = type('obj', (object,), {'data': {'integration_type': 'REST'}})
             >>> try:
-            ...     ToolCreate.validate_request_type('SSE', info)
+            ...     ToolCreate.validate_request_type('SSE', info_rest)
             ... except ValueError as e:
             ...     "not allowed for REST" in str(e)
             True
@@ -478,12 +482,17 @@ class ToolCreate(BaseModel):
 
         integration_type = info.data.get("integration_type")
 
-        if integration_type != "REST":
+        if integration_type not in ["REST", "MCP"]:
             raise ValueError(f"Unknown integration type: {integration_type}")
 
-        allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
-        if v not in allowed:
-            raise ValueError(f"Request type '{v}' not allowed for REST. Only {allowed} methods are accepted.")
+        if integration_type == "REST":
+            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            if v not in allowed:
+                raise ValueError(f"Request type '{v}' not allowed for REST. Only {allowed} methods are accepted.")
+        elif integration_type == "MCP":
+            allowed = ["SSE", "STDIO", "STREAMABLEHTTP"]
+            if v not in allowed:
+                raise ValueError(f"Request type '{v}' not allowed for MCP. Only {allowed} transports are accepted.")
 
         return v
 
@@ -551,8 +560,37 @@ class ToolCreate(BaseModel):
                 encoded_auth = encode_auth({"Authorization": f"Bearer {values.get('auth_token', '')}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
-                encoded_auth = encode_auth({values.get("auth_header_key", ""): values.get("auth_header_value", "")})
-                values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                header_key = values.get("auth_header_key", "")
+                header_value = values.get("auth_header_value", "")
+                if header_key and header_value:
+                    encoded_auth = encode_auth({header_key: header_value})
+                    values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                else:
+                    # Don't encode empty headers - leave auth empty
+                    values["auth"] = {"auth_type": "authheaders", "auth_value": None}
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def prevent_manual_mcp_creation(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Prevent manual creation of MCP tools via API.
+
+        MCP tools should only be created by the gateway service when discovering
+        tools from MCP servers. Users should add MCP servers via the Gateways interface.
+
+        Args:
+            values: The input values
+
+        Returns:
+            Dict[str, Any]: The validated values
+
+        Raises:
+            ValueError: If attempting to manually create MCP integration type
+        """
+        integration_type = values.get("integration_type")
+        if integration_type == "MCP":
+            raise ValueError("Cannot manually create MCP tools. Add MCP servers via the Gateways interface - " "tools will be auto-discovered and registered with integration_type='MCP'.")
         return values
 
 
@@ -565,7 +603,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Optional[Literal["REST"]] = Field(None, description="Tool integration type")
+    integration_type: Optional[Literal["REST", "MCP"]] = Field(None, description="Tool integration type")
     request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
@@ -678,7 +716,13 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
 
         integration_type = values.data.get("integration_type", "REST")
-        allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+
+        if integration_type == "REST":
+            allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+        elif integration_type == "MCP":
+            allowed = ["SSE", "STDIO", "STREAMABLEHTTP"]
+        else:
+            raise ValueError(f"Unknown integration type: {integration_type}")
 
         if v not in allowed:
             raise ValueError(f"Request type '{v}' not allowed for {integration_type} integration")
@@ -721,8 +765,37 @@ class ToolUpdate(BaseModelWithConfigDict):
                 encoded_auth = encode_auth({"Authorization": f"Bearer {values.get('auth_token', '')}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
-                encoded_auth = encode_auth({values.get("auth_header_key", ""): values.get("auth_header_value", "")})
-                values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                header_key = values.get("auth_header_key", "")
+                header_value = values.get("auth_header_value", "")
+                if header_key and header_value:
+                    encoded_auth = encode_auth({header_key: header_value})
+                    values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                else:
+                    # Don't encode empty headers - leave auth empty
+                    values["auth"] = {"auth_type": "authheaders", "auth_value": None}
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def prevent_manual_mcp_update(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Prevent updating tools to MCP integration type via API.
+
+        MCP tools should only be managed by the gateway service. Users should not
+        be able to change a REST tool to MCP type or vice versa manually.
+
+        Args:
+            values: The input values
+
+        Returns:
+            Dict[str, Any]: The validated values
+
+        Raises:
+            ValueError: If attempting to update to MCP integration type
+        """
+        integration_type = values.get("integration_type")
+        if integration_type == "MCP":
+            raise ValueError("Cannot update tools to MCP integration type. MCP tools are managed by the gateway service.")
         return values
 
 
