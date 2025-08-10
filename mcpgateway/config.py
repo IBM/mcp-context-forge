@@ -124,6 +124,14 @@ class Settings(BaseSettings):
 
     require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
 
+    # MCP Client Authentication
+    mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
+    trust_proxy_auth: bool = Field(
+        default=False,
+        description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
+    )
+    proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
+
     #  Encryption key phrase for auth storage
     auth_encryption_secret: str = "my-test-salt"
 
@@ -630,6 +638,14 @@ class Settings(BaseSettings):
         else:
             # Safer defaults without Authorization header
             self.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
+
+        # Validate proxy auth configuration
+        if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:
+            logger.warning(
+                "MCP client authentication is disabled but trust_proxy_auth is not set. "
+                "This is a security risk! Set TRUST_PROXY_AUTH=true only if MCP Gateway "
+                "is behind a trusted authentication proxy."
+            )
 
     # Masking value for all sensitive data
     masked_auth_value: str = "*****"

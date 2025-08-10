@@ -226,8 +226,16 @@ class TestUtilityFunctions:
         # Should have either result or error
         assert "result" in body or "error" in body
 
-    def test_websocket_error_scenarios(self):
+    @patch("mcpgateway.main.settings")
+    def test_websocket_error_scenarios(self, mock_settings):
         """Test WebSocket error scenarios."""
+        # Configure mock settings for auth disabled
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.auth_required = False
+        mock_settings.federation_timeout = 30
+        mock_settings.skip_ssl_verify = False
+        mock_settings.port = 4444
+
         with patch("mcpgateway.main.ResilientHttpClient") as mock_client:
             from types import SimpleNamespace
 
