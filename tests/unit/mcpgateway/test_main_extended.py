@@ -50,7 +50,7 @@ class TestEndpointErrorHandling:
                 "content": [{"type": "text", "text": "Tool error"}],
                 "is_error": True,
             }
-            
+
             req = {
                 "jsonrpc": "2.0",
                 "id": "test-id",
@@ -75,7 +75,7 @@ class TestEndpointErrorHandling:
         with patch("mcpgateway.main.resource_service.read_resource") as mock_read:
             from mcpgateway.services.resource_service import ResourceNotFoundError
             mock_read.side_effect = ResourceNotFoundError("Resource not found")
-            
+
             response = test_client.get("/resources/test/resource", headers=auth_headers)
             assert response.status_code == 404
 
@@ -96,7 +96,7 @@ class TestEndpointErrorHandling:
 
 class TestMiddlewareEdgeCases:
     """Test middleware and authentication edge cases."""
-    
+
     def test_docs_endpoint_without_auth(self):
         """Test accessing docs without authentication."""
         # Create client without auth override to test real auth
@@ -111,7 +111,7 @@ class TestMiddlewareEdgeCases:
         assert response.status_code == 401
 
     def test_redoc_endpoint_without_auth(self):
-        """Test accessing ReDoc without authentication."""  
+        """Test accessing ReDoc without authentication."""
         client = TestClient(app)
         response = client.get("/redoc")
         assert response.status_code == 401
@@ -119,14 +119,14 @@ class TestMiddlewareEdgeCases:
 
 class TestApplicationStartupPaths:
     """Test application startup conditional paths."""
-    
+
     @patch("mcpgateway.main.plugin_manager", None)
     @patch("mcpgateway.main.logging_service")
     async def test_startup_without_plugin_manager(self, mock_logging_service):
         """Test startup path when plugin_manager is None."""
         mock_logging_service.initialize = AsyncMock()
         mock_logging_service.configure_uvicorn_after_startup = MagicMock()
-        
+
         # Mock all required services
         with patch("mcpgateway.main.tool_service") as mock_tool, \
              patch("mcpgateway.main.resource_service") as mock_resource, \
@@ -138,7 +138,7 @@ class TestApplicationStartupPaths:
              patch("mcpgateway.main.resource_cache") as mock_cache, \
              patch("mcpgateway.main.streamable_http_session") as mock_session, \
              patch("mcpgateway.main.refresh_slugs_on_startup") as mock_refresh:
-            
+
             # Setup all mocks
             services = [
                 mock_tool, mock_resource, mock_prompt, mock_gateway,
@@ -147,12 +147,12 @@ class TestApplicationStartupPaths:
             for service in services:
                 service.initialize = AsyncMock()
                 service.shutdown = AsyncMock()
-            
+
             # Test lifespan without plugin manager
             from mcpgateway.main import lifespan
             async with lifespan(app):
                 pass
-            
+
             # Verify initialization happened without plugin manager
             mock_logging_service.initialize.assert_called_once()
             for service in services:
@@ -162,19 +162,19 @@ class TestApplicationStartupPaths:
 
 class TestUtilityFunctions:
     """Test utility functions for edge cases."""
-    
+
     def test_message_endpoint_edge_cases(self, test_client, auth_headers):
         """Test message endpoint with edge case parameters."""
         # Test with missing session_id to trigger validation error
         message = {"type": "test", "data": "hello"}
         response = test_client.post("/message", json=message, headers=auth_headers)
         assert response.status_code == 400  # Should require session_id parameter
-        
+
         # Test with valid session_id
         with patch("mcpgateway.main.session_registry.broadcast") as mock_broadcast:
             response = test_client.post(
-                "/message?session_id=test-session", 
-                json=message, 
+                "/message?session_id=test-session",
+                json=message,
                 headers=auth_headers
             )
             assert response.status_code == 202
@@ -185,7 +185,7 @@ class TestUtilityFunctions:
         with patch("mcpgateway.main.settings.mcpgateway_ui_enabled", True):
             client = TestClient(app)
             response = client.get("/", follow_redirects=False)
-            
+
             # Should redirect to /admin when UI is enabled
             if response.status_code == 303:
                 assert response.headers.get("location") == "/admin"
@@ -194,9 +194,9 @@ class TestUtilityFunctions:
                 assert response.status_code == 200
 
         with patch("mcpgateway.main.settings.mcpgateway_ui_enabled", False):
-            client = TestClient(app) 
+            client = TestClient(app)
             response = client.get("/")
-            
+
             # Should return API info when UI is disabled
             if response.status_code == 200:
                 data = response.json()
@@ -230,17 +230,17 @@ class TestUtilityFunctions:
         """Test WebSocket error scenarios."""
         with patch("mcpgateway.main.ResilientHttpClient") as mock_client:
             from types import SimpleNamespace
-            
+
             mock_instance = mock_client.return_value
             mock_instance.__aenter__.return_value = mock_instance
             mock_instance.__aexit__.return_value = False
-            
+
             # Mock a failing post operation
             async def failing_post(*_args, **_kwargs):
                 raise Exception("Network error")
-            
+
             mock_instance.post = failing_post
-            
+
             client = TestClient(app)
             with client.websocket_connect("/ws") as websocket:
                 websocket.send_text('{"jsonrpc":"2.0","method":"ping","id":1}')
@@ -259,13 +259,13 @@ class TestUtilityFunctions:
         """Test SSE endpoint edge cases."""
         with patch("mcpgateway.main.SSETransport") as mock_transport_class, \
              patch("mcpgateway.main.session_registry.add_session") as mock_add_session:
-            
+
             mock_transport = MagicMock()
             mock_transport.session_id = "test-session"
-            
+
             # Test SSE transport creation error
             mock_transport_class.side_effect = Exception("SSE error")
-            
+
             response = test_client.get("/servers/test/sse", headers=auth_headers)
             # Should handle SSE creation error
             assert response.status_code in [404, 500, 503]
@@ -275,7 +275,7 @@ class TestUtilityFunctions:
         with patch("mcpgateway.main.server_service.toggle_server_status") as mock_toggle:
             # Create a proper ServerRead model response
             from mcpgateway.schemas import ServerRead
-            
+
             mock_server_data = {
                 "id": "1",
                 "name": "test_server",
@@ -298,13 +298,13 @@ class TestUtilityFunctions:
                     "last_execution_time": None,
                 }
             }
-            
+
             mock_toggle.return_value = ServerRead(**mock_server_data)
-            
+
             # Test activate=true
             response = test_client.post("/servers/1/toggle?activate=true", headers=auth_headers)
             assert response.status_code == 200
-            
+
             # Test activate=false
             mock_server_data["is_active"] = False
             mock_toggle.return_value = ServerRead(**mock_server_data)
