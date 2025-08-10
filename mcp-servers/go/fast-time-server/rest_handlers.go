@@ -425,6 +425,218 @@ func handleAPIDocs(w http.ResponseWriter, r *http.Request) {
     _, _ = w.Write([]byte(html))
 }
 
+// handleRESTListResources handles GET /api/v1/resources
+func handleRESTListResources(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+        return
+    }
+
+    resources := []map[string]string{
+        {
+            "uri":         "timezone://info",
+            "name":        "Timezone Information",
+            "description": "Comprehensive timezone information including offsets, DST, and major cities",
+            "mime_type":   "application/json",
+        },
+        {
+            "uri":         "time://current/world",
+            "name":        "Current World Times",
+            "description": "Current time in major cities around the world",
+            "mime_type":   "application/json",
+        },
+        {
+            "uri":         "time://formats",
+            "name":        "Time Formats",
+            "description": "Examples of supported time formats for parsing and display",
+            "mime_type":   "application/json",
+        },
+        {
+            "uri":         "time://business-hours",
+            "name":        "Business Hours",
+            "description": "Standard business hours across different regions",
+            "mime_type":   "application/json",
+        },
+    }
+
+    writeJSON(w, http.StatusOK, map[string]interface{}{
+        "resources": resources,
+        "count":     len(resources),
+    })
+}
+
+// handleRESTGetResource handles GET /api/v1/resources/{uri}
+func handleRESTGetResource(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+        return
+    }
+
+    // Extract resource URI from path
+    path := strings.TrimPrefix(r.URL.Path, "/api/v1/resources/")
+    resourceURI := path
+
+    if resourceURI == "" {
+        handleRESTListResources(w, r)
+        return
+    }
+
+    // Handle different resources based on URI
+    switch resourceURI {
+    case "timezone-info":
+        // Return timezone information
+        data := getTimezoneInfoData()
+        writeJSON(w, http.StatusOK, data)
+
+    case "current-world":
+        // Return current world times
+        data := getCurrentWorldTimesData()
+        writeJSON(w, http.StatusOK, data)
+
+    case "time-formats":
+        // Return time format examples
+        data := getTimeFormatsData()
+        writeJSON(w, http.StatusOK, data)
+
+    case "business-hours":
+        // Return business hours
+        data := getBusinessHoursData()
+        writeJSON(w, http.StatusOK, data)
+
+    default:
+        writeJSONError(w, http.StatusNotFound, fmt.Sprintf("Resource not found: %s", resourceURI))
+    }
+}
+
+// handleRESTListPrompts handles GET /api/v1/prompts
+func handleRESTListPrompts(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+        return
+    }
+
+    prompts := []map[string]interface{}{
+        {
+            "name":        "compare_timezones",
+            "description": "Compare current times across multiple time zones",
+            "arguments": []map[string]interface{}{
+                {
+                    "name":        "timezones",
+                    "description": "Comma-separated list of timezone IDs to compare",
+                    "required":    true,
+                },
+                {
+                    "name":        "reference_time",
+                    "description": "Optional reference time (defaults to now)",
+                    "required":    false,
+                },
+            },
+        },
+        {
+            "name":        "schedule_meeting",
+            "description": "Find optimal meeting time across multiple time zones",
+            "arguments": []map[string]interface{}{
+                {
+                    "name":        "participants",
+                    "description": "Comma-separated list of participant locations/timezones",
+                    "required":    true,
+                },
+                {
+                    "name":        "duration",
+                    "description": "Meeting duration in minutes",
+                    "required":    true,
+                },
+                {
+                    "name":        "preferred_hours",
+                    "description": "Preferred time range (e.g., '9 AM - 5 PM')",
+                    "required":    false,
+                },
+                {
+                    "name":        "date_range",
+                    "description": "Date range to consider (e.g., 'next 7 days')",
+                    "required":    false,
+                },
+            },
+        },
+        {
+            "name":        "convert_time_detailed",
+            "description": "Convert time with detailed context",
+            "arguments": []map[string]interface{}{
+                {
+                    "name":        "time",
+                    "description": "Time to convert",
+                    "required":    true,
+                },
+                {
+                    "name":        "from_timezone",
+                    "description": "Source timezone",
+                    "required":    true,
+                },
+                {
+                    "name":        "to_timezones",
+                    "description": "Comma-separated list of target timezones",
+                    "required":    true,
+                },
+                {
+                    "name":        "include_context",
+                    "description": "Whether to include contextual information (true/false)",
+                    "required":    false,
+                },
+            },
+        },
+    }
+
+    writeJSON(w, http.StatusOK, map[string]interface{}{
+        "prompts": prompts,
+        "count":   len(prompts),
+    })
+}
+
+// handleRESTExecutePrompt handles POST /api/v1/prompts/{name}/execute
+func handleRESTExecutePrompt(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+        return
+    }
+
+    // Extract prompt name from path
+    path := strings.TrimPrefix(r.URL.Path, "/api/v1/prompts/")
+    path = strings.TrimSuffix(path, "/execute")
+    promptName := path
+
+    if promptName == "" {
+        writeJSONError(w, http.StatusBadRequest, "Prompt name not specified")
+        return
+    }
+
+    // Parse request body for arguments
+    var args map[string]string
+    if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
+        writeJSONError(w, http.StatusBadRequest, "Invalid request body")
+        return
+    }
+
+    // Generate prompt text based on the prompt name
+    var promptText string
+    switch promptName {
+    case "compare_timezones":
+        promptText = generateCompareTimezonesPrompt(args)
+    case "schedule_meeting":
+        promptText = generateScheduleMeetingPrompt(args)
+    case "convert_time_detailed":
+        promptText = generateConvertTimeDetailedPrompt(args)
+    default:
+        writeJSONError(w, http.StatusNotFound, fmt.Sprintf("Unknown prompt: %s", promptName))
+        return
+    }
+
+    writeJSON(w, http.StatusOK, map[string]interface{}{
+        "prompt":    promptName,
+        "arguments": args,
+        "text":      promptText,
+    })
+}
+
 // registerRESTHandlers registers all REST API handlers
 func registerRESTHandlers(mux *http.ServeMux) {
     // Time operations
@@ -437,6 +649,14 @@ func registerRESTHandlers(mux *http.ServeMux) {
     mux.HandleFunc("/api/v1/timezones", handleRESTListTimezones)
     mux.HandleFunc("/api/v1/timezones/", handleRESTTimezoneInfo) // With timezone in path
 
+    // Resource operations
+    mux.HandleFunc("/api/v1/resources", handleRESTListResources)
+    mux.HandleFunc("/api/v1/resources/", handleRESTGetResource) // With resource URI in path
+
+    // Prompt operations
+    mux.HandleFunc("/api/v1/prompts", handleRESTListPrompts)
+    mux.HandleFunc("/api/v1/prompts/", handleRESTExecutePrompt) // With prompt name in path
+
     // Test endpoints
     mux.HandleFunc("/api/v1/test/echo", handleRESTTestEcho)
     mux.HandleFunc("/api/v1/test/validate", handleRESTTestValidate)
@@ -445,6 +665,163 @@ func registerRESTHandlers(mux *http.ServeMux) {
     // Documentation
     mux.HandleFunc("/api/v1/openapi.json", handleOpenAPISpec)
     mux.HandleFunc("/api/v1/docs", handleAPIDocs)
+}
+
+// Helper functions for resource data
+func getTimezoneInfoData() map[string]interface{} {
+    return map[string]interface{}{
+        "timezones": []map[string]interface{}{
+            {
+                "id":           "America/New_York",
+                "name":         "Eastern Time",
+                "offset":       "-05:00",
+                "dst":          true,
+                "abbreviation": "EST/EDT",
+                "major_cities": []string{"New York", "Toronto", "Montreal"},
+                "population":   141000000,
+            },
+            {
+                "id":           "Europe/London",
+                "name":         "Greenwich Mean Time",
+                "offset":       "+00:00",
+                "dst":          true,
+                "abbreviation": "GMT/BST",
+                "major_cities": []string{"London", "Dublin", "Lisbon"},
+                "population":   67000000,
+            },
+            {
+                "id":           "Asia/Tokyo",
+                "name":         "Japan Standard Time",
+                "offset":       "+09:00",
+                "dst":          false,
+                "abbreviation": "JST",
+                "major_cities": []string{"Tokyo", "Osaka", "Yokohama"},
+                "population":   127000000,
+            },
+        },
+        "timezone_groups": map[string][]string{
+            "us_timezones":     []string{"America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"},
+            "europe_timezones": []string{"Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Moscow"},
+            "asia_timezones":   []string{"Asia/Tokyo", "Asia/Shanghai", "Asia/Singapore", "Asia/Dubai"},
+        },
+    }
+}
+
+func getCurrentWorldTimesData() map[string]interface{} {
+    cities := map[string]string{
+        "New York":    "America/New_York",
+        "Los Angeles": "America/Los_Angeles",
+        "London":      "Europe/London",
+        "Paris":       "Europe/Paris",
+        "Tokyo":       "Asia/Tokyo",
+        "Sydney":      "Australia/Sydney",
+        "Dubai":       "Asia/Dubai",
+    }
+
+    times := make(map[string]string)
+    now := time.Now()
+
+    for city, tz := range cities {
+        if loc, err := time.LoadLocation(tz); err == nil {
+            localTime := now.In(loc)
+            times[city] = localTime.Format("2006-01-02 15:04:05 MST")
+        }
+    }
+
+    return map[string]interface{}{
+        "last_updated": now.UTC().Format(time.RFC3339),
+        "times":        times,
+    }
+}
+
+func getTimeFormatsData() map[string]interface{} {
+    return map[string]interface{}{
+        "input_formats": []string{
+            "2006-01-02 15:04:05",
+            "2006-01-02T15:04:05Z",
+            "2006-01-02T15:04:05-07:00",
+            "Jan 2, 2006 3:04 PM",
+        },
+        "output_formats": map[string]string{
+            "iso8601": "2006-01-02T15:04:05Z07:00",
+            "rfc3339": "2006-01-02T15:04:05Z",
+            "rfc822":  "Mon, 02 Jan 2006 15:04:05 MST",
+        },
+    }
+}
+
+func getBusinessHoursData() map[string]interface{} {
+    return map[string]interface{}{
+        "regions": map[string]interface{}{
+            "north_america": map[string]interface{}{
+                "standard_hours": "9:00 AM - 5:00 PM",
+                "lunch_break":    "12:00 PM - 1:00 PM",
+                "working_days":   []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"},
+            },
+            "europe": map[string]interface{}{
+                "standard_hours": "9:00 AM - 6:00 PM",
+                "lunch_break":    "1:00 PM - 2:00 PM",
+                "working_days":   []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"},
+            },
+        },
+    }
+}
+
+// Helper functions for generating prompts
+func generateCompareTimezonesPrompt(args map[string]string) string {
+    timezones := args["timezones"]
+    referenceTime := args["reference_time"]
+
+    prompt := fmt.Sprintf("Compare the current time across these time zones: %s\n", timezones)
+    if referenceTime != "" {
+        prompt += fmt.Sprintf("Reference time: %s\n", referenceTime)
+    }
+    prompt += "\nShow:\n"
+    prompt += "1. The current time in each timezone\n"
+    prompt += "2. The time difference from the first timezone\n"
+    prompt += "3. Whether it's business hours (9 AM - 5 PM)\n"
+    prompt += "4. The day of the week\n"
+
+    return prompt
+}
+
+func generateScheduleMeetingPrompt(args map[string]string) string {
+    participants := args["participants"]
+    duration := args["duration"]
+    preferredHours := args["preferred_hours"]
+    if preferredHours == "" {
+        preferredHours = "9 AM - 5 PM"
+    }
+    dateRange := args["date_range"]
+    if dateRange == "" {
+        dateRange = "next 7 days"
+    }
+
+    prompt := fmt.Sprintf("Find the best meeting time for participants in: %s\n", participants)
+    prompt += fmt.Sprintf("\nMeeting details:\n")
+    prompt += fmt.Sprintf("- Duration: %s minutes\n", duration)
+    prompt += fmt.Sprintf("- Preferred hours: %s local time\n", preferredHours)
+    prompt += fmt.Sprintf("- Date range: %s\n", dateRange)
+
+    return prompt
+}
+
+func generateConvertTimeDetailedPrompt(args map[string]string) string {
+    timeStr := args["time"]
+    fromTz := args["from_timezone"]
+    toTzs := args["to_timezones"]
+    includeContext := args["include_context"]
+
+    prompt := fmt.Sprintf("Convert %s from %s to: %s\n", timeStr, fromTz, toTzs)
+
+    if includeContext == "true" {
+        prompt += "\nAlso provide:\n"
+        prompt += "1. Day of week in each timezone\n"
+        prompt += "2. Whether it's a business day\n"
+        prompt += "3. Time until/since this moment\n"
+    }
+
+    return prompt
 }
 
 // corsMiddleware adds CORS headers to responses

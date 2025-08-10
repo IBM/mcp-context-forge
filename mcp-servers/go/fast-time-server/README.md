@@ -10,6 +10,9 @@
 
 ## Features
 
+- **MCP Tools**: `get_system_time` and `convert_time` for timezone operations
+- **MCP Resources**: Timezone information, world times, format examples, business hours
+- **MCP Prompts**: Time comparisons, meeting scheduling, detailed conversions
 - Five transports: `stdio`, `http` (JSON-RPC 2.0), `sse`, `dual` (MCP + REST), and `rest` (REST API only)
 - REST API with OpenAPI documentation for direct HTTP access
 - Single static binary (~2 MiB)
@@ -61,6 +64,49 @@ Also available as releases.
 | `-addr`/`-listen` | `0.0.0.0` | Bind address for HTTP/SSE               |
 | `-port`           | `8080`    | Port for HTTP/SSE/dual                  |
 | `-auth-token`     | *(empty)* | Bearer token for SSE authentication     |
+
+## MCP Features
+
+### Tools
+
+The server provides two main MCP tools:
+
+1. **get_system_time** - Returns the current time in any IANA timezone
+   - Parameter: `timezone` (optional, defaults to UTC)
+
+2. **convert_time** - Converts time between different timezones
+   - Parameters: `time`, `source_timezone`, `target_timezone` (all required)
+
+### Resources
+
+The server exposes four MCP resources:
+
+1. **timezone://info** - Comprehensive timezone information
+   - Includes offset, DST status, major cities, and population data
+
+2. **time://current/world** - Current time in major cities
+   - Real-time updates for global cities
+
+3. **time://formats** - Time format examples
+   - Input/output format specifications and examples
+
+4. **time://business-hours** - Business hours by region
+   - Working hours, lunch breaks, and holidays for different regions
+
+### Prompts
+
+Three prompt templates are available:
+
+1. **compare_timezones** - Compare times across multiple zones
+   - Arguments: `timezones` (required), `reference_time` (optional)
+
+2. **schedule_meeting** - Find optimal meeting times
+   - Arguments: `participants` (required), `duration` (required),
+     `preferred_hours` (optional), `date_range` (optional)
+
+3. **convert_time_detailed** - Convert with context
+   - Arguments: `time`, `from_timezone`, `to_timezones` (all required),
+     `include_context` (optional)
 
 ## API Reference
 
@@ -132,6 +178,35 @@ curl http://localhost:8080/api/v1/timezones/Asia/Tokyo/info
 **POST** `/api/v1/convert/batch`
 
 Convert multiple times in a single request.
+
+#### MCP Resources
+**GET** `/api/v1/resources` - List all available MCP resources
+**GET** `/api/v1/resources/{uri}` - Get specific resource content
+
+Available resource URIs:
+- `timezone-info` - Comprehensive timezone information
+- `current-world` - Current world times
+- `time-formats` - Time format examples
+- `business-hours` - Business hours by region
+
+```bash
+curl http://localhost:8080/api/v1/resources/timezone-info
+```
+
+#### MCP Prompts
+**GET** `/api/v1/prompts` - List all available MCP prompts
+**POST** `/api/v1/prompts/{name}/execute` - Execute a prompt with arguments
+
+Available prompts:
+- `compare_timezones` - Compare times across zones
+- `schedule_meeting` - Find optimal meeting times
+- `convert_time_detailed` - Convert with context
+
+```bash
+curl -X POST http://localhost:8080/api/v1/prompts/compare_timezones/execute \
+  -H "Content-Type: application/json" \
+  -d '{"timezones":"UTC,America/New_York,Asia/Tokyo"}'
+```
 
 #### Test Endpoints
 - **GET** `/api/v1/test/echo` - Echo test endpoint
