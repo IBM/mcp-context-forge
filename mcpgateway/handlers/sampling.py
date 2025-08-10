@@ -218,7 +218,7 @@ class SamplingHandler:
                 if not self._validate_message(msg):
                     raise SamplingError(f"Invalid message format: {msg}")
 
-            # FIXME: Implement actual model sampling - currently returns mock response
+            # TODO: Implement actual model sampling - currently returns mock response  # pylint: disable=fixme
             # For now return mock response
             response = self._mock_sample(messages=messages)
 
@@ -357,7 +357,7 @@ class SamplingHandler:
             >>> len(result)
             2
         """
-        # FIXME: Implement context gathering based on type - currently no-op
+        # TODO: Implement context gathering based on type - currently no-op  # pylint: disable=fixme
         # For now return original messages
         return messages
 

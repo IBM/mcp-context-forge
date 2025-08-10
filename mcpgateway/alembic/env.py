@@ -118,7 +118,6 @@ if config.config_file_name is not None:
         disable_existing_loggers=False,
     )
 
-# First-Party
 # add your model's MetaData object here
 # for 'autogenerate' support
 # from myapp import mymodel

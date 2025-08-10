@@ -3705,6 +3705,97 @@ pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 		python3 -m pip install --quiet --upgrade pip-audit && \
 		pip-audit --strict || true"
 
+
+
+## --------------------------------------------------------------------------- ##
+##  Async Code Testing and Performance Profiling
+## --------------------------------------------------------------------------- ##
+.PHONY: async-test async-lint profile async-monitor async-debug profile-serve
+
+ASYNC_TEST_DIR := async_testing
+PROFILE_DIR := $(ASYNC_TEST_DIR)/profiles
+REPORTS_DIR := $(ASYNC_TEST_DIR)/reports
+VENV_PYTHON := $(VENV_DIR)/bin/python
+
+async-test: async-lint async-debug
+	@echo "🔄 Running comprehensive async safety tests..."
+	@mkdir -p $(REPORTS_DIR)
+	@PYTHONASYNCIODEBUG=1 $(VENV_PYTHON) -m pytest \
+		tests/ \
+		--asyncio-mode=auto \
+		--tb=short \
+		--junitxml=$(REPORTS_DIR)/async-test-results.xml \
+		-v
+
+async-lint:
+	@echo "🔍 Running async-aware linting..."
+	@$(VENV_DIR)/bin/ruff check mcpgateway/ tests/ \
+		--select=F,E,B,ASYNC \
+		--output-format=github
+	@$(VENV_DIR)/bin/flake8 mcpgateway/ tests/ \
+		--extend-select=B,ASYNC \
+		--max-line-length=100
+	@$(VENV_DIR)/bin/mypy mcpgateway/ \
+		--warn-unused-coroutine \
+		--strict
+
+profile:
+	@echo "📊 Generating async performance profiles..."
+	@mkdir -p $(PROFILE_DIR)
+	@$(VENV_PYTHON) $(ASYNC_TEST_DIR)/profiler.py \
+		--scenarios websocket,database,mcp_calls \
+		--output $(PROFILE_DIR) \
+		--duration 60
+	@echo "🌐 Starting SnakeViz server..."
+	@$(VENV_DIR)/bin/snakeviz $(PROFILE_DIR)/combined_profile.prof \
+		--server --port 8080
+
+profile-serve:
+	@echo "🌐 Starting SnakeViz profile server..."
+	@$(VENV_DIR)/bin/snakeviz $(PROFILE_DIR) \
+		--server --port 8080 --hostname 0.0.0.0
+
+async-monitor:
+	@echo "👁️  Starting aiomonitor for live async debugging..."
+	@$(VENV_PYTHON) $(ASYNC_TEST_DIR)/monitor_runner.py \
+		--webui_port 50101 \
+		--console_port 50102 \
+		--host localhost \
+		--console-enabled
+
+async-debug:
+	@echo "🐛 Running async tests with debug mode..."
+	@PYTHONASYNCIODEBUG=1 $(VENV_PYTHON) -X dev \
+		-m pytest tests/ \
+		--asyncio-mode=auto \
+		--capture=no \
+		-v
+
+async-benchmark:
+	@echo "⚡ Running async performance benchmarks..."
+	@$(VENV_PYTHON) $(ASYNC_TEST_DIR)/benchmarks.py \
+		--output $(REPORTS_DIR)/benchmark-results.json \
+		--iterations 1000
+
+profile-compare:
+	@echo "📈 Comparing performance profiles..."
+	@$(VENV_PYTHON) $(ASYNC_TEST_DIR)/profile_compare.py \
+		--baseline $(PROFILE_DIR)/combined_profile.prof \
+		--current $(PROFILE_DIR)/mcp_calls_profile.prof \
+		--output $(REPORTS_DIR)/profile-comparison.json
+
+async-validate:
+	@echo "✅ Validating async code patterns..."
+	@$(VENV_PYTHON) $(ASYNC_TEST_DIR)/async_validator.py \
+		--source mcpgateway/ \
+		--report $(REPORTS_DIR)/async-validation.json
+
+async-clean:
+	@echo "🧹 Cleaning async testing artifacts..."
+	@rm -rf $(PROFILE_DIR)/* $(REPORTS_DIR)/*
+	@pkill -f "aiomonitor" || true
+	@pkill -f "snakeviz" || true
+
 ## --------------------------------------------------------------------------- ##
 ##  Gitleaks (Go binary - separate installation)
 ## --------------------------------------------------------------------------- ##
