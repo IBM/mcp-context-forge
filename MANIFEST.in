@@ -27,6 +27,8 @@ include *.yml
 include *.json
 include *.sh
 include *.txt
+recursive-include async_testing *.py
+recursive-include async_testing *.yaml
 
 # 3️⃣  Tooling/lint configuration dot-files (explicit so they're not lost)
 include .env.make
@@ -73,7 +75,8 @@ prune *.egg-info
 prune charts
 prune k8s
 prune .devcontainer
-
+exclude CLAUDE.*
+exclude llms-full.txt
 
 # Exclude deployment, mcp-servers and agent_runtimes
 prune deployment

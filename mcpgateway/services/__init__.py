@@ -12,7 +12,6 @@ Exposes core MCP Gateway services:
 - Gateway coordination
 """
 
-# First-Party
 from mcpgateway.services.gateway_service import GatewayError, GatewayService
 from mcpgateway.services.prompt_service import PromptError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceService

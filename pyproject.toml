@@ -68,7 +68,7 @@ dependencies = [
     "sse-starlette>=3.0.2",
     "starlette>=0.47.2",
     "uvicorn>=0.35.0",
-    "zeroconf>=0.147.0",
+    "zeroconf>=0.147.0"
 ]
 
 # ----------------------------------------------------------------
@@ -101,6 +101,7 @@ asyncpg = [
 
 # Optional dependency groups (development)
 dev = [
+    "aiohttp>=3.12.14",
     "argparse-manpage>=4.6",
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
@@ -161,6 +162,7 @@ dev = [
     "uv>=0.8.4",
     "vulture>=2.14",
     "yamllint>=1.37.1",
+    "websockets>=15.0.1"
 ]
 
 # UI Testing
@@ -249,6 +251,20 @@ target-version = ["py310", "py311", "py312"]
 include = "\\.pyi?$"
 
 # isort configuration
+# --------------------------------------------------------------------
+#  🛠  Async tool configurations (async-test, async-lint, etc.)
+# --------------------------------------------------------------------
+[tool.ruff]
+select = ["F", "E", "W", "B", "ASYNC"]
+unfixable = ["B"]  # Never auto-fix critical bugbear warnings
+
+[tool.ruff.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
 [tool.isort]
 ###############################################################################
 # Core behaviour
@@ -320,6 +336,7 @@ warn_unreachable = true                # Warn about unreachable code
 warn_unused_ignores = true             # Warn if a "# type: ignore" is unnecessary
 warn_unused_configs = true             # Warn about unused config options
 warn_redundant_casts = true            # Warn if a cast does nothing
+warn_unused_coroutine = true           # Warn if an unused async coroutine is defined
 strict_equality = true                 # Disallow ==/!= between incompatible types
 
 # Output formatting
@@ -332,6 +349,9 @@ exclude = [
   '^\\.venv/',
   '^\\.mypy_cache/',
 ]
+
+# Plugins to use with mypy
+plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic models
 
 [tool.pytest.ini_options]
 minversion = "6.0"

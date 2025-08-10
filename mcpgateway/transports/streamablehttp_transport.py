@@ -42,13 +42,7 @@ from uuid import uuid4
 from fastapi.security.utils import get_authorization_scheme_param
 from mcp import types
 from mcp.server.lowlevel import Server
-from mcp.server.streamable_http import (
-    EventCallback,
-    EventId,
-    EventMessage,
-    EventStore,
-    StreamId,
-)
+from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage
 from starlette.datastructures import Headers
