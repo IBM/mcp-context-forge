@@ -8,6 +8,8 @@ The **fast-time-server** is a high-performance Go-based MCP server that provides
 
 - **Multiple Transport Modes**: stdio, HTTP (JSON-RPC), SSE, dual (MCP + REST), and REST API
 - **Comprehensive Time Operations**: Get system time, convert between timezones
+- **MCP Resources**: Timezone data, world times, format examples, business hours
+- **MCP Prompts**: Time comparisons, meeting scheduling, detailed conversions
 - **REST API**: Traditional HTTP endpoints alongside MCP protocol
 - **OpenAPI Documentation**: Interactive Swagger UI and OpenAPI 3.0 specification
 - **CORS Support**: Enabled for browser-based testing
@@ -115,6 +117,146 @@ Converts time between different timezones.
 }
 ```
 
+## MCP Resources
+
+The server provides four MCP resources that can be accessed through the MCP protocol:
+
+### timezone://info
+Comprehensive timezone information including offsets, DST status, major cities, and population data.
+
+**Example Response:**
+```json
+{
+  "timezones": [
+    {
+      "id": "America/New_York",
+      "name": "Eastern Time",
+      "offset": "-05:00",
+      "dst": true,
+      "abbreviation": "EST/EDT",
+      "major_cities": ["New York", "Toronto", "Montreal"],
+      "population": 141000000
+    }
+  ],
+  "timezone_groups": {
+    "us_timezones": ["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"]
+  }
+}
+```
+
+### time://current/world
+Current time in major cities around the world, updated in real-time.
+
+**Example Response:**
+```json
+{
+  "last_updated": "2025-01-10T16:30:00Z",
+  "times": {
+    "New York": "2025-01-10 11:30:00 EST",
+    "London": "2025-01-10 16:30:00 GMT",
+    "Tokyo": "2025-01-11 01:30:00 JST"
+  }
+}
+```
+
+### time://formats
+Examples of supported time formats for parsing and display.
+
+**Example Response:**
+```json
+{
+  "input_formats": [
+    "2006-01-02 15:04:05",
+    "2006-01-02T15:04:05Z",
+    "2006-01-02T15:04:05-07:00"
+  ],
+  "output_formats": {
+    "iso8601": "2006-01-02T15:04:05Z07:00",
+    "rfc3339": "2006-01-02T15:04:05Z"
+  }
+}
+```
+
+### time://business-hours
+Standard business hours across different regions.
+
+**Example Response:**
+```json
+{
+  "regions": {
+    "north_america": {
+      "standard_hours": "9:00 AM - 5:00 PM",
+      "lunch_break": "12:00 PM - 1:00 PM",
+      "working_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    }
+  }
+}
+```
+
+## MCP Prompts
+
+The server provides three prompt templates for common time-related tasks:
+
+### compare_timezones
+Compare current times across multiple time zones.
+
+**Arguments:**
+- `timezones` (required): Comma-separated list of timezone IDs
+- `reference_time` (optional): Reference time (defaults to now)
+
+**Example:**
+```json
+{
+  "prompt": "compare_timezones",
+  "arguments": {
+    "timezones": "UTC,America/New_York,Asia/Tokyo"
+  }
+}
+```
+
+### schedule_meeting
+Find optimal meeting time across multiple time zones.
+
+**Arguments:**
+- `participants` (required): Comma-separated list of participant locations/timezones
+- `duration` (required): Meeting duration in minutes
+- `preferred_hours` (optional): Preferred time range (default: "9 AM - 5 PM")
+- `date_range` (optional): Date range to consider (default: "next 7 days")
+
+**Example:**
+```json
+{
+  "prompt": "schedule_meeting",
+  "arguments": {
+    "participants": "New York,London,Tokyo",
+    "duration": "60",
+    "preferred_hours": "9 AM - 5 PM"
+  }
+}
+```
+
+### convert_time_detailed
+Convert time with detailed context.
+
+**Arguments:**
+- `time` (required): Time to convert
+- `from_timezone` (required): Source timezone
+- `to_timezones` (required): Comma-separated list of target timezones
+- `include_context` (optional): Include contextual information (true/false)
+
+**Example:**
+```json
+{
+  "prompt": "convert_time_detailed",
+  "arguments": {
+    "time": "2025-01-10T10:00:00Z",
+    "from_timezone": "UTC",
+    "to_timezones": "America/New_York,Europe/London,Asia/Tokyo",
+    "include_context": "true"
+  }
+}
+```
+
 ## REST API Endpoints
 
 When using `rest` or `dual` transport modes, the following REST endpoints are available:
@@ -203,6 +345,35 @@ curl http://localhost:8080/api/v1/timezones/Asia/Tokyo/info
   "is_dst": false,
   "abbreviation": "JST"
 }
+```
+
+### MCP Resources via REST
+
+```bash
+# List all resources
+curl http://localhost:8080/api/v1/resources
+
+# Get specific resource
+curl http://localhost:8080/api/v1/resources/timezone-info
+curl http://localhost:8080/api/v1/resources/current-world
+curl http://localhost:8080/api/v1/resources/time-formats
+curl http://localhost:8080/api/v1/resources/business-hours
+```
+
+### MCP Prompts via REST
+
+```bash
+# List all prompts
+curl http://localhost:8080/api/v1/prompts
+
+# Execute a prompt
+curl -X POST http://localhost:8080/api/v1/prompts/compare_timezones/execute \
+  -H "Content-Type: application/json" \
+  -d '{"timezones": "UTC,America/New_York,Asia/Tokyo"}'
+
+curl -X POST http://localhost:8080/api/v1/prompts/schedule_meeting/execute \
+  -H "Content-Type: application/json" \
+  -d '{"participants": "New York,London,Tokyo", "duration": "60"}'
 ```
 
 ### Test Endpoints
