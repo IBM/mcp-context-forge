@@ -1330,7 +1330,12 @@ function createEnhancedTopPerformersSection(topData) {
     }
 }
 function calculateSuccessRate(item) {
-    const total = item.execution_count || item.executions || 0;
+    // API returns successRate directly as a percentage
+    if (item.successRate !== undefined && item.successRate !== null) {
+        return Math.round(item.successRate);
+    }
+    // Fallback for legacy format (if needed)
+    const total = item.execution_count || item.executions || item.executionCount || 0;
     const successful = item.successful_count || item.successfulExecutions || 0;
     return total > 0 ? Math.round((successful / total) * 100) : 0;
 }
@@ -1466,7 +1471,7 @@ function createTopPerformersTable(entityType, data, isActive) {
         execCell.className =
             "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
         execCell.textContent = formatNumber(
-            item.execution_count || item.executions || 0,
+            item.executionCount || item.execution_count || item.executions || 0,
         );
         row.appendChild(execCell);
 
@@ -1627,7 +1632,7 @@ function exportMetricsToCSV(topData) {
                     type,
                     index + 1,
                     `"${escapeHtml(item.name || "Unknown")}"`,
-                    formatNumber(item.execution_count || item.executions || 0),
+                    formatNumber(item.executionCount || item.execution_count || item.executions || 0),
                     item.avg_response_time || item.avgResponseTime
                         ? `${Math.round(item.avg_response_time || item.avgResponseTime)}ms`
                         : "N/A",
