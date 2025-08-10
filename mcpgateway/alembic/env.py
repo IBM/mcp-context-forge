@@ -83,15 +83,22 @@ def _inside_alembic() -> bool:
             code or during testing.
 
     Examples:
-        When running migrations::
+        >>> # Normal import context (no _proxy attribute)
+        >>> import types
+        >>> fake_context = types.SimpleNamespace()
+        >>> import mcpgateway.alembic.env as env_module
+        >>> original_context = env_module.context
+        >>> env_module.context = fake_context
+        >>> env_module._inside_alembic()
+        False
 
-            $ alembic upgrade head
-            # _inside_alembic() returns True
+        >>> # Simulated Alembic context (with _proxy attribute)
+        >>> fake_context._proxy = True
+        >>> env_module._inside_alembic()
+        True
 
-        When importing in tests or application code::
-
-            from mcpgateway.alembic.env import target_metadata
-            # _inside_alembic() returns False
+        >>> # Restore original context
+        >>> env_module.context = original_context
 
     Note:
         This guard is crucial to prevent the migration execution code at the

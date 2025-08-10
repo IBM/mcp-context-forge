@@ -362,6 +362,10 @@ class SessionRegistry(SessionBackend):
                 await self._redis.aclose()
             except Exception as e:
                 logger.error(f"Error closing Redis connection: {e}")
+                # Error example:
+                # >>> import logging
+                # >>> logger = logging.getLogger(__name__)
+                # >>> logger.error(f"Error closing Redis connection: Connection lost")  # doctest: +SKIP
 
     async def add_session(self, session_id: str, transport: SSETransport) -> None:
         """Add a session to the registry.
