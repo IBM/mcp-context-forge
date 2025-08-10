@@ -159,6 +159,7 @@ package main
 import (
     "bufio"
     "context"
+    "encoding/json"
     "flag"
     "fmt"
     "io"
@@ -275,6 +276,439 @@ func loadLocation(name string) (*time.Location, error) {
     // Cache for future use
     tzCache.Store(name, loc)
     return loc, nil
+}
+
+/* ------------------------------------------------------------------ */
+/*                       resource handlers                            */
+/* ------------------------------------------------------------------ */
+
+// handleTimezoneInfo returns comprehensive timezone information
+func handleTimezoneInfo(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+    data := map[string]interface{}{
+        "timezones": []map[string]interface{}{
+            {
+                "id":           "America/New_York",
+                "name":         "Eastern Time",
+                "offset":       "-05:00",
+                "dst":          true,
+                "abbreviation": "EST/EDT",
+                "major_cities": []string{"New York", "Toronto", "Montreal"},
+                "population":   141000000,
+            },
+            {
+                "id":           "America/Chicago",
+                "name":         "Central Time",
+                "offset":       "-06:00",
+                "dst":          true,
+                "abbreviation": "CST/CDT",
+                "major_cities": []string{"Chicago", "Houston", "Mexico City"},
+                "population":   110000000,
+            },
+            {
+                "id":           "America/Denver",
+                "name":         "Mountain Time",
+                "offset":       "-07:00",
+                "dst":          true,
+                "abbreviation": "MST/MDT",
+                "major_cities": []string{"Denver", "Phoenix", "Calgary"},
+                "population":   35000000,
+            },
+            {
+                "id":           "America/Los_Angeles",
+                "name":         "Pacific Time",
+                "offset":       "-08:00",
+                "dst":          true,
+                "abbreviation": "PST/PDT",
+                "major_cities": []string{"Los Angeles", "San Francisco", "Seattle"},
+                "population":   53000000,
+            },
+            {
+                "id":           "Europe/London",
+                "name":         "Greenwich Mean Time",
+                "offset":       "+00:00",
+                "dst":          true,
+                "abbreviation": "GMT/BST",
+                "major_cities": []string{"London", "Dublin", "Lisbon"},
+                "population":   67000000,
+            },
+            {
+                "id":           "Europe/Paris",
+                "name":         "Central European Time",
+                "offset":       "+01:00",
+                "dst":          true,
+                "abbreviation": "CET/CEST",
+                "major_cities": []string{"Paris", "Madrid", "Rome"},
+                "population":   250000000,
+            },
+            {
+                "id":           "Europe/Moscow",
+                "name":         "Moscow Time",
+                "offset":       "+03:00",
+                "dst":          false,
+                "abbreviation": "MSK",
+                "major_cities": []string{"Moscow", "Istanbul", "Nairobi"},
+                "population":   250000000,
+            },
+            {
+                "id":           "Asia/Dubai",
+                "name":         "Gulf Standard Time",
+                "offset":       "+04:00",
+                "dst":          false,
+                "abbreviation": "GST",
+                "major_cities": []string{"Dubai", "Abu Dhabi", "Muscat"},
+                "population":   65000000,
+            },
+            {
+                "id":           "Asia/Shanghai",
+                "name":         "China Standard Time",
+                "offset":       "+08:00",
+                "dst":          false,
+                "abbreviation": "CST",
+                "major_cities": []string{"Shanghai", "Beijing", "Hong Kong"},
+                "population":   1400000000,
+            },
+            {
+                "id":           "Asia/Tokyo",
+                "name":         "Japan Standard Time",
+                "offset":       "+09:00",
+                "dst":          false,
+                "abbreviation": "JST",
+                "major_cities": []string{"Tokyo", "Osaka", "Yokohama"},
+                "population":   127000000,
+            },
+            {
+                "id":           "Australia/Sydney",
+                "name":         "Australian Eastern Time",
+                "offset":       "+10:00",
+                "dst":          true,
+                "abbreviation": "AEST/AEDT",
+                "major_cities": []string{"Sydney", "Melbourne", "Brisbane"},
+                "population":   25000000,
+            },
+        },
+        "timezone_groups": map[string][]string{
+            "us_timezones":     []string{"America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"},
+            "europe_timezones": []string{"Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Moscow"},
+            "asia_timezones":   []string{"Asia/Tokyo", "Asia/Shanghai", "Asia/Singapore", "Asia/Dubai"},
+        },
+    }
+
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        return nil, fmt.Errorf("failed to marshal timezone data: %w", err)
+    }
+
+    logAt(logInfo, "resource: timezone info requested")
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      "timezone://info",
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+    }, nil
+}
+
+// handleCurrentWorldTimes returns current time in major cities
+func handleCurrentWorldTimes(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+    cities := map[string]string{
+        "New York":     "America/New_York",
+        "Los Angeles":  "America/Los_Angeles",
+        "London":       "Europe/London",
+        "Paris":        "Europe/Paris",
+        "Tokyo":        "Asia/Tokyo",
+        "Sydney":       "Australia/Sydney",
+        "Dubai":        "Asia/Dubai",
+        "Singapore":    "Asia/Singapore",
+        "Mumbai":       "Asia/Kolkata",
+        "Hong Kong":    "Asia/Hong_Kong",
+    }
+
+    times := make(map[string]string)
+    now := time.Now()
+
+    for city, tz := range cities {
+        loc, err := loadLocation(tz)
+        if err != nil {
+            times[city] = "Error loading timezone"
+            continue
+        }
+        localTime := now.In(loc)
+        times[city] = localTime.Format("2006-01-02 15:04:05 MST")
+    }
+
+    data := map[string]interface{}{
+        "last_updated": now.UTC().Format(time.RFC3339),
+        "times":        times,
+    }
+
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        return nil, fmt.Errorf("failed to marshal world times: %w", err)
+    }
+
+    logAt(logInfo, "resource: current world times requested")
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      "time://current/world",
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+    }, nil
+}
+
+// handleTimeFormats returns examples of supported time formats
+func handleTimeFormats(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+    data := map[string]interface{}{
+        "input_formats": []string{
+            "2006-01-02 15:04:05",
+            "2006-01-02T15:04:05Z",
+            "2006-01-02T15:04:05-07:00",
+            "Jan 2, 2006 3:04 PM",
+            "Monday, January 2, 2006",
+            "02/01/2006 15:04",
+        },
+        "output_formats": map[string]string{
+            "iso8601":        "2006-01-02T15:04:05Z07:00",
+            "rfc3339":        "2006-01-02T15:04:05Z",
+            "rfc822":         "Mon, 02 Jan 2006 15:04:05 MST",
+            "unix":           "1136214245",
+            "human_readable": "Monday, January 2, 2006 at 3:04 PM",
+            "short":          "1/2/06 3:04 PM",
+        },
+        "examples": []map[string]string{
+            {
+                "format":      "ISO 8601",
+                "example":     "2024-01-15T14:30:00-05:00",
+                "description": "Standard international format with timezone",
+            },
+            {
+                "format":      "Unix Timestamp",
+                "example":     "1705339800",
+                "description": "Seconds since January 1, 1970 UTC",
+            },
+            {
+                "format":      "RFC 3339",
+                "example":     "2024-01-15T14:30:00Z",
+                "description": "Internet standard format",
+            },
+        },
+    }
+
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        return nil, fmt.Errorf("failed to marshal format data: %w", err)
+    }
+
+    logAt(logInfo, "resource: time formats requested")
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      "time://formats",
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+    }, nil
+}
+
+// handleBusinessHours returns standard business hours across regions
+func handleBusinessHours(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+    data := map[string]interface{}{
+        "regions": map[string]interface{}{
+            "north_america": map[string]interface{}{
+                "standard_hours": "9:00 AM - 5:00 PM",
+                "lunch_break":    "12:00 PM - 1:00 PM",
+                "working_days":   []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"},
+            },
+            "europe": map[string]interface{}{
+                "standard_hours": "9:00 AM - 6:00 PM",
+                "lunch_break":    "1:00 PM - 2:00 PM",
+                "working_days":   []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"},
+            },
+            "asia_pacific": map[string]interface{}{
+                "standard_hours": "9:00 AM - 6:00 PM",
+                "lunch_break":    "12:00 PM - 1:00 PM",
+                "working_days":   []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"},
+            },
+            "middle_east": map[string]interface{}{
+                "standard_hours": "9:00 AM - 6:00 PM",
+                "lunch_break":    "1:00 PM - 2:00 PM",
+                "working_days":   []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"},
+            },
+        },
+        "holidays": map[string]interface{}{
+            "global": []string{"New Year's Day", "Christmas Day"},
+            "regional": map[string][]string{
+                "us":    []string{"Independence Day", "Thanksgiving", "Memorial Day", "Labor Day"},
+                "uk":    []string{"Boxing Day", "Spring Bank Holiday", "Summer Bank Holiday"},
+                "japan": []string{"Golden Week", "Obon", "New Year Holiday"},
+                "china": []string{"Spring Festival", "Mid-Autumn Festival", "National Day"},
+            },
+        },
+    }
+
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        return nil, fmt.Errorf("failed to marshal business hours: %w", err)
+    }
+
+    logAt(logInfo, "resource: business hours requested")
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      "time://business-hours",
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+    }, nil
+}
+
+/* ------------------------------------------------------------------ */
+/*                        prompt handlers                             */
+/* ------------------------------------------------------------------ */
+
+// handleCompareTimezonesPrompt compares times across multiple timezones
+func handleCompareTimezonesPrompt(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    timezones := req.Params.Arguments["timezones"]
+    referenceTime := req.Params.Arguments["reference_time"]
+
+    if timezones == "" {
+        return nil, fmt.Errorf("timezones parameter is required")
+    }
+
+    tzList := strings.Split(timezones, ",")
+    for i := range tzList {
+        tzList[i] = strings.TrimSpace(tzList[i])
+    }
+
+    var baseTime time.Time
+    if referenceTime != "" {
+        var err error
+        baseTime, err = time.Parse(time.RFC3339, referenceTime)
+        if err != nil {
+            baseTime = time.Now()
+        }
+    } else {
+        baseTime = time.Now()
+    }
+
+    var promptText strings.Builder
+    promptText.WriteString("Compare the current time across these time zones:\n")
+    for _, tz := range tzList {
+        promptText.WriteString(fmt.Sprintf("- %s\n", tz))
+    }
+    promptText.WriteString(fmt.Sprintf("\nReference time: %s\n\n", baseTime.Format(time.RFC3339)))
+    promptText.WriteString("Show:\n")
+    promptText.WriteString("1. The current time in each timezone\n")
+    promptText.WriteString("2. The time difference from the first timezone\n")
+    promptText.WriteString("3. Whether it's business hours (9 AM - 5 PM)\n")
+    promptText.WriteString("4. The day of the week\n")
+
+    logAt(logInfo, "prompt: compare_timezones for %s", timezones)
+    return &mcp.GetPromptResult{
+        Description: "Time zone comparison analysis",
+        Messages: []mcp.PromptMessage{
+            {
+                Role:    mcp.RoleUser,
+                Content: mcp.TextContent{Type: "text", Text: promptText.String()},
+            },
+        },
+    }, nil
+}
+
+// handleScheduleMeetingPrompt finds optimal meeting times
+func handleScheduleMeetingPrompt(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    participants := req.Params.Arguments["participants"]
+    duration := req.Params.Arguments["duration"]
+    if duration == "" {
+        duration = "60"
+    }
+    preferredHours := req.Params.Arguments["preferred_hours"]
+    if preferredHours == "" {
+        preferredHours = "9 AM - 5 PM"
+    }
+    dateRange := req.Params.Arguments["date_range"]
+    if dateRange == "" {
+        dateRange = "next 7 days"
+    }
+
+    if participants == "" {
+        return nil, fmt.Errorf("participants parameter is required")
+    }
+
+    partList := strings.Split(participants, ",")
+    for i := range partList {
+        partList[i] = strings.TrimSpace(partList[i])
+    }
+
+    var promptText strings.Builder
+    promptText.WriteString("Find the best meeting time for participants in these locations:\n")
+    for _, p := range partList {
+        promptText.WriteString(fmt.Sprintf("- %s\n", p))
+    }
+    promptText.WriteString("\nMeeting details:\n")
+    promptText.WriteString(fmt.Sprintf("- Duration: %s minutes\n", duration))
+    promptText.WriteString(fmt.Sprintf("- Preferred hours: %s local time for each participant\n", preferredHours))
+    promptText.WriteString(fmt.Sprintf("- Date range: %s\n\n", dateRange))
+    promptText.WriteString("Consider:\n")
+    promptText.WriteString("1. Business hours overlap across all timezones\n")
+    promptText.WriteString("2. Avoid very early morning (before 8 AM) or late evening (after 7 PM)\n")
+    promptText.WriteString("3. Account for any timezone transitions (DST changes)\n")
+    promptText.WriteString("4. Suggest top 3 meeting times with pros/cons for each\n")
+
+    logAt(logInfo, "prompt: schedule_meeting for %s", participants)
+    return &mcp.GetPromptResult{
+        Description: "Meeting scheduler analysis",
+        Messages: []mcp.PromptMessage{
+            {
+                Role:    mcp.RoleUser,
+                Content: mcp.TextContent{Type: "text", Text: promptText.String()},
+            },
+        },
+    }, nil
+}
+
+// handleConvertTimeDetailedPrompt converts time with detailed context
+func handleConvertTimeDetailedPrompt(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    timeStr := req.Params.Arguments["time"]
+    fromTz := req.Params.Arguments["from_timezone"]
+    toTzs := req.Params.Arguments["to_timezones"]
+    includeContext := req.Params.Arguments["include_context"]
+    if includeContext == "" {
+        includeContext = "false"
+    }
+
+    if timeStr == "" || fromTz == "" || toTzs == "" {
+        return nil, fmt.Errorf("time, from_timezone, and to_timezones are required")
+    }
+
+    tzList := strings.Split(toTzs, ",")
+    for i := range tzList {
+        tzList[i] = strings.TrimSpace(tzList[i])
+    }
+
+    var promptText strings.Builder
+    promptText.WriteString(fmt.Sprintf("Convert %s from %s to:\n", timeStr, fromTz))
+    for _, tz := range tzList {
+        promptText.WriteString(fmt.Sprintf("- %s\n", tz))
+    }
+
+    if includeContext == "true" {
+        promptText.WriteString("\nAlso provide:\n")
+        promptText.WriteString("1. Day of week in each timezone\n")
+        promptText.WriteString("2. Whether it's a business day\n")
+        promptText.WriteString("3. Any relevant holidays or observances\n")
+        promptText.WriteString("4. Time until/since this moment (relative to now)\n")
+        promptText.WriteString("5. Sunrise/sunset times if significantly different days\n")
+    }
+
+    logAt(logInfo, "prompt: convert_time_detailed from %s to %s", fromTz, toTzs)
+    return &mcp.GetPromptResult{
+        Description: "Detailed time conversion",
+        Messages: []mcp.PromptMessage{
+            {
+                Role:    mcp.RoleUser,
+                Content: mcp.TextContent{Type: "text", Text: promptText.String()},
+            },
+        },
+    }, nil
 }
 
 /* ------------------------------------------------------------------ */
@@ -516,6 +950,83 @@ func main() {
         ),
     )
     s.AddTool(convertTimeTool, handleConvertTime)
+
+    /* ----------------------- register resources ---------------------- */
+    // Register timezone information resource
+    s.AddResource(mcp.NewResource("timezone://info", "Timezone Information",
+        mcp.WithResourceDescription("Comprehensive timezone information including offsets, DST, and major cities"),
+        mcp.WithMIMEType("application/json"),
+    ), handleTimezoneInfo)
+
+    // Register current world times resource
+    s.AddResource(mcp.NewResource("time://current/world", "Current World Times",
+        mcp.WithResourceDescription("Current time in major cities around the world"),
+        mcp.WithMIMEType("application/json"),
+    ), handleCurrentWorldTimes)
+
+    // Register time format examples resource
+    s.AddResource(mcp.NewResource("time://formats", "Time Formats",
+        mcp.WithResourceDescription("Examples of supported time formats for parsing and display"),
+        mcp.WithMIMEType("application/json"),
+    ), handleTimeFormats)
+
+    // Register business hours resource
+    s.AddResource(mcp.NewResource("time://business-hours", "Business Hours",
+        mcp.WithResourceDescription("Standard business hours across different regions"),
+        mcp.WithMIMEType("application/json"),
+    ), handleBusinessHours)
+
+    /* ----------------------- register prompts ------------------------ */
+    // Register time zone comparison prompt
+    s.AddPrompt(mcp.NewPrompt("compare_timezones",
+        mcp.WithPromptDescription("Compare current times across multiple time zones"),
+        mcp.WithArgument("timezones",
+            mcp.RequiredArgument(),
+            mcp.ArgumentDescription("Comma-separated list of timezone IDs to compare"),
+        ),
+        mcp.WithArgument("reference_time",
+            mcp.ArgumentDescription("Optional reference time (defaults to now)"),
+        ),
+    ), handleCompareTimezonesPrompt)
+
+    // Register meeting scheduler prompt
+    s.AddPrompt(mcp.NewPrompt("schedule_meeting",
+        mcp.WithPromptDescription("Find optimal meeting time across multiple time zones"),
+        mcp.WithArgument("participants",
+            mcp.RequiredArgument(),
+            mcp.ArgumentDescription("Comma-separated list of participant locations/timezones"),
+        ),
+        mcp.WithArgument("duration",
+            mcp.RequiredArgument(),
+            mcp.ArgumentDescription("Meeting duration in minutes"),
+        ),
+        mcp.WithArgument("preferred_hours",
+            mcp.ArgumentDescription("Preferred time range (e.g., '9 AM - 5 PM')"),
+        ),
+        mcp.WithArgument("date_range",
+            mcp.ArgumentDescription("Date range to consider (e.g., 'next 7 days')"),
+        ),
+    ), handleScheduleMeetingPrompt)
+
+    // Register time zone converter prompt
+    s.AddPrompt(mcp.NewPrompt("convert_time_detailed",
+        mcp.WithPromptDescription("Convert time with detailed context"),
+        mcp.WithArgument("time",
+            mcp.RequiredArgument(),
+            mcp.ArgumentDescription("Time to convert"),
+        ),
+        mcp.WithArgument("from_timezone",
+            mcp.RequiredArgument(),
+            mcp.ArgumentDescription("Source timezone"),
+        ),
+        mcp.WithArgument("to_timezones",
+            mcp.RequiredArgument(),
+            mcp.ArgumentDescription("Comma-separated list of target timezones"),
+        ),
+        mcp.WithArgument("include_context",
+            mcp.ArgumentDescription("Whether to include contextual information (true/false)"),
+        ),
+    ), handleConvertTimeDetailedPrompt)
 
     /* -------------------- choose transport & serve ---------------- */
     switch strings.ToLower(*transport) {

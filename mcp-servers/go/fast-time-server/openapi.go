@@ -368,6 +368,207 @@ func getOpenAPISpec() map[string]interface{} {
                     },
                 },
             },
+            "/api/v1/resources": map[string]interface{}{
+                "get": map[string]interface{}{
+                    "summary":     "List available MCP resources",
+                    "description": "Returns a list of all available MCP resources",
+                    "responses": map[string]interface{}{
+                        "200": map[string]interface{}{
+                            "description": "List of resources",
+                            "content": map[string]interface{}{
+                                "application/json": map[string]interface{}{
+                                    "schema": map[string]interface{}{
+                                        "type": "object",
+                                        "properties": map[string]interface{}{
+                                            "resources": map[string]interface{}{
+                                                "type": "array",
+                                                "items": map[string]interface{}{
+                                                    "type": "object",
+                                                    "properties": map[string]interface{}{
+                                                        "uri": map[string]interface{}{
+                                                            "type": "string",
+                                                        },
+                                                        "name": map[string]interface{}{
+                                                            "type": "string",
+                                                        },
+                                                        "description": map[string]interface{}{
+                                                            "type": "string",
+                                                        },
+                                                        "mime_type": map[string]interface{}{
+                                                            "type": "string",
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                            "count": map[string]interface{}{
+                                                "type": "integer",
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            "/api/v1/resources/{uri}": map[string]interface{}{
+                "get": map[string]interface{}{
+                    "summary":     "Get specific MCP resource",
+                    "description": "Returns the content of a specific MCP resource",
+                    "parameters": []map[string]interface{}{
+                        {
+                            "name":        "uri",
+                            "in":          "path",
+                            "description": "Resource URI (e.g., timezone-info, current-world, time-formats, business-hours)",
+                            "required":    true,
+                            "schema": map[string]interface{}{
+                                "type": "string",
+                                "enum": []string{"timezone-info", "current-world", "time-formats", "business-hours"},
+                            },
+                        },
+                    },
+                    "responses": map[string]interface{}{
+                        "200": map[string]interface{}{
+                            "description": "Resource content",
+                            "content": map[string]interface{}{
+                                "application/json": map[string]interface{}{
+                                    "schema": map[string]interface{}{
+                                        "type": "object",
+                                    },
+                                },
+                            },
+                        },
+                        "404": map[string]interface{}{
+                            "description": "Resource not found",
+                            "content": map[string]interface{}{
+                                "application/json": map[string]interface{}{
+                                    "schema": map[string]interface{}{
+                                        "$ref": "#/components/schemas/ErrorResponse",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            "/api/v1/prompts": map[string]interface{}{
+                "get": map[string]interface{}{
+                    "summary":     "List available MCP prompts",
+                    "description": "Returns a list of all available MCP prompt templates",
+                    "responses": map[string]interface{}{
+                        "200": map[string]interface{}{
+                            "description": "List of prompts",
+                            "content": map[string]interface{}{
+                                "application/json": map[string]interface{}{
+                                    "schema": map[string]interface{}{
+                                        "type": "object",
+                                        "properties": map[string]interface{}{
+                                            "prompts": map[string]interface{}{
+                                                "type": "array",
+                                                "items": map[string]interface{}{
+                                                    "type": "object",
+                                                    "properties": map[string]interface{}{
+                                                        "name": map[string]interface{}{
+                                                            "type": "string",
+                                                        },
+                                                        "description": map[string]interface{}{
+                                                            "type": "string",
+                                                        },
+                                                        "arguments": map[string]interface{}{
+                                                            "type": "array",
+                                                            "items": map[string]interface{}{
+                                                                "type": "object",
+                                                                "properties": map[string]interface{}{
+                                                                    "name": map[string]interface{}{
+                                                                        "type": "string",
+                                                                    },
+                                                                    "description": map[string]interface{}{
+                                                                        "type": "string",
+                                                                    },
+                                                                    "required": map[string]interface{}{
+                                                                        "type": "boolean",
+                                                                    },
+                                                                },
+                                                            },
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                            "count": map[string]interface{}{
+                                                "type": "integer",
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            "/api/v1/prompts/{name}/execute": map[string]interface{}{
+                "post": map[string]interface{}{
+                    "summary":     "Execute an MCP prompt",
+                    "description": "Execute a specific MCP prompt template with provided arguments",
+                    "parameters": []map[string]interface{}{
+                        {
+                            "name":        "name",
+                            "in":          "path",
+                            "description": "Prompt name",
+                            "required":    true,
+                            "schema": map[string]interface{}{
+                                "type": "string",
+                                "enum": []string{"compare_timezones", "schedule_meeting", "convert_time_detailed"},
+                            },
+                        },
+                    },
+                    "requestBody": map[string]interface{}{
+                        "required": true,
+                        "content": map[string]interface{}{
+                            "application/json": map[string]interface{}{
+                                "schema": map[string]interface{}{
+                                    "type": "object",
+                                    "additionalProperties": map[string]interface{}{
+                                        "type": "string",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    "responses": map[string]interface{}{
+                        "200": map[string]interface{}{
+                            "description": "Executed prompt result",
+                            "content": map[string]interface{}{
+                                "application/json": map[string]interface{}{
+                                    "schema": map[string]interface{}{
+                                        "type": "object",
+                                        "properties": map[string]interface{}{
+                                            "prompt": map[string]interface{}{
+                                                "type": "string",
+                                            },
+                                            "arguments": map[string]interface{}{
+                                                "type": "object",
+                                            },
+                                            "text": map[string]interface{}{
+                                                "type": "string",
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        "404": map[string]interface{}{
+                            "description": "Prompt not found",
+                            "content": map[string]interface{}{
+                                "application/json": map[string]interface{}{
+                                    "schema": map[string]interface{}{
+                                        "$ref": "#/components/schemas/ErrorResponse",
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
         },
         "components": map[string]interface{}{
             "schemas": map[string]interface{}{
