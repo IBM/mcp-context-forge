@@ -1335,7 +1335,8 @@ function calculateSuccessRate(item) {
         return Math.round(item.successRate);
     }
     // Fallback for legacy format (if needed)
-    const total = item.execution_count || item.executions || item.executionCount || 0;
+    const total =
+        item.execution_count || item.executions || item.executionCount || 0;
     const successful = item.successful_count || item.successfulExecutions || 0;
     return total > 0 ? Math.round((successful / total) * 100) : 0;
 }
@@ -1632,7 +1633,12 @@ function exportMetricsToCSV(topData) {
                     type,
                     index + 1,
                     `"${escapeHtml(item.name || "Unknown")}"`,
-                    formatNumber(item.executionCount || item.execution_count || item.executions || 0),
+                    formatNumber(
+                        item.executionCount ||
+                            item.execution_count ||
+                            item.executions ||
+                            0,
+                    ),
                     item.avg_response_time || item.avgResponseTime
                         ? `${Math.round(item.avg_response_time || item.avgResponseTime)}ms`
                         : "N/A",
