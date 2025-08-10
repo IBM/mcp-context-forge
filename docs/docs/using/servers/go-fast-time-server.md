@@ -1,799 +1,467 @@
-# 🦫 Fast Time Server
+# Go Fast Time Server
 
-`fast-time-server` is a lightweight, high-performance Go service that provides **current time lookup** across different timezones via multiple transport protocols. Built specifically for **MCP (Model Context Protocol)** integration, it supports stdio, HTTP, SSE, and dual transport modes.
+## Overview
 
-> Perfect for time-sensitive applications requiring fast, reliable timezone conversions
-> with **sub-millisecond response times** and multiple client interface options.
+The **fast-time-server** is a high-performance Go-based MCP server that provides time-related tools for LLM applications. It offers multiple transport modes including stdio, HTTP, SSE, dual (MCP + REST), and REST-only modes, making it versatile for various integration scenarios.
 
-### Docker Gateway Integration
+## Features
 
-#### Running fast-time-server for Gateway Registration
+- **Multiple Transport Modes**: stdio, HTTP (JSON-RPC), SSE, dual (MCP + REST), and REST API
+- **Comprehensive Time Operations**: Get system time, convert between timezones
+- **REST API**: Traditional HTTP endpoints alongside MCP protocol
+- **OpenAPI Documentation**: Interactive Swagger UI and OpenAPI 3.0 specification
+- **CORS Support**: Enabled for browser-based testing
+- **Authentication**: Optional Bearer token authentication
+- **Lightweight**: Single static binary (~2 MiB)
+- **High Performance**: Sub-millisecond response times
 
-```bash
-# 1️⃣ Start fast-time-server in SSE mode for direct gateway registration
-docker run --rm -d --name fast-time-server \
-  -p 8888:8080 \
-  ghcr.io/ibm/fast-time-server:latest \
-  -transport=sse -listen=0.0.0.0 -port=8080 -log-level=debug
+## Installation
 
-# 2️⃣ Register with gateway (gateway running on host)
-curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"docker_fast_time","url":"http://host.docker.internal:8888/sse"}' \
-     http://localhost:4444/gateways
-```
-
-#### Docker Compose Setup
-
-Create `docker-compose.yml` for integrated testing:
-
-```yaml
-version: '3.8'
-services:
-  mcpgateway:
-    image: ghcr.io/ibm/mcp-context-forge:latest
-    ports:
-      - "4444:4444"
-    environment:
-      BASIC_AUTH_PASSWORD: pass
-      JWT_SECRET_KEY: my-test-key
-    command: mcpgateway --host 0.0.0.0 --port 4444
-
-  fast-time-server:
-    image: ghcr.io/ibm/fast-time-server:latest
-    ports:
-      - "8888:8080"
-    command: ["-transport=sse", "-listen=0.0.0.0", "-port=8080", "-log-level=debug"]
-    depends_on:
-      - mcpgateway
-
-  wrapper-test:
-    image: ghcr.io/ibm/mcp-context-forge:latest
-    environment:
-      MCP_AUTH_TOKEN: "${MCPGATEWAY_BEARER_TOKEN}"
-      MCP_SERVER_CATALOG_URLS: "http://mcpgateway:4444/servers/UUID_OF_SERVER_1"
-      MCP_WRAPPER_LOG_LEVEL: DEBUG
-    command: python3 -m mcpgateway.wrapper
-    depends_on:
-      - mcpgateway
-      - fast-time-server
-    stdin_open: true
-    tty: true
-```
-
-Run the complete stack:
+### From Source
 
 ```bash
-# Generate token
-export MCPGATEWAY_BEARER_TOKEN=$(docker run --rm ghcr.io/ibm/mcp-context-forge:latest \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
-
-# Start services
-docker-compose up -d mcpgateway fast-time-server
-
-# Register fast-time-server
-curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"docker_time","url":"http://fast-time-server:8080/sse"}' \
-     http://localhost:4444/gateways
-
-# Test wrapper
-docker-compose run wrapper-test
-```
-
-### Container Networking Notes
-
-!!! tip "Docker Networking"
-    - Use `host.docker.internal` when gateway runs on host and server in container
-    - Use service names when both run in same Docker Compose network
-    - Map ports consistently: `-p 8888:8080` maps host port 8888 to container port 8080
-
----
-
-## 🔑 Key Features
-
-* **⚡ Ultra-fast** - Written in Go for minimal latency and high throughput
-* **🌍 Timezone-aware** - IANA timezone support with DST handling
-* **🚀 Multiple transports** - stdio, HTTP, SSE, and dual-mode support
-* **🔐 Secure** - Bearer token authentication for SSE endpoints
-* **📊 Production-ready** - Built-in benchmarking, logging, and health checks
-* **🐳 Docker-native** - Pre-built container images available
-
----
-
-## 🚀 Quick Start
-
-### Docker (Recommended)
-
-Run with dual transport mode (HTTP + SSE on port 8080):
-
-```bash
-docker run --rm -it -p 8888:8080 \
-  ghcr.io/ibm/fast-time-server:latest \
-  -transport=dual -log-level=debug
-```
-
-!!! tip "Port Mapping"
-    The example maps host port `8888` to container port `8080`. Adjust as needed for your environment.
-
-### Alternative Transport Modes
-
-=== "HTTP Only"
-
-    ```bash
-    docker run --rm -p 8080:8080 \
-      ghcr.io/ibm/fast-time-server:latest \
-      -transport=http -addr=0.0.0.0:8080
-    ```
-
-=== "SSE Only"
-
-    ```bash
-    docker run --rm -p 8080:8080 \
-      ghcr.io/ibm/fast-time-server:latest \
-      -transport=sse -listen=0.0.0.0 -port=8080
-    ```
-
-=== "SSE with Auth"
-
-    ```bash
-    docker run --rm -p 8080:8080 \
-      -e AUTH_TOKEN=your-secret-token \
-      ghcr.io/ibm/fast-time-server:latest \
-      -transport=sse -listen=0.0.0.0 -port=8080 -auth-token=your-secret-token
-    ```
-
-=== "STDIO (MCP Default)"
-
-    ```bash
-    docker run --rm -i \
-      ghcr.io/ibm/fast-time-server:latest \
-      -transport=stdio
-    ```
-
----
-
-## 🛠 Building from Source
-
-### Prerequisites
-
-- **Go 1.21+** installed
-- **Git** for cloning the repository
-- **Make** for build automation
-
-### Clone and Build
-
-```bash
-# Clone the MCP servers repository
-git clone https://github.com/IBM/mcp-context-forge
+git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-servers/go/fast-time-server
-
-# Install dependencies and build
-make tidy
 make build
-
-# Binary will be in ./dist/fast-time-server
 ```
 
-### Development Commands
-
-=== "Build & Test"
-
-    ```bash
-    make build          # Build binary into ./dist
-    make test           # Run unit tests with race detection
-    make coverage       # Generate HTML coverage report
-    make install        # Install to GOPATH/bin
-    ```
-
-=== "Code Quality"
-
-    ```bash
-    make fmt            # Format code (gofmt + goimports)
-    make vet            # Run go vet
-    make lint           # Run golangci-lint
-    make staticcheck    # Run staticcheck
-    make pre-commit     # Run all pre-commit hooks
-    ```
-
-=== "Cross-Compilation"
-
-    ```bash
-    # Build for different platforms
-    GOOS=linux GOARCH=amd64 make release
-    GOOS=darwin GOARCH=arm64 make release
-    GOOS=windows GOARCH=amd64 make release
-    ```
-
----
-
-## 🏃 Running Locally
-
-### Local Development
+### Using Go Install
 
 ```bash
-# Quick run with stdio transport
-make run
-
-# Run specific transport modes
-make run-http    # HTTP on :8080
-make run-sse     # SSE on :8080
-make run-dual    # Both HTTP & SSE on :8080
+go install github.com/IBM/mcp-context-forge/mcp-servers/go/fast-time-server@latest
 ```
 
-### Manual Execution
+## Transport Modes
+
+### 1. STDIO Mode (Default)
+For desktop clients like Claude Desktop:
 
 ```bash
-# After building with make build
-./dist/fast-time-server -transport=dual -port=8080 -log-level=info
+./fast-time-server
+# or with specific log level
+./fast-time-server -transport=stdio -log-level=error
 ```
 
----
-
-## 🐳 Docker Development
-
-### Build Your Own Image
+### 2. HTTP Mode
+JSON-RPC 2.0 over HTTP:
 
 ```bash
-make docker-build
+./fast-time-server -transport=http -port=8080
 ```
 
-### Development Containers
-
-=== "HTTP Development"
-
-    ```bash
-    make docker-run
-    # Runs HTTP transport on localhost:8080
-    ```
-
-=== "SSE Development"
-
-    ```bash
-    make docker-run-sse
-    # Runs SSE transport on localhost:8080
-    ```
-
-=== "Authenticated SSE"
-
-    ```bash
-    make docker-run-sse-auth TOKEN=my-dev-token
-    # Runs SSE with Bearer token authentication
-    ```
-
----
-
-## ⚙️ Configuration Options
-
-| Flag | Description | Default | Example |
-|------|-------------|---------|---------|
-| `-transport` | Transport mode: `stdio`, `http`, `sse`, `dual` | `stdio` | `-transport=dual` |
-| `-addr` | HTTP bind address | `:8080` | `-addr=0.0.0.0:8080` |
-| `-listen` | SSE listen address | `localhost` | `-listen=0.0.0.0` |
-| `-port` | Port for SSE/dual mode | `8080` | `-port=9000` |
-| `-auth-token` | Bearer token for SSE authentication | - | `-auth-token=secret123` |
-| `-log-level` | Logging level: `debug`, `info`, `warn`, `error` | `info` | `-log-level=debug` |
-
----
-
-## 📡 API Endpoints
-
-### HTTP Transport (`-transport=http` or `-transport=dual`)
-
-**POST** `/http` - JSON-RPC endpoint
+### 3. SSE Mode
+Server-Sent Events for web clients:
 
 ```bash
-curl -X POST http://localhost:8080/http \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "get_system_time",
-    "params": {
-      "timezone": "Europe/Dublin"
-    }
-  }'
+./fast-time-server -transport=sse -port=8080
 ```
 
-### SSE Transport (`-transport=sse` or `-transport=dual`)
-
-**GET** `/sse` - Server-Sent Events stream
-**POST** `/messages` - Send JSON-RPC messages
+### 4. Dual Mode
+Both MCP (SSE/HTTP) and REST API:
 
 ```bash
-# Connect to SSE stream
-curl -N http://localhost:8080/sse
-
-# Send message (in another terminal)
-curl -X POST http://localhost:8080/messages \
-  -H "Content-Type: application/json" \
-  -d '{"method":"get_system_time","params":{"timezone":"UTC"}}'
+./fast-time-server -transport=dual -port=8080
 ```
 
-### STDIO Transport (`-transport=stdio`)
+Endpoints:
+- `/sse` - MCP SSE events
+- `/messages` - MCP SSE messages
+- `/http` - MCP HTTP (JSON-RPC)
+- `/api/v1/*` - REST API endpoints
+- `/api/v1/docs` - Interactive API documentation
 
-Standard MCP JSON-RPC over stdin/stdout:
-
-```json
-{"jsonrpc":"2.0","id":1,"method":"get_system_time","params":{"timezone":"America/New_York"}}
-```
-
----
-
-## 🧪 Testing & Benchmarking
-
-### Unit Tests
+### 5. REST Mode
+REST API only (no MCP protocol):
 
 ```bash
-make test           # Run all tests
-make coverage       # Generate coverage report
+./fast-time-server -transport=rest -port=8080
 ```
 
-### Load Testing
+## MCP Tools
 
-Start the server in dual mode:
+### get_system_time
+Returns the current time in a specified timezone.
 
-```bash
-make run-dual
-```
+**Parameters:**
+- `timezone` (optional): IANA timezone name (default: "UTC")
 
-Run benchmark (requires [hey](https://github.com/rakyll/hey)):
-
-```bash
-make bench
-# Runs 100,000 requests with 100 concurrent connections
-```
-
-### Manual Performance Test
-
-```bash
-# Create a test payload
-echo '{"jsonrpc":"2.0","id":1,"method":"get_system_time","params":{"timezone":"UTC"}}' > payload.json
-
-# Run load test
-hey -m POST -T 'application/json' -D payload.json -n 10000 -c 50 http://localhost:8080/http
-```
-
----
-
-## 🌐 MCP Gateway Integration
-
-### Registering with MCP Gateway
-
-The fast-time-server can be registered with an MCP Gateway to expose its tools through the gateway's federated API.
-
-#### Method 1: Using Supergateway (Recommended)
-
-```bash
-# 1️⃣ Start the Gateway (if not already running)
-pip install mcp-contextforge-gateway
-BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
-  mcpgateway --host 0.0.0.0 --port 4444 &
-
-# 2️⃣ Expose fast-time-server via supergateway
-pip install uv
-npx -y supergateway --stdio "./dist/fast-time-server -transport=stdio" --port 8002 &
-
-# 3️⃣ Register with the gateway
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
-
-curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"fast_time","url":"http://localhost:8002/sse"}' \
-     http://localhost:4444/gateways
-
-# 4️⃣ Create a virtual server with the time tools
-curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["1","2"]}' \
-     http://localhost:4444/servers
-```
-
-#### Method 2: Direct SSE Registration
-
-```bash
-# 1️⃣ Start fast-time-server in SSE mode
-./dist/fast-time-server -transport=sse -port=8003
-
-# 2️⃣ Register directly with the gateway
-curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"fast_time_direct","url":"http://localhost:8003/sse"}' \
-     http://localhost:4444/gateways
-```
-
-### Testing with mcpgateway.wrapper
-
-The `mcpgateway.wrapper` bridges gateway tools to stdio, perfect for testing and MCP client integration:
-
-```bash
-# 1️⃣ Set up environment variables
-export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
-export MCP_TOOL_CALL_TIMEOUT=120
-export MCP_WRAPPER_LOG_LEVEL=DEBUG
-
-# 2️⃣ Start the wrapper (manual testing)
-python3 -m mcpgateway.wrapper
-
-# 3️⃣ Test MCP protocol manually
-# Initialize
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | python3 -m mcpgateway.wrapper
-
-# List tools
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | python3 -m mcpgateway.wrapper
-
-# Call get_system_time
-echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_system_time","arguments":{"timezone":"Europe/Dublin"}}}' | python3 -m mcpgateway.wrapper
-```
-
-### Testing with mcpgateway.translate
-
-Use `mcpgateway.translate` to bridge stdio servers to SSE endpoints:
-
-```bash
-# 1️⃣ Bridge fast-time-server (stdio) to SSE on port 9000
-python3 -m mcpgateway.translate \
-  --stdio "./dist/fast-time-server -transport=stdio" \
-  --port 9000
-
-# 2️⃣ In another terminal, connect to the SSE stream
-curl -N http://localhost:9000/sse
-
-# 3️⃣ Send test requests (in a third terminal)
-# Initialize
-curl -X POST http://localhost:9000/message \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
-
-# List tools
-curl -X POST http://localhost:9000/message \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-
-# Call get_system_time
-curl -X POST http://localhost:9000/message \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_system_time","arguments":{"timezone":"Asia/Tokyo"}}}'
-```
-
-### MCP Inspector Integration
-
-Test your gateway setup with MCP Inspector:
-
-```bash
-# 1️⃣ Direct fast-time-server inspection
-npx @modelcontextprotocol/inspector ./dist/fast-time-server
-
-# 2️⃣ Inspect via gateway wrapper
-npx @modelcontextprotocol/inspector python3 -m mcpgateway.wrapper
-# Environment: MCP_AUTH_TOKEN, MCP_SERVER_CATALOG_URLS
-
-# 3️⃣ Inspect SSE endpoint directly
-npx @modelcontextprotocol/inspector
-# Transport: SSE
-# URL: http://localhost:4444/servers/UUID_OF_SERVER_1/sse
-# Header: Authorization
-# Value: Bearer <your-token>
-```
-
----
-
-## 🔌 MCP Client Integration
-
-### Claude Desktop
-
-Add to your `claude_desktop_config.json`:
-
-=== "Direct Integration"
-
-    ```json
-    {
-      "mcpServers": {
-        "fast-time-server": {
-          "command": "/path/to/fast-time-server",
-          "args": ["-transport=stdio"],
-          "env": {}
-        }
-      }
-    }
-    ```
-
-=== "Via Gateway Wrapper"
-
-    ```json
-    {
-      "mcpServers": {
-        "gateway-time": {
-          "command": "python3",
-          "args": ["-m", "mcpgateway.wrapper"],
-          "env": {
-            "MCP_AUTH_TOKEN": "<your-bearer-token>",
-            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
-          }
-        }
-      }
-    }
-    ```
-
-=== "Docker with MCP Client"
-
-    ```json
-    {
-      "mcpServers": {
-        "fast-time-server": {
-          "command": "docker",
-          "args": [
-            "run", "--rm", "-i",
-            "ghcr.io/ibm/fast-time-server:latest",
-            "-transport=stdio"
-          ]
-        }
-      }
-    }
-    ```
-
-### Continue/Cline Integration
-
-For VS Code extensions:
-
+**Example:**
 ```json
 {
-  "mcpServers": {
-    "fast-time-server": {
-      "command": "/path/to/fast-time-server",
-      "args": ["-transport=stdio", "-log-level=info"],
-      "env": {}
-    }
+  "tool": "get_system_time",
+  "arguments": {
+    "timezone": "America/New_York"
   }
 }
 ```
 
-### Gateway Workflow Examples
+### convert_time
+Converts time between different timezones.
 
-#### Complete End-to-End Test
+**Parameters:**
+- `time` (required): Time to convert (RFC3339 or common formats)
+- `source_timezone` (required): Source IANA timezone
+- `target_timezone` (required): Target IANA timezone
 
+**Example:**
+```json
+{
+  "tool": "convert_time",
+  "arguments": {
+    "time": "2025-01-10T10:00:00Z",
+    "source_timezone": "UTC",
+    "target_timezone": "Asia/Tokyo"
+  }
+}
+```
+
+## REST API Endpoints
+
+When using `rest` or `dual` transport modes, the following REST endpoints are available:
+
+### Get System Time
 ```bash
-# 1️⃣ Start Gateway
-BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key mcpgateway --host 0.0.0.0 --port 4444 &
+# With query parameter
+curl http://localhost:8080/api/v1/time?timezone=America/New_York
 
-# 2️⃣ Start fast-time-server via supergateway
-npx -y supergateway --stdio "./dist/fast-time-server -transport=stdio" --port 8002 &
-
-# 3️⃣ Generate token and register
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
-
-curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"fast_time","url":"http://localhost:8002/sse"}' \
-     http://localhost:4444/gateways
-
-# 4️⃣ Verify tools are available
-curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/tools | jq
-
-# 5️⃣ Create virtual server
-curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["1"]}' \
-     http://localhost:4444/servers
-
-# 6️⃣ Test via wrapper
-export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_system_time","arguments":{"timezone":"UTC"}}}' | python3 -m mcpgateway.wrapper
-```
-
-#### Expected Gateway Responses
-
-When testing with the wrapper, you should see responses like:
-
-```json
-// Tool listing response
-{
-  "jsonrpc":"2.0","id":2,
-  "result":{
-    "tools":[
-      {
-        "name":"get_system_time",
-        "description":"Get current time in a specific timezone",
-        "inputSchema":{
-          "type":"object",
-          "properties":{
-            "timezone":{
-              "type":"string",
-              "description":"IANA timezone name (e.g., 'America/New_York', 'Europe/London')"
-            }
-          },
-          "required":["timezone"]
-        }
-      }
-    ]
-  }
-}
-
-// Tool execution response
-{
-  "jsonrpc":"2.0","id":3,
-  "result":{
-    "content":[
-      {
-        "type":"text",
-        "text":"{\"timezone\":\"UTC\",\"datetime\":\"2025-07-08T21:30:15Z\",\"is_dst\":false}"
-      }
-    ],
-    "isError":false
-  }
-}
-```
-
----
-
-## 💡 Usage Examples
-
-### Get Current Time
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "get_system_time",
-  "params": {
-    "timezone": "Europe/Dublin"
-  }
-}
+# With path parameter
+curl http://localhost:8080/api/v1/time/Europe/London
 ```
 
 **Response:**
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "content": [
+  "time": "2025-01-10T11:30:00-05:00",
+  "timezone": "America/New_York",
+  "unix": 1736522400,
+  "utc": "2025-01-10T16:30:00Z"
+}
+```
+
+### Convert Time
+```bash
+curl -X POST http://localhost:8080/api/v1/convert \
+  -H "Content-Type: application/json" \
+  -d '{
+    "time": "2025-01-10T10:00:00Z",
+    "from_timezone": "UTC",
+    "to_timezone": "Asia/Tokyo"
+  }'
+```
+
+**Response:**
+```json
+{
+  "original_time": "2025-01-10T10:00:00Z",
+  "from_timezone": "UTC",
+  "converted_time": "2025-01-10T19:00:00+09:00",
+  "to_timezone": "Asia/Tokyo",
+  "unix": 1736503200
+}
+```
+
+### Batch Convert
+```bash
+curl -X POST http://localhost:8080/api/v1/convert/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "conversions": [
       {
-        "type": "text",
-        "text": "{\"timezone\":\"Europe/Dublin\",\"datetime\":\"2025-07-08T22:30:15+01:00\",\"is_dst\":true}"
+        "time": "2025-01-10T10:00:00Z",
+        "from_timezone": "UTC",
+        "to_timezone": "America/New_York"
+      },
+      {
+        "time": "2025-01-10T10:00:00Z",
+        "from_timezone": "UTC",
+        "to_timezone": "Europe/Paris"
       }
-    ],
-    "isError": false
+    ]
+  }'
+```
+
+### List Timezones
+```bash
+# All timezones
+curl http://localhost:8080/api/v1/timezones
+
+# Filtered timezones
+curl http://localhost:8080/api/v1/timezones?filter=Europe
+```
+
+### Timezone Info
+```bash
+curl http://localhost:8080/api/v1/timezones/Asia/Tokyo/info
+```
+
+**Response:**
+```json
+{
+  "name": "Asia/Tokyo",
+  "offset": "+09:00",
+  "current_time": "2025-01-10T19:00:00+09:00",
+  "is_dst": false,
+  "abbreviation": "JST"
+}
+```
+
+### Test Endpoints
+```bash
+# Echo test
+curl http://localhost:8080/api/v1/test/echo?message=Hello
+
+# Validate JSON
+curl -X POST http://localhost:8080/api/v1/test/validate \
+  -H "Content-Type: application/json" \
+  -d '{"test": "data"}'
+
+# Performance metrics
+curl http://localhost:8080/api/v1/test/performance
+```
+
+### API Documentation
+- **OpenAPI Spec**: `http://localhost:8080/api/v1/openapi.json`
+- **Swagger UI**: `http://localhost:8080/api/v1/docs`
+
+## Configuration
+
+### Command-Line Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-transport` | `stdio` | Transport mode: stdio, http, sse, dual, rest |
+| `-port` | `8080` | TCP port for HTTP/SSE/REST |
+| `-listen` | `0.0.0.0` | Listen interface |
+| `-addr` | *(empty)* | Full address (overrides -listen/-port) |
+| `-auth-token` | *(empty)* | Bearer token for authentication |
+| `-log-level` | `info` | Log level: debug, info, warn, error, none |
+| `-public-url` | *(empty)* | External base URL for SSE clients |
+
+### Environment Variables
+
+- `AUTH_TOKEN`: Bearer token for authentication (overrides `-auth-token` flag)
+
+## Authentication
+
+When authentication is enabled, include the Bearer token in requests:
+
+```bash
+# Set token
+export TOKEN="your-secret-token"
+
+# Start server with authentication
+./fast-time-server -transport=rest -auth-token=$TOKEN
+
+# Make authenticated requests
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/v1/time
+```
+
+## Claude Desktop Configuration
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "fast-time": {
+      "command": "/path/to/fast-time-server",
+      "args": ["-log-level=error"]
+    }
   }
 }
 ```
 
-### Common Timezones
+## MCP Gateway Integration
 
-| Region | Timezone | Example |
-|--------|----------|---------|
-| 🇺🇸 US East | `America/New_York` | `2025-07-08T17:30:15-04:00` |
-| 🇺🇸 US West | `America/Los_Angeles` | `2025-07-08T14:30:15-07:00` |
-| 🇬🇧 UK | `Europe/London` | `2025-07-08T22:30:15+01:00` |
-| 🇮🇪 Ireland | `Europe/Dublin` | `2025-07-08T22:30:15+01:00` |
-| 🇯🇵 Japan | `Asia/Tokyo` | `2025-07-09T06:30:15+09:00` |
-| 🌍 UTC | `UTC` | `2025-07-08T21:30:15Z` |
-
----
-
-## 🧹 Maintenance
-
-### Cleanup
+The fast-time-server can be registered with MCP Gateway for federation:
 
 ```bash
-make clean          # Remove build artifacts
-docker system prune # Clean up Docker images/containers
+# Start the server in dual mode
+./fast-time-server -transport=dual -port=8080
+
+# Register with MCP Gateway
+curl -X POST http://gateway:4444/gateways \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "fast-time-server",
+    "url": "http://localhost:8080",
+    "transport": "sse"
+  }'
 ```
 
-### Updates
+## Development
+
+### Building from Source
 
 ```bash
-git pull            # Update source code
-make tools          # Update Go tools (golangci-lint, staticcheck)
-make tidy           # Update Go dependencies
+# Build binary
+make build
+
+# Run tests
+make test
+
+# Generate coverage report
+make coverage
+
+# Run linters
+make lint staticcheck
+
+# Build for multiple platforms
+make cross
 ```
 
----
-
-## 🚨 Troubleshooting
-
-### Common Issues
-
-!!! warning "Port Already in Use"
-    ```bash
-    Error: bind: address already in use
-    ```
-    **Solution:** Change the port with `-port=9000` or kill the existing process.
-
-!!! warning "Docker Permission Denied"
-    ```bash
-    docker: permission denied
-    ```
-    **Solution:** Add your user to the docker group or use `sudo`.
-
-!!! warning "SSE Authentication Failed"
-    ```bash
-    401 Unauthorized
-    ```
-    **Solution:** Ensure you're passing the correct `-auth-token` and including `Authorization: Bearer <token>` in requests.
-
-### Debug Mode
-
-Enable verbose logging:
+### Running Different Modes
 
 ```bash
-./fast-time-server -transport=dual -log-level=debug
+# Development with hot reload
+make run
+
+# HTTP mode
+make run-http
+
+# SSE mode
+make run-sse
+
+# Dual mode
+make run-dual
+
+# REST mode
+make run-rest
 ```
 
-### Gateway Integration Issues
-
-!!! warning "Gateway Registration Failed"
-    ```bash
-    Error: Connection refused to http://localhost:4444
-    ```
-    **Solution:** Ensure the MCP Gateway is running on the correct port and check firewall settings.
-
-!!! warning "Wrapper Authentication Failed"
-    ```bash
-    HTTP 401: Unauthorized
-    ```
-    **Solution:** Verify your `MCP_AUTH_TOKEN` is valid and not expired:
-    ```bash
-    curl -H "Authorization: Bearer $MCP_AUTH_TOKEN" http://localhost:4444/version
-    ```
-
-!!! warning "No Tools Available in Wrapper"
-    ```bash
-    {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
-    ```
-    **Solution:** Check that:
-    1. fast-time-server is registered with the gateway
-    2. A virtual server exists with associated tools
-    3. `MCP_SERVER_CATALOG_URLS` points to the correct server ID
-
-!!! warning "Supergateway Not Found"
-    ```bash
-    npx: command not found
-    ```
-    **Solution:** Install Node.js and npm:
-    ```bash
-    # Ubuntu/Debian
-    sudo apt install nodejs npm
-
-    # macOS
-    brew install node
-    ```
-
-!!! warning "mcpgateway.translate Connection Issues"
-    ```bash
-    Error: Process terminated unexpectedly
-    ```
-    **Solution:** Check that the stdio command is correct and the binary exists:
-    ```bash
-    # Test the command directly first
-    ./dist/fast-time-server -transport=stdio
-    ```
-
-### Testing Connectivity
-
-Verify each component is working:
+### Docker Support
 
 ```bash
-# 1. Test fast-time-server directly
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | ./dist/fast-time-server -transport=stdio | jq
+# Build Docker image
+make docker-build
 
-# 2. Test gateway API
-curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/health
+# Run in Docker
+make docker-run
 
-# 3. Test wrapper connectivity
-export MCP_WRAPPER_LOG_LEVEL=DEBUG
-python3 -m mcpgateway.wrapper
+# Run with authentication
+make docker-run-sse-auth TOKEN=mysecret
 ```
 
----
+## Performance
 
-## 📚 Further Reading
+The fast-time-server is optimized for high performance:
+
+- **Response Time**: < 1ms for simple queries
+- **Throughput**: > 10,000 requests/second
+- **Memory Usage**: < 10 MB
+- **CPU Usage**: Minimal, single-threaded design
+- **Startup Time**: < 100ms
+
+### Benchmarking
+
+```bash
+# Install hey (HTTP load tester)
+go install github.com/rakyll/hey@latest
+
+# Run benchmark
+hey -n 10000 -c 100 http://localhost:8080/api/v1/time
+```
+
+## Error Handling
+
+The REST API returns consistent error responses:
+
+```json
+{
+  "error": "Bad Request",
+  "message": "Invalid timezone: Invalid/Zone",
+  "code": 400
+}
+```
+
+Common HTTP status codes:
+- `200 OK`: Successful request
+- `400 Bad Request`: Invalid parameters
+- `401 Unauthorized`: Missing or invalid authentication
+- `405 Method Not Allowed`: Wrong HTTP method
+- `500 Internal Server Error`: Server error
+
+## CORS Support
+
+CORS is enabled for REST endpoints, allowing browser-based testing:
+
+```javascript
+fetch('http://localhost:8080/api/v1/time?timezone=UTC')
+  .then(response => response.json())
+  .then(data => console.log(data));
+```
+
+## Troubleshooting
+
+### Server won't start
+- Check if the port is already in use: `lsof -i :8080`
+- Verify the binary has execute permissions: `chmod +x fast-time-server`
+
+### Authentication errors
+- Ensure the Bearer token is correctly formatted: `Bearer <token>`
+- Check that the token matches between server and client
+- Health and version endpoints bypass authentication
+
+### Timezone errors
+- Use valid IANA timezone names (e.g., "America/New_York", not "EST")
+- Check available timezones: `curl http://localhost:8080/api/v1/timezones`
+
+### Performance issues
+- Use `-log-level=error` or `-log-level=none` to reduce logging overhead
+- Consider using the compiled binary instead of `go run`
+- Enable caching in your HTTP client for repeated requests
+
+## Examples
+
+### Time Zone Conversion Script
+```bash
+#!/bin/bash
+# Convert meeting time to multiple timezones
+
+TIME="2025-01-15T14:00:00Z"
+ZONES=("America/New_York" "Europe/London" "Asia/Tokyo")
+
+for zone in "${ZONES[@]}"; do
+  result=$(curl -s -X POST http://localhost:8080/api/v1/convert \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"time\": \"$TIME\",
+      \"from_timezone\": \"UTC\",
+      \"to_timezone\": \"$zone\"
+    }" | jq -r '.converted_time')
+
+  echo "$zone: $result"
+done
+```
+
+### Python Client Example
+```python
+import requests
+import json
+
+# Get current time in Tokyo
+response = requests.get('http://localhost:8080/api/v1/time/Asia/Tokyo')
+data = response.json()
+print(f"Current time in Tokyo: {data['time']}")
+
+# Convert time
+conversion = {
+    "time": "2025-01-15T10:00:00Z",
+    "from_timezone": "UTC",
+    "to_timezone": "America/New_York"
+}
+response = requests.post(
+    'http://localhost:8080/api/v1/convert',
+    json=conversion
+)
+result = response.json()
+print(f"Converted time: {result['converted_time']}")
+```
+
+## Related Resources
 
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
-- [IANA Time Zone Database](https://www.iana.org/time-zones)
-- [Go Time Package Documentation](https://pkg.go.dev/time)
-- [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
+- [MCP Gateway Documentation](../gateway/index.md)
+- [Go MCP SDK](https://github.com/mark3labs/mcp-go)
+- [Time Zone Database](https://www.iana.org/time-zones)

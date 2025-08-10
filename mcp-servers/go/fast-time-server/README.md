@@ -69,7 +69,7 @@ Also available as releases.
 When using `rest` or `dual` transport modes, the following REST endpoints are available:
 
 #### Get System Time
-**GET** `/api/v1/time?timezone={timezone}`  
+**GET** `/api/v1/time?timezone={timezone}`
 **GET** `/api/v1/time/{timezone}`
 
 Returns the current time in the specified timezone (default: UTC).

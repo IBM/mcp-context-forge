@@ -34,8 +34,8 @@ type ConvertRequest struct {
 
 // ConvertResponse represents a time conversion response
 type ConvertResponse struct {
-	OriginalTime string `json:"original_time"`
-	FromTimezone string `json:"from_timezone"`
+	OriginalTime  string `json:"original_time"`
+	FromTimezone  string `json:"from_timezone"`
 	ConvertedTime string `json:"converted_time"`
 	ToTimezone    string `json:"to_timezone"`
 	Unix          int64  `json:"unix"`
@@ -71,7 +71,7 @@ type ErrorResponse struct {
 func writeJSONError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(ErrorResponse{
+	_ = json.NewEncoder(w).Encode(ErrorResponse{
 		Error:   http.StatusText(code),
 		Message: message,
 		Code:    code,
@@ -97,7 +97,7 @@ func handleRESTGetTime(w http.ResponseWriter, r *http.Request) {
 	// Extract timezone from path or query parameter
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/time")
 	path = strings.TrimPrefix(path, "/")
-	
+
 	timezone := path
 	if timezone == "" {
 		timezone = r.URL.Query().Get("timezone")
@@ -115,7 +115,7 @@ func handleRESTGetTime(w http.ResponseWriter, r *http.Request) {
 
 	// Get current time in the specified timezone
 	now := time.Now().In(loc)
-	
+
 	response := TimeResponse{
 		Time:     now.Format(time.RFC3339),
 		Timezone: timezone,
@@ -242,7 +242,7 @@ func handleRESTListTimezones(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := r.URL.Query().Get("filter")
-	
+
 	// Get all known timezones
 	var timezones []string
 	for _, tz := range []string{
@@ -298,7 +298,7 @@ func handleRESTTimezoneInfo(w http.ResponseWriter, r *http.Request) {
 	// Get current time in the timezone
 	now := time.Now().In(loc)
 	_, offset := now.Zone()
-	
+
 	info := TimezoneInfo{
 		Name:         timezone,
 		Offset:       fmt.Sprintf("%+d:%02d", offset/3600, (offset%3600)/60),
@@ -357,21 +357,21 @@ func handleRESTTestPerformance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	
+
 	// Perform some operations to measure
 	testOps := 1000
 	for i := 0; i < testOps; i++ {
 		_ = time.Now().Format(time.RFC3339)
 	}
-	
+
 	duration := time.Since(start)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"operations":        testOps,
-		"duration_ms":       duration.Milliseconds(),
-		"duration_ns":       duration.Nanoseconds(),
-		"ops_per_second":    float64(testOps) / duration.Seconds(),
-		"server_time":       time.Now().Format(time.RFC3339),
+		"operations":     testOps,
+		"duration_ms":    duration.Milliseconds(),
+		"duration_ns":    duration.Nanoseconds(),
+		"ops_per_second": float64(testOps) / duration.Seconds(),
+		"server_time":    time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -422,7 +422,7 @@ func handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(html))
+	_, _ = w.Write([]byte(html))
 }
 
 // registerRESTHandlers registers all REST API handlers
@@ -432,16 +432,16 @@ func registerRESTHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/time/", handleRESTGetTime) // With timezone in path
 	mux.HandleFunc("/api/v1/convert", handleRESTConvertTime)
 	mux.HandleFunc("/api/v1/convert/batch", handleRESTBatchConvert)
-	
+
 	// Timezone operations
 	mux.HandleFunc("/api/v1/timezones", handleRESTListTimezones)
 	mux.HandleFunc("/api/v1/timezones/", handleRESTTimezoneInfo) // With timezone in path
-	
+
 	// Test endpoints
 	mux.HandleFunc("/api/v1/test/echo", handleRESTTestEcho)
 	mux.HandleFunc("/api/v1/test/validate", handleRESTTestValidate)
 	mux.HandleFunc("/api/v1/test/performance", handleRESTTestPerformance)
-	
+
 	// Documentation
 	mux.HandleFunc("/api/v1/openapi.json", handleOpenAPISpec)
 	mux.HandleFunc("/api/v1/docs", handleAPIDocs)
