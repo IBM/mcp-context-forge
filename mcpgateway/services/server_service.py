@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import case, delete, desc, func, not_, select
+from sqlalchemy import case, delete, desc, func, not_, select, Float
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,7 @@ from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.metrics_common import build_top_performers
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -153,9 +154,13 @@ class ServerService:
                 DbServer.name,
                 func.count(ServerMetric.id).label("execution_count"),  # pylint: disable=not-callable
                 func.avg(ServerMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case((func.count(ServerMetric.id) > 0, func.sum(case((ServerMetric.is_success, 1), else_=0)) / func.count(ServerMetric.id) * 100), else_=None).label(
-                    "success_rate"
-                ),  # pylint: disable=not-callable
+                case(
+                    (
+                        func.count(ServerMetric.id) > 0,  # pylint: disable=not-callable
+                        func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,  # pylint: disable=not-callable
+                    ),
+                    else_=None,
+                ).label("success_rate"),
                 func.max(ServerMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(ServerMetric)
@@ -165,17 +170,7 @@ class ServerService:
             .all()
         )
 
-        return [
-            TopPerformer(
-                id=result.id,
-                name=result.name,
-                execution_count=result.execution_count or 0,
-                avg_response_time=float(result.avg_response_time) if result.avg_response_time else None,
-                success_rate=float(result.success_rate) if result.success_rate else None,
-                last_execution=result.last_execution,
-            )
-            for result in results
-        ]
+        return build_top_performers(results)
 
     def _convert_server_to_read(self, server: DbServer) -> ServerRead:
         """

@@ -28,7 +28,7 @@ import uuid
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import case, delete, desc, func, not_, select
+from sqlalchemy import case, delete, desc, func, not_, select, Float
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -44,6 +44,7 @@ from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginViola
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
@@ -215,9 +216,13 @@ class ToolService:
                 DbTool.name,
                 func.count(ToolMetric.id).label("execution_count"),  # pylint: disable=not-callable
                 func.avg(ToolMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case((func.count(ToolMetric.id) > 0, func.sum(case((ToolMetric.is_success, 1), else_=0)) / func.count(ToolMetric.id) * 100), else_=None).label(
-                    "success_rate"
-                ),  # pylint: disable=not-callable
+                case(
+                    (
+                        func.count(ToolMetric.id) > 0,  # pylint: disable=not-callable
+                        func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,  # pylint: disable=not-callable
+                    ),
+                    else_=None,
+                ).label("success_rate"),
                 func.max(ToolMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(ToolMetric)
@@ -227,17 +232,7 @@ class ToolService:
             .all()
         )
 
-        return [
-            TopPerformer(
-                id=result.id,
-                name=result.name,
-                execution_count=result.execution_count or 0,
-                avg_response_time=float(result.avg_response_time) if result.avg_response_time else None,
-                success_rate=float(result.success_rate) if result.success_rate else None,
-                last_execution=result.last_execution,
-            )
-            for result in results
-        ]
+        return build_top_performers(results)
 
     def _convert_tool_to_read(self, tool: DbTool) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
@@ -734,18 +729,21 @@ class ToolService:
                 # Handle 204 No Content responses that have no body
                 if response.status_code == 204:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                    # Mark as successful only after all operations complete successfully
+                    success = True
                 elif response.status_code not in [200, 201, 202, 206]:
                     result = response.json()
                     tool_result = ToolResult(
                         content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
                         is_error=True,
                     )
+                    # Don't mark as successful for error responses - success remains False
                 else:
                     result = response.json()
                     filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                     tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
-
-                success = True
+                    # Mark as successful only after all operations complete successfully
+                    success = True
             elif tool.integration_type == "MCP":
                 transport = tool.request_type.lower()
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
@@ -795,9 +793,10 @@ class ToolService:
                     tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url)
                 content = tool_call_result.model_dump(by_alias=True).get("content", [])
 
-                success = True
                 filtered_response = extract_using_jq(content, tool.jsonpath_filter)
                 tool_result = ToolResult(content=filtered_response)
+                # Mark as successful only after all operations complete successfully
+                success = True
             else:
                 tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 

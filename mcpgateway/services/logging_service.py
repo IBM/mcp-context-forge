@@ -123,7 +123,7 @@ class LoggingService:
             try:
                 root_logger.addHandler(_get_file_handler())
                 if settings.log_rotation_enabled:
-                    logging.info(f"File logging enabled with rotation: {settings.log_folder or '.'}/{settings.log_file} " f"(max: {settings.log_max_size_mb}MB, backups: {settings.log_backup_count})")
+                    logging.info(f"File logging enabled with rotation: {settings.log_folder or '.'}/{settings.log_file} (max: {settings.log_max_size_mb}MB, backups: {settings.log_backup_count})")
                 else:
                     logging.info(f"File logging enabled (no rotation): {settings.log_folder or '.'}/{settings.log_file}")
             except Exception as e:

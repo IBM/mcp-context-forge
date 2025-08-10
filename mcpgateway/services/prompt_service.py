@@ -23,7 +23,7 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import case, delete, desc, func, not_, select
+from sqlalchemy import case, delete, desc, func, not_, select, Float
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,7 @@ from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.metrics_common import build_top_performers
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -165,9 +166,13 @@ class PromptService:
                 DbPrompt.name,
                 func.count(PromptMetric.id).label("execution_count"),  # pylint: disable=not-callable
                 func.avg(PromptMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case((func.count(PromptMetric.id) > 0, func.sum(case((PromptMetric.is_success, 1), else_=0)) / func.count(PromptMetric.id) * 100), else_=None).label(
-                    "success_rate"
-                ),  # pylint: disable=not-callable
+                case(
+                    (
+                        func.count(PromptMetric.id) > 0,  # pylint: disable=not-callable
+                        func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,  # pylint: disable=not-callable
+                    ),
+                    else_=None,
+                ).label("success_rate"),
                 func.max(PromptMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
             )
             .outerjoin(PromptMetric)
@@ -177,17 +182,7 @@ class PromptService:
             .all()
         )
 
-        return [
-            TopPerformer(
-                id=result.id,
-                name=result.name,
-                execution_count=result.execution_count or 0,
-                avg_response_time=float(result.avg_response_time) if result.avg_response_time else None,
-                success_rate=float(result.success_rate) if result.success_rate else None,
-                last_execution=result.last_execution,
-            )
-            for result in results
-        ]
+        return build_top_performers(results)
 
     def _convert_db_prompt(self, db_prompt: DbPrompt) -> Dict[str, Any]:
         """

@@ -590,7 +590,7 @@ class ToolCreate(BaseModel):
         """
         integration_type = values.get("integration_type")
         if integration_type == "MCP":
-            raise ValueError("Cannot manually create MCP tools. Add MCP servers via the Gateways interface - " "tools will be auto-discovered and registered with integration_type='MCP'.")
+            raise ValueError("Cannot manually create MCP tools. Add MCP servers via the Gateways interface - tools will be auto-discovered and registered with integration_type='MCP'.")
         return values
 
 
