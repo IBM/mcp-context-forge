@@ -29,6 +29,7 @@ from mcpgateway.services.tool_service import (
     ToolNotFoundError,
     ToolResult,
     ToolService,
+    ToolValidationError,
 )
 from mcpgateway.utils.services_auth import encode_auth
 
@@ -324,13 +325,13 @@ class TestToolService:
             request_type="POST",
         )
 
-        # Should raise IntegrityError due to UNIQUE constraint failure
+        # Should raise ToolError due to UNIQUE constraint failure (wrapped IntegrityError)
         test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name", None, None))
-        with pytest.raises(IntegrityError) as exc_info:
+        with pytest.raises(ToolError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
 
-        # Check the error message for UNIQUE constraint failure
-        assert "UNIQUE constraint failed: tools.name" in str(exc_info.value)
+        # Check the error message for tool name conflict
+        assert "Tool already exists: test_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_inactive_tool_name_conflict(self, tool_service, mock_tool, test_db):
@@ -350,13 +351,13 @@ class TestToolService:
             request_type="POST",
         )
 
-        # Should raise IntegrityError due to UNIQUE constraint failure
+        # Should raise ToolError due to UNIQUE constraint failure (wrapped IntegrityError)
         test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name", None, None))
-        with pytest.raises(IntegrityError) as exc_info:
+        with pytest.raises(ToolError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
 
-        # Check the error message for UNIQUE constraint failure
-        assert "UNIQUE constraint failed: tools.name" in str(exc_info.value)
+        # Check the error message for tool name conflict
+        assert "Tool already exists: test_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_tool_db_integrity_error(self, tool_service, test_db):
@@ -378,13 +379,13 @@ class TestToolService:
             request_type="POST",
         )
 
-        # Should raise IntegrityError
-        with pytest.raises(IntegrityError) as exc_info:
+        # Should raise ToolError (wrapped IntegrityError)
+        with pytest.raises(ToolError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
-            # After exception, rollback should be called
-            test_db.rollback.assert_called_once()
 
-        assert "orig" in str(exc_info.value)
+        # Verify rollback was called
+        test_db.rollback.assert_called_once()
+        assert "Tool already exists: test_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_list_tools(self, tool_service, mock_tool, test_db):
@@ -1650,3 +1651,220 @@ class TestToolService:
         # Verify DB operations with tool_id
         test_db.execute.assert_called_once()
         test_db.commit.assert_called_once()
+
+    async def test_record_tool_metric(self, tool_service, mock_tool):
+        """Test recording tool invocation metrics."""
+        # Set up test data
+        start_time = 100.0
+        success = True
+        error_message = None
+
+        # Mock database
+        mock_db = MagicMock()
+
+        # Mock time.monotonic to return a consistent value
+        with patch("mcpgateway.services.tool_service.time.monotonic", return_value=105.0):
+            # Mock ToolMetric class
+            with patch("mcpgateway.services.tool_service.ToolMetric") as MockToolMetric:
+                mock_metric_instance = MagicMock()
+                MockToolMetric.return_value = mock_metric_instance
+
+                # Call the method
+                await tool_service._record_tool_metric(mock_db, mock_tool, start_time, success, error_message)
+
+                # Verify ToolMetric was created with correct data
+                MockToolMetric.assert_called_once_with(
+                    tool_id=mock_tool.id,
+                    response_time=5.0,  # 105.0 - 100.0
+                    is_success=True,
+                    error_message=None
+                )
+
+                # Verify DB operations
+                mock_db.add.assert_called_once_with(mock_metric_instance)
+                mock_db.commit.assert_called_once()
+
+    async def test_record_tool_metric_with_error(self, tool_service, mock_tool):
+        """Test recording tool invocation metrics with error."""
+        start_time = 100.0
+        success = False
+        error_message = "Connection timeout"
+
+        # Mock database
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.tool_service.time.monotonic", return_value=102.5):
+            with patch("mcpgateway.services.tool_service.ToolMetric") as MockToolMetric:
+                mock_metric_instance = MagicMock()
+                MockToolMetric.return_value = mock_metric_instance
+
+                await tool_service._record_tool_metric(mock_db, mock_tool, start_time, success, error_message)
+
+                # Verify ToolMetric was created with error data
+                MockToolMetric.assert_called_once_with(
+                    tool_id=mock_tool.id,
+                    response_time=2.5,
+                    is_success=False,
+                    error_message="Connection timeout"
+                )
+
+                mock_db.add.assert_called_once_with(mock_metric_instance)
+                mock_db.commit.assert_called_once()
+
+    async def test_aggregate_metrics(self, tool_service):
+        """Test aggregating metrics across all tools."""
+        # Mock database
+        mock_db = MagicMock()
+
+        # Create a mock that returns scalar values
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar.side_effect = [
+            10,     # total count
+            8,      # successful count
+            2,      # failed count
+            0.5,    # min response time
+            5.0,    # max response time
+            2.3,    # avg response time
+            "2025-01-10T12:00:00"  # last execution time
+        ]
+        mock_db.execute.return_value = mock_execute_result
+
+        result = await tool_service.aggregate_metrics(mock_db)
+
+        assert result == {
+            "total_executions": 10,
+            "successful_executions": 8,
+            "failed_executions": 2,
+            "failure_rate": 0.2,  # 2/10
+            "min_response_time": 0.5,
+            "max_response_time": 5.0,
+            "avg_response_time": 2.3,
+            "last_execution_time": "2025-01-10T12:00:00"
+        }
+
+        # Verify all expected queries were made
+        assert mock_db.execute.call_count == 7
+
+    async def test_aggregate_metrics_no_data(self, tool_service):
+        """Test aggregating metrics when no data exists."""
+        # Mock database
+        mock_db = MagicMock()
+
+        # Create a mock that returns scalar values
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar.side_effect = [
+            0,      # total count
+            0,      # successful count
+            0,      # failed count
+            None,   # min response time
+            None,   # max response time
+            None,   # avg response time
+            None    # last execution time
+        ]
+        mock_db.execute.return_value = mock_execute_result
+
+        result = await tool_service.aggregate_metrics(mock_db)
+
+        assert result == {
+            "total_executions": 0,
+            "successful_executions": 0,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": None,
+            "max_response_time": None,
+            "avg_response_time": None,
+            "last_execution_time": None
+        }
+
+    async def test_validate_tool_url_success(self, tool_service):
+        """Test successful tool URL validation."""
+        # Mock successful HTTP response
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        tool_service._http_client.get.return_value = mock_response
+
+        # Should not raise any exception
+        await tool_service._validate_tool_url("http://example.com/tool")
+
+        tool_service._http_client.get.assert_called_once_with("http://example.com/tool")
+        mock_response.raise_for_status.assert_called_once()
+
+    async def test_validate_tool_url_failure(self, tool_service):
+        """Test tool URL validation failure."""
+        # Mock HTTP error
+        tool_service._http_client.get.side_effect = Exception("Connection refused")
+
+        with pytest.raises(ToolValidationError, match="Failed to validate tool URL: Connection refused"):
+            await tool_service._validate_tool_url("http://example.com/tool")
+
+    async def test_check_tool_health_success(self, tool_service, mock_tool):
+        """Test successful tool health check."""
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        tool_service._http_client.get.return_value = mock_response
+
+        result = await tool_service._check_tool_health(mock_tool)
+
+        assert result is True
+        tool_service._http_client.get.assert_called_once_with(mock_tool.url)
+
+    async def test_check_tool_health_failure(self, tool_service, mock_tool):
+        """Test failed tool health check."""
+        mock_response = MagicMock()
+        mock_response.is_success = False
+        tool_service._http_client.get.return_value = mock_response
+
+        result = await tool_service._check_tool_health(mock_tool)
+
+        assert result is False
+
+    async def test_check_tool_health_exception(self, tool_service, mock_tool):
+        """Test tool health check with exception."""
+        tool_service._http_client.get.side_effect = Exception("Network error")
+
+        result = await tool_service._check_tool_health(mock_tool)
+
+        assert result is False
+
+    async def test_subscribe_events(self, tool_service):
+        """Test event subscription mechanism."""
+        # Create an event to publish
+        test_event = {"type": "test_event", "data": {"id": 1}}
+
+        # Start subscription in background
+        subscriber = tool_service.subscribe_events()
+        subscription_task = asyncio.create_task(subscriber.__anext__())
+
+        # Give a moment for subscription to be registered
+        await asyncio.sleep(0.01)
+
+        # Publish event
+        await tool_service._publish_event(test_event)
+
+        # Get the event
+        received_event = await subscription_task
+        assert received_event == test_event
+
+        # Clean up
+        await subscriber.aclose()
+
+    async def test_notify_tool_added(self, tool_service, mock_tool):
+        """Test notification when tool is added."""
+        with patch.object(tool_service, '_publish_event', new_callable=AsyncMock) as mock_publish:
+            await tool_service._notify_tool_added(mock_tool)
+
+            mock_publish.assert_called_once()
+            event = mock_publish.call_args[0][0]
+            assert event["type"] == "tool_added"
+            assert event["data"]["id"] == mock_tool.id
+            assert event["data"]["name"] == mock_tool.name
+
+    async def test_notify_tool_removed(self, tool_service, mock_tool):
+        """Test notification when tool is removed."""
+        with patch.object(tool_service, '_publish_event', new_callable=AsyncMock) as mock_publish:
+            await tool_service._notify_tool_removed(mock_tool)
+
+            mock_publish.assert_called_once()
+            event = mock_publish.call_args[0][0]
+            assert event["type"] == "tool_removed"
+            assert event["data"]["id"] == mock_tool.id

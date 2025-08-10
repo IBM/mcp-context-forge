@@ -29,6 +29,7 @@ Structure:
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
 
@@ -52,7 +53,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -64,7 +65,8 @@ from mcpgateway.admin import admin_router
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.models import (
     InitializeRequest,
@@ -1780,17 +1782,49 @@ async def get_prompt(
 
     Returns:
         Rendered prompt or metadata.
+
+    Raises:
+        Exception: Re-raised if not a handled exception type.
     """
     logger.debug(f"User: {user} requested prompt: {name} with args={args}")
+    start_time = time.monotonic()
+    success = False
+    error_message = None
+    result = None
+
     try:
         PromptExecuteArgs(args=args)
-        return await prompt_service.get_prompt(db, name, args)
+        result = await prompt_service.get_prompt(db, name, args)
+        success = True
+        logger.debug(f"Prompt execution successful for '{name}'")
     except Exception as ex:
+        error_message = str(ex)
         logger.error(f"Could not retrieve prompt {name}: {ex}")
         if isinstance(ex, (ValueError, PromptError)):
-            return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
-        if isinstance(ex, PluginViolationError):
-            return JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues", "details": ex.message}, status_code=422)
+            result = JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
+        elif isinstance(ex, PluginViolationError):
+            result = JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues", "details": ex.message}, status_code=422)
+        else:
+            raise
+
+    # Record metrics (moved outside try/except/finally to ensure it runs)
+    end_time = time.monotonic()
+    response_time = end_time - start_time
+
+    # Get the prompt from database to get its ID
+    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name)).scalar_one_or_none()
+
+    if prompt:
+        metric = PromptMetric(
+            prompt_id=prompt.id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
+
+    return result
 
 
 @prompt_router.get("/{name}")
@@ -1810,9 +1844,41 @@ async def get_prompt_no_args(
 
     Returns:
         The prompt template information
+
+    Raises:
+        Exception: Re-raised from prompt service.
     """
     logger.debug(f"User: {user} requested prompt: {name} with no arguments")
-    return await prompt_service.get_prompt(db, name, {})
+    start_time = time.monotonic()
+    success = False
+    error_message = None
+    result = None
+
+    try:
+        result = await prompt_service.get_prompt(db, name, {})
+        success = True
+    except Exception as ex:
+        error_message = str(ex)
+        raise
+
+    # Record metrics
+    end_time = time.monotonic()
+    response_time = end_time - start_time
+
+    # Get the prompt from database to get its ID
+    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name)).scalar_one_or_none()
+
+    if prompt:
+        metric = PromptMetric(
+            prompt_id=prompt.id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
+
+    return result
 
 
 @prompt_router.put("/{name}", response_model=PromptRead)

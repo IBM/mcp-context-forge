@@ -41,7 +41,8 @@ from mcpgateway.admin import (
     admin_edit_server,
     admin_edit_tool,
     admin_get_gateway,
-    admin_get_metrics,
+    # admin_get_metrics,
+    get_aggregated_metrics,
     admin_get_prompt,
     admin_get_resource,
     admin_get_server,
@@ -997,7 +998,11 @@ class TestAdminMetricsRoutes:
     @patch.object(ResourceService, "aggregate_metrics", new_callable=AsyncMock)
     @patch.object(ServerService, "aggregate_metrics", new_callable=AsyncMock)
     @patch.object(PromptService, "aggregate_metrics", new_callable=AsyncMock)
-    async def test_admin_get_metrics_with_nulls(self, mock_prompt_metrics, mock_server_metrics, mock_resource_metrics, mock_tool_metrics, mock_db):
+    @patch.object(ToolService, "get_top_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "get_top_resources", new_callable=AsyncMock)
+    @patch.object(ServerService, "get_top_servers", new_callable=AsyncMock)
+    @patch.object(PromptService, "get_top_prompts", new_callable=AsyncMock)
+    async def test_admin_get_metrics_with_nulls(self, mock_prompt_top, mock_server_top, mock_resource_top, mock_tool_top, mock_prompt_metrics, mock_server_metrics, mock_resource_metrics, mock_tool_metrics, mock_db):
         """Test getting metrics with null values."""
         # Some services return metrics with null values
         mock_tool_metrics.return_value = ToolMetrics(
@@ -1025,12 +1030,23 @@ class TestAdminMetricsRoutes:
         mock_server_metrics.return_value = None  # No metrics available
         mock_prompt_metrics.return_value = None
 
-        result = await admin_get_metrics(mock_db, "test-user")
+        # Mock top performers to return empty lists
+        mock_tool_top.return_value = []
+        mock_resource_top.return_value = []
+        mock_server_top.return_value = []
+        mock_prompt_top.return_value = []
+
+        # result = await admin_get_metrics(mock_db, "test-user")
+        result = await get_aggregated_metrics(mock_db)
 
         assert result["tools"].total_executions == 0
         assert result["resources"].total_executions == 100
         assert result["servers"] is None
         assert result["prompts"] is None
+        # Check that topPerformers structure exists
+        assert "topPerformers" in result
+        assert result["topPerformers"]["tools"] == []
+        assert result["topPerformers"]["resources"] == []
 
     @patch.object(ToolService, "reset_metrics", new_callable=AsyncMock)
     @patch.object(ResourceService, "reset_metrics", new_callable=AsyncMock)
