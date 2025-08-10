@@ -1298,5 +1298,128 @@ class TestErrorHandling:
         mock_db.rollback.assert_called_once()
 
 
+class TestResourceServiceMetricsExtended:
+    """Extended tests for resource service metrics."""
+
+    @pytest.mark.asyncio
+    async def test_list_resources_with_tags(self, resource_service, mock_db, mock_resource):
+        """Test listing resources with tag filtering."""
+        from sqlalchemy import func
+
+        # Mock query chain
+        mock_query = MagicMock()
+        mock_query.where.return_value = mock_query
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_resource]
+
+        with patch("mcpgateway.services.resource_service.select", return_value=mock_query):
+            with patch("mcpgateway.services.resource_service.func") as mock_func:
+                mock_func.json_contains.return_value = MagicMock()
+                mock_func.or_.return_value = MagicMock()
+
+                result = await resource_service.list_resources(
+                    mock_db, tags=["test", "production"]
+                )
+
+                # Verify tag filtering was applied
+                assert mock_func.json_contains.call_count == 2
+                mock_func.or_.assert_called_once()
+                assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_with_uri(self, resource_service):
+        """Test subscribing to events for specific URI."""
+        test_uri = "test://resource"
+        test_event = {"type": "resource_updated", "data": {"uri": test_uri}}
+
+        # Start subscription
+        subscriber = resource_service.subscribe_events(uri=test_uri)
+        subscription_task = asyncio.create_task(subscriber.__anext__())
+
+        # Allow subscription to register
+        await asyncio.sleep(0.01)
+
+        # Publish event to specific URI
+        await resource_service._publish_event(test_uri, test_event)
+
+        # Receive event
+        received = await asyncio.wait_for(subscription_task, timeout=0.1)
+        assert received == test_event
+
+        # Clean up
+        await subscriber.aclose()
+
+        # Verify cleanup
+        assert test_uri not in resource_service._event_subscribers
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_global(self, resource_service):
+        """Test subscribing to all events."""
+        test_event = {"type": "resource_created", "data": {"uri": "any://resource"}}
+
+        # Start global subscription
+        subscriber = resource_service.subscribe_events(uri=None)
+        subscription_task = asyncio.create_task(subscriber.__anext__())
+
+        await asyncio.sleep(0.01)
+
+        # Publish event to any URI
+        await resource_service._publish_event("any://resource", test_event)
+
+        received = await asyncio.wait_for(subscription_task, timeout=0.1)
+        assert received == test_event
+
+        await subscriber.aclose()
+
+        # Verify cleanup of global subscribers
+        assert "*" not in resource_service._event_subscribers
+
+    @pytest.mark.asyncio
+    async def test_read_template_resource_not_found(self, resource_service):
+        """Test reading template resource that doesn't exist."""
+        with pytest.raises(ResourceNotFoundError, match="No template matches URI"):
+            await resource_service._read_template_resource("template://nonexistent/{id}")
+
+    @pytest.mark.asyncio
+    async def test_get_top_resources(self, resource_service, mock_db):
+        """Test getting top performing resources."""
+        # Mock query results
+        mock_result1 = MagicMock()
+        mock_result1.id = 1
+        mock_result1.name = "resource1"
+        mock_result1.execution_count = 10
+        mock_result1.avg_response_time = 1.5
+        mock_result1.success_rate = 100.0
+        mock_result1.last_execution = "2025-01-10T12:00:00"
+
+        mock_result2 = MagicMock()
+        mock_result2.id = 2
+        mock_result2.name = "resource2"
+        mock_result2.execution_count = 7
+        mock_result2.avg_response_time = 2.3
+        mock_result2.success_rate = 71.43
+        mock_result2.last_execution = "2025-01-10T11:00:00"
+
+        # Mock the query chain
+        mock_query = MagicMock()
+        mock_query.outerjoin.return_value = mock_query
+        mock_query.group_by.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = [mock_result1, mock_result2]
+
+        mock_db.query.return_value = mock_query
+
+        result = await resource_service.get_top_resources(mock_db, limit=2)
+
+        assert len(result) == 2
+        assert result[0].name == "resource1"
+        assert result[0].execution_count == 10
+        assert result[0].success_rate == 100.0
+
+        assert result[1].name == "resource2"
+        assert result[1].execution_count == 7
+        assert result[1].success_rate == pytest.approx(71.43, rel=0.01)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
