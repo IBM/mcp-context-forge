@@ -46,21 +46,21 @@ def _install_fake_mcp(monkeypatch) -> None:
     client_mod = ModuleType("mcp.client")
     sse_mod = ModuleType("mcp.client.sse")
     streamable_http_mod = ModuleType("mcp.client.streamable_http")
-    
+
     # Add missing ClientSession class that gateway_service.py needs
     class _FakeClientSession:
         def __init__(self, *args, **kwargs):
             pass
-    
+
     mcp.ClientSession = _FakeClientSession
-    
+
     # Add missing sse_client function that gateway_service.py needs
     def _fake_sse_client(*args, **kwargs):
         pass
-    
+
     def _fake_streamablehttp_client(*args, **kwargs):
         pass
-    
+
     sse_mod.sse_client = _fake_sse_client
     streamable_http_mod.streamablehttp_client = _fake_streamablehttp_client
     client_mod.sse = sse_mod
