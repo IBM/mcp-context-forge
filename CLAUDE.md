@@ -232,3 +232,6 @@ make interrogate doctest test smoketest lint-web flake8 bandit pylint
 
 # Rules
 - When using git commit always add a -s to sign commits
+
+# TO test individual files, ensure you're activated the env first, ex:
+. /home/cmihai/.venv/mcpgateway/bin/activate && pytest --cov-report=annotate tests/unit/mcpgateway/test_translate.py
