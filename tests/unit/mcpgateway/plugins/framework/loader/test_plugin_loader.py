@@ -18,6 +18,7 @@ from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.models import PluginMode
 from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginContext, PromptPosthookPayload, PromptPrehookPayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig, SearchReplacePlugin
+from unittest.mock import patch, MagicMock
 
 
 def test_config_loader_load():
@@ -78,3 +79,145 @@ async def test_plugin_loader_invalid_plugin_load():
     loader = PluginLoader()
     with pytest.raises(ModuleNotFoundError):
         await loader.load_and_instantiate_plugin(config.plugins[0])
+
+
+@pytest.mark.asyncio
+async def test_plugin_loader_duplicate_registration():
+    """Test that duplicate plugin type registration is handled correctly."""
+    config = ConfigLoader.load_config(config="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+    loader = PluginLoader()
+
+    # Load the same plugin twice to test the "if kind not in self._plugin_types" path (line 72)
+    plugin1 = await loader.load_and_instantiate_plugin(config.plugins[0])
+    plugin2 = await loader.load_and_instantiate_plugin(config.plugins[0])
+
+    # Both should be instances of the same type
+    assert type(plugin1) == type(plugin2)
+    assert isinstance(plugin1, SearchReplacePlugin)
+    assert isinstance(plugin2, SearchReplacePlugin)
+
+    # Verify the plugin type was only registered once
+    assert len(loader._plugin_types) == 1
+    assert config.plugins[0].kind in loader._plugin_types
+
+    await loader.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_plugin_loader_get_plugin_type_error():
+    """Test error handling in __get_plugin_type method."""
+    from mcpgateway.plugins.framework.models import PluginConfig
+
+    loader = PluginLoader()
+
+    # Create a config with an invalid plugin kind that will cause an import error
+    invalid_config = PluginConfig(
+        name="InvalidPlugin",
+        description="Test invalid plugin",
+        author="Test Author",
+        version="1.0",
+        tags=["test"],
+        kind="nonexistent.module.InvalidPlugin",
+        hooks=["prompt_pre_fetch"],
+        config={}
+    )
+
+    # This should raise an exception during plugin type registration
+    with pytest.raises(Exception):  # Could be ModuleNotFoundError or other import-related error
+        await loader.load_and_instantiate_plugin(invalid_config)
+
+    await loader.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_plugin_loader_none_plugin_type():
+    """Test handling when plugin type resolves to None."""
+    from mcpgateway.plugins.framework.models import PluginConfig
+
+    loader = PluginLoader()
+
+    # Mock the _plugin_types to return None for a specific kind
+    test_config = PluginConfig(
+        name="TestPlugin",
+        description="Test plugin",
+        author="Test Author",
+        version="1.0",
+        tags=["test"],
+        kind="test.plugin.TestPlugin",
+        hooks=["prompt_pre_fetch"],
+        config={}
+    )
+
+    # Manually set plugin type to None to test line 90 (return None)
+    with patch.object(loader, '_PluginLoader__get_plugin_type') as mock_get_type:
+        mock_get_type.return_value = None
+        loader._plugin_types[test_config.kind] = None
+
+        result = await loader.load_and_instantiate_plugin(test_config)
+        assert result is None  # Should return None when plugin_type is None
+
+    await loader.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_plugin_loader_shutdown_with_empty_types():
+    """Test shutdown when _plugin_types is empty."""
+    loader = PluginLoader()
+
+    # Start with empty plugin types
+    assert len(loader._plugin_types) == 0
+
+    # Shutdown should handle empty dict gracefully (line 94: if self._plugin_types)
+    await loader.shutdown()
+
+    # Should still be empty
+    assert len(loader._plugin_types) == 0
+
+
+@pytest.mark.asyncio
+async def test_plugin_loader_shutdown_with_existing_types():
+    """Test shutdown clears existing plugin types."""
+    config = ConfigLoader.load_config(config="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+    loader = PluginLoader()
+
+    # Load a plugin to populate _plugin_types
+    plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
+    assert plugin is not None
+    assert len(loader._plugin_types) == 1
+
+    # Shutdown should clear the dict
+    await loader.shutdown()
+    assert len(loader._plugin_types) == 0
+
+
+@pytest.mark.asyncio
+async def test_plugin_loader_registration_branch_coverage():
+    """Test plugin registration path coverage."""
+    from mcpgateway.plugins.framework.models import PluginConfig
+
+    loader = PluginLoader()
+
+    # Create a valid config
+    config = PluginConfig(
+        name="TestPlugin",
+        description="Test plugin for registration",
+        author="Test Author",
+        version="1.0",
+        tags=["test"],
+        kind="plugins.regex_filter.search_replace.SearchReplacePlugin",
+        hooks=["prompt_pre_fetch"],
+        config={"words": [{"search": "test", "replace": "example"}]}
+    )
+
+    # First load - should register the plugin type (lines 85-87)
+    assert config.kind not in loader._plugin_types  # Verify it's not registered yet
+    plugin1 = await loader.load_and_instantiate_plugin(config)
+    assert plugin1 is not None
+    assert config.kind in loader._plugin_types  # Now it should be registered
+
+    # Second load - should skip registration (line 72 condition is false)
+    plugin2 = await loader.load_and_instantiate_plugin(config)
+    assert plugin2 is not None
+    assert len(loader._plugin_types) == 1  # Still only one type registered
+
+    await loader.shutdown()
