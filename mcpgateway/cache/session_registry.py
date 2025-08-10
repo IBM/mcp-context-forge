@@ -61,7 +61,7 @@ from fastapi import HTTPException, status
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
+from mcpgateway.db import SessionMessageRecord, SessionRecord, get_db
 from mcpgateway.models import Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.services.logging_service import LoggingService

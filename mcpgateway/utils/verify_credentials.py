@@ -40,21 +40,18 @@ Examples:
     error
 """
 
+import binascii
+
 # Standard
 from base64 import b64decode
-import binascii
 from typing import Optional
+
+import jwt
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, status
-from fastapi.security import (
-    HTTPAuthorizationCredentials,
-    HTTPBasic,
-    HTTPBasicCredentials,
-    HTTPBearer,
-)
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
-import jwt
 
 # First-Party
 from mcpgateway.config import settings

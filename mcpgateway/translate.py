@@ -55,21 +55,22 @@ from __future__ import annotations
 # Standard
 import argparse
 import asyncio
-from contextlib import suppress
 import json
 import logging
 import shlex
 import signal
 import sys
-from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple
 import uuid
+from contextlib import suppress
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple
+
+import uvicorn
 
 # Third-Party
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from sse_starlette.sse import EventSourceResponse
-import uvicorn
 
 try:
     # Third-Party

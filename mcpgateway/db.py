@@ -21,24 +21,19 @@ Examples:
     True
 """
 
+import uuid
+
 # Standard
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Table, Text, UniqueConstraint, create_engine, event, func, make_url, select
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import (
-    DeclarativeBase,
-    Mapped,
-    mapped_column,
-    relationship,
-    sessionmaker,
-)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 
 # First-Party

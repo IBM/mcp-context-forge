@@ -16,14 +16,14 @@ It handles:
 
 # Standard
 import asyncio
+import uuid
 from datetime import datetime, timezone
 from string import Formatter
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
-import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import case, delete, desc, Float, func, not_, select
+from sqlalchemy import Float, case, delete, desc, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 

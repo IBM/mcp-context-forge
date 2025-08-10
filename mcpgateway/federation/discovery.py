@@ -63,10 +63,10 @@ Examples:
 
 # Standard
 import asyncio
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 import os
 import socket
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 

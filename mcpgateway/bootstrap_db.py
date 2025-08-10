@@ -23,10 +23,11 @@ directly with ``python3 mcpgateway/bootstrap_db.py``.
 import asyncio
 from importlib.resources import files
 
-# Third-Party
-from sqlalchemy import create_engine, inspect
 from alembic import command
 from alembic.config import Config
+
+# Third-Party
+from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings

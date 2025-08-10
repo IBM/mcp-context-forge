@@ -8,9 +8,10 @@ Authors: Mihai Criveti
 Module that stores plugin instances and manages hook points.
 """
 
+import logging
+
 # Standard
 from collections import defaultdict
-import logging
 from typing import Optional
 
 # First-Party

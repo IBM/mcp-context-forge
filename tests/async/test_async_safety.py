@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Comprehensive async safety tests for mcpgateway.
 """

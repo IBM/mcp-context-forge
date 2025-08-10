@@ -17,17 +17,19 @@ various services to perform the actual business logic operations on the
 underlying data.
 """
 
+import json
+import time
+
 # Standard
 from collections import defaultdict
 from functools import wraps
-import json
-import time
 from typing import Any, Dict, List, Optional, Union
+
+import httpx
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-import httpx
 from pydantic import ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy.exc import IntegrityError
@@ -35,7 +37,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, GlobalConfig
+from mcpgateway.db import GlobalConfig, get_db
 from mcpgateway.schemas import (
     GatewayCreate,
     GatewayRead,
