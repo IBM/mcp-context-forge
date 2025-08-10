@@ -47,7 +47,7 @@ maintainers = [
 # ----------------------------------------------------------------
 dependencies = [
     "alembic>=1.16.4",
-    "cryptography>=45.0.5",
+    "cryptography>=45.0.6",
     "fastapi>=0.116.1",
     "filelock>=3.18.0",
     "gunicorn>=23.0.0",
@@ -56,19 +56,19 @@ dependencies = [
     "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.25.0",
-    "mcp>=1.12.3",
+    "mcp>=1.12.4",
     "parse>=1.20.2",
     "psutil>=7.0.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "pyjwt>=2.10.1",
-    "python-json-logger>=2.0.0",
+    "python-json-logger>=3.3.0",
     "PyYAML>=6.0.2",
     "sqlalchemy>=2.0.42",
     "sse-starlette>=3.0.2",
     "starlette>=0.47.2",
     "uvicorn>=0.35.0",
-    "zeroconf>=0.147.0"
+    "zeroconf>=0.147.0",
 ]
 
 # ----------------------------------------------------------------
@@ -78,7 +78,7 @@ dependencies = [
 
 # Optional dependency groups (runtime)
 redis = [
-    "redis>=6.2.0",
+    "redis>=6.4.0",
 ]
 
 postgres = [
@@ -101,7 +101,7 @@ asyncpg = [
 
 # Optional dependency groups (development)
 dev = [
-    "aiohttp>=3.12.14",
+    "aiohttp>=3.12.15",
     "argparse-manpage>=4.6",
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
@@ -110,7 +110,7 @@ dev = [
     "check-manifest>=0.50",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
-    "coverage>=7.10.1",
+    "coverage>=7.10.2",
     "coverage-badge>=1.1.2",
     "darglint>=1.8.1",
     "dlint>=0.16.0",
@@ -125,13 +125,13 @@ dev = [
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",
     "pip_audit>=2.9.0",
-    "pre-commit>=4.2.0",
+    "pre-commit>=4.3.0",
     "prospector[with_everything]>=1.17.2",
     "pydocstyle>=6.3.0",
-    "pylint>=3.3.7",
+    "pylint>=3.3.8",
     "pylint-pydantic>=0.3.5",
     "pyre-check>=0.9.25",
-    "pyrefly>=0.26.1",
+    "pyrefly>=0.27.2",
     "pyright>=1.1.403",
     "pyroma>=5.0",
     "pyspelling>=2.10",
@@ -147,22 +147,22 @@ dev = [
     "pytype>=2024.10.11",
     "pyupgrade>=3.20.0",
     "radon>=6.0.1",
-    "redis>=6.2.0",
-    "ruff>=0.12.7",
+    "redis>=6.4.0",
+    "ruff>=0.12.8",
     "semgrep>=1.131.0",
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "tomlcheck>=0.2.3",
     "tox>=4.28.4",
-    "tox-uv>=1.26.2",
+    "tox-uv>=1.27.0",
     "twine>=6.1.0",
-    "ty>=0.0.1a16",
+    "ty>=0.0.1a17",
     "types-tabulate>=0.9.0.20241207",
     "unimport>=1.2.1",
-    "uv>=0.8.4",
+    "uv>=0.8.8",
     "vulture>=2.14",
+    "websockets>=15.0.1",
     "yamllint>=1.37.1",
-    "websockets>=15.0.1"
 ]
 
 # UI Testing
