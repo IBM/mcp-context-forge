@@ -17,26 +17,27 @@ It handles:
 # Standard
 import asyncio
 import base64
+from datetime import datetime, timezone
 import json
 import re
 import time
-import uuid
-from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
+import uuid
 
 # Third-Party
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import Float, case, delete, desc, func, not_, select
+from sqlalchemy import case, delete, desc, Float, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric, server_tool_association
+from mcpgateway.db import ToolMetric
 from mcpgateway.models import TextContent, ToolResult
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload

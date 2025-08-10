@@ -26,14 +26,14 @@ Examples:
 
 # Standard
 import asyncio
+from datetime import datetime, timezone
 import mimetypes
 import re
-from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import parse
-from sqlalchemy import Float, case, delete, desc, func, not_, select
+from sqlalchemy import case, delete, desc, Float, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 

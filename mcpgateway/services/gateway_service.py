@@ -39,17 +39,16 @@ Examples:
 
 # Standard
 import asyncio
+from datetime import datetime, timezone
 import logging
 import os
 import tempfile
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING
 import uuid
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Set
-
-import httpx
 
 # Third-Party
 from filelock import FileLock, Timeout
+import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client

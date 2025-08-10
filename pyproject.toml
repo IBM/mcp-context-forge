@@ -251,9 +251,6 @@ target-version = ["py310", "py311", "py312"]
 include = "\\.pyi?$"
 
 # isort configuration
-[tool.isort]
-
-
 # --------------------------------------------------------------------
 #  🛠  Async tool configurations (async-test, async-lint, etc.)
 # --------------------------------------------------------------------
@@ -268,6 +265,7 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 module = "tests.*"
 disallow_untyped_defs = false
 
+[tool.isort]
 ###############################################################################
 # Core behaviour
 ###############################################################################

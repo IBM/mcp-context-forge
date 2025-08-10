@@ -10,7 +10,7 @@ This module implements the plugin loader.
 
 # Standard
 import logging
-from typing import Type, cast
+from typing import cast, Type
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin

@@ -47,21 +47,19 @@ Examples:
     True
 """
 
-import json
-import logging
-import os
-import re
-
 # Standard
 from functools import lru_cache
 from importlib.resources import files
+import json
+import logging
+import os
 from pathlib import Path
+import re
 from typing import Annotated, Any, ClassVar, Dict, List, Optional, Set, Union
-
-import jq
 
 # Third-Party
 from fastapi import HTTPException
+import jq
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
 from pydantic import Field, field_validator

@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import Float, case, delete, desc, func, select
+from sqlalchemy import case, delete, desc, Float, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
