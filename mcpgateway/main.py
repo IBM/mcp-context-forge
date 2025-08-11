@@ -52,7 +52,6 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router
-from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
 from mcpgateway.db import Prompt as DbPrompt
@@ -112,14 +111,6 @@ logger = logging_service.get_logger("mcpgateway")
 
 # Wait for database to be ready before creating tables
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
-
-# Create database tables
-try:
-    loop = asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.run(bootstrap_db())
-else:
-    loop.create_task(bootstrap_db())
 
 # Initialize plugin manager as a singleton.
 plugin_manager: PluginManager | None = PluginManager(settings.plugin_config_file) if settings.plugins_enabled else None
