@@ -1840,6 +1840,7 @@ container-run-ssl: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--user $(shell id -u):$(shell id -g) \
 		--env-file=.env \
 		-e SSL=true \
 		-e CERT_FILE=certs/cert.pem \
@@ -1860,6 +1861,7 @@ container-run-ssl-host: certs container-check-image
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--user $(shell id -u):$(shell id -g) \
 		--network=host \
 		--env-file=.env \
 		-e SSL=true \
