@@ -46,7 +46,7 @@ import binascii
 from typing import Optional
 
 # Third-Party
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
 import jwt
@@ -213,20 +213,24 @@ async def verify_credentials(token: str) -> dict:
     return payload
 
 
-async def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(None)) -> str | dict:
-    """Require authentication via JWT token.
+async def require_auth(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(None)) -> str | dict:
+    """Require authentication via JWT token or proxy headers.
 
-    FastAPI dependency that checks for a JWT token either in the Authorization
-    header (Bearer scheme) or as a cookie. If authentication is required but
-    no token is provided, raises an HTTP 401 error.
+    FastAPI dependency that checks for authentication via:
+    1. Proxy headers (if mcp_client_auth_enabled=false and trust_proxy_auth=true)
+    2. JWT token in Authorization header (Bearer scheme)
+    3. JWT token in cookies
+
+    If authentication is required but no token is provided, raises an HTTP 401 error.
 
     Args:
+        request: The FastAPI request object for accessing headers.
         credentials: HTTP Authorization credentials from the request header.
         jwt_token: JWT token from cookies.
 
     Returns:
         str | dict: The verified credentials payload if authenticated,
-            or "anonymous" if authentication is not required.
+            proxy user if proxy auth enabled, or "anonymous" if authentication is not required.
 
     Raises:
         HTTPException: 401 status if authentication is required but no valid
@@ -240,39 +244,59 @@ async def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Dep
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
+        ...     mcp_client_auth_enabled = True
+        ...     trust_proxy_auth = False
+        ...     proxy_user_header = 'X-Authenticated-User'
         ...     require_token_expiration = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> import jwt
         >>> from fastapi.security import HTTPAuthorizationCredentials
+        >>> from fastapi import Request
         >>> import asyncio
 
         Test with valid credentials in header:
         >>> token = jwt.encode({'sub': 'alice'}, 'secret', algorithm='HS256')
         >>> creds = HTTPAuthorizationCredentials(scheme='Bearer', credentials=token)
-        >>> result = asyncio.run(vc.require_auth(credentials=creds, jwt_token=None))
+        >>> req = Request(scope={'type': 'http', 'headers': []})
+        >>> result = asyncio.run(vc.require_auth(request=req, credentials=creds, jwt_token=None))
         >>> result['sub'] == 'alice'
         True
 
         Test with valid token in cookie:
-        >>> result = asyncio.run(vc.require_auth(credentials=None, jwt_token=token))
+        >>> result = asyncio.run(vc.require_auth(request=req, credentials=None, jwt_token=token))
         >>> result['sub'] == 'alice'
         True
 
         Test with auth required but no token:
         >>> try:
-        ...     asyncio.run(vc.require_auth(credentials=None, jwt_token=None))
+        ...     asyncio.run(vc.require_auth(request=req, credentials=None, jwt_token=None))
         ... except vc.HTTPException as e:
         ...     print(e.status_code, e.detail)
         401 Not authenticated
 
         Test with auth not required:
         >>> vc.settings.auth_required = False
-        >>> result = asyncio.run(vc.require_auth(credentials=None, jwt_token=None))
+        >>> result = asyncio.run(vc.require_auth(request=req, credentials=None, jwt_token=None))
         >>> result
         'anonymous'
         >>> vc.settings.auth_required = True
     """
+    # If MCP client auth is disabled and proxy auth is trusted, use proxy headers
+    if not settings.mcp_client_auth_enabled:
+        if settings.trust_proxy_auth:
+            # Extract user from proxy header
+            proxy_user = request.headers.get(settings.proxy_user_header)
+            if proxy_user:
+                return {"sub": proxy_user, "source": "proxy", "token": None}
+            # If no proxy header but proxy auth is trusted, treat as anonymous
+            return "anonymous"
+        else:
+            # Warning: MCP auth disabled without proxy trust - security risk!
+            # This case is already warned about in config validation
+            return "anonymous"
+
+    # Standard JWT authentication flow
     token = credentials.credentials if credentials else jwt_token
 
     if settings.auth_required and not token:
@@ -490,6 +514,7 @@ async def require_docs_basic_auth(auth_header: str) -> str:
 async def require_auth_override(
     auth_header: str | None = None,
     jwt_token: str | None = None,
+    request: Request | None = None,
 ) -> str | dict:
     """Call require_auth manually from middleware without FastAPI dependency injection.
 
@@ -502,6 +527,7 @@ async def require_auth_override(
         auth_header: Raw Authorization header value (e.g. "Bearer eyJhbGciOi...").
         jwt_token: JWT taken from a cookie. If both header and cookie are
             supplied, the header takes precedence.
+        request: Optional Request object for accessing headers (used for proxy auth).
 
     Returns:
         str | dict: The decoded JWT payload or the string "anonymous",
@@ -523,6 +549,9 @@ async def require_auth_override(
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
+        ...     mcp_client_auth_enabled = True
+        ...     trust_proxy_auth = False
+        ...     proxy_user_header = 'X-Authenticated-User'
         ...     require_token_expiration = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
@@ -554,6 +583,10 @@ async def require_auth_override(
         'anonymous'
         >>> vc.settings.auth_required = True
     """
+    # Create a mock request if not provided (for backward compatibility)
+    if request is None:
+        request = Request(scope={"type": "http", "headers": []})
+
     credentials = None
     if auth_header:
         scheme, param = get_authorization_scheme_param(auth_header)
@@ -562,4 +595,4 @@ async def require_auth_override(
         elif scheme.lower() == "basic" and param and settings.docs_allow_basic_auth:
             # Only allow Basic Auth for docs endpoints when explicitly enabled
             return await require_docs_basic_auth(auth_header)
-    return await require_auth(credentials=credentials, jwt_token=jwt_token)
+    return await require_auth(request=request, credentials=credentials, jwt_token=jwt_token)

@@ -69,6 +69,7 @@ def test_settings():
         basic_auth_user="testuser",
         basic_auth_password="testpass",
         auth_required=False,
+        mcp_client_auth_enabled=False,
     )
 
 

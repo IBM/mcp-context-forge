@@ -1073,12 +1073,20 @@ class TestRPCEndpoints:
 class TestRealtimeEndpoints:
     """Tests for real-time communication: WebSocket, SSE, message handling, etc."""
 
+    @patch("mcpgateway.main.settings")
     @patch("mcpgateway.main.ResilientHttpClient")  # stub network calls
-    def test_websocket_endpoint(self, mock_client, test_client):
+    def test_websocket_endpoint(self, mock_client, mock_settings, test_client):
         # Standard
         from types import SimpleNamespace
 
         """Test WebSocket connection and message handling."""
+        # Configure mock settings for auth disabled
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.auth_required = False
+        mock_settings.federation_timeout = 30
+        mock_settings.skip_ssl_verify = False
+        mock_settings.port = 4444
+
         # ----- set up async context-manager dummy -----
         mock_instance = mock_client.return_value
         mock_instance.__aenter__.return_value = mock_instance
