@@ -908,9 +908,11 @@ func main() {
     s := server.NewMCPServer(
         appName,
         appVersion,
-        server.WithToolCapabilities(false), // No progress reporting needed
-        server.WithLogging(),               // Enable MCP protocol logging
-        server.WithRecovery(),              // Recover from panics in handlers
+        server.WithToolCapabilities(false),        // No progress reporting needed
+        server.WithResourceCapabilities(false, true), // Enable resource capabilities (no subscribe, list changed)
+        server.WithPromptCapabilities(true),       // Enable prompt capabilities (list changed)
+        server.WithLogging(),                      // Enable MCP protocol logging
+        server.WithRecovery(),                     // Recover from panics in handlers
     )
 
     /* ----------------------- register tools ----------------------- */

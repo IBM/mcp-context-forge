@@ -70,9 +70,11 @@ except ImportError:
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate
+from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.logging_service import LoggingService
@@ -433,7 +435,7 @@ class GatewayService:
                 header_dict = {h["key"]: h["value"] for h in gateway.auth_headers if h.get("key")}
                 auth_value = encode_auth(header_dict)  # Encode the dict for consistency
 
-            capabilities, tools = await self._initialize_gateway(normalized_url, auth_value, gateway.transport)
+            capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, auth_value, gateway.transport)
 
             tools = [
                 DbTool(
@@ -453,6 +455,29 @@ class GatewayService:
                 for tool in tools
             ]
 
+            # Create resource DB models
+            db_resources = [
+                DbResource(
+                    uri=resource.uri,
+                    name=resource.name,
+                    description=resource.description,
+                    mime_type=resource.mime_type,
+                    template=resource.template,
+                )
+                for resource in resources
+            ]
+
+            # Create prompt DB models
+            db_prompts = [
+                DbPrompt(
+                    name=prompt.name,
+                    description=prompt.description,
+                    template=prompt.template if hasattr(prompt, "template") else "",
+                    argument_schema={},  # Use argument_schema instead of arguments
+                )
+                for prompt in prompts
+            ]
+
             # Create DB model
             db_gateway = DbGateway(
                 name=gateway.name,
@@ -466,6 +491,8 @@ class GatewayService:
                 auth_type=auth_type,
                 auth_value=auth_value,
                 tools=tools,
+                resources=db_resources,
+                prompts=db_prompts,
             )
 
             # Add to DB
@@ -632,9 +659,12 @@ class GatewayService:
                 # Try to reinitialize connection if URL changed
                 if gateway_update.url is not None:
                     try:
-                        capabilities, tools = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
+                        capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
                         new_tool_names = [tool.name for tool in tools]
+                        new_resource_uris = [resource.uri for resource in resources]
+                        new_prompt_names = [prompt.name for prompt in prompts]
 
+                        # Update tools
                         for tool in tools:
                             existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
                             if not existing_tool:
@@ -653,8 +683,38 @@ class GatewayService:
                                         auth_value=gateway.auth_value,
                                     )
                                 )
+
+                        # Update resources
+                        for resource in resources:
+                            existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri).where(DbResource.gateway_id == gateway_id)).scalar_one_or_none()
+                            if not existing_resource:
+                                gateway.resources.append(
+                                    DbResource(
+                                        uri=resource.uri,
+                                        name=resource.name,
+                                        description=resource.description,
+                                        mime_type=resource.mime_type,
+                                        template=resource.template,
+                                    )
+                                )
+
+                        # Update prompts
+                        for prompt in prompts:
+                            existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name).where(DbPrompt.gateway_id == gateway_id)).scalar_one_or_none()
+                            if not existing_prompt:
+                                gateway.prompts.append(
+                                    DbPrompt(
+                                        name=prompt.name,
+                                        description=prompt.description,
+                                        template=prompt.template if hasattr(prompt, "template") else "",
+                                        argument_schema={},  # Use argument_schema instead of arguments
+                                    )
+                                )
+
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
+                        gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
+                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
                         gateway.last_seen = datetime.now(timezone.utc)
 
                         # Update tracking with new URL
@@ -786,9 +846,12 @@ class GatewayService:
                     self._active_gateways.add(gateway.url)
                     # Try to initialize if activating
                     try:
-                        capabilities, tools = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
+                        capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport)
                         new_tool_names = [tool.name for tool in tools]
+                        new_resource_uris = [resource.uri for resource in resources]
+                        new_prompt_names = [prompt.name for prompt in prompts]
 
+                        # Update tools
                         for tool in tools:
                             existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
                             if not existing_tool:
@@ -808,8 +871,37 @@ class GatewayService:
                                     )
                                 )
 
+                        # Update resources
+                        for resource in resources:
+                            existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri).where(DbResource.gateway_id == gateway_id)).scalar_one_or_none()
+                            if not existing_resource:
+                                gateway.resources.append(
+                                    DbResource(
+                                        uri=resource.uri,
+                                        name=resource.name,
+                                        description=resource.description,
+                                        mime_type=resource.mime_type,
+                                        template=resource.template,
+                                    )
+                                )
+
+                        # Update prompts
+                        for prompt in prompts:
+                            existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name).where(DbPrompt.gateway_id == gateway_id)).scalar_one_or_none()
+                            if not existing_prompt:
+                                gateway.prompts.append(
+                                    DbPrompt(
+                                        name=prompt.name,
+                                        description=prompt.description,
+                                        template=prompt.template if hasattr(prompt, "template") else "",
+                                        argument_schema={},  # Use argument_schema instead of arguments
+                                    )
+                                )
+
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
+                        gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
+                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
                         gateway.last_seen = datetime.now(timezone.utc)
                     except Exception as e:
                         logger.warning(f"Failed to initialize reactivated gateway: {e}")
@@ -1203,12 +1295,14 @@ class GatewayService:
         finally:
             self._event_subscribers.remove(queue)
 
-    async def _initialize_gateway(self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE") -> tuple[Dict[str, Any], List[ToolCreate]]:
+    async def _initialize_gateway(
+        self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE"
+    ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
         Connects to an MCP gateway using the specified transport protocol,
-        performs the MCP handshake, and retrieves both capabilities and
-        available tools from the gateway.
+        performs the MCP handshake, and retrieves capabilities, tools,
+        resources, and prompts from the gateway.
 
         Args:
             url: Gateway URL to connect to
@@ -1216,7 +1310,8 @@ class GatewayService:
             transport: Transport protocol - "SSE" or "StreamableHTTP"
 
         Returns:
-            tuple[Dict[str, Any], List[ToolCreate]]: Capabilities dictionary and list of ToolCreate objects
+            tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
+                Capabilities dictionary, list of ToolCreate objects, list of ResourceCreate objects, and list of PromptCreate objects
 
         Raises:
             GatewayConnectionError: If connection or initialization fails
@@ -1252,15 +1347,16 @@ class GatewayService:
                 """Connect to an MCP server running with SSE transport.
 
                 Establishes an SSE connection to the MCP server, performs the
-                initialization handshake, and retrieves server capabilities
-                and available tools.
+                initialization handshake, and retrieves server capabilities,
+                tools, resources, and prompts.
 
                 Args:
                     server_url: URL to connect to the SSE-enabled MCP server
                     authentication: Optional authentication headers for the connection
 
                 Returns:
-                    Tuple[Dict, List[ToolCreate]]: Server capabilities and list of available tools
+                    Tuple[Dict, List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
+                        Server capabilities, list of tools, resources, and prompts
 
                 Examples:
                     >>> # Test function signature and defaults
@@ -1292,27 +1388,93 @@ class GatewayService:
                             # Initialize the session
                             response = await session.initialize()
                             capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                            logger.debug(f"Server capabilities: {capabilities}")
 
                             response = await session.list_tools()
                             tools = response.tools
                             tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
 
                             tools = [ToolCreate.model_validate(tool) for tool in tools]
-                            logger.info(f"{tools[0]=}")
+                            if tools:
+                                logger.info(f"Fetched {len(tools)} tools from gateway")
 
-                    return capabilities, tools
+                            # Fetch resources if supported
+                            resources = []
+                            logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                            if capabilities.get("resources"):
+                                try:
+                                    response = await session.list_resources()
+                                    raw_resources = response.resources
+                                    for resource in raw_resources:
+                                        resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                        # Convert AnyUrl to string if present
+                                        if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                            resource_data["uri"] = str(resource_data["uri"])
+                                        # Add default content if not present (will be fetched on demand)
+                                        if "content" not in resource_data:
+                                            resource_data["content"] = ""
+                                        try:
+                                            resources.append(ResourceCreate.model_validate(resource_data))
+                                        except Exception:
+                                            # If validation fails, create minimal resource
+                                            resources.append(
+                                                ResourceCreate(
+                                                    uri=str(resource_data.get("uri", "")),
+                                                    name=resource_data.get("name", ""),
+                                                    description=resource_data.get("description"),
+                                                    mime_type=resource_data.get("mime_type"),
+                                                    template=resource_data.get("template"),
+                                                    content="",
+                                                )
+                                            )
+                                    logger.info(f"Fetched {len(resources)} resources from gateway")
+                                except Exception as e:
+                                    logger.warning(f"Failed to fetch resources: {e}")
+
+                            # Fetch prompts if supported
+                            prompts = []
+                            logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                            if capabilities.get("prompts"):
+                                try:
+                                    response = await session.list_prompts()
+                                    raw_prompts = response.prompts
+                                    for prompt in raw_prompts:
+                                        prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                                        # Add default template if not present
+                                        if "template" not in prompt_data:
+                                            prompt_data["template"] = ""
+                                        try:
+                                            prompts.append(PromptCreate.model_validate(prompt_data))
+                                        except Exception:
+                                            # If validation fails, create minimal prompt
+                                            prompts.append(
+                                                PromptCreate(
+                                                    name=prompt_data.get("name", ""),
+                                                    description=prompt_data.get("description"),
+                                                    template=prompt_data.get("template", ""),
+                                                )
+                                            )
+                                    logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                                except Exception as e:
+                                    logger.warning(f"Failed to fetch prompts: {e}")
+
+                    return capabilities, tools, resources, prompts
                 raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
             async def connect_to_streamablehttp_server(server_url: str, authentication: Optional[Dict[str, str]] = None):
-                """
-                Connect to an MCP server running with Streamable HTTP transport
+                """Connect to an MCP server running with Streamable HTTP transport.
+
+                Establishes a StreamableHTTP connection to the MCP server, performs the
+                initialization handshake, and retrieves server capabilities,
+                tools, resources, and prompts.
 
                 Args:
                     server_url: URL to connect to the server
                     authentication: Authentication headers for connection to URL
 
                 Returns:
-                    list, list: List of capabilities and tools
+                    Tuple[Dict, List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
+                        Server capabilities, list of tools, resources, and prompts
                 """
                 if authentication is None:
                     authentication = {}
@@ -1326,6 +1488,7 @@ class GatewayService:
                         # Initialize the session
                         response = await session.initialize()
                         capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                        logger.debug(f"Server capabilities: {capabilities}")
 
                         response = await session.list_tools()
                         tools = response.tools
@@ -1334,16 +1497,60 @@ class GatewayService:
                         tools = [ToolCreate.model_validate(tool) for tool in tools]
                         for tool in tools:
                             tool.request_type = "STREAMABLEHTTP"
-                return capabilities, tools
+                        if tools:
+                            logger.info(f"Fetched {len(tools)} tools from gateway")
+
+                        # Fetch resources if supported
+                        resources = []
+                        logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                        if capabilities.get("resources"):
+                            try:
+                                response = await session.list_resources()
+                                raw_resources = response.resources
+                                resources = []
+                                for resource in raw_resources:
+                                    resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                    # Convert AnyUrl to string if present
+                                    if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                        resource_data["uri"] = str(resource_data["uri"])
+                                    # Add default content if not present
+                                    if "content" not in resource_data:
+                                        resource_data["content"] = ""
+                                    resources.append(ResourceCreate.model_validate(resource_data))
+                                logger.info(f"Fetched {len(resources)} resources from gateway")
+                            except Exception as e:
+                                logger.warning(f"Failed to fetch resources: {e}")
+
+                        # Fetch prompts if supported
+                        prompts = []
+                        logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                        if capabilities.get("prompts"):
+                            try:
+                                response = await session.list_prompts()
+                                raw_prompts = response.prompts
+                                prompts = []
+                                for prompt in raw_prompts:
+                                    prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                                    # Add default template if not present
+                                    if "template" not in prompt_data:
+                                        prompt_data["template"] = ""
+                                    prompts.append(PromptCreate.model_validate(prompt_data))
+                                logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                            except Exception as e:
+                                logger.warning(f"Failed to fetch prompts: {e}")
+
+                return capabilities, tools, resources, prompts
 
             capabilities = {}
             tools = []
+            resources = []
+            prompts = []
             if transport.lower() == "sse":
-                capabilities, tools = await connect_to_sse_server(url, authentication)
+                capabilities, tools, resources, prompts = await connect_to_sse_server(url, authentication)
             elif transport.lower() == "streamablehttp":
-                capabilities, tools = await connect_to_streamablehttp_server(url, authentication)
+                capabilities, tools, resources, prompts = await connect_to_streamablehttp_server(url, authentication)
 
-            return capabilities, tools
+            return capabilities, tools, resources, prompts
         except Exception as e:
             logger.debug(f"Gateway initialization failed for {url}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to initialize gateway at {url}")

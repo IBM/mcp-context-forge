@@ -170,6 +170,8 @@ class TestGatewayService:
                     "tools": {"listChanged": True},
                 },
                 [],
+                [],
+                [],
             )
         )
         gateway_service._notify_gateway_added = AsyncMock()
@@ -270,6 +272,8 @@ class TestGatewayService:
                     "tools": {"listChanged": True},
                 },
                 [],
+                [],
+                [],
             )
         )
 
@@ -326,6 +330,8 @@ class TestGatewayService:
                     "tools": {"listChanged": True},
                 },
                 mock_tools,
+                [],
+                [],
             )
         )
         gateway_service._notify_gateway_added = AsyncMock()
@@ -387,7 +393,7 @@ class TestGatewayService:
         test_db.commit = Mock(side_effect=Exception("Database error"))
         test_db.rollback = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
 
         gateway_create = GatewayCreate(
             name="test_gateway",
@@ -446,7 +452,7 @@ class TestGatewayService:
         test_db.add = Mock()
         test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", "orig"))
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
 
         gateway_create = GatewayCreate(
             name="test_gateway",
@@ -470,7 +476,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_added = AsyncMock()
 
         mock_model = Mock()
@@ -502,7 +508,7 @@ class TestGatewayService:
         test_db.commit = Mock(side_effect=Exception("Commit failed"))
         test_db.rollback = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
 
         gateway_create = GatewayCreate(
             name="test_gateway",
@@ -541,7 +547,7 @@ class TestGatewayService:
 
         mock_tools = [ToolCreate(name="existing_tool", description="An existing tool", integration_type="REST", request_type="POST", input_schema={"type": "object"})]  # This tool already exists
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, mock_tools))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, mock_tools, [], []))
         gateway_service._notify_gateway_added = AsyncMock()
 
         mock_model = Mock()
@@ -914,7 +920,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         # Mock settings for auth value checking
@@ -942,7 +948,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(auth_type="")
@@ -984,7 +990,7 @@ class TestGatewayService:
             ToolCreate(name="new_tool", description="Brand new tool", integration_type="REST", request_type="POST", input_schema={"type": "object"}),
         ]
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, new_tools))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, new_tools, [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
         url = GatewayService.normalize_url("http://example.com/new-url")
         gateway_update = GatewayUpdate(url=url)
@@ -1136,7 +1142,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(transport="STREAMABLEHTTP")
@@ -1199,7 +1205,7 @@ class TestGatewayService:
         # Setup gateway service mocks
         gateway_service._notify_gateway_activated = AsyncMock()
         gateway_service._notify_gateway_deactivated = AsyncMock()
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
         tool_service_stub = MagicMock()
         tool_service_stub.toggle_tool_status = AsyncMock()
@@ -1235,7 +1241,7 @@ class TestGatewayService:
         # Setup gateway service mocks
         gateway_service._notify_gateway_activated = AsyncMock()
         gateway_service._notify_gateway_deactivated = AsyncMock()
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
         tool_service_stub = MagicMock()
         tool_service_stub.toggle_tool_status = AsyncMock()
@@ -1280,7 +1286,7 @@ class TestGatewayService:
 
         # Setup gateway service mocks
         gateway_service._notify_gateway_deactivated = AsyncMock()
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
         # Make tool toggle fail
         tool_service_stub = MagicMock()
