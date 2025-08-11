@@ -94,12 +94,14 @@ class TestGatewayServiceExtended:
             service._validate_gateway_url = AsyncMock(return_value=True)
 
             # Execute
-            capabilities, tools = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
+            capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
             assert len(tools) == 1
             assert isinstance(tools[0], ToolCreate)
+            assert resources == []
+            assert prompts == []
 
     @pytest.mark.asyncio
     async def test_initialize_gateway_streamablehttp_transport(self):
@@ -141,12 +143,14 @@ class TestGatewayServiceExtended:
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Execute
-            capabilities, tools = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
+            capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
 
             # Verify
             assert capabilities == {"protocolVersion": "0.1.0"}
             assert len(tools) == 1
             assert tools[0].request_type == "STREAMABLEHTTP"
+            assert resources == []
+            assert prompts == []
 
     @pytest.mark.asyncio
     async def test_initialize_gateway_connection_error(self):

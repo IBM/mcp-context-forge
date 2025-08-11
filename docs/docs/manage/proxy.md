@@ -15,7 +15,7 @@ sequenceDiagram
     participant Client
     participant Gateway as MCP Gateway
     participant MCP as MCP Server
-    
+
     Client->>Client: Generate JWT Token
     Client->>Gateway: Request + Bearer Token
     Gateway->>Gateway: Validate JWT
@@ -37,7 +37,7 @@ sequenceDiagram
     participant IDP as Identity Provider
     participant Gateway as MCP Gateway
     participant MCP as MCP Server
-    
+
     User->>Proxy: Request
     Proxy->>IDP: Validate Session
     IDP-->>Proxy: User Identity
@@ -92,9 +92,9 @@ graph LR
     OAuth -->|X-Auth-Request-User| Gateway[MCP Gateway]
     Gateway --> MCP1[MCP Server 1]
     Gateway --> MCP2[MCP Server 2]
-    
+
     OAuth -.->|OAuth Flow| IDP[Google/GitHub/etc]
-    
+
     style OAuth fill:#f9f,stroke:#333,stroke-width:2px
     style Gateway fill:#bbf,stroke:#333,stroke-width:2px
 ```
@@ -168,15 +168,15 @@ graph TB
             VS --> AuthZ[Authorization Policy]
             AuthZ --> Gateway[MCP Gateway Pod]
         end
-        
+
         Gateway --> MCP1[MCP Server Pod 1]
         Gateway --> MCP2[MCP Server Pod 2]
-        
+
         OIDC[OIDC Provider] -.->|JWT Validation| AuthZ
     end
-    
+
     User[User] -->|HTTPS + JWT| IG
-    
+
     style AuthZ fill:#f96,stroke:#333,stroke-width:2px
     style Gateway fill:#bbf,stroke:#333,stroke-width:2px
 ```
@@ -271,13 +271,13 @@ graph LR
         Plugin[OIDC Plugin] --> Route[Route]
         Route --> Service[Service]
     end
-    
+
     User[User] -->|HTTPS| Plugin
     Service -->|X-Consumer-Username| Gateway[MCP Gateway]
     Gateway --> MCP[MCP Servers]
-    
+
     Plugin -.->|OIDC Flow| IDP[Keycloak/Auth0]
-    
+
     style Plugin fill:#f9f,stroke:#333,stroke-width:2px
     style Gateway fill:#bbf,stroke:#333,stroke-width:2px
 ```
@@ -345,9 +345,9 @@ PROXY_USER_HEADER=Remote-User
 graph LR
     User[User] -->|HTTPS| CF[Cloudflare Edge]
     CF -->|Cf-Access-Jwt-Assertion| Gateway[MCP Gateway]
-    
+
     CF -.->|SAML/OIDC| IDP[Identity Provider]
-    
+
     style CF fill:#f90,stroke:#333,stroke-width:2px
     style Gateway fill:#bbf,stroke:#333,stroke-width:2px
 ```
@@ -389,15 +389,15 @@ graph TB
         WAF[WAF] --> LB[Load Balancer]
         LB --> Proxy[Auth Proxy]
     end
-    
+
     subgraph "Private Network"
         Proxy -->|Internal Only| Gateway[MCP Gateway]
         Gateway --> MCP1[MCP Server 1]
         Gateway --> MCP2[MCP Server 2]
     end
-    
+
     Internet[Internet] -->|HTTPS| WAF
-    
+
     style Proxy fill:#f96,stroke:#333,stroke-width:2px
     style Gateway fill:#bbf,stroke:#333,stroke-width:2px
 ```
@@ -465,7 +465,7 @@ Configure your load balancer to use these endpoints:
 
 ??? question "Getting 401 Unauthorized with proxy headers"
     **Check these settings:**
-    
+
     1. Verify `MCP_CLIENT_AUTH_ENABLED=false`
     2. Ensure `TRUST_PROXY_AUTH=true`
     3. Confirm header name matches `PROXY_USER_HEADER`
@@ -481,15 +481,15 @@ Configure your load balancer to use these endpoints:
     ```
     WARNING - MCP client authentication is disabled but trust_proxy_auth is not set
     ```
-    
+
     **Solution:** Set `TRUST_PROXY_AUTH=true` to acknowledge proxy authentication.
 
 ??? question "WebSocket connections fail"
     **Common causes:**
-    
+
     1. Proxy not passing headers on WebSocket upgrade
     2. Missing WebSocket support in proxy
-    
+
     **nginx fix:**
     ```nginx
     location /ws {
@@ -503,13 +503,13 @@ Configure your load balancer to use these endpoints:
 
 ??? question "How to handle multiple authentication methods?"
     **Use virtual servers with different auth configs:**
-    
+
     ```yaml
     # Server 1: Proxy auth
     - name: internal-server
       auth_mode: proxy
       proxy_header: X-Employee-Id
-    
+
     # Server 2: JWT auth
     - name: external-server
       auth_mode: jwt
@@ -526,17 +526,17 @@ graph LR
         A1[Document Current Auth] --> A2[Deploy Proxy]
         A2 --> A3[Test Proxy Auth]
     end
-    
+
     subgraph "Phase 2: Dual Mode"
         B1[Enable Both Auth] --> B2[Migrate Clients]
         B2 --> B3[Monitor Logs]
     end
-    
+
     subgraph "Phase 3: Proxy Only"
         C1[Disable JWT Auth] --> C2[Remove JWT Code]
         C2 --> C3[Document Change]
     end
-    
+
     A3 --> B1
     B3 --> C1
 ```
@@ -547,7 +547,7 @@ graph LR
     ```bash
     # Deploy auth proxy alongside existing setup
     docker-compose up -d oauth2-proxy
-    
+
     # Test proxy authentication
     curl -H "Authorization: Bearer $TOKEN" \
          http://localhost:4180/health
@@ -566,7 +566,7 @@ graph LR
     # Test JWT (existing)
     curl -H "Authorization: Bearer $JWT_TOKEN" \
          http://localhost:4444/tools
-    
+
     # Test proxy header (new)
     curl -H "X-Auth-Request-Email: user@example.com" \
          http://localhost:4444/tools
@@ -577,7 +577,7 @@ graph LR
     # Disable JWT authentication
     MCP_CLIENT_AUTH_ENABLED=false
     TRUST_PROXY_AUTH=true
-    
+
     # Restart gateway
     docker-compose restart mcp-gateway
     ```
@@ -594,12 +594,12 @@ graph LR
         Cache -->|Miss| IDP1[IDP]
         IDP1 --> Cache
     end
-    
+
     subgraph "Without Caching"
         Proxy2[Auth Proxy] --> IDP2[IDP]
         IDP2 --> Gateway2[MCP Gateway]
     end
-    
+
     style Cache fill:#9f9,stroke:#333,stroke-width:2px
 ```
 

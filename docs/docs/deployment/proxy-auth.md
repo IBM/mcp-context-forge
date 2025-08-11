@@ -61,7 +61,7 @@ services:
       OAUTH2_PROXY_UPSTREAMS: http://mcp-gateway:4444
       OAUTH2_PROXY_PASS_USER_HEADERS: true
       OAUTH2_PROXY_SET_XAUTHREQUEST: true
-    
+
   mcp-gateway:
     image: ghcr.io/contingentai/mcp-gateway:latest
     environment:
@@ -83,7 +83,7 @@ services:
       - ./authelia:/config
     environment:
       TZ: America/New_York
-  
+
   mcp-gateway:
     image: ghcr.io/contingentai/mcp-gateway:latest
     environment:
