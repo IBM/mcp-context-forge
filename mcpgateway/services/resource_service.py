@@ -51,12 +51,10 @@ from mcpgateway.utils.metrics_common import build_top_performers
 
 # Plugin support imports (conditional)
 try:
+    # First-Party
     from mcpgateway.plugins.framework.manager import PluginManager
-    from mcpgateway.plugins.framework.plugin_types import (
-        ResourcePreFetchPayload,
-        ResourcePostFetchPayload,
-        GlobalContext
-    )
+    from mcpgateway.plugins.framework.plugin_types import GlobalContext, ResourcePostFetchPayload, ResourcePreFetchPayload
+
     PLUGINS_AVAILABLE = True
 except ImportError:
     PLUGINS_AVAILABLE = False
@@ -113,12 +111,12 @@ class ResourceService:
         """Initialize the resource service."""
         self._event_subscribers: Dict[str, List[asyncio.Queue]] = {}
         self._template_cache: Dict[str, ResourceTemplate] = {}
-        
+
         # Initialize plugin manager if plugins are enabled
         self._plugin_manager = None
-        if PLUGINS_AVAILABLE and os.getenv('PLUGINS_ENABLED', 'false').lower() == 'true':
+        if PLUGINS_AVAILABLE and os.getenv("PLUGINS_ENABLED", "false").lower() == "true":
             try:
-                config_file = os.getenv('PLUGIN_CONFIG_FILE', 'plugins/config.yaml')
+                config_file = os.getenv("PLUGIN_CONFIG_FILE", "plugins/config.yaml")
                 self._plugin_manager = PluginManager(config_file)
                 logger.info(f"Plugin manager initialized for ResourceService with config: {config_file}")
             except Exception as e:
@@ -377,14 +375,7 @@ class ResourceService:
         resources = db.execute(query).scalars().all()
         return [self._convert_resource_to_read(r) for r in resources]
 
-    async def read_resource(
-        self, 
-        db: Session, 
-        uri: str,
-        request_id: Optional[str] = None,
-        user: Optional[str] = None,
-        server_id: Optional[str] = None
-    ) -> ResourceContent:
+    async def read_resource(self, db: Session, uri: str, request_id: Optional[str] = None, user: Optional[str] = None, server_id: Optional[str] = None) -> ResourceContent:
         """Read a resource's content with plugin hook support.
 
         Args:
@@ -416,43 +407,34 @@ class ResourceService:
         # Generate request ID if not provided
         if not request_id:
             request_id = str(uuid.uuid4())
-        
+
         original_uri = uri
         contexts = None
-        
+
         # Call pre-fetch hooks if plugin manager is available
         if self._plugin_manager and PLUGINS_AVAILABLE:
             # Initialize plugin manager if needed
             if not self._plugin_manager._initialized:
                 await self._plugin_manager.initialize()
-            
+
             # Create plugin context
-            global_context = GlobalContext(
-                request_id=request_id,
-                user=user,
-                server_id=server_id
-            )
-            
+            global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id)
+
             # Create pre-fetch payload
             pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
-            
+
             # Execute pre-fetch hooks
             try:
-                pre_result, contexts = await self._plugin_manager.resource_pre_fetch(
-                    pre_payload, 
-                    global_context
-                )
-                
+                pre_result, contexts = await self._plugin_manager.resource_pre_fetch(pre_payload, global_context)
+
                 # Check if we should continue
                 if not pre_result.continue_processing:
                     # Plugin blocked the resource fetch
                     if pre_result.violation:
                         logger.warning(f"Resource blocked by plugin: {pre_result.violation.reason} (URI: {uri})")
-                        raise ResourceError(
-                            f"Resource blocked: {pre_result.violation.reason}"
-                        )
+                        raise ResourceError(f"Resource blocked: {pre_result.violation.reason}")
                     raise ResourceError("Resource fetch blocked by plugin")
-                
+
                 # Use modified URI if plugin changed it
                 if pre_result.modified_payload:
                     uri = pre_result.modified_payload.uri
@@ -462,7 +444,7 @@ class ResourceService:
             except Exception as e:
                 logger.error(f"Error in resource pre-fetch hooks: {e}")
                 # Continue without plugin processing if there's an error
-        
+
         # Original resource fetching logic
         # Check for template
         if "{" in uri and "}" in uri:
@@ -481,30 +463,28 @@ class ResourceService:
                 raise ResourceNotFoundError(f"Resource not found: {uri}")
 
             content = resource.content
-        
+
         # Call post-fetch hooks if plugin manager is available
         if self._plugin_manager and PLUGINS_AVAILABLE:
             # Create post-fetch payload
             post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-            
+
             # Execute post-fetch hooks
             try:
                 post_result, _ = await self._plugin_manager.resource_post_fetch(
                     post_payload,
                     global_context,
-                    contexts  # Pass contexts from pre-fetch
+                    contexts,  # Pass contexts from pre-fetch
                 )
-                
+
                 # Check if we should continue
                 if not post_result.continue_processing:
                     # Plugin blocked the resource after fetching
                     if post_result.violation:
                         logger.warning(f"Resource content blocked by plugin: {post_result.violation.reason} (URI: {original_uri})")
-                        raise ResourceError(
-                            f"Resource content blocked: {post_result.violation.reason}"
-                        )
+                        raise ResourceError(f"Resource content blocked: {post_result.violation.reason}")
                     raise ResourceError("Resource content blocked by plugin")
-                
+
                 # Use modified content if plugin changed it
                 if post_result.modified_payload:
                     content = post_result.modified_payload.content
