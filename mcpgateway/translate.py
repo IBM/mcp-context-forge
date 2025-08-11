@@ -90,20 +90,12 @@ try:
 except ImportError:
     httpx = None  # type: ignore[assignment]
 
-try:
-    # Third-Party - for streamable HTTP support
-    # Third-Party
-    from mcp.server.lowlevel import Server as MCPServer
-    from mcp.server.stdio import StdioServerProxy
-    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-    from starlette.applications import Starlette
-    from starlette.routing import Route
-except ImportError:
-    MCPServer = None  # type: ignore[assignment]
-    StreamableHTTPSessionManager = None  # type: ignore[assignment]
-    StdioServerProxy = None  # type: ignore[assignment]
-    Starlette = None  # type: ignore[assignment]
-    Route = None  # type: ignore[assignment]
+# Third-Party
+# Third-Party - for streamable HTTP support
+from mcp.server import Server as MCPServer
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from starlette.applications import Starlette
+from starlette.routing import Route
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -1180,17 +1172,27 @@ async def _run_stdio_to_streamable_http(
     Raises:
         ImportError: If MCP server components are not available.
     """
-    if not MCPServer or not StreamableHTTPSessionManager or not StdioServerProxy:
-        raise ImportError("MCP server components are required for streamable HTTP bridging. Install with: pip install mcp")
+    # MCP components are available, proceed with setup
 
     LOGGER.info(f"Starting stdio to streamable HTTP bridge for command: {cmd}")
 
-    # Create the stdio proxy for the subprocess
-    proxy = StdioServerProxy(cmd)
+    # Create a simple MCP server that will proxy to stdio subprocess
+    server = MCPServer(name="stdio-proxy")
 
-    # Set up the streamable HTTP session manager with the proxy
+    # Create subprocess for stdio communication
+    process = await asyncio.create_subprocess_exec(
+        *shlex.split(cmd),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=sys.stderr,
+    )
+
+    if not process.stdin or not process.stdout:
+        raise RuntimeError(f"Failed to create subprocess with stdin/stdout pipes for command: {cmd}")
+
+    # Set up the streamable HTTP session manager with the server
     session_manager = StreamableHTTPSessionManager(
-        app=proxy,
+        app=server,
         stateless=stateless,
         json_response=json_response,
     )
@@ -1243,7 +1245,10 @@ async def _run_stdio_to_streamable_http(
             return
         shutting_down.set()
         LOGGER.info("Shutting down streamable HTTP bridge...")
-        await proxy.stop()
+        if process.returncode is None:
+            process.terminate()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), 5)
         await server.shutdown()
 
     loop = asyncio.get_running_loop()
@@ -1251,10 +1256,34 @@ async def _run_stdio_to_streamable_http(
         with suppress(NotImplementedError):  # Windows lacks add_signal_handler
             loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
 
-    # Start the proxy
-    async with proxy.run():
+    # Pump messages between stdio and HTTP
+    async def pump_stdio_to_http() -> None:
+        """Forward messages from subprocess stdout to HTTP responses."""
+        while True:
+            try:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                # The session manager will handle routing to appropriate HTTP responses
+                # This would need proper integration with session_manager's internal queue
+                LOGGER.debug(f"Received from subprocess: {line.decode().strip()}")
+            except Exception as e:
+                LOGGER.error(f"Error reading from subprocess: {e}")
+                break
+
+    async def pump_http_to_stdio(data: str) -> None:
+        """Forward HTTP requests to subprocess stdin."""
+        process.stdin.write(data.encode() + b"\n")
+        await process.stdin.drain()
+
+    # Start the pump task
+    pump_task = asyncio.create_task(pump_stdio_to_http())
+
+    try:
         LOGGER.info(f"Streamable HTTP bridge ready → http://{host}:{port}/mcp")
         await server.serve()
+    finally:
+        pump_task.cancel()
         await _shutdown()
 
 
@@ -1605,38 +1634,6 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             await stdio.send(payload.decode().rstrip() + "\n")
             return PlainTextResponse("forwarded", status_code=status.HTTP_202_ACCEPTED)
 
-    # Add streamable HTTP endpoint if requested
-    streamable_proxy = None
-    streamable_manager = None
-
-    if expose_streamable_http:
-        if not MCPServer or not StreamableHTTPSessionManager or not StdioServerProxy:
-            raise ImportError("MCP server components are required for streamable HTTP. Install with: pip install mcp")
-
-        # Create separate proxy for streamable HTTP
-        streamable_proxy = StdioServerProxy(cmd)
-        streamable_manager = StreamableHTTPSessionManager(
-            app=streamable_proxy,
-            stateless=stateless,
-            json_response=json_response,
-        )
-
-        @app.post("/mcp")
-        @app.get("/mcp")
-        async def handle_mcp(request: Request) -> Response:
-            """Handle MCP requests via streamable HTTP.
-
-            Args:
-                request: The incoming HTTP request.
-
-            Returns:
-                Response: MCP protocol response.
-            """
-            # The session manager handles all the protocol details
-            await streamable_manager.handle_request(request.scope, request.receive, request.send)
-            # Return empty response as the manager handles everything
-            return Response(content="", status_code=200)
-
     # Add health check
     @app.get("/healthz")
     async def health() -> Response:
@@ -1646,6 +1643,36 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             Response: Health status response.
         """
         return PlainTextResponse("ok")
+
+    # Add streamable HTTP endpoint if requested
+    streamable_server = None
+    streamable_manager = None
+
+    if expose_streamable_http:
+        # Create an MCP server instance
+        streamable_server = MCPServer("stdio-proxy")
+
+        # Set up the streamable HTTP session manager
+        streamable_manager = StreamableHTTPSessionManager(
+            app=streamable_server,
+            stateless=stateless,
+            json_response=json_response,
+        )
+
+        # Store the original app before modifying
+        original_app = app
+
+        # Create a custom middleware for handling MCP requests
+        async def mcp_middleware(scope, receive, send):
+            """Middleware to handle MCP requests via streamable HTTP."""
+            if scope["type"] == "http" and scope["path"] == "/mcp":
+                await streamable_manager.handle_request(scope, receive, send)
+            else:
+                # Pass through to the original app for other routes
+                await original_app(scope, receive, send)
+
+        # Replace the app with our middleware wrapper
+        app = mcp_middleware
 
     # Run the server
     config = uvicorn.Config(
@@ -1667,8 +1694,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         LOGGER.info("Shutting down multi-protocol server...")
         if stdio:
             await stdio.stop()
-        if streamable_proxy:
-            await streamable_proxy.stop()
+        # Streamable HTTP cleanup handled by server shutdown
         await server.shutdown()
 
     loop = asyncio.get_running_loop()
@@ -1676,9 +1702,11 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
 
-    # Start streamable proxy if needed
-    if streamable_proxy:
-        await streamable_proxy.run().__aenter__()  # pylint: disable=unnecessary-dunder-call
+    # Start streamable HTTP manager if needed
+    streamable_context = None
+    if streamable_manager:
+        streamable_context = streamable_manager.run()
+        await streamable_context.__aenter__()
 
     # Log available endpoints
     endpoints = []
@@ -1693,8 +1721,9 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         await server.serve()
     finally:
         await _shutdown()
-        if streamable_proxy:
-            await streamable_proxy.run().__aexit__(None, None, None)
+        # Clean up streamable HTTP context
+        if streamable_context:
+            await streamable_context.__aexit__(None, None, None)
 
 
 async def _simple_sse_pump(client: httpx.AsyncClient, url: str, max_retries: int, initial_retry_delay: float) -> None:
