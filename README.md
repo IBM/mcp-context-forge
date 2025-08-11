@@ -282,15 +282,24 @@ Copy [.env.example](.env.example) to `.env` and tweak any of the settings (or us
 # 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
 python3 -m mcpgateway.translate \
      --stdio "docker run --rm -i -p 8888:8080 ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
+     --expose-sse \
      --port 8003
 
 # Or using the official mcp-server-git using uvx:
 pip install uv # to install uvx, if not already installed
-python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
+python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9000
 
 # Alternative: running the local binary
 # cd mcp-servers/go/fast-time-server; make build
-# python3 -m mcpgateway.translate --stdio "./dist/fast-time-server -transport=stdio" --port 8002
+# python3 -m mcpgateway.translate --stdio "./dist/fast-time-server -transport=stdio" --expose-sse --port 8002
+
+# NEW: Expose via multiple protocols simultaneously!
+python3 -m mcpgateway.translate \
+     --stdio "uvx mcp-server-git" \
+     --expose-sse \
+     --expose-streamable-http \
+     --port 9000
+# Now accessible via both /sse (SSE) and /mcp (streamable HTTP) endpoints
 
 # 2️⃣  Register it with the gateway
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \

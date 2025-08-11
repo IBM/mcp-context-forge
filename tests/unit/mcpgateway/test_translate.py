@@ -457,14 +457,44 @@ def test_parse_args_ok(translate):
     assert (ns.stdio, ns.port) == ("echo hi", 9001)
 
 
-def test_parse_args_sse_ok(translate):
-    ns = translate._parse_args(["--sse", "http://up.example/sse"])
-    assert ns.sse and ns.stdio is None
+def test_parse_args_connect_sse_ok(translate):
+    ns = translate._parse_args(["--connect-sse", "http://up.example/sse"])
+    assert ns.connect_sse == "http://up.example/sse" and ns.stdio is None
 
 
-def test_parse_args_not_implemented(translate):
-    with pytest.raises(NotImplementedError):
-        translate._parse_args(["--streamableHttp", "on"])
+def test_parse_args_connect_streamable_http(translate):
+    """Test parsing connect-streamable-http arguments."""
+    ns = translate._parse_args(["--connect-streamable-http", "https://api.example.com/mcp"])
+    assert ns.connect_streamable_http == "https://api.example.com/mcp"
+    assert ns.stdio is None
+
+
+def test_parse_args_expose_protocols(translate):
+    """Test parsing expose protocol arguments."""
+    # Test expose-sse flag
+    ns = translate._parse_args(["--stdio", "uvx mcp-server-git", "--expose-sse"])
+    assert ns.stdio == "uvx mcp-server-git"
+    assert ns.expose_sse is True
+    assert ns.expose_streamable_http is False
+
+    # Test expose-streamable-http flag
+    ns = translate._parse_args(["--stdio", "uvx mcp-server-git", "--expose-streamable-http"])
+    assert ns.stdio == "uvx mcp-server-git"
+    assert ns.expose_sse is False
+    assert ns.expose_streamable_http is True
+
+    # Test both flags together
+    ns = translate._parse_args(["--stdio", "uvx mcp-server-git", "--expose-sse", "--expose-streamable-http"])
+    assert ns.stdio == "uvx mcp-server-git"
+    assert ns.expose_sse is True
+    assert ns.expose_streamable_http is True
+
+    # Test with stateless and jsonResponse flags for streamable HTTP
+    ns = translate._parse_args(["--stdio", "uvx mcp-server-git", "--expose-streamable-http", "--stateless", "--jsonResponse"])
+    assert ns.stdio == "uvx mcp-server-git"
+    assert ns.expose_streamable_http is True
+    assert ns.stateless is True
+    assert ns.jsonResponse is True
 
 
 def test_parse_args_with_cors(translate):
@@ -486,13 +516,13 @@ def test_parse_args_log_level(translate):
 
 
 def test_parse_args_missing_required(translate):
-    # Standard
-    pass
-
+    """Test that parse_args returns args even without required arguments."""
     argv = []
-    # Should exit with SystemExit due to missing required argument
-    with pytest.raises(SystemExit):
-        translate._parse_args(argv)
+    # Parse succeeds but returns None for main transport arguments
+    args = translate._parse_args(argv)
+    assert args.stdio is None
+    assert args.connect_sse is None
+    assert args.connect_streamable_http is None
 
 
 # ---------------------------------------------------------------------------#
@@ -965,7 +995,7 @@ def test_main_function_sse(monkeypatch, translate):
 
     monkeypatch.setattr(translate.asyncio, "run", _fake_asyncio_run)
 
-    translate.main(["--sse", "http://example.com/sse"])
+    translate.main(["--connect-sse", "http://example.com/sse"])
     assert "asyncio_run" in executed
 
 
@@ -1007,12 +1037,18 @@ def test_main_function_not_implemented_error(monkeypatch, translate, capsys):
     assert "Test error message" in captured.err
 
 
-def test_main_unknown_args(monkeypatch, translate):
+def test_main_unknown_args(monkeypatch, translate, capsys):
+    """Test main() function with no valid transport arguments."""
     monkeypatch.setattr(
-        translate, "_parse_args", lambda argv: type("Args", (), {"stdio": None, "sse": None, "streamableHttp": None, "logLevel": "info", "cors": None, "oauth2Bearer": None, "port": 8000})()
+        translate, "_parse_args", lambda argv: type("Args", (), {"stdio": None, "connect_sse": None, "connect_streamable_http": None, "expose_sse": False, "expose_streamable_http": False, "logLevel": "info", "cors": None, "oauth2Bearer": None, "port": 8000})()
     )
-    # Just call main and assert it returns None (does not raise)
-    assert translate.main(["--unknown"]) is None
+    # Should exit with error when no transport is specified
+    with pytest.raises(SystemExit) as exc_info:
+        translate.main(["--unknown"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "Must specify either --stdio" in captured.err
 
 
 # ---------------------------------------------------------------------------#

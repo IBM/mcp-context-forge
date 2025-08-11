@@ -13,6 +13,21 @@ Includes:
 - Response validation
 - Standard error codes
 - Error message formatting
+
+Examples:
+    >>> from mcpgateway.validation.jsonrpc import JSONRPCError, validate_request
+    >>> error = JSONRPCError(-32600, "Invalid Request")
+    >>> error.code
+    -32600
+    >>> error.message
+    'Invalid Request'
+    >>> validate_request({'jsonrpc': '2.0', 'method': 'test', 'id': 1})
+    >>> validate_request({'jsonrpc': '2.0', 'method': 'test'})  # notification
+    >>> try:
+    ...     validate_request({'method': 'test'})  # missing jsonrpc
+    ... except JSONRPCError as e:
+    ...     e.code
+    -32600
 """
 
 # Standard

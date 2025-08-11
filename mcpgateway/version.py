@@ -24,7 +24,7 @@ Environment variables containing the following patterns are automatically redact
 - Specific vars: BASIC_AUTH_USER, DATABASE_URL, REDIS_URL
 
 Examples:
-    >>> from mcpgateway.version import _is_secret, _sanitize_url
+    >>> from mcpgateway.version import _is_secret, _sanitize_url, START_TIME, HOSTNAME
     >>> _is_secret("DATABASE_PASSWORD")
     True
     >>> _is_secret("BASIC_AUTH_USER")
@@ -33,6 +33,18 @@ Examples:
     False
     >>> _sanitize_url("redis://user:pass@localhost:6379/0")
     'redis://user@localhost:6379/0'
+    >>> _sanitize_url("postgresql://admin:secret@db.example.com/mydb")
+    'postgresql://admin@db.example.com/mydb'
+    >>> _sanitize_url("https://example.com/path")
+    'https://example.com/path'
+    >>> isinstance(START_TIME, float)
+    True
+    >>> START_TIME > 0
+    True
+    >>> isinstance(HOSTNAME, str)
+    True
+    >>> len(HOSTNAME) > 0
+    True
 """
 
 # Future

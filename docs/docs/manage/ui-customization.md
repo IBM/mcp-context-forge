@@ -104,25 +104,25 @@ The Admin UI supports flexible panel arrangements with drag-and-drop functionali
 ```javascript
 // Enable panel customization
 const panelConfig = {
-    virtualServers: { 
-        visible: true, 
-        order: 1, 
-        width: 'full' 
+    virtualServers: {
+        visible: true,
+        order: 1,
+        width: 'full'
     },
-    tools: { 
-        visible: true, 
-        order: 2, 
-        width: 'half' 
+    tools: {
+        visible: true,
+        order: 2,
+        width: 'half'
     },
-    resources: { 
-        visible: true, 
-        order: 3, 
-        width: 'half' 
+    resources: {
+        visible: true,
+        order: 3,
+        width: 'half'
     },
-    prompts: { 
-        visible: false, 
-        order: 4, 
-        width: 'full' 
+    prompts: {
+        visible: false,
+        order: 4,
+        width: 'full'
     }
 };
 
@@ -227,8 +227,8 @@ function exportSettings() {
         layout: JSON.parse(localStorage.getItem('panel-layout')),
         widgets: JSON.parse(localStorage.getItem('dashboard-widgets'))
     };
-    
-    const blob = new Blob([JSON.stringify(settings, null, 2)], 
+
+    const blob = new Blob([JSON.stringify(settings, null, 2)],
                           { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -242,20 +242,20 @@ function importSettings(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
         const settings = JSON.parse(e.target.result);
-        
+
         // Apply imported settings
         if (settings.profile) {
-            localStorage.setItem('user-profile', 
+            localStorage.setItem('user-profile',
                                JSON.stringify(settings.profile));
         }
         if (settings.theme) {
             localStorage.setItem('theme', settings.theme);
         }
         if (settings.layout) {
-            localStorage.setItem('panel-layout', 
+            localStorage.setItem('panel-layout',
                                JSON.stringify(settings.layout));
         }
-        
+
         // Reload UI to apply changes
         location.reload();
     };
@@ -306,13 +306,13 @@ Enable high contrast for better visibility:
 [data-high-contrast="true"] {
     --color-contrast-ratio: 7:1;
     --border-width: 2px;
-    
+
     /* Stronger colors for better contrast */
     --color-primary: #0066cc;
     --color-secondary: #008844;
     --color-danger: #cc0000;
     --color-warning: #ff6600;
-    
+
     /* Enhanced borders */
     border-width: var(--border-width);
     outline-width: 2px;
@@ -333,7 +333,7 @@ const fontSizeOptions = {
 };
 
 function setFontSize(size) {
-    document.documentElement.style.setProperty('--base-font-size', 
+    document.documentElement.style.setProperty('--base-font-size',
                                                fontSizeOptions[size]);
     localStorage.setItem('font-size', size);
 }
@@ -353,7 +353,7 @@ document.addEventListener('keydown', (e) => {
         );
         // Handle focus management
     }
-    
+
     // Arrow key navigation in lists
     if (e.key.startsWith('Arrow')) {
         const currentItem = document.activeElement;
@@ -398,7 +398,7 @@ Optimize for touch interactions:
         min-width: 44px;
         padding: 12px;
     }
-    
+
     /* Increased spacing for touch targets */
     .tool-list > * {
         margin-bottom: 8px;
@@ -418,19 +418,19 @@ Responsive layout configurations:
         display: flex;
         flex-direction: column;
     }
-    
+
     /* Hide less critical sections */
     .desktop-only {
         display: none;
     }
-    
+
     /* Collapsible navigation */
     .nav-menu {
         position: fixed;
         transform: translateX(-100%);
         transition: transform 0.3s;
     }
-    
+
     .nav-menu.open {
         transform: translateX(0);
     }
@@ -515,12 +515,12 @@ Support for right-to-left languages:
     .panel-container {
         flex-direction: row-reverse;
     }
-    
+
     /* Adjust text alignment */
     .text-left {
         text-align: right;
     }
-    
+
     /* Mirror icons */
     .icon-arrow {
         transform: scaleX(-1);
@@ -541,20 +541,20 @@ class CustomPlugin {
         this.name = config.name;
         this.version = config.version;
     }
-    
+
     init() {
         // Add custom functionality
         this.registerCustomPanel();
         this.addCustomMenuItems();
     }
-    
+
     registerCustomPanel() {
         const panel = document.createElement('div');
         panel.className = 'custom-panel';
         panel.innerHTML = this.renderPanel();
         document.querySelector('#panels').appendChild(panel);
     }
-    
+
     renderPanel() {
         return `
             <div class="panel">
@@ -579,7 +579,7 @@ Integrate alternative CSS frameworks:
 
 ```html
 <!-- Replace Tailwind with Bootstrap -->
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" 
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
       rel="stylesheet">
 
 <!-- Custom Bootstrap theme -->
@@ -614,7 +614,7 @@ async def get_preferences(user = Depends(get_current_user)):
     }
 
 @ui_router.post("/preferences")
-async def save_preferences(preferences: dict, 
+async def save_preferences(preferences: dict,
                           user = Depends(get_current_user)):
     """Save user UI preferences"""
     user.preferences.update(preferences)
@@ -755,10 +755,10 @@ services:
       - ./custom-ui/admin.css:/app/mcpgateway/static/admin.css:ro
       # Or mount entire static directory
       # - ./custom-static:/app/mcpgateway/static:ro
-      
+
       # Mount data directory for persistence
       - ./data:/data
-      
+
       # Optional: Mount custom favicon and JavaScript
       - ./custom-ui/favicon.ico:/app/mcpgateway/static/favicon.ico:ro
       - ./custom-ui/admin.js:/app/mcpgateway/static/admin.js:ro
@@ -802,11 +802,11 @@ Example custom CSS file structure:
     --color-primary: #1e40af;
     --color-primary-hover: #1e3a8a;
     --color-secondary: #059669;
-    
+
     /* Custom spacing */
     --spacing-unit: 0.5rem;
     --border-radius: 0.375rem;
-    
+
     /* Custom fonts */
     --font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
@@ -1152,7 +1152,7 @@ ws.onopen = () => {
         type: 'auth',
         token: token
     }));
-    
+
     // Subscribe to updates
     ws.send(JSON.stringify({
         jsonrpc: '2.0',
@@ -1187,7 +1187,7 @@ class MCPGatewayClient {
         this.baseUrl = baseUrl;
         this.token = token;
     }
-    
+
     async fetchServers() {
         const response = await fetch(`${this.baseUrl}/servers`, {
             headers: {
@@ -1197,7 +1197,7 @@ class MCPGatewayClient {
         });
         return response.json();
     }
-    
+
     async createServer(config) {
         const response = await fetch(`${this.baseUrl}/servers`, {
             method: 'POST',
@@ -1209,17 +1209,17 @@ class MCPGatewayClient {
         });
         return response.json();
     }
-    
+
     connectSSE(serverId, onMessage) {
         const eventSource = new EventSource(
             `${this.baseUrl}/servers/${serverId}/sse`,
-            { 
-                headers: { 
-                    'Authorization': `Bearer ${this.token}` 
-                } 
+            {
+                headers: {
+                    'Authorization': `Bearer ${this.token}`
+                }
             }
         );
-        
+
         eventSource.onmessage = onMessage;
         return eventSource;
     }
@@ -1235,25 +1235,25 @@ export function ServerDashboard() {
         process.env.REACT_APP_GATEWAY_URL,
         process.env.REACT_APP_TOKEN
     );
-    
+
     useEffect(() => {
         // Load initial data
         client.fetchServers().then(setServers);
-        
+
         // Subscribe to real-time updates
         const sse = client.connectSSE('all', (event) => {
             const update = JSON.parse(event.data);
             if (update.type === 'server-update') {
-                setServers(prev => 
-                    prev.map(s => s.id === update.server.id 
+                setServers(prev =>
+                    prev.map(s => s.id === update.server.id
                         ? update.server : s)
                 );
             }
         });
-        
+
         return () => sse.close();
     }, []);
-    
+
     return (
         <div className="dashboard">
             <h1>MCP Gateway Servers</h1>
@@ -1282,7 +1282,7 @@ class MCPGatewayClient:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
-    
+
     def list_servers(self) -> List[Dict]:
         """List all virtual servers"""
         response = requests.get(
@@ -1291,7 +1291,7 @@ class MCPGatewayClient:
         )
         response.raise_for_status()
         return response.json()
-    
+
     def create_server(self, config: Dict) -> Dict:
         """Create a new virtual server"""
         response = requests.post(
@@ -1301,7 +1301,7 @@ class MCPGatewayClient:
         )
         response.raise_for_status()
         return response.json()
-    
+
     def invoke_tool(self, tool_id: str, params: Dict) -> Dict:
         """Invoke a tool"""
         response = requests.post(
@@ -1311,7 +1311,7 @@ class MCPGatewayClient:
         )
         response.raise_for_status()
         return response.json()
-    
+
     def stream_events(self, server_id: str = "all"):
         """Stream real-time events via SSE"""
         response = requests.get(
@@ -1329,11 +1329,11 @@ if __name__ == "__main__":
         base_url="http://localhost:4444",
         token="your-jwt-token"
     )
-    
+
     # List servers
     servers = client.list_servers()
     print(f"Found {len(servers)} servers")
-    
+
     # Stream events
     for event in client.stream_events():
         print(f"Event: {event.event}, Data: {event.data}")
@@ -1364,7 +1364,7 @@ export class MCPGatewaySDK {
         private baseUrl: string,
         private token: string
     ) {}
-    
+
     private async request<T>(
         path: string,
         options: RequestInit = {}
@@ -1377,31 +1377,31 @@ export class MCPGatewaySDK {
                 ...options.headers,
             },
         });
-        
+
         if (!response.ok) {
             throw new Error(`API Error: ${response.statusText}`);
         }
-        
+
         return response.json();
     }
-    
+
     async getServers(): Promise<Server[]> {
         return this.request<Server[]>('/servers');
     }
-    
+
     async createServer(config: Partial<Server>): Promise<Server> {
         return this.request<Server>('/servers', {
             method: 'POST',
             body: JSON.stringify(config),
         });
     }
-    
+
     async getTools(): Promise<Tool[]> {
         return this.request<Tool[]>('/tools');
     }
-    
+
     async invokeTool(
-        toolId: string, 
+        toolId: string,
         params: Record<string, any>
     ): Promise<any> {
         return this.request(`/tools/${toolId}/invoke`, {
@@ -1409,7 +1409,7 @@ export class MCPGatewaySDK {
             body: JSON.stringify({ params }),
         });
     }
-    
+
     subscribeToEvents(
         serverId: string = 'all',
         onMessage: (event: MessageEvent) => void
@@ -1422,13 +1422,13 @@ export class MCPGatewaySDK {
                 },
             }
         );
-        
+
         eventSource.onmessage = onMessage;
-        
+
         eventSource.onerror = (error) => {
             console.error('SSE Error:', error);
         };
-        
+
         return eventSource;
     }
 }
@@ -1459,7 +1459,7 @@ Handle rate limit responses:
 ```javascript
 async function apiCall(url, options) {
     const response = await fetch(url, options);
-    
+
     if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         console.log(`Rate limited. Retry after ${retryAfter} seconds`);
@@ -1467,7 +1467,7 @@ async function apiCall(url, options) {
         await sleep(retryAfter * 1000);
         return apiCall(url, options);
     }
-    
+
     return response;
 }
 ```

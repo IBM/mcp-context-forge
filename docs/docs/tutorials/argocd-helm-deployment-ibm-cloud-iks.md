@@ -1079,7 +1079,7 @@ wait
 Run the Kubernetes MCP Server and add it to the gateway:
 
 ```
-python3 -m mcpgateway.translate --stdio "npx -y kubernetes-mcp-server@latest" --port 8103
+python3 -m mcpgateway.translate --stdio "npx -y kubernetes-mcp-server@latest" --expose-sse --port 8103
 ```
 
 

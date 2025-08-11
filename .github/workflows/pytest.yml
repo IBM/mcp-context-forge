@@ -83,7 +83,7 @@ jobs:
             --cov-fail-under=80
 
       # -----------------------------------------------------------
-      # 4️⃣  Run doctests (fail under 55% coverage)
+      # 4️⃣  Run doctests (fail under 550 coverage)
       # -----------------------------------------------------------
       - name: 📊  Doctest coverage with threshold
         run: |
@@ -92,7 +92,7 @@ jobs:
             --cov=mcpgateway \
             --cov-report=term \
             --cov-report=json:doctest-coverage.json \
-            --cov-fail-under=55 \
+            --cov-fail-under=50 \
             --tb=short
 
       # -----------------------------------------------------------

@@ -97,6 +97,17 @@ class Settings(BaseSettings):
         >>> s4 = Settings(database_url='sqlite:///./test.db')
         >>> isinstance(s4.database_settings, dict)
         True
+        >>> s5 = Settings()
+        >>> s5.app_name
+        'MCP_Gateway'
+        >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either
+        True
+        >>> s5.port
+        4444
+        >>> s5.auth_required
+        True
+        >>> isinstance(s5.allowed_origins, set)
+        True
     """
 
     # Basic Settings

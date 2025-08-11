@@ -14,6 +14,22 @@ It includes:
   - Protocol initialization types
   - Sampling message types
   - Capability definitions
+
+Examples:
+    >>> from mcpgateway.models import Role, LogLevel, TextContent
+    >>> Role.USER.value
+    'user'
+    >>> Role.ASSISTANT.value
+    'assistant'
+    >>> LogLevel.ERROR.value
+    'error'
+    >>> LogLevel.INFO.value
+    'info'
+    >>> content = TextContent(type='text', text='Hello')
+    >>> content.text
+    'Hello'
+    >>> content.type
+    'text'
 """
 
 # Standard
@@ -31,6 +47,16 @@ class Role(str, Enum):
     Attributes:
         ASSISTANT (str): Indicates the assistant's role.
         USER (str): Indicates the user's role.
+
+    Examples:
+        >>> Role.USER.value
+        'user'
+        >>> Role.ASSISTANT.value
+        'assistant'
+        >>> Role.USER == 'user'
+        True
+        >>> list(Role)
+        [<Role.ASSISTANT: 'assistant'>, <Role.USER: 'user'>]
     """
 
     ASSISTANT = "assistant"
@@ -68,6 +94,15 @@ class TextContent(BaseModel):
     Attributes:
         type (Literal["text"]): The fixed content type identifier for text.
         text (str): The actual text message.
+
+    Examples:
+        >>> content = TextContent(type='text', text='Hello World')
+        >>> content.text
+        'Hello World'
+        >>> content.type
+        'text'
+        >>> content.model_dump()
+        {'type': 'text', 'text': 'Hello World'}
     """
 
     type: Literal["text"]
