@@ -883,10 +883,10 @@ class PluginManager:
 
         # Store context for potential post-fetch
         if result[1]:
-            self._context_store[global_context.request_id] = result[1]
+            self._context_store[global_context.request_id] = (result[1], time.time())
 
         # Periodic cleanup
-        await self._cleanup_contexts()
+        await self._cleanup_old_contexts()
 
         return result
 
