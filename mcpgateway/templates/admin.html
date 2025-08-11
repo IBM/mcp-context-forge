@@ -765,7 +765,13 @@
                   <td
                     class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
                   >
-                    {{ tool.description | replace('\n', '<br />') | safe }}
+                    {% set clean_desc = (tool.description or "") | replace('\n', ' ') | replace('\r', ' ') %}
+                    {% set refactor_desc = clean_desc | striptags | trim | escape %}
+                    {% if refactor_desc | length is greaterthan 120 %}
+                      {{ refactor_desc[:120] }}...
+                    {% else %}
+                      {{ refactor_desc }}
+                    {% endif %}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if tool.annotations %} {% if tool.annotations.title %}
