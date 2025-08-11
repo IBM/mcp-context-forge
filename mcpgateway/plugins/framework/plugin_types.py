@@ -196,6 +196,72 @@ ToolPreInvokeResult = PluginResult[ToolPreInvokePayload]
 ToolPostInvokeResult = PluginResult[ToolPostInvokePayload]
 
 
+class ResourcePreFetchPayload:
+    """A resource payload for a resource pre-fetch hook.
+
+    Examples:
+        >>> payload = ResourcePreFetchPayload("file:///data.txt")
+        >>> payload.uri
+        'file:///data.txt'
+        >>> payload2 = ResourcePreFetchPayload("http://api/data", {"Accept": "application/json"})
+        >>> payload2.metadata
+        {'Accept': 'application/json'}
+    """
+
+    def __init__(self, uri: str, metadata: Optional[dict[str, Any]] = None):
+        """Initialize a resource pre-fetch payload.
+
+        Args:
+            uri: The resource URI.
+            metadata: Optional metadata for the resource request.
+
+        Examples:
+            >>> p = ResourcePreFetchPayload("file:///docs/readme.md", {"version": "1.0"})
+            >>> p.uri
+            'file:///docs/readme.md'
+            >>> p.metadata["version"]
+            '1.0'
+        """
+        self.uri = uri
+        self.metadata = metadata or {}
+
+
+class ResourcePostFetchPayload:
+    """A resource payload for a resource post-fetch hook.
+
+    Examples:
+        >>> from mcpgateway.models import ResourceContent
+        >>> content = ResourceContent(type="resource", uri="file:///data.txt",
+        ...     text="Hello World")
+        >>> payload = ResourcePostFetchPayload("file:///data.txt", content)
+        >>> payload.uri
+        'file:///data.txt'
+        >>> payload.content.text
+        'Hello World'
+    """
+
+    def __init__(self, uri: str, content: Any):
+        """Initialize a resource post-fetch payload.
+
+        Args:
+            uri: The resource URI.
+            content: The fetched resource content.
+
+        Examples:
+            >>> from mcpgateway.models import ResourceContent
+            >>> resource_content = ResourceContent(type="resource", uri="test://resource", text="Test data")
+            >>> p = ResourcePostFetchPayload("test://resource", resource_content)
+            >>> p.uri
+            'test://resource'
+        """
+        self.uri = uri
+        self.content = content
+
+
+ResourcePreFetchResult = PluginResult[ResourcePreFetchPayload]
+ResourcePostFetchResult = PluginResult[ResourcePostFetchPayload]
+
+
 class GlobalContext:
     """The global context, which shared across all plugins.
 

@@ -1,0 +1,22 @@
+description: "Sample plugin demonstrating resource pre/post fetch hooks"
+author: "Mihai Criveti"
+version: "0.1.0"
+tags:
+  - resource
+  - filter
+  - example
+available_hooks:
+  - resource_pre_fetch
+  - resource_post_fetch
+default_config:
+  max_content_size: 1048576  # 1MB
+  allowed_protocols:
+    - file
+    - http
+    - https
+  blocked_domains: []
+  content_filters:
+    - pattern: "password"
+      replacement: "***"
+    - pattern: "secret"
+      replacement: "***"
