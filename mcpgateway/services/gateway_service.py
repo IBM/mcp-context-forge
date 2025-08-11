@@ -473,7 +473,7 @@ class GatewayService:
                     name=prompt.name,
                     description=prompt.description,
                     template=prompt.template if hasattr(prompt, "template") else "",
-                    arguments=prompt.arguments if hasattr(prompt, "arguments") else [],
+                    argument_schema={},  # Use argument_schema instead of arguments
                 )
                 for prompt in prompts
             ]
@@ -707,7 +707,7 @@ class GatewayService:
                                         name=prompt.name,
                                         description=prompt.description,
                                         template=prompt.template if hasattr(prompt, "template") else "",
-                                        arguments=prompt.arguments if hasattr(prompt, "arguments") else [],
+                                        argument_schema={},  # Use argument_schema instead of arguments
                                     )
                                 )
 
@@ -894,7 +894,7 @@ class GatewayService:
                                         name=prompt.name,
                                         description=prompt.description,
                                         template=prompt.template if hasattr(prompt, "template") else "",
-                                        arguments=prompt.arguments if hasattr(prompt, "arguments") else [],
+                                        argument_schema={},  # Use argument_schema instead of arguments
                                     )
                                 )
 
@@ -1388,6 +1388,7 @@ class GatewayService:
                             # Initialize the session
                             response = await session.initialize()
                             capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                            logger.debug(f"Server capabilities: {capabilities}")
 
                             response = await session.list_tools()
                             tools = response.tools
@@ -1399,12 +1400,16 @@ class GatewayService:
 
                             # Fetch resources if supported
                             resources = []
+                            logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
                             if capabilities.get("resources"):
                                 try:
                                     response = await session.list_resources()
                                     raw_resources = response.resources
                                     for resource in raw_resources:
                                         resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                        # Convert AnyUrl to string if present
+                                        if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                            resource_data["uri"] = str(resource_data["uri"])
                                         # Add default content if not present (will be fetched on demand)
                                         if "content" not in resource_data:
                                             resource_data["content"] = ""
@@ -1414,7 +1419,7 @@ class GatewayService:
                                             # If validation fails, create minimal resource
                                             resources.append(
                                                 ResourceCreate(
-                                                    uri=resource_data.get("uri", ""),
+                                                    uri=str(resource_data.get("uri", "")),
                                                     name=resource_data.get("name", ""),
                                                     description=resource_data.get("description"),
                                                     mime_type=resource_data.get("mime_type"),
@@ -1428,6 +1433,7 @@ class GatewayService:
 
                             # Fetch prompts if supported
                             prompts = []
+                            logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
                             if capabilities.get("prompts"):
                                 try:
                                     response = await session.list_prompts()
@@ -1446,7 +1452,6 @@ class GatewayService:
                                                     name=prompt_data.get("name", ""),
                                                     description=prompt_data.get("description"),
                                                     template=prompt_data.get("template", ""),
-                                                    arguments=prompt_data.get("arguments", []),
                                                 )
                                             )
                                     logger.info(f"Fetched {len(prompts)} prompts from gateway")
@@ -1483,6 +1488,7 @@ class GatewayService:
                         # Initialize the session
                         response = await session.initialize()
                         capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                        logger.debug(f"Server capabilities: {capabilities}")
 
                         response = await session.list_tools()
                         tools = response.tools
@@ -1496,24 +1502,39 @@ class GatewayService:
 
                         # Fetch resources if supported
                         resources = []
+                        logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
                         if capabilities.get("resources"):
                             try:
                                 response = await session.list_resources()
-                                resources = response.resources
-                                resources = [resource.model_dump(by_alias=True, exclude_none=True) for resource in resources]
-                                resources = [ResourceCreate.model_validate(resource) for resource in resources]
+                                raw_resources = response.resources
+                                resources = []
+                                for resource in raw_resources:
+                                    resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                    # Convert AnyUrl to string if present
+                                    if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                        resource_data["uri"] = str(resource_data["uri"])
+                                    # Add default content if not present
+                                    if "content" not in resource_data:
+                                        resource_data["content"] = ""
+                                    resources.append(ResourceCreate.model_validate(resource_data))
                                 logger.info(f"Fetched {len(resources)} resources from gateway")
                             except Exception as e:
                                 logger.warning(f"Failed to fetch resources: {e}")
 
                         # Fetch prompts if supported
                         prompts = []
+                        logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
                         if capabilities.get("prompts"):
                             try:
                                 response = await session.list_prompts()
-                                prompts = response.prompts
-                                prompts = [prompt.model_dump(by_alias=True, exclude_none=True) for prompt in prompts]
-                                prompts = [PromptCreate.model_validate(prompt) for prompt in prompts]
+                                raw_prompts = response.prompts
+                                prompts = []
+                                for prompt in raw_prompts:
+                                    prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                                    # Add default template if not present
+                                    if "template" not in prompt_data:
+                                        prompt_data["template"] = ""
+                                    prompts.append(PromptCreate.model_validate(prompt_data))
                                 logger.info(f"Fetched {len(prompts)} prompts from gateway")
                             except Exception as e:
                                 logger.warning(f"Failed to fetch prompts: {e}")

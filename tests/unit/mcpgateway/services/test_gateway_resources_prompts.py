@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for gateway service resource and prompt fetching functionality."""
 
 import pytest
@@ -100,7 +101,7 @@ class TestGatewayResourcesPrompts:
             assert isinstance(tools[0], ToolCreate)
             assert isinstance(resources[0], ResourceCreate)
             assert isinstance(prompts[0], PromptCreate)
-            
+
             # Verify the methods were called
             mock_session_instance.list_tools.assert_called_once()
             mock_session_instance.list_resources.assert_called_once()
@@ -168,7 +169,7 @@ class TestGatewayResourcesPrompts:
             assert len(tools) == 1
             assert resources == []
             assert prompts == []
-            
+
             # Verify list_resources and list_prompts were NOT called
             mock_session_instance.list_resources.assert_not_called()
             mock_session_instance.list_prompts.assert_not_called()
@@ -241,8 +242,7 @@ class TestGatewayResourcesPrompts:
             assert len(tools) == 1
             assert resources == []
             assert prompts == []
-            
+
             # Verify the methods were called despite failure
             mock_session_instance.list_resources.assert_called_once()
             mock_session_instance.list_prompts.assert_called_once()
-
