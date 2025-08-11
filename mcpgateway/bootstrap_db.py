@@ -17,6 +17,18 @@ The script:
 
 It is intended to be invoked via ``python3 -m mcpgateway.bootstrap_db`` or
 directly with ``python3 mcpgateway/bootstrap_db.py``.
+
+Examples:
+    >>> from mcpgateway.bootstrap_db import logging_service, logger
+    >>> logging_service is not None
+    True
+    >>> logger is not None
+    True
+    >>> hasattr(logger, 'info')
+    True
+    >>> from mcpgateway.bootstrap_db import Base
+    >>> hasattr(Base, 'metadata')
+    True
 """
 
 # Standard

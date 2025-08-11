@@ -34,6 +34,17 @@ Example usage:
     SecurityValidator.validate_name("my_tool", field_name="Tool Name")
     SecurityValidator.validate_url("https://example.com")
     SecurityValidator.validate_json_depth({...})
+
+Examples:
+    >>> from mcpgateway.validators import SecurityValidator
+    >>> SecurityValidator.sanitize_display_text('<b>Test</b>', 'test')
+    '&lt;b&gt;Test&lt;/b&gt;'
+    >>> SecurityValidator.validate_name('valid_name-123', 'test')
+    'valid_name-123'
+    >>> SecurityValidator.validate_identifier('my.test.id_123', 'test')
+    'my.test.id_123'
+    >>> SecurityValidator.validate_json_depth({'a': {'b': 1}})
+    >>> SecurityValidator.validate_json_depth({'a': 1})
 """
 
 # Standard
