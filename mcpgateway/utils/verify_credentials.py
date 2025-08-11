@@ -97,8 +97,8 @@ async def verify_jwt_token(token: str) -> dict:
         True
 
         Test expired token:
-        >>> import datetime
-        >>> expired_payload = {'sub': 'bob', 'exp': datetime.datetime.utcnow() - datetime.timedelta(hours=1)}
+        >>> from datetime import datetime, timezone, timedelta
+        >>> expired_payload = {'sub': 'bob', 'exp': datetime.now(timezone.utc) - timedelta(hours=1)}
         >>> expired_token = jwt.encode(expired_payload, 'secret', algorithm='HS256')
         >>> try:
         ...     asyncio.run(vc.verify_jwt_token(expired_token))

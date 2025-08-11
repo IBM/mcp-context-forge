@@ -183,6 +183,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if plugin_manager:
             await plugin_manager.initialize()
             logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
+
         await tool_service.initialize()
         await resource_service.initialize()
         await prompt_service.initialize()
