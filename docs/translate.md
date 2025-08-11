@@ -300,13 +300,13 @@ async function sendRequest(request) {
     if (!messageEndpoint) {
         throw new Error('No message endpoint yet');
     }
-    
+
     const response = await fetch(messageEndpoint, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(request)
     });
-    
+
     if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
     }
@@ -339,7 +339,7 @@ from typing import AsyncIterator
 async def connect_to_mcp_bridge(url: str):
     """Connect to MCP translate bridge via SSE."""
     message_endpoint = None
-    
+
     async with httpx.AsyncClient() as client:
         # Connect to SSE stream
         async with client.stream('GET', f'{url}/sse') as response:
@@ -349,15 +349,15 @@ async def connect_to_mcp_bridge(url: str):
                     continue
                 elif line.startswith('data: '):
                     data = line[6:]  # Remove 'data: ' prefix
-                    
+
                     if message_endpoint is None:
                         # First data is the endpoint URL
                         message_endpoint = data
                         print(f'Message endpoint: {message_endpoint}')
-                        
+
                         # Send initialization
                         await send_request(
-                            client, 
+                            client,
                             message_endpoint,
                             {
                                 'jsonrpc': '2.0',
