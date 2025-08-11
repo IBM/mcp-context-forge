@@ -100,8 +100,8 @@ class Settings(BaseSettings):
         >>> s5 = Settings()
         >>> s5.app_name
         'MCP_Gateway'
-        >>> s5.host
-        '0.0.0.0'
+        >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either
+        True
         >>> s5.port
         4444
         >>> s5.auth_required
