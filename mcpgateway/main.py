@@ -1770,10 +1770,12 @@ async def get_prompt(
     except Exception as ex:
         error_message = str(ex)
         logger.error(f"Could not retrieve prompt {name}: {ex}")
-        if isinstance(ex, (ValueError, PromptError)):
-            result = JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
-        elif isinstance(ex, PluginViolationError):
-            result = JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues", "details": ex.message}, status_code=422)
+        if isinstance(ex, PluginViolationError):
+            # Return the actual plugin violation message
+            result = JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
+        elif isinstance(ex, (ValueError, PromptError)):
+            # Return the actual error message
+            result = JSONResponse(content={"message": str(ex)}, status_code=422)
         else:
             raise
 

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for resource hook functionality in the plugin framework."""
 
 import asyncio
@@ -209,7 +210,7 @@ class TestResourceHooks:
 
 class TestResourceHookIntegration:
     """Test resource hook integration with plugin manager."""
-    
+
     @pytest.fixture(autouse=True)
     def clear_plugin_manager_state(self):
         """Clear the PluginManager shared state before and after each test."""
@@ -247,9 +248,9 @@ class TestResourceHookIntegration:
                 mock_ref.mode = PluginMode.ENFORCE
                 mock_ref.conditions = []
                 mock_ref.uuid = "test-uuid"
-                
+
                 MockRegistry.return_value.get_plugins_for_hook.return_value = [mock_ref]
-                
+
                 # Mock config
                 mock_config = MagicMock()
                 mock_config.plugin_settings = MagicMock()
@@ -294,9 +295,9 @@ class TestResourceHookIntegration:
                 mock_ref.mode = PluginMode.ENFORCE
                 mock_ref.conditions = []
                 mock_ref.uuid = "test-uuid"
-                
+
                 MockRegistry.return_value.get_plugins_for_hook.return_value = [mock_ref]
-                
+
                 # Mock config
                 mock_config = MagicMock()
                 mock_config.plugin_settings = MagicMock()
@@ -400,9 +401,9 @@ class TestResourceHookIntegration:
                 mock_ref.mode = PluginMode.PERMISSIVE
                 mock_ref.conditions = []
                 mock_ref.uuid = "test-uuid"
-                
+
                 MockRegistry.return_value.get_plugins_for_hook.return_value = [mock_ref]
-                
+
                 # Mock config
                 mock_config = MagicMock()
                 mock_config.plugin_settings = MagicMock()

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Integration tests for resource plugin functionality."""
 
 import os
@@ -49,11 +50,11 @@ class TestResourcePluginIntegration:
         pre_result = MagicMock()
         pre_result.continue_processing = True
         pre_result.modified_payload = None
-        
+
         post_result = MagicMock()
         post_result.continue_processing = True
         post_result.modified_payload = None
-        
+
         mock_manager.resource_pre_fetch = AsyncMock(
             return_value=(pre_result, {"context": "data"})
         )
@@ -285,11 +286,11 @@ class TestResourcePluginIntegration:
         pre_result = MagicMock()
         pre_result.continue_processing = True
         pre_result.modified_payload = None
-        
+
         post_result = MagicMock()
         post_result.continue_processing = True
         post_result.modified_payload = None
-        
+
         mock_manager.resource_pre_fetch = AsyncMock(
             return_value=(pre_result, {"context": "data"})
         )
@@ -323,7 +324,7 @@ class TestResourcePluginIntegration:
         pre_result = MagicMock()
         pre_result.continue_processing = True
         pre_result.modified_payload = None
-        
+
         mock_manager.resource_pre_fetch = AsyncMock(
             return_value=(pre_result, None)
         )

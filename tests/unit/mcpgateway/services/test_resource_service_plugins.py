@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for ResourceService plugin integration."""
 
 import os
@@ -335,7 +336,7 @@ class TestResourceServicePluginIntegration:
         mock_post_result = MagicMock()
         mock_post_result.continue_processing = True
         mock_post_result.modified_payload = None
-        
+
         mock_manager.resource_post_fetch = AsyncMock(
             return_value=(mock_post_result, None)
         )
