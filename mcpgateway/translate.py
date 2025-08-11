@@ -1216,8 +1216,9 @@ async def _run_stdio_to_streamable_http(
 
     # Add CORS middleware if specified
     if cors:
+        # Import here to avoid unnecessary dependency when CORS not used
         # Third-Party
-        from starlette.middleware.cors import CORSMiddleware as StarletteCORS
+        from starlette.middleware.cors import CORSMiddleware as StarletteCORS  # pylint: disable=import-outside-toplevel
 
         app.add_middleware(
             StarletteCORS,
@@ -1279,6 +1280,9 @@ async def _run_stdio_to_streamable_http(
         """
         process.stdin.write(data.encode() + b"\n")
         await process.stdin.drain()
+
+    # Note: pump_http_to_stdio will be used when stdio-to-HTTP bridge is fully implemented
+    _ = pump_http_to_stdio
 
     # Start the pump task
     pump_task = asyncio.create_task(pump_stdio_to_http())
@@ -1716,7 +1720,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     streamable_context = None
     if streamable_manager:
         streamable_context = streamable_manager.run()
-        await streamable_context.__aenter__()
+        await streamable_context.__aenter__()  # pylint: disable=unnecessary-dunder-call,no-member
 
     # Log available endpoints
     endpoints = []
@@ -1733,7 +1737,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         await _shutdown()
         # Clean up streamable HTTP context
         if streamable_context:
-            await streamable_context.__aexit__(None, None, None)
+            await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
 
 
 async def _simple_sse_pump(client: httpx.AsyncClient, url: str, max_retries: int, initial_retry_delay: float) -> None:
