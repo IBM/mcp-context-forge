@@ -1272,7 +1272,11 @@ async def _run_stdio_to_streamable_http(
                 break
 
     async def pump_http_to_stdio(data: str) -> None:
-        """Forward HTTP requests to subprocess stdin."""
+        """Forward HTTP requests to subprocess stdin.
+
+        Args:
+            data: The data string to send to subprocess stdin.
+        """
         process.stdin.write(data.encode() + b"\n")
         await process.stdin.drain()
 
@@ -1664,7 +1668,13 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
 
         # Create a custom middleware for handling MCP requests
         async def mcp_middleware(scope, receive, send):
-            """Middleware to handle MCP requests via streamable HTTP."""
+            """Middleware to handle MCP requests via streamable HTTP.
+
+            Args:
+                scope: ASGI scope dictionary.
+                receive: ASGI receive callable.
+                send: ASGI send callable.
+            """
             if scope["type"] == "http" and scope["path"] == "/mcp":
                 await streamable_manager.handle_request(scope, receive, send)
             else:
