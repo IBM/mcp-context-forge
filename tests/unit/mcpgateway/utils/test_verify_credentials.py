@@ -27,11 +27,12 @@ import base64
 from datetime import datetime, timedelta, timezone
 
 # Third-Party
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
 from fastapi.testclient import TestClient
 import jwt
 import pytest
+from unittest.mock import Mock
 
 # First-Party
 from mcpgateway.utils import verify_credentials as vc  # module under test
@@ -129,17 +130,21 @@ async def test_require_auth_header(monkeypatch):
 
     tok = _token({"uid": 7})
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=tok)
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
 
-    payload = await vc.require_auth(credentials=creds, jwt_token=None)
+    payload = await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
     assert payload["uid"] == 7
 
 
 @pytest.mark.asyncio
 async def test_require_auth_missing_token(monkeypatch):
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
 
     with pytest.raises(HTTPException) as exc:
-        await vc.require_auth(credentials=None, jwt_token=None)
+        await vc.require_auth(request=mock_request, credentials=None, jwt_token=None)
 
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert exc.value.detail == "Not authenticated"
@@ -214,12 +219,14 @@ async def test_require_auth_override_non_bearer(monkeypatch):
     # Arrange
     header = "Basic Zm9vOmJhcg=="  # non-Bearer scheme
     monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
 
     # Act
     result = await vc.require_auth_override(auth_header=header)
 
     # Assert
-    assert result == await vc.require_auth(credentials=None, jwt_token=None)
+    assert result == await vc.require_auth(request=mock_request, credentials=None, jwt_token=None)
 
 
 @pytest.mark.asyncio

@@ -97,7 +97,7 @@ from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.verify_credentials import require_auth, require_auth_override
+from mcpgateway.utils.verify_credentials import require_auth, require_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -2277,6 +2277,37 @@ async def websocket_endpoint(websocket: WebSocket):
         websocket: The WebSocket connection instance.
     """
     try:
+        # Authenticate WebSocket connection
+        if settings.mcp_client_auth_enabled or settings.auth_required:
+            # Extract auth from query params or headers
+            token = None
+            # Try to get token from query parameter
+            if "token" in websocket.query_params:
+                token = websocket.query_params["token"]
+            # Try to get token from Authorization header
+            elif "authorization" in websocket.headers:
+                auth_header = websocket.headers["authorization"]
+                if auth_header.startswith("Bearer "):
+                    token = auth_header[7:]
+
+            # Check for proxy auth if MCP client auth is disabled
+            if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
+                proxy_user = websocket.headers.get(settings.proxy_user_header)
+                if not proxy_user and not token:
+                    await websocket.close(code=1008, reason="Authentication required")
+                    return
+            elif settings.auth_required and not token:
+                await websocket.close(code=1008, reason="Authentication required")
+                return
+
+            # Verify JWT token if provided and MCP client auth is enabled
+            if token and settings.mcp_client_auth_enabled:
+                try:
+                    await verify_jwt_token(token)
+                except Exception:
+                    await websocket.close(code=1008, reason="Invalid authentication")
+                    return
+
         await websocket.accept()
         while True:
             try:
