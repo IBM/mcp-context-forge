@@ -42,8 +42,10 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import os
+import socket
 import tempfile
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING
+from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
@@ -248,6 +250,33 @@ class GatewayService:
         else:
             self._redis_client = None
 
+    @staticmethod
+    def normalize_url(url: str) -> str:
+        """
+        Normalize a URL by resolving the hostname to its IP address.
+
+        Args:
+            url (str): The URL to normalize.
+
+        Returns:
+            str: The normalized URL with the hostname replaced by its IP address.
+
+        Examples:
+            >>> GatewayService.normalize_url('http://localhost:8080/path')
+            'http://127.0.0.1:8080/path'
+        """
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        try:
+            ip = socket.gethostbyname(hostname)
+        except Exception:
+            ip = hostname
+        netloc = ip
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        normalized = parsed._replace(netloc=netloc)
+        return urlunparse(normalized)
+
     async def _validate_gateway_url(self, url: str, headers: dict, transport_type: str, timeout: Optional[int] = None):
         """
         Validate if the given URL is a live Server-Sent Events (SSE) endpoint.
@@ -393,6 +422,9 @@ class GatewayService:
                     gateway_id=existing_gateway.id,
                 )
 
+            # Normalize the gateway URL
+            normalized_url = self.normalize_url(gateway.url)
+
             auth_type = getattr(gateway, "auth_type", None)
             # Support multiple custom headers
             auth_value = getattr(gateway, "auth_value", {})
@@ -401,13 +433,13 @@ class GatewayService:
                 header_dict = {h["key"]: h["value"] for h in gateway.auth_headers if h.get("key")}
                 auth_value = encode_auth(header_dict)  # Encode the dict for consistency
 
-            capabilities, tools = await self._initialize_gateway(gateway.url, auth_value, gateway.transport)
+            capabilities, tools = await self._initialize_gateway(normalized_url, auth_value, gateway.transport)
 
             tools = [
                 DbTool(
                     original_name=tool.name,
                     original_name_slug=slugify(tool.name),
-                    url=gateway.url,
+                    url=normalized_url,
                     description=tool.description,
                     integration_type="MCP",  # Gateway-discovered tools are MCP type
                     request_type=tool.request_type,
@@ -425,7 +457,7 @@ class GatewayService:
             db_gateway = DbGateway(
                 name=gateway.name,
                 slug=slugify(gateway.name),
-                url=gateway.url,
+                url=normalized_url,
                 description=gateway.description,
                 tags=gateway.tags,
                 transport=gateway.transport,
@@ -566,7 +598,8 @@ class GatewayService:
                     gateway.name = gateway_update.name
                     gateway.slug = slugify(gateway_update.name)
                 if gateway_update.url is not None:
-                    gateway.url = gateway_update.url
+                    # Normalize the updated URL
+                    gateway.url = self.normalize_url(gateway_update.url)
                 if gateway_update.description is not None:
                     gateway.description = gateway_update.description
                 if gateway_update.transport is not None:

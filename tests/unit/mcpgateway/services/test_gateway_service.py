@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+import socket
 
 # Third-Party
 import httpx
@@ -172,12 +173,13 @@ class TestGatewayService:
             )
         )
         gateway_service._notify_gateway_added = AsyncMock()
-
+        normalize_url = lambda url: f"http://{socket.gethostbyname(url)}/gateway"
+        url = normalize_url("example.com")
         # Patch GatewayRead.model_validate to return a mock with .masked()
         mock_model = Mock()
         mock_model.masked.return_value = mock_model
         mock_model.name = "test_gateway"
-        mock_model.url = "http://example.com/gateway"
+        mock_model.url = url
         mock_model.description = "A test gateway"
 
         monkeypatch.setattr(
@@ -187,7 +189,7 @@ class TestGatewayService:
 
         gateway_create = GatewayCreate(
             name="test_gateway",
-            url="http://example.com/gateway",
+            url=url,
             description="A test gateway",
         )
 
@@ -202,9 +204,10 @@ class TestGatewayService:
         # `result` is the same GatewayCreate instance because we stubbed
         # GatewayRead.model_validate → just check its fields:
         assert result.name == "test_gateway"
-        assert result.url == "http://example.com/gateway"
+        expected_url = url
+        assert result.url == expected_url
         assert result.description == "A test gateway"
-
+        mock_model.url = expected_url
     @pytest.mark.asyncio
     async def test_register_gateway_name_conflict(self, gateway_service, mock_gateway, test_db):
         """Trying to register a gateway whose *name* already exists raises a conflict error."""
@@ -229,7 +232,6 @@ class TestGatewayService:
     async def test_register_gateway_connection_error(self, gateway_service, test_db):
         """Initial connection to the remote gateway fails and the error propagates."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
-
         # _initialize_gateway blows up before any DB work happens
         gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Failed to connect"))
 
@@ -257,28 +259,39 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
+        #url = f"http://{socket.gethostbyname('example.com')}/gateway"
+        normalize_url = lambda url: f"http://{socket.gethostbyname(url)}/gateway"
+        url = normalize_url("example.com")
+        print(f"url:{url}")
         gateway_service._initialize_gateway = AsyncMock(
             return_value=(
                 {
-                    "prompts": {"listChanged": True},
                     "resources": {"listChanged": True},
                     "tools": {"listChanged": True},
                 },
                 [],
             )
         )
+
         gateway_service._notify_gateway_added = AsyncMock()
 
         mock_model = Mock()
         mock_model.masked.return_value = mock_model
         mock_model.name = "auth_gateway"
+        mock_model.url = url
 
         monkeypatch.setattr(
             "mcpgateway.services.gateway_service.GatewayRead.model_validate",
             lambda x: mock_model,
         )
 
-        gateway_create = GatewayCreate(name="auth_gateway", url="http://example.com/gateway", description="Gateway with auth", auth_type="bearer", auth_token="test-token")
+        gateway_create = GatewayCreate(
+            name="auth_gateway",
+            url=url,
+            description="Gateway with auth",
+            auth_type="bearer",
+            auth_token="test-token"
+        )
 
         await gateway_service.register_gateway(test_db, gateway_create)
 
@@ -973,8 +986,8 @@ class TestGatewayService:
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, new_tools))
         gateway_service._notify_gateway_updated = AsyncMock()
-
-        gateway_update = GatewayUpdate(url="http://example.com/new-url")
+        url = GatewayService.normalize_url("http://example.com/new-url")
+        gateway_update = GatewayUpdate(url=url)
 
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
@@ -982,7 +995,7 @@ class TestGatewayService:
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             await gateway_service.update_gateway(test_db, 1, gateway_update)
 
-        assert mock_gateway.url == "http://example.com/new-url"
+        assert mock_gateway.url == url
         gateway_service._initialize_gateway.assert_called_once()
         test_db.commit.assert_called_once()
 
@@ -997,8 +1010,8 @@ class TestGatewayService:
         # Mock initialization failure
         gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("Connection failed"))
         gateway_service._notify_gateway_updated = AsyncMock()
-
-        gateway_update = GatewayUpdate(url="http://example.com/bad-url")
+        url = GatewayService.normalize_url("http://example.com/bad-url")
+        gateway_update = GatewayUpdate(url=url)
 
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
@@ -1007,7 +1020,7 @@ class TestGatewayService:
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             await gateway_service.update_gateway(test_db, 1, gateway_update)
 
-        assert mock_gateway.url == "http://example.com/bad-url"
+        assert mock_gateway.url == url
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
