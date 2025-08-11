@@ -25,7 +25,7 @@ pip install mcpgateway
 
 ```bash
 # Start the bridge to expose mcp-server-git at http://localhost:9000/sse
-python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
+python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9000
 
 # The server is now accessible at:
 # - SSE endpoint: http://localhost:9000/sse
@@ -76,10 +76,23 @@ python3 -m mcpgateway.translate [OPTIONS]
 
 ### Options
 
+#### Local Server Options
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--stdio <command>` | Command to run as stdio subprocess | Required* |
-| `--sse <url>` | Remote SSE endpoint URL to bridge | Required* |
+| `--stdio <command>` | Command to run as stdio subprocess | Required for local server |
+| `--expose-sse` | Expose stdio server via SSE protocol | False |
+| `--expose-streamable-http` | Expose stdio server via streamable HTTP | False |
+
+#### Remote Connection Options
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--connect-sse <url>` | Connect to remote SSE endpoint | None |
+| `--connect-streamable-http <url>` | Connect to remote streamable HTTP endpoint | None |
+| `--stdioCommand <cmd>` | Local command for remote connections | None |
+
+#### Configuration Options
+| Option | Description | Default |
+|--------|-------------|---------|
 | `--port <port>` | HTTP port to bind | 8000 |
 | `--host <host>` | Host interface to bind | 127.0.0.1 |
 | `--logLevel <level>` | Log level (debug, info, warning, error, critical) | info |
@@ -88,15 +101,16 @@ python3 -m mcpgateway.translate [OPTIONS]
 | `--ssePath <path>` | SSE endpoint path | /sse |
 | `--messagePath <path>` | Message endpoint path | /message |
 | `--keepAlive <seconds>` | Keep-alive interval in seconds | 30 |
-| `--stdioCommand <cmd>` | Command for SSE→stdio mode | None |
+| `--stateless` | Use stateless mode (streamable HTTP) | False |
+| `--jsonResponse` | Return JSON responses (streamable HTTP) | False |
 
-*One of `--stdio` or `--sse` is required (mutually exclusive)
+**Note**: You must specify either `--stdio` with exposure flags OR a remote connection option
 
 ### Examples
 
 #### Basic stdio to SSE Bridge
 ```bash
-python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
+python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9000
 ```
 
 #### With CORS Support
