@@ -19,12 +19,12 @@ version:
 author:
    type: str
    help: Who is the author?
-   default: "[[_copier_conf.git_user.name]]"
+   default: {{_copier_conf.git_user.name}}
 
-e-mail:
+email:
    type: str
-   help: What's the author's email?
-   default: "[[_copier_conf.git_user.email]]"
+   help: What's the author's e-mail?
+   default: {{_copier_conf.git_user.email}}
 
 description:
    type: str

@@ -77,7 +77,7 @@ def bootstrap(
     template_url: Annotated[str, typer.Option("--template_url", "-u", help="The URL to the plugins copier template.")] = DEFAULT_TEMPLATE_URL,
     vcs_ref: Annotated[str, typer.Option("--vcs_ref", "-r", help="The version control system tag/branch/commit to use for the template.")] = DEFAULT_VCS_REF,
     answers_file: Optional[Annotated[typer.FileText, typer.Option("--answers_file", "-a", help="The answers file to be used for bootstrapping.")]] = None,
-    defaults: Annotated[str, typer.Option("--vcs_ref", "-r", help="Bootstrap with defaults.")] = False,
+    defaults: Annotated[bool, typer.Option("--defaults", help="Bootstrap with defaults.")] = False,
 ):
     with Worker(
         src_path=template_url,
