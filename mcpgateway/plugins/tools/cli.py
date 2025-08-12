@@ -98,11 +98,12 @@ def install(
     for pkg in manifest.packages:
         typer.echo(f"Installing plugin package {pkg.package} from {pkg.repository}")
         repository = os.path.expandvars(pkg.repository)
+        cmd = installer.split(" ")
         if pkg.extras:
-            cmd = f"{installer} \"{pkg.package}[{','.join(pkg.extras)}]@{repository}\""
+            cmd.append(f"{pkg.package}[{','.join(pkg.extras)}]@{repository}")
         else:
-            cmd = f'{installer} "{pkg.package}@{repository}"'
-        subprocess.run(cmd, shell=True)
+            cmd.append(f"{pkg.package}@{repository}")
+        subprocess.run(cmd)
 
 
 @app.command(help="Builds an MCP server to serve plugins as tools")
@@ -113,8 +114,9 @@ def package(
     build_context: Annotated[Path, typer.Option("--build_context", "-p", help="The container builder context, specified as a path.")] = DEFAULT_BUILD_CONTEXT,
 ):
     typer.echo("Building MCP server image")
-    cmd = f"{builder} -f {containerfile} -t {image_tag} {build_context}"
-    subprocess.run(cmd, shell=True)
+    cmd = builder.split(" ")
+    cmd.extend(["-f", containerfile, "-t", image_tag, build_context])
+    subprocess.run(cmd)
 
 
 def main() -> None:  # noqa: D401 - imperative mood is fine here
