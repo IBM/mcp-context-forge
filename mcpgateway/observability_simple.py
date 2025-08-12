@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Simple OpenTelemetry instrumentation for MCP Gateway to send traces to Phoenix.
 This is the minimal implementation to get observability working.
@@ -9,10 +10,19 @@ import os
 
 # Third-Party
 from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import Status, StatusCode
+
+# Try to import gRPC exporter first, fall back to HTTP if not available
+try:
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+except ImportError:
+    try:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    except ImportError:
+        OTLPSpanExporter = None
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +33,11 @@ tracer = None
 def init_telemetry():
     """Initialize OpenTelemetry with Phoenix as the backend."""
     global tracer
+
+    # Check if exporter is available
+    if OTLPSpanExporter is None:
+        logger.info("OTLP exporter not available. Install with: pip install opentelemetry-exporter-otlp-proto-grpc")
+        return
 
     # Check if Phoenix endpoint is configured
     phoenix_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -59,6 +74,13 @@ def init_telemetry():
 def trace_operation(operation_name: str, attributes: dict = None):
     """
     Simple decorator to trace any operation.
+
+    Args:
+        operation_name: Name of the operation to trace (e.g., "tool.invoke").
+        attributes: Optional dictionary of attributes to add to the span.
+
+    Returns:
+        Decorator function that wraps the target function with tracing.
 
     Usage:
         @trace_operation("tool.invoke", {"tool.name": "calculator"})
@@ -100,6 +122,13 @@ def create_span(name: str, attributes: dict = None):
     """
     Create a span for manual instrumentation.
 
+    Args:
+        name: Name of the span to create (e.g., "database.query").
+        attributes: Optional dictionary of attributes to add to the span.
+
+    Returns:
+        Context manager that creates and manages the span lifecycle.
+
     Usage:
         with create_span("database.query", {"db.statement": "SELECT * FROM tools"}):
             # Your code here
@@ -134,6 +163,15 @@ def create_span(name: str, attributes: dict = None):
                 return self.span
 
             def __exit__(self, exc_type, exc_val, exc_tb):
+                # Record exception if one occurred
+                if exc_type is not None and self.span:
+                    self.span.record_exception(exc_val)
+                    self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
+                    self.span.set_attribute("error", True)
+                    self.span.set_attribute("error.type", exc_type.__name__)
+                    self.span.set_attribute("error.message", str(exc_val))
+                elif self.span:
+                    self.span.set_status(Status(StatusCode.OK))
                 return self.span_context.__exit__(exc_type, exc_val, exc_tb)
 
         return SpanWithAttributes(span_context, attributes)

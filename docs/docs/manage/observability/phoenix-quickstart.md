@@ -80,7 +80,7 @@ OTEL_TRACES_EXPORTER=otlp
 
 With the simple implementation, you can trace:
 - Tool invocations
-- Prompt rendering  
+- Prompt rendering
 - Resource fetching
 - Gateway federation calls
 - Any custom operations you add
