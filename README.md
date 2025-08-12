@@ -203,6 +203,16 @@ MCP Gateway is published on [PyPI](https://pypi.org/project/mcp-contextforge-gat
 
 ---
 
+**TLDR;**:
+(single command using [uv](https://docs.astral.sh/uv/))
+
+```bash
+BASIC_AUTH_PASSWORD=pass \
+MCPGATEWAY_UI_ENABLED=true \
+MCPGATEWAY_ADMIN_API_ENABLED=true \
+uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
+```
+
 <details>
 <summary><strong>📋 Prerequisites</strong></summary>
 
