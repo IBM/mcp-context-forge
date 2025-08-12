@@ -7,11 +7,8 @@ import pytest
 from sqlalchemy.orm import Session
 
 from mcpgateway.models import ResourceContent
-from mcpgateway.plugins.framework.plugin_types import (
-    GlobalContext,
+from mcpgateway.plugins.framework.models import (
     PluginViolation,
-    ResourcePostFetchResult,
-    ResourcePreFetchResult,
 )
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
 

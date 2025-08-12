@@ -15,9 +15,9 @@ import importlib
 from types import ModuleType
 
 # First-Party
-from mcpgateway.plugins.framework.models import PluginCondition
-from mcpgateway.plugins.framework.plugin_types import (
+from mcpgateway.plugins.framework.models import (
     GlobalContext,
+    PluginCondition,
     PromptPosthookPayload,
     PromptPrehookPayload,
     ResourcePostFetchPayload,
@@ -84,7 +84,7 @@ def matches(condition: PluginCondition, context: GlobalContext) -> bool:
 
     Examples:
         >>> from mcpgateway.plugins.framework.models import PluginCondition
-        >>> from mcpgateway.plugins.framework.plugin_types import GlobalContext
+        >>> from mcpgateway.plugins.framework.models import GlobalContext
         >>> cond = PluginCondition(server_ids={"srv1", "srv2"})
         >>> ctx = GlobalContext("req1", server_id="srv1")
         >>> matches(cond, ctx)
@@ -125,7 +125,7 @@ def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCon
 
     Examples:
         >>> from mcpgateway.plugins.framework.models import PluginCondition
-        >>> from mcpgateway.plugins.framework.plugin_types import PromptPrehookPayload, GlobalContext
+        >>> from mcpgateway.plugins.framework.models import PromptPrehookPayload, GlobalContext
         >>> payload = PromptPrehookPayload("greeting", {})
         >>> cond = PluginCondition(prompts={"greeting"})
         >>> ctx = GlobalContext("req1")
@@ -187,7 +187,7 @@ def pre_tool_matches(payload: ToolPreInvokePayload, conditions: list[PluginCondi
 
     Examples:
         >>> from mcpgateway.plugins.framework.models import PluginCondition
-        >>> from mcpgateway.plugins.framework.plugin_types import ToolPreInvokePayload, GlobalContext
+        >>> from mcpgateway.plugins.framework.models import ToolPreInvokePayload, GlobalContext
         >>> payload = ToolPreInvokePayload("calculator", {})
         >>> cond = PluginCondition(tools={"calculator"})
         >>> ctx = GlobalContext("req1")
@@ -224,7 +224,7 @@ def post_tool_matches(payload: ToolPostInvokePayload, conditions: list[PluginCon
 
     Examples:
         >>> from mcpgateway.plugins.framework.models import PluginCondition
-        >>> from mcpgateway.plugins.framework.plugin_types import ToolPostInvokePayload, GlobalContext
+        >>> from mcpgateway.plugins.framework.models import ToolPostInvokePayload, GlobalContext
         >>> payload = ToolPostInvokePayload("calculator", {"result": 8})
         >>> cond = PluginCondition(tools={"calculator"})
         >>> ctx = GlobalContext("req1")
@@ -261,7 +261,7 @@ def pre_resource_matches(payload: ResourcePreFetchPayload, conditions: list[Plug
 
     Examples:
         >>> from mcpgateway.plugins.framework.models import PluginCondition
-        >>> from mcpgateway.plugins.framework.plugin_types import ResourcePreFetchPayload, GlobalContext
+        >>> from mcpgateway.plugins.framework.models import ResourcePreFetchPayload, GlobalContext
         >>> payload = ResourcePreFetchPayload("file:///data.txt")
         >>> cond = PluginCondition(resources={"file:///data.txt"})
         >>> ctx = GlobalContext("req1")
@@ -298,7 +298,7 @@ def post_resource_matches(payload: ResourcePostFetchPayload, conditions: list[Pl
 
     Examples:
         >>> from mcpgateway.plugins.framework.models import PluginCondition
-        >>> from mcpgateway.plugins.framework.plugin_types import ResourcePostFetchPayload, GlobalContext
+        >>> from mcpgateway.plugins.framework.models import ResourcePostFetchPayload, GlobalContext
         >>> from mcpgateway.models import ResourceContent
         >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Test")
         >>> payload = ResourcePostFetchPayload("file:///data.txt", content)
