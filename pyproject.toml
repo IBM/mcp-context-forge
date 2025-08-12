@@ -47,6 +47,7 @@ maintainers = [
 # ----------------------------------------------------------------
 dependencies = [
     "alembic>=1.16.4",
+    "copier>=9.9.0",
     "cryptography>=45.0.6",
     "fastapi>=0.116.1",
     "filelock>=3.18.0",
@@ -67,6 +68,7 @@ dependencies = [
     "sqlalchemy>=2.0.43",
     "sse-starlette>=3.0.2",
     "starlette>=0.47.2",
+    "typer>=0.16.0",
     "uvicorn>=0.35.0",
     "zeroconf>=0.147.0",
 ]
@@ -223,6 +225,7 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 # --------------------------------------------------------------------
 [project.scripts]
 mcpgateway = "mcpgateway.cli:main"
+mcpplugins = "mcpgateway.plugins.tools.cli:main"
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration
