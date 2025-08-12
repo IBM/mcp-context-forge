@@ -3,7 +3,7 @@
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
+Authors: Teryl Taylor, Mihai Criveti
 
 This module implements the base plugin object.
 It supports pre and post hooks AI safety, security and business processing
@@ -209,6 +209,56 @@ class Plugin:
         """
         # Default pass-through implementation
         return ToolPostInvokeResult(continue_processing=True, modified_payload=payload)
+
+    async def resource_pre_fetch(self, payload, context):
+        """Plugin hook run before a resource is fetched.
+
+        Args:
+            payload: The resource payload to be analyzed.
+            context: Contextual information about the hook call.
+
+        Returns:
+            ResourcePreFetchResult with processing status and modified payload.
+
+        Examples:
+            >>> from mcpgateway.plugins.framework.plugin_types import ResourcePreFetchPayload, PluginContext, GlobalContext
+            >>> payload = ResourcePreFetchPayload("file:///data.txt", {"cache": True})
+            >>> context = PluginContext(GlobalContext(request_id="123"))
+            >>> # In async context:
+            >>> # result = await plugin.resource_pre_fetch(payload, context)
+        """
+        # Import here to avoid circular dependency
+        # First-Party
+        from mcpgateway.plugins.framework.plugin_types import ResourcePreFetchResult
+
+        # Default pass-through implementation
+        return ResourcePreFetchResult(continue_processing=True, modified_payload=payload)
+
+    async def resource_post_fetch(self, payload, context):
+        """Plugin hook run after a resource is fetched.
+
+        Args:
+            payload: The resource content payload to be analyzed.
+            context: Contextual information about the hook call.
+
+        Returns:
+            ResourcePostFetchResult with processing status and modified content.
+
+        Examples:
+            >>> from mcpgateway.plugins.framework.plugin_types import ResourcePostFetchPayload, PluginContext, GlobalContext
+            >>> from mcpgateway.models import ResourceContent
+            >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Data")
+            >>> payload = ResourcePostFetchPayload("file:///data.txt", content)
+            >>> context = PluginContext(GlobalContext(request_id="123"))
+            >>> # In async context:
+            >>> # result = await plugin.resource_post_fetch(payload, context)
+        """
+        # Import here to avoid circular dependency
+        # First-Party
+        from mcpgateway.plugins.framework.plugin_types import ResourcePostFetchResult
+
+        # Default pass-through implementation
+        return ResourcePostFetchResult(continue_processing=True, modified_payload=payload)
 
     async def shutdown(self) -> None:
         """Plugin cleanup code."""

@@ -3,7 +3,7 @@
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
+Authors: Teryl Taylor, Mihai Criveti
 
 This module implements the pydantic models associated with
 the base plugin layer including configurations, and contexts.
@@ -25,6 +25,8 @@ class HookType(str, Enum):
         prompt_post_fetch: The prompt post hook.
         tool_pre_invoke: The tool pre invoke hook.
         tool_post_invoke: The tool post invoke hook.
+        resource_pre_fetch: The resource pre fetch hook.
+        resource_post_fetch: The resource post fetch hook.
 
     Examples:
         >>> HookType.PROMPT_PRE_FETCH
@@ -33,14 +35,16 @@ class HookType(str, Enum):
         'prompt_pre_fetch'
         >>> HookType('prompt_post_fetch')
         <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>
-        >>> list(HookType)
-        [<HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>, <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>, <HookType.TOOL_PRE_INVOKE: 'tool_pre_invoke'>, <HookType.TOOL_POST_INVOKE: 'tool_post_invoke'>]
+        >>> list(HookType)  # doctest: +ELLIPSIS
+        [<HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>, <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>, <HookType.TOOL_PRE_INVOKE: 'tool_pre_invoke'>, <HookType.TOOL_POST_INVOKE: 'tool_post_invoke'>, ...]
     """
 
     PROMPT_PRE_FETCH = "prompt_pre_fetch"
     PROMPT_POST_FETCH = "prompt_post_fetch"
     TOOL_PRE_INVOKE = "tool_pre_invoke"
     TOOL_POST_INVOKE = "tool_post_invoke"
+    RESOURCE_PRE_FETCH = "resource_pre_fetch"
+    RESOURCE_POST_FETCH = "resource_post_fetch"
 
 
 class PluginMode(str, Enum):
@@ -117,6 +121,30 @@ class PromptTemplate(BaseModel):
     result: bool = False
 
 
+class ResourceTemplate(BaseModel):
+    """Resource Template.
+
+    Attributes:
+        resource_uri (str): the URI of the resource.
+        fields (Optional[list[str]]): the resource fields that are affected.
+        result (bool): analyze resource output if true.
+
+    Examples:
+        >>> resource = ResourceTemplate(resource_uri="file:///data.txt")
+        >>> resource.resource_uri
+        'file:///data.txt'
+        >>> resource.result
+        False
+        >>> resource2 = ResourceTemplate(resource_uri="http://api/data", fields=["content"], result=True)
+        >>> resource2.fields
+        ['content']
+    """
+
+    resource_uri: str
+    fields: Optional[list[str]] = None
+    result: bool = False
+
+
 class PluginCondition(BaseModel):
     """Conditions for when plugin should execute.
 
@@ -125,6 +153,7 @@ class PluginCondition(BaseModel):
         tenant_ids (Optional[set[str]]): set of tenant ids.
         tools (Optional[set[str]]): set of tool names.
         prompts (Optional[set[str]]): set of prompt names.
+        resources (Optional[set[str]]): set of resource URIs.
         user_pattern (Optional[list[str]]): list of user patterns.
         content_types (Optional[list[str]]): list of content types.
 
@@ -144,20 +173,23 @@ class PluginCondition(BaseModel):
     tenant_ids: Optional[set[str]] = None
     tools: Optional[set[str]] = None
     prompts: Optional[set[str]] = None
+    resources: Optional[set[str]] = None
     user_patterns: Optional[list[str]] = None
     content_types: Optional[list[str]] = None
 
 
 class AppliedTo(BaseModel):
-    """What tools/prompts and fields the plugin will be applied to.
+    """What tools/prompts/resources and fields the plugin will be applied to.
 
     Attributes:
         tools (Optional[list[ToolTemplate]]): tools and fields to be applied.
         prompts (Optional[list[PromptTemplate]]): prompts and fields to be applied.
+        resources (Optional[list[ResourceTemplate]]): resources and fields to be applied.
     """
 
     tools: Optional[list[ToolTemplate]] = None
     prompts: Optional[list[PromptTemplate]] = None
+    resources: Optional[list[ResourceTemplate]] = None
 
 
 class PluginConfig(BaseModel):
