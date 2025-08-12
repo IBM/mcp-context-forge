@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Simple OpenTelemetry instrumentation for MCP Gateway to send traces to Phoenix.
-This is the minimal implementation to get observability working.
+Vendor-agnostic OpenTelemetry instrumentation for MCP Gateway.
+Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 """
 
 # Standard
@@ -17,9 +17,11 @@ from opentelemetry.trace import Status, StatusCode
 
 # Try to import gRPC exporter first, fall back to HTTP if not available
 try:
+    # Third-Party
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 except ImportError:
     try:
+        # Third-Party
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     except ImportError:
         OTLPSpanExporter = None
@@ -31,39 +33,157 @@ tracer = None
 
 
 def init_telemetry():
-    """Initialize OpenTelemetry with Phoenix as the backend."""
+    """Initialize OpenTelemetry with configurable backend.
+
+    Supports multiple backends via environment variables:
+    - OTEL_TRACES_EXPORTER: Exporter type (otlp, jaeger, zipkin, console, none)
+    - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP endpoint (for otlp exporter)
+    - OTEL_EXPORTER_JAEGER_ENDPOINT: Jaeger endpoint (for jaeger exporter)
+    - OTEL_EXPORTER_ZIPKIN_ENDPOINT: Zipkin endpoint (for zipkin exporter)
+    - OTEL_ENABLE_OBSERVABILITY: Set to 'false' to disable completely
+    """
     global tracer
 
-    # Check if exporter is available
-    if OTLPSpanExporter is None:
+    # Check if observability is explicitly disabled
+    if os.getenv("OTEL_ENABLE_OBSERVABILITY", "true").lower() == "false":
+        logger.info("Observability disabled via OTEL_ENABLE_OBSERVABILITY=false")
+        return
+
+    # Get exporter type from environment
+    exporter_type = os.getenv("OTEL_TRACES_EXPORTER", "otlp").lower()
+
+    # Handle 'none' exporter (tracing disabled)
+    if exporter_type == "none":
+        logger.info("Tracing disabled via OTEL_TRACES_EXPORTER=none")
+        return
+
+    # Check if OTLP exporter is available for otlp type
+    if exporter_type == "otlp" and OTLPSpanExporter is None:
         logger.info("OTLP exporter not available. Install with: pip install opentelemetry-exporter-otlp-proto-grpc")
         return
 
-    # Check if Phoenix endpoint is configured
-    phoenix_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-    if not phoenix_endpoint:
-        logger.info("Phoenix endpoint not configured, skipping telemetry init")
-        return
+    # Check if endpoint is configured for otlp
+    if exporter_type == "otlp":
+        endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+        if not endpoint:
+            logger.info("OTLP endpoint not configured, skipping telemetry init")
+            return
 
     try:
         # Create resource attributes
-        resource = Resource.create({"service.name": os.getenv("OTEL_SERVICE_NAME", "mcp-gateway"), "service.version": "0.5.0", "deployment.environment": os.getenv("DEPLOYMENT_ENV", "docker")})
+        resource_attributes = {
+            "service.name": os.getenv("OTEL_SERVICE_NAME", "mcp-gateway"),
+            "service.version": "0.5.0",
+            "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
+        }
 
-        # Set up tracer provider
+        # Add custom resource attributes from environment
+        custom_attrs = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "")
+        if custom_attrs:
+            for attr in custom_attrs.split(","):
+                if "=" in attr:
+                    key, value = attr.split("=", 1)
+                    resource_attributes[key.strip()] = value.strip()
+
+        resource = Resource.create(resource_attributes)
+
+        # Set up tracer provider with optional sampling
         provider = TracerProvider(resource=resource)
         trace.set_tracer_provider(provider)
 
-        # Configure OTLP exporter to send to Phoenix
-        otlp_exporter = OTLPSpanExporter(endpoint=phoenix_endpoint, insecure=True)  # Phoenix in Docker doesn't use TLS
+        # Configure the appropriate exporter based on type
+        exporter = None
 
-        # Add batch processor for better performance
-        span_processor = BatchSpanProcessor(otlp_exporter)
-        provider.add_span_processor(span_processor)
+        if exporter_type == "otlp":
+            endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+            protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
+            headers = os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "")
+            insecure = os.getenv("OTEL_EXPORTER_OTLP_INSECURE", "true").lower() == "true"
+
+            # Parse headers if provided
+            header_dict = {}
+            if headers:
+                for header in headers.split(","):
+                    if "=" in header:
+                        key, value = header.split("=", 1)
+                        header_dict[key.strip()] = value.strip()
+
+            if protocol == "grpc" and OTLPSpanExporter:
+                exporter = OTLPSpanExporter(endpoint=endpoint, headers=header_dict or None, insecure=insecure)
+            else:
+                # Try HTTP exporter as fallback
+                try:
+                    # Third-Party
+                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HTTPExporter
+
+                    exporter = HTTPExporter(endpoint=endpoint.replace(":4317", ":4318") + "/v1/traces" if ":4317" in endpoint else endpoint, headers=header_dict or None)
+                except ImportError:
+                    logger.error("HTTP OTLP exporter not available")
+                    return
+
+        elif exporter_type == "jaeger":
+            try:
+                # Third-Party
+                from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+
+                endpoint = os.getenv("OTEL_EXPORTER_JAEGER_ENDPOINT", "http://localhost:14268/api/traces")
+                exporter = JaegerExporter(collector_endpoint=endpoint, username=os.getenv("OTEL_EXPORTER_JAEGER_USER"), password=os.getenv("OTEL_EXPORTER_JAEGER_PASSWORD"))
+            except ImportError:
+                logger.error("Jaeger exporter not available. Install with: pip install opentelemetry-exporter-jaeger")
+                return
+
+        elif exporter_type == "zipkin":
+            try:
+                # Third-Party
+                from opentelemetry.exporter.zipkin.json import ZipkinExporter
+
+                endpoint = os.getenv("OTEL_EXPORTER_ZIPKIN_ENDPOINT", "http://localhost:9411/api/v2/spans")
+                exporter = ZipkinExporter(endpoint=endpoint)
+            except ImportError:
+                logger.error("Zipkin exporter not available. Install with: pip install opentelemetry-exporter-zipkin")
+                return
+
+        elif exporter_type == "console":
+            # Console exporter for debugging
+            # Third-Party
+            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+            exporter = ConsoleSpanExporter()
+
+        else:
+            logger.warning(f"Unknown exporter type: {exporter_type}. Using console exporter.")
+            # Third-Party
+            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+            exporter = ConsoleSpanExporter()
+
+        if exporter:
+            # Add batch processor for better performance (except for console)
+            if exporter_type == "console":
+                # Third-Party
+                from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+                span_processor = SimpleSpanProcessor(exporter)
+            else:
+                span_processor = BatchSpanProcessor(
+                    exporter,
+                    max_queue_size=int(os.getenv("OTEL_BSP_MAX_QUEUE_SIZE", "2048")),
+                    max_export_batch_size=int(os.getenv("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "512")),
+                    schedule_delay_millis=int(os.getenv("OTEL_BSP_SCHEDULE_DELAY", "5000")),
+                )
+            provider.add_span_processor(span_processor)
 
         # Get tracer
-        tracer = trace.get_tracer("mcp-gateway")
+        tracer = trace.get_tracer("mcp-gateway", "0.5.0", schema_url="https://opentelemetry.io/schemas/1.11.0")
 
-        logger.info(f"✅ OpenTelemetry initialized with Phoenix endpoint: {phoenix_endpoint}")
+        logger.info(f"✅ OpenTelemetry initialized with {exporter_type} exporter")
+        if exporter_type == "otlp":
+            logger.info(f"   Endpoint: {os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT')}")
+        elif exporter_type == "jaeger":
+            logger.info(f"   Endpoint: {os.getenv('OTEL_EXPORTER_JAEGER_ENDPOINT', 'default')}")
+        elif exporter_type == "zipkin":
+            logger.info(f"   Endpoint: {os.getenv('OTEL_EXPORTER_ZIPKIN_ENDPOINT', 'default')}")
+
         return tracer
 
     except Exception as e:

@@ -97,6 +97,21 @@ observability = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
 ]
 
+# Additional observability backends (optional)
+observability-jaeger = [
+    "opentelemetry-exporter-jaeger>=1.20.0",
+]
+
+observability-zipkin = [
+    "opentelemetry-exporter-zipkin>=1.20.0",
+]
+
+observability-all = [
+    "mcp-contextforge-gateway[observability]>=0.5.0",
+    "opentelemetry-exporter-jaeger>=1.20.0",
+    "opentelemetry-exporter-zipkin>=1.20.0",
+]
+
 # Async SQLite Driver (optional)
 aiosqlite = [
     "aiosqlite>=0.21.0",
