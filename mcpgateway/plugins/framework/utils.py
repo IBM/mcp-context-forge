@@ -3,7 +3,7 @@
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
+Authors: Teryl Taylor, Mihai Criveti
 
 This module implements the utility functions associated with
 plugins.
@@ -16,7 +16,15 @@ from types import ModuleType
 
 # First-Party
 from mcpgateway.plugins.framework.models import PluginCondition
-from mcpgateway.plugins.framework.plugin_types import GlobalContext, PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework.plugin_types import (
+    GlobalContext,
+    PromptPosthookPayload,
+    PromptPrehookPayload,
+    ResourcePostFetchPayload,
+    ResourcePreFetchPayload,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
+)
 
 
 @cache  # noqa
@@ -232,6 +240,82 @@ def post_tool_matches(payload: ToolPostInvokePayload, conditions: list[PluginCon
             current_result = False
 
         if condition.tools and payload.name not in condition.tools:
+            current_result = False
+        if current_result:
+            return True
+        elif index < len(conditions) - 1:
+            current_result = True
+    return current_result
+
+
+def pre_resource_matches(payload: ResourcePreFetchPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+    """Check for a match on pre-resource hooks.
+
+    Args:
+        payload: the resource pre-fetch payload.
+        conditions: the conditions on the plugin that are required for execution.
+        context: the global context.
+
+    Returns:
+        True if the plugin matches criteria.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.models import PluginCondition
+        >>> from mcpgateway.plugins.framework.plugin_types import ResourcePreFetchPayload, GlobalContext
+        >>> payload = ResourcePreFetchPayload("file:///data.txt")
+        >>> cond = PluginCondition(resources={"file:///data.txt"})
+        >>> ctx = GlobalContext("req1")
+        >>> pre_resource_matches(payload, [cond], ctx)
+        True
+        >>> payload2 = ResourcePreFetchPayload("http://api/other")
+        >>> pre_resource_matches(payload2, [cond], ctx)
+        False
+    """
+    current_result = True
+    for index, condition in enumerate(conditions):
+        if not matches(condition, context):
+            current_result = False
+
+        if condition.resources and payload.uri not in condition.resources:
+            current_result = False
+        if current_result:
+            return True
+        elif index < len(conditions) - 1:
+            current_result = True
+    return current_result
+
+
+def post_resource_matches(payload: ResourcePostFetchPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+    """Check for a match on post-resource hooks.
+
+    Args:
+        payload: the resource post-fetch payload.
+        conditions: the conditions on the plugin that are required for execution.
+        context: the global context.
+
+    Returns:
+        True if the plugin matches criteria.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.models import PluginCondition
+        >>> from mcpgateway.plugins.framework.plugin_types import ResourcePostFetchPayload, GlobalContext
+        >>> from mcpgateway.models import ResourceContent
+        >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Test")
+        >>> payload = ResourcePostFetchPayload("file:///data.txt", content)
+        >>> cond = PluginCondition(resources={"file:///data.txt"})
+        >>> ctx = GlobalContext("req1")
+        >>> post_resource_matches(payload, [cond], ctx)
+        True
+        >>> payload2 = ResourcePostFetchPayload("http://api/other", content)
+        >>> post_resource_matches(payload2, [cond], ctx)
+        False
+    """
+    current_result = True
+    for index, condition in enumerate(conditions):
+        if not matches(condition, context):
+            current_result = False
+
+        if condition.resources and payload.uri not in condition.resources:
             current_result = False
         if current_result:
             return True

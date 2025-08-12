@@ -32,6 +32,7 @@ import json
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
+import uuid
 
 # Third-Party
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request, status, WebSocket, WebSocketDisconnect
@@ -1499,12 +1500,13 @@ async def create_resource(
 
 
 @resource_router.get("/{uri:path}")
-async def read_resource(uri: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ResourceContent:
+async def read_resource(uri: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ResourceContent:
     """
-    Read a resource by its URI.
+    Read a resource by its URI with plugin support.
 
     Args:
         uri (str): URI of the resource.
+        request (Request): FastAPI request object for context.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -1514,14 +1516,23 @@ async def read_resource(uri: str, db: Session = Depends(get_db), user: str = Dep
     Raises:
         HTTPException: If the resource cannot be found or read.
     """
-    logger.debug(f"User {user} requested resource with URI {uri}")
+    # Get request ID from headers or generate one
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    server_id = request.headers.get("X-Server-ID")
+
+    logger.debug(f"User {user} requested resource with URI {uri} (request_id: {request_id})")
+
+    # Check cache
     if cached := resource_cache.get(uri):
         return cached
+
     try:
-        content: ResourceContent = await resource_service.read_resource(db, uri)
+        # Call service with context for plugin support
+        content: ResourceContent = await resource_service.read_resource(db, uri, request_id=request_id, user=user, server_id=server_id)
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
     resource_cache.set(uri, content)
     return content
 
@@ -1759,10 +1770,12 @@ async def get_prompt(
     except Exception as ex:
         error_message = str(ex)
         logger.error(f"Could not retrieve prompt {name}: {ex}")
-        if isinstance(ex, (ValueError, PromptError)):
-            result = JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues"}, status_code=422)
-        elif isinstance(ex, PluginViolationError):
-            result = JSONResponse(content={"message": "Prompt execution arguments contains HTML tags that may cause security issues", "details": ex.message}, status_code=422)
+        if isinstance(ex, PluginViolationError):
+            # Return the actual plugin violation message
+            result = JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
+        elif isinstance(ex, (ValueError, PromptError)):
+            # Return the actual error message
+            result = JSONResponse(content={"message": str(ex)}, status_code=422)
         else:
             raise
 

@@ -76,6 +76,40 @@ plugins:
         - groundbreaking
         - revolutionary
 
+  # Resource Filter Plugin - Example of resource hooks
+  - name: "ResourceFilterExample"
+    kind: "plugins.resource_filter.resource_filter.ResourceFilterPlugin"
+    description: "Demonstrates resource pre/post fetch hooks for filtering and validation"
+    version: "1.0.0"
+    author: "MCP Gateway Team"
+    hooks: ["resource_pre_fetch", "resource_post_fetch"]
+    tags: ["resource", "filter", "security", "example"]
+    mode: "enforce"  # Block resources that violate rules
+    priority: 75
+    conditions: []  # Apply to all resources
+    config:
+      # Maximum content size in bytes (1MB)
+      max_content_size: 1048576
+      # Allowed protocols (removing file for testing)
+      allowed_protocols:
+        - test
+        - time
+        - timezone
+        - http
+        - https
+      # Blocked domains (examples)
+      blocked_domains:
+        - malicious.example.com
+        - untrusted-site.net
+      # Content filters to redact sensitive data
+      content_filters:
+        - pattern: "password\\s*[:=]\\s*\\S+"
+          replacement: "password: [REDACTED]"
+        - pattern: "api[_-]?key\\s*[:=]\\s*\\S+"
+          replacement: "api_key: [REDACTED]"
+        - pattern: "secret\\s*[:=]\\s*\\S+"
+          replacement: "secret: [REDACTED]"
+
 # Plugin directories to scan
 plugin_dirs:
   - "plugins/native"      # Built-in plugins
