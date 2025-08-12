@@ -1,0 +1,11 @@
+logging:
+  # Setting the log level: CRITICAL, ERROR, WARNING, INFO, DEBUG
+  level: 'DEBUG'
+plugin:
+  configpath: src/{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}
+  codepaths:
+    - src
+    - resources/plugins
+  plugins:
+    - {{plugin_name}}
+    - {{plugin_name}}Custom

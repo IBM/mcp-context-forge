@@ -1,0 +1,29 @@
+_exclude:
+    - CHANGELOG.md
+    - copier.yml
+    - .copier-answers.yml
+    - .git
+    - .github/CODEOWNERS
+
+plugin_name:
+   type: str
+   help:  What is the plugin name? (e.g., MyFilter)
+
+version:
+   type: str
+   help: What is the initial version of the plugin?
+   default: 0.1.0
+
+author:
+   type: str
+   help: Who is the author?
+   default: "[[_copier_conf.git_user.name]]"
+
+e-mail:
+   type: str
+   help: What's the author's email?
+   default: "[[_copier_conf.git_user.email]]"
+
+description:
+   type: str
+   help: Write a plugin description

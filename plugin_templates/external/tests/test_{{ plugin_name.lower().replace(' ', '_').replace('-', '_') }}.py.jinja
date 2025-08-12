@@ -1,0 +1,16 @@
+"""Tests for custom skill."""
+import pytest
+from skills_sdk.loader.plugin import PluginLoader
+
+
+@pytest.fixture(scope="module", autouse=True)
+def plugin():
+    """Loads plugin loader and skill."""
+    loader = PluginLoader("./resources/config/config.yaml")
+    plugin = loader.get_skill("{{ plugin_name }}")
+    yield plugin
+
+
+def test_{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}(plugin):
+    """Implement me."""
+    assert True
