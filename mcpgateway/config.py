@@ -378,6 +378,10 @@ class Settings(BaseSettings):
     plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
     plugin_config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file")
 
+    # Plugin CLI settings
+    plugins_cli_completion: bool = Field(default=False, description="Enable auto-completion for plugins CLI")
+    plugins_cli_markup_mode: str | None = Field(default=None, description="Set markup mode for plugins CLI")
+
     # Development
     dev_mode: bool = False
     reload: bool = False
