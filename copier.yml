@@ -1,9 +1,11 @@
-_exclude:
-    - CHANGELOG.md
-    - copier.yml
-    - .copier-answers.yml
-    - .git
-    - .github/CODEOWNERS
+_subdirectory: plugin_templates/{{template_type}}
+
+template_type:
+   type: str
+   help: What plugin template would you like to use?
+   choices:
+      - native
+      - external
 
 plugin_name:
    type: str
