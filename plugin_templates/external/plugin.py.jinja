@@ -1,0 +1,35 @@
+"""A custom skill."""
+from logging import Logger
+from typing import Dict
+
+from skills_sdk.plugins.core.base import BaseSkill
+from skills_sdk.plugins.core.schemas import TaskIn, TaskOut
+
+
+{% set class_parts = plugin_name.replace(' ', '_').replace('-','_').split('_') -%}
+{% if class_parts|length > 1 -%}
+{% set class_name = class_parts|map('capitalize')|join -%}
+{% else -%}
+{% set class_name = class_parts|join -%}
+{% endif -%}
+class {{ class_name }}(BaseSkill):
+    """A custom skill for ..."""
+
+    def __init__(self, logger: Logger, config: Dict = None) -> None:
+        """Entry init block for ...
+
+        Args:
+          logger: logger that the skill can make use of
+          config: the skill configuration
+        """
+        super().__init__(logger, config)
+
+    def run(self, input: TaskIn) -> TaskOut:
+        """Start the main skill flow.
+
+        Args:
+          input: input object for the skill
+        Returns:
+          The skill output
+        """
+        return TaskOut(output="implement me")

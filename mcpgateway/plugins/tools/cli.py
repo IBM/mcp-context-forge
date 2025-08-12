@@ -44,7 +44,9 @@ from mcpgateway.plugins.tools.models import InstallManifest
 # ---------------------------------------------------------------------------
 # Configuration defaults
 # ---------------------------------------------------------------------------
-DEFAULT_TEMPLATE_URL = "https://github.com/IBM/mcp-context-forge-plugins-template.git"
+DEFAULT_TEMPLATE_BASE_URL = "https://github.com/IBM/mcp-context-forge.git"
+DEFAULT_TEMPLATE_TYPE = "external"
+DEFAULT_TEMPLATE_URL = f"{DEFAULT_TEMPLATE_BASE_URL}::plugin_templates/{DEFAULT_TEMPLATE_TYPE}"
 DEFAULT_PROJECT_DIR = Path("./.")
 DEFAULT_INSTALL_MANIFEST = Path("plugins/install.yaml")
 DEFAULT_IMAGE_TAG = "contextforge-plugin:latest"  # TBD: add plugin name and version

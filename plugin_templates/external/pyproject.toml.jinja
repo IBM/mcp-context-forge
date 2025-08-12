@@ -1,0 +1,87 @@
+# ----------------------------------------------------------------
+# 💡 Build system (PEP 517)
+#     - setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     - wheel is needed by most build front-ends
+# ----------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ----------------------------------------------------------------
+# 📦 Core project metadata (PEP 621)
+# ----------------------------------------------------------------
+[project]
+name = "{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}"
+version = "{{version}}"
+description = "{{description}}"
+keywords = ["MCP","API","gateway","tools",
+  "agents","agentic ai","model context protocol","multi-agent","fastapi",
+  "json-rpc","sse","websocket","federation","security","authentication"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Framework :: AsyncIO",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+    "Topic :: Software Development :: Libraries :: Application Frameworks"
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+
+# SPDX licence expression + explicit licence file (PEP 639)
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+# Maintainers
+maintainers = [
+    {name = "{{author}}", email = "{{email}}"}
+]
+
+# Authors
+authors = [
+    {name = "{{author}}", email = "{{email}}"}
+]
+
+# URLs
+urls = [
+    Homepage = "https://ibm.github.io/mcp-context-forge/"
+    Documentation = "https://ibm.github.io/mcp-context-forge/"
+    Repository = "https://github.com/IBM/mcp-context-forge"
+    "Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
+    Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
+]
+
+# ----------------------------------------------------------------
+# Runtime dependencies
+# ----------------------------------------------------------------
+packages = [{include = "{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}", from = "src"}]
+dependencies = [
+    "chuk-mcp-runtime>=0.6.5",
+    "chuk-mcp[full]>=0.5.1",
+    "mcp-contextforge-gateway",
+]
+
+[tool.uv.sources]
+mcp-contextforge-gateway = { git = "https://github.com/terylt/mcp-context-forge.git", rev = "feat/remote_plugin_support" }
+
+# --------------------------------------------------------------------
+#  🔧 setuptools-specific configuration
+# --------------------------------------------------------------------
+[tool.setuptools]
+include-package-data = true          # ensure wheels include the data files
+
+# Automatic discovery: keep every package that starts with "{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}"
+[tool.setuptools.packages.find]
+include = ["{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}*"]
+exclude = ["tests*"]
+
+##  Runtime data files  ------------------------------------------------
+[tool.setuptools.package-data]
+{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }} = [
+  "resources/plugins/config.yaml",
+]
