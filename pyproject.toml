@@ -89,6 +89,13 @@ alembic = [
     "alembic>=1.16.4",
 ]
 
+# Observability dependencies (optional)
+observability = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
+
 # Async SQLite Driver (optional)
 aiosqlite = [
     "aiosqlite>=0.21.0",

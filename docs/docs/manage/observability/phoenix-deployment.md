@@ -49,7 +49,7 @@ docker-compose -f docker-compose.yml -f docker-compose.with-phoenix.yml down
 │   MCP Gateway   │────────▶│     Phoenix      │
 │                 │  OTLP   │                  │
 │  - Tools        │         │  - Traces        │
-│  - Prompts      │         │  - Metrics       │  
+│  - Prompts      │         │  - Metrics       │
 │  - Resources    │         │  - LLM Analytics │
 └─────────────────┘         └──────────────────┘
      Port 4444                   Port 6006

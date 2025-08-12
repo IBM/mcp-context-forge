@@ -1,5 +1,5 @@
 # Simplified Phoenix Observability Stack for MCP Gateway
-# 
+#
 # Usage:
 #   Start Phoenix: docker-compose -f docker-compose.phoenix-simple.yml up -d
 #   Stop Phoenix: docker-compose -f docker-compose.phoenix-simple.yml down
