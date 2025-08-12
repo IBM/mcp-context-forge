@@ -3061,8 +3061,8 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     form = await request.form()
 
     # Parse tags from comma-separated string
-    # tags_str = form.get("tags", "")
-    # tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = form.get("tags", "")
+    tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
         resource = ResourceCreate(
@@ -4260,7 +4260,7 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
             response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
-            response_body: Union[dict, str] = response.json()
+            response_body: Union[Dict[str, Any], str] = response.json()
         except json.JSONDecodeError:
             response_body = {"details": response.text}
 
