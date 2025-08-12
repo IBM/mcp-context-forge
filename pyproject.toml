@@ -121,7 +121,6 @@ dev = [
     "importchecker>=3.0",
     "interrogate>=1.7.0",
     "isort>=6.0.1",
-    "mutmut>=3.3.1",
     "mypy>=1.17.1",
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",

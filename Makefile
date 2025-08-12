@@ -328,7 +328,7 @@ mutmut-install:
 	@echo "📥 Installing mutmut..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q mutmut"
+		python3 -m pip install -q mutmut==3.3.1"
 
 mutmut-run: mutmut-install
 	@echo "🧬 Running mutation testing (sample mode - 20 mutants)..."
