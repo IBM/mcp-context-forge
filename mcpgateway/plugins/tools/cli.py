@@ -47,6 +47,8 @@ from mcpgateway.plugins.tools.models import InstallManifest
 DEFAULT_TEMPLATE_BASE_URL = "https://github.com/IBM/mcp-context-forge.git"
 DEFAULT_TEMPLATE_TYPE = "external"
 DEFAULT_TEMPLATE_URL = f"{DEFAULT_TEMPLATE_BASE_URL}::plugin_templates/{DEFAULT_TEMPLATE_TYPE}"
+DEFAULT_AUTHOR_NAME = "<changeme>"
+DEFAULT_AUTHOR_EMAIL = "<changeme>"
 DEFAULT_PROJECT_DIR = Path("./.")
 DEFAULT_INSTALL_MANIFEST = Path("plugins/install.yaml")
 DEFAULT_IMAGE_TAG = "contextforge-plugin:latest"  # TBD: add plugin name and version
@@ -67,6 +69,28 @@ app = typer.Typer(
     rich_markup_mode=None if markup_mode == "disabled" else markup_mode,
 )
 
+# ---------------------------------------------------------------------------
+# Utility functions
+# ---------------------------------------------------------------------------
+
+
+def git_user_name() -> str:
+    """Return the current git user name from the environment."""
+    try:
+        res = subprocess.run(["git", "config", "user.name"], stdout=subprocess.PIPE)
+        return res.stdout.strip().decode() if not res.returncode else DEFAULT_AUTHOR_NAME
+    except Exception:
+        return DEFAULT_AUTHOR_NAME
+
+
+def git_user_email() -> str:
+    """Return the current git user email from the environment."""
+    try:
+        res = subprocess.run(["git", "config", "user.email"], stdout=subprocess.PIPE)
+        return res.stdout.strip().decode() if not res.returncode else DEFAULT_AUTHOR_EMAIL
+    except Exception:
+        return DEFAULT_AUTHOR_EMAIL
+
 
 # ---------------------------------------------------------------------------
 # Commands
@@ -85,6 +109,7 @@ def bootstrap(
         answers_file=answers_file,
         defaults=defaults,
         vcs_ref=vcs_ref,
+        data={"default_author_name": git_user_name(), "default_author_email": git_user_email()},
     ) as worker:
         worker.run_copy()
 
