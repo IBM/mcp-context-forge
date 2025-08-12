@@ -457,3 +457,25 @@ project-excludes = [
     '**/\.mypy_cache/',
 ]
 python-version = "3.11.0"
+
+# --------------------------------------------------------------------
+#  🧬 mutmut - Mutation testing configuration
+# --------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = ["mcpgateway/"]
+tests_dir = ["tests/"]
+do_not_mutate = ["mcpgateway/services/gateway_service.py"]
+also_copy = ["plugins/", "pyproject.toml", "mutmut_config.py"]
+
+# --------------------------------------------------------------------
+#  📊 coverage - Code coverage configuration
+# --------------------------------------------------------------------
+[tool.coverage.run]
+source = ["mcpgateway"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__init__.py",
+    "*/alembic/*",
+    "*/version.py"
+]
