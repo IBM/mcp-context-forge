@@ -57,7 +57,6 @@ from typing import Any, Dict, Optional
 
 # Third-Party
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway import __version__
@@ -70,12 +69,12 @@ from mcpgateway.transports import SSETransport
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
 # Initialize logging service first
-logging_service = LoggingService()
+logging_service: LoggingService = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-tool_service = ToolService()
-resource_service = ResourceService()
-prompt_service = PromptService()
+tool_service: ToolService = ToolService()
+resource_service: ResourceService = ResourceService()
+prompt_service: PromptService = PromptService()
 
 try:
     # Third-Party
@@ -831,7 +830,7 @@ class SessionRegistry(SessionBackend):
             # if self._session_message:
             transport = self.get_session_sync(session_id)
             if transport:
-                message = json.loads(self._session_message.get("message"))
+                message = json.loads(str(self._session_message.get("message")))
                 await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
         elif self._backend == "redis":
