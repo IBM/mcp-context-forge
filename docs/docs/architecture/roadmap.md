@@ -80,7 +80,7 @@
     - ✅ [**#159**](https://github.com/IBM/mcp-context-forge/issues/159) - Add auto activation of mcp-server, when it goes up back again
     - ✅ [**#154**](https://github.com/IBM/mcp-context-forge/issues/154) - Export connection strings to various clients from UI and via API
     - ✅ [**#135**](https://github.com/IBM/mcp-context-forge/issues/135) - Dynamic UI Picker for Tool, Resource, and Prompt Associations
-    - ✅ [**#116**](https://github.com/IBM/mcp-context-forge/issues/116) - Namespace Composite Key & UUIDs for Tool Identity
+    - ✅ [**#116**](https://github.com/IBM/mcp-context-forge/issues/116) - Namespace Composite Key & UUIDs for Tool Identity
     - ✅ [**#100**](https://github.com/IBM/mcp-context-forge/issues/100) - Add path parameter or replace value in input payload for a REST API?
     - ✅ [**#26**](https://github.com/IBM/mcp-context-forge/issues/26) - Add dark mode toggle to Admin UI
 
@@ -259,7 +259,7 @@
     - [**#276**](https://github.com/IBM/mcp-context-forge/issues/276) - Terraform Module – "mcp-gateway-ibm-cloud" supporting IKS, ROKS, Code Engine targets
     - [**#275**](https://github.com/IBM/mcp-context-forge/issues/275) - Terraform Module - "mcp-gateway-gcp" supporting GKE and Cloud Run
     - [**#274**](https://github.com/IBM/mcp-context-forge/issues/274) - Terraform Module - "mcp-gateway-azure" supporting AKS and ACA
-    - [**#273**](https://github.com/IBM/mcp-context-forge/issues/273) - Terraform Module - “mcp-gateway-aws” supporting both EKS and ECS Fargate targets
+    - [**#273**](https://github.com/IBM/mcp-context-forge/issues/273) - Terraform Module - "mcp-gateway-aws" supporting both EKS and ECS Fargate targets
     - [**#258**](https://github.com/IBM/mcp-context-forge/issues/258) - Universal Client Retry Mechanisms with Exponential Backoff & Random Jitter
     - [**#234**](https://github.com/IBM/mcp-context-forge/issues/234) - 🧠 Protocol Feature – Elicitation Support (MCP 2025-06-18)
     - [**#217**](https://github.com/IBM/mcp-context-forge/issues/217) - Graceful-Shutdown Hooks for API & Worker Containers (SIGTERM-safe rollouts, DB-pool cleanup, zero-drop traffic)
@@ -276,7 +276,7 @@
     - ✅ [**#666**](https://github.com/IBM/mcp-context-forge/issues/666) - [Bug]:Vague/Unclear Error Message "Validation Failed" When Adding a REST Tool
     - ✅ [**#661**](https://github.com/IBM/mcp-context-forge/issues/661) - Database migration runs during doctest execution
     - ✅ [**#649**](https://github.com/IBM/mcp-context-forge/issues/649) - Duplicate Gateway Registration with Equivalent URLs Bypasses Uniqueness Check
-    - ✅ [**#646**](https://github.com/IBM/mcp-context-forge/issues/646) - MCP Server/Federated Gateway Registration is failing 
+    - ✅ [**#646**](https://github.com/IBM/mcp-context-forge/issues/646) - MCP Server/Federated Gateway Registration is failing
     - [**#625**](https://github.com/IBM/mcp-context-forge/issues/625) - Gateway unable to register gateway or call tools on MacOS
     - [**#587**](https://github.com/IBM/mcp-context-forge/issues/587) - REST Tool giving error
     - ✅ [**#557**](https://github.com/IBM/mcp-context-forge/issues/557) - [BUG] Cleanup tool descriptions to remove newlines and truncate text
@@ -338,7 +338,7 @@
     - [**#270**](https://github.com/IBM/mcp-context-forge/issues/270) - MCP Server – Go Implementation ("libreoffice-server")
     - [**#269**](https://github.com/IBM/mcp-context-forge/issues/269) - MCP Server - Go Implementation (LaTeX Service)
     - [**#263**](https://github.com/IBM/mcp-context-forge/issues/263) - Sample Agent - CrewAI Integration (OpenAI & A2A Endpoints)
-    - [**#262**](https://github.com/IBM/mcp-context-forge/issues/262) - Sample Agent - LangChain Integration (OpenAI & A2A Endpoints)
+    - [**#262**](https://github.com/IBM/mcp-context-forge/issues/262) - Sample Agent - LangChain Integration (OpenAI & A2A Endpoints)
     - [**#218**](https://github.com/IBM/mcp-context-forge/issues/218) - Prometheus Metrics Instrumentation using prometheus-fastapi-instrumentator
     - [**#186**](https://github.com/IBM/mcp-context-forge/issues/186) - Granular Configuration Export & Import (via UI & API)
     - [**#185**](https://github.com/IBM/mcp-context-forge/issues/185) - Portable Configuration Export & Import CLI (registry, virtual servers and prompts)
