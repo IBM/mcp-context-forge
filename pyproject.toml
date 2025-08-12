@@ -121,6 +121,7 @@ dev = [
     "importchecker>=3.0",
     "interrogate>=1.7.0",
     "isort>=6.0.1",
+    "mutmut>=3.3.1",
     "mypy>=1.17.1",
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",
@@ -457,3 +458,25 @@ project-excludes = [
     '**/\.mypy_cache/',
 ]
 python-version = "3.11.0"
+
+# --------------------------------------------------------------------
+#  🧬 mutmut - Mutation testing configuration
+# --------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = ["mcpgateway/"]
+tests_dir = ["tests/"]
+do_not_mutate = ["mcpgateway/services/gateway_service.py"]
+also_copy = ["plugins/", "pyproject.toml", "mutmut_config.py"]
+
+# --------------------------------------------------------------------
+#  📊 coverage - Code coverage configuration
+# --------------------------------------------------------------------
+[tool.coverage.run]
+source = ["mcpgateway"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__init__.py",
+    "*/alembic/*",
+    "*/version.py"
+]
