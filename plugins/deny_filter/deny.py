@@ -15,8 +15,13 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.models import PluginConfig, PluginViolation
-from mcpgateway.plugins.framework.plugin_types import PluginContext, PromptPrehookPayload, PromptPrehookResult
+from mcpgateway.plugins.framework.models import (
+    PluginConfig,
+    PluginContext,
+    PluginViolation,
+    PromptPrehookPayload,
+    PromptPrehookResult
+)
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

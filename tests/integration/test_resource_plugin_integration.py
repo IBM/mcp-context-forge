@@ -121,11 +121,9 @@ class TestResourcePluginIntegration:
             # Use real plugin manager but mock its initialization
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 from mcpgateway.plugins.framework.manager import PluginManager
-                from mcpgateway.plugins.framework.plugin_types import (
-                    GlobalContext,
+                from mcpgateway.plugins.framework.models import (
                     ResourcePostFetchPayload,
                     ResourcePostFetchResult,
-                    ResourcePreFetchPayload,
                     ResourcePreFetchResult,
                 )
 
@@ -136,6 +134,10 @@ class TestResourcePluginIntegration:
 
                     async def initialize(self):
                         self._initialized = True
+
+                    @property
+                    def initialized(self) -> bool:
+                        return self._initialized
 
                     async def resource_pre_fetch(self, payload, global_context):
                         # Allow test:// protocol
@@ -148,7 +150,7 @@ class TestResourcePluginIntegration:
                                 {"validated": True},
                             )
                         else:
-                            from mcpgateway.plugins.framework.plugin_types import PluginViolation
+                            from mcpgateway.plugins.framework.models import PluginViolation
 
                             return (
                                 ResourcePreFetchResult(

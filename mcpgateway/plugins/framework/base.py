@@ -20,9 +20,12 @@ federation_pre_sync / federation_post_sync - for gateway federation
 import uuid
 
 # First-Party
-from mcpgateway.plugins.framework.models import HookType, PluginCondition, PluginConfig, PluginMode
-from mcpgateway.plugins.framework.plugin_types import (
+from mcpgateway.plugins.framework.models import (
+    HookType,
+    PluginCondition,
+    PluginConfig,
     PluginContext,
+    PluginMode,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -138,6 +141,9 @@ class Plugin:
         """
         return self._config.conditions
 
+    async def initialize(self) -> None:
+        """Initialize the plugin."""
+
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """Plugin hook run before a prompt is retrieved and rendered.
 
@@ -177,18 +183,14 @@ class Plugin:
             payload: The tool payload to be analyzed.
             context: Contextual information about the hook call.
 
-        Returns:
-            ToolPreInvokeResult with processing status and modified payload.
-
-        Examples:
-            >>> from mcpgateway.plugins.framework.plugin_types import ToolPreInvokePayload, PluginContext, GlobalContext
-            >>> payload = ToolPreInvokePayload("calculator", {"operation": "add", "a": 5, "b": 3})
-            >>> context = PluginContext(GlobalContext(request_id="123"))
-            >>> # In async context:
-            >>> # result = await plugin.tool_pre_invoke(payload, context)
+        Raises:
+            NotImplementedError: needs to be implemented by sub class.
         """
-        # Default pass-through implementation
-        return ToolPreInvokeResult(continue_processing=True, modified_payload=payload)
+        raise NotImplementedError(
+            f"""'tool_pre_invoke' not implemented for plugin {self._config.name}
+                                    of plugin type {type(self)}
+                                   """
+        )
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Plugin hook run after a tool is invoked.
@@ -197,18 +199,14 @@ class Plugin:
             payload: The tool result payload to be analyzed.
             context: Contextual information about the hook call.
 
-        Returns:
-            ToolPostInvokeResult with processing status and modified result.
-
-        Examples:
-            >>> from mcpgateway.plugins.framework.plugin_types import ToolPostInvokePayload, PluginContext, GlobalContext
-            >>> payload = ToolPostInvokePayload("calculator", {"result": 8, "status": "success"})
-            >>> context = PluginContext(GlobalContext(request_id="123"))
-            >>> # In async context:
-            >>> # result = await plugin.tool_post_invoke(payload, context)
+        Raises:
+            NotImplementedError: needs to be implemented by sub class.
         """
-        # Default pass-through implementation
-        return ToolPostInvokeResult(continue_processing=True, modified_payload=payload)
+        raise NotImplementedError(
+            f"""'tool_post_invoke' not implemented for plugin {self._config.name}
+                                    of plugin type {type(self)}
+                                   """
+        )
 
     async def resource_pre_fetch(self, payload, context):
         """Plugin hook run before a resource is fetched.
@@ -217,22 +215,14 @@ class Plugin:
             payload: The resource payload to be analyzed.
             context: Contextual information about the hook call.
 
-        Returns:
-            ResourcePreFetchResult with processing status and modified payload.
-
-        Examples:
-            >>> from mcpgateway.plugins.framework.plugin_types import ResourcePreFetchPayload, PluginContext, GlobalContext
-            >>> payload = ResourcePreFetchPayload("file:///data.txt", {"cache": True})
-            >>> context = PluginContext(GlobalContext(request_id="123"))
-            >>> # In async context:
-            >>> # result = await plugin.resource_pre_fetch(payload, context)
+        Raises:
+            NotImplementedError: needs to be implemented by sub class.
         """
-        # Import here to avoid circular dependency
-        # First-Party
-        from mcpgateway.plugins.framework.plugin_types import ResourcePreFetchResult
-
-        # Default pass-through implementation
-        return ResourcePreFetchResult(continue_processing=True, modified_payload=payload)
+        raise NotImplementedError(
+            f"""'resource_pre_fetch' not implemented for plugin {self._config.name}
+                                    of plugin type {type(self)}
+                                   """
+        )
 
     async def resource_post_fetch(self, payload, context):
         """Plugin hook run after a resource is fetched.
@@ -241,24 +231,14 @@ class Plugin:
             payload: The resource content payload to be analyzed.
             context: Contextual information about the hook call.
 
-        Returns:
-            ResourcePostFetchResult with processing status and modified content.
-
-        Examples:
-            >>> from mcpgateway.plugins.framework.plugin_types import ResourcePostFetchPayload, PluginContext, GlobalContext
-            >>> from mcpgateway.models import ResourceContent
-            >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Data")
-            >>> payload = ResourcePostFetchPayload("file:///data.txt", content)
-            >>> context = PluginContext(GlobalContext(request_id="123"))
-            >>> # In async context:
-            >>> # result = await plugin.resource_post_fetch(payload, context)
+        Raises:
+            NotImplementedError: needs to be implemented by sub class.
         """
-        # Import here to avoid circular dependency
-        # First-Party
-        from mcpgateway.plugins.framework.plugin_types import ResourcePostFetchResult
-
-        # Default pass-through implementation
-        return ResourcePostFetchResult(continue_processing=True, modified_payload=payload)
+        raise NotImplementedError(
+            f"""'resource_post_fetch' not implemented for plugin {self._config.name}
+                                    of plugin type {type(self)}
+                                   """
+        )
 
     async def shutdown(self) -> None:
         """Plugin cleanup code."""

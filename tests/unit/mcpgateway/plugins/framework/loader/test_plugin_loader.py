@@ -15,8 +15,7 @@ import pytest
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
-from mcpgateway.plugins.framework.models import PluginMode
-from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginContext, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework.models import PluginContext, PluginMode, PromptPosthookPayload, PromptPrehookPayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig, SearchReplacePlugin
 from unittest.mock import patch, MagicMock
 
@@ -54,8 +53,8 @@ async def test_plugin_loader_load():
     assert plugin.hooks[0] == "prompt_pre_fetch"
     assert plugin.hooks[1] == "prompt_post_fetch"
 
-    context = PluginContext(GlobalContext(request_id="1", server_id="2"))
-    prompt = PromptPrehookPayload(name="test_prompt", args={"user": "What a crapshow!"})
+    context = PluginContext(request_id="1", server_id="2")
+    prompt = PromptPrehookPayload(name="test_prompt", args = {"user": "What a crapshow!"})
     result = await plugin.prompt_pre_fetch(prompt, context=context)
     assert len(result.modified_payload.args) == 1
     assert result.modified_payload.args["user"] == "What a yikesshow!"

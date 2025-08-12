@@ -14,6 +14,8 @@ from typing import cast, Type
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
+from mcpgateway.plugins.framework.constants import EXTERNAL_PLUGIN_TYPE
+from mcpgateway.plugins.framework.external.mcp import ExternalPlugin
 from mcpgateway.plugins.framework.models import PluginConfig
 from mcpgateway.plugins.framework.utils import import_module, parse_class_name
 
@@ -70,7 +72,10 @@ class PluginLoader(object):
             kind: The fully-qualified type of the plugin to be registered.
         """
         if kind not in self._plugin_types:
-            plugin_type = self.__get_plugin_type(kind)
+            if kind == EXTERNAL_PLUGIN_TYPE:
+                plugin_type = ExternalPlugin
+            else:
+                plugin_type = self.__get_plugin_type(kind)
             self._plugin_types[kind] = plugin_type
 
     async def load_and_instantiate_plugin(self, config: PluginConfig) -> Plugin | None:
@@ -86,7 +91,9 @@ class PluginLoader(object):
             self.__register_plugin_type(config.kind)
         plugin_type = self._plugin_types[config.kind]
         if plugin_type:
-            return plugin_type(config)
+            plugin = plugin_type(config)
+            await plugin.initialize()
+            return plugin
         return None
 
     async def shutdown(self) -> None:

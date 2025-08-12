@@ -20,9 +20,10 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.models import PluginConfig, PluginViolation
-from mcpgateway.plugins.framework.plugin_types import (
+from mcpgateway.plugins.framework.models import (
+    PluginConfig,
     PluginContext,
+    PluginViolation,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
