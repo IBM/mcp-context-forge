@@ -1982,7 +1982,7 @@ async def admin_edit_tool(
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> Union[RedirectResponse, JSONResponse]:
+) -> RedirectResponse:
     """
     Edit a tool via the admin UI.
 
@@ -2766,7 +2766,7 @@ async def admin_edit_gateway(
     try:
         # Parse tags from comma-separated string
         tags_str = form.get("tags", "")
-        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+        tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
         auth_headers_json = form.get("auth_headers")
@@ -2788,18 +2788,19 @@ async def admin_edit_gateway(
         else:
             passthrough_headers = None
 
-        gateway = GatewayUpdate(  # Pydantic validation happens here
-            name=form.get("name"),
-            url=form["url"],
-            description=form.get("description"),
+        gateway = GatewayUpdate(
+            name=str(form["name"]),
+            url=str(form["url"]),
+            description=str(form.get("description")),
             tags=tags,
-            transport=form.get("transport", "SSE"),
-            auth_type=form.get("auth_type", None),
-            auth_username=form.get("auth_username", None),
-            auth_password=form.get("auth_password", None),
-            auth_token=form.get("auth_token", None),
-            auth_header_key=form.get("auth_header_key", None),
-            auth_header_value=form.get("auth_header_value", None),
+            transport=str(form.get("transport", "SSE")),
+            auth_type=str(form.get("auth_type", "")),
+            auth_username=str(form.get("auth_username", "")),
+            auth_password=str(form.get("auth_password", "")),
+            auth_token=str(form.get("auth_token", "")),
+            auth_header_key=str(form.get("auth_header_key", "")),
+            auth_header_value=str(form.get("auth_header_value", "")),
+            auth_value=str(form.get("auth_value", "")),
             auth_headers=auth_headers if auth_headers else None,
             passthrough_headers=passthrough_headers,
         )
@@ -3060,17 +3061,17 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    # tags_str = form.get("tags", "")
+    # tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
         resource = ResourceCreate(
-            uri=form["uri"],
-            name=form["name"],
-            description=form.get("description"),
-            mime_type=form.get("mimeType"),
+            uri=str(form["uri"]),
+            name=str(form["name"]),
+            description=str(form.get("description", "")),
+            mime_type=str(form.get("mimeType", "")),
             template=form.get("template"),  # defaults to None if not provided
-            content=form["content"],
+            content=str(form["content"]),
             tags=tags,
         )
         await resource_service.register_resource(db, resource)
@@ -3187,14 +3188,15 @@ async def admin_edit_resource(
 
     # Parse tags from comma-separated string
     tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
         resource = ResourceUpdate(
-            name=form["name"],
-            description=form.get("description"),
-            mime_type=form.get("mimeType"),
-            content=form["content"],
+            name=str(form["name"]),
+            description=str(form.get("description")),
+            mime_type=str(form.get("mimeType")),
+            content=str(form["content"]),
+            template=form.get("template"),
             tags=tags,
         )
         await resource_service.update_resource(db, uri, resource)
@@ -3544,7 +3546,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
 
     # Parse tags from comma-separated string
     tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
         args_json = form.get("arguments") or "[]"
@@ -3652,8 +3654,11 @@ async def admin_edit_prompt(
     tags_str = form.get("tags", "")
     tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
-    args_json = form.get("arguments") or "[]"
+    args_json: str = str(form.get("arguments")) or "[]"
     arguments = json.loads(args_json)
+    # Parse tags from comma-separated string
+    tags_str = form.get("tags", "")
+    tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
         prompt = PromptUpdate(
             name=form["name"],
@@ -3849,8 +3854,8 @@ async def admin_toggle_prompt(
     """
     logger.debug(f"User {user} is toggling prompt ID {prompt_id}")
     form = await request.form()
-    activate = form.get("activate", "true").lower() == "true"
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    activate: bool = str(form.get("activate", "true")).lower() == "true"
+    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     try:
         await prompt_service.toggle_prompt_status(db, prompt_id, activate)
     except Exception as e:
@@ -4250,9 +4255,9 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
     full_url = full_url.rstrip("/")
     logger.debug(f"User {user} testing server at {request.base_url}.")
     try:
-        start_time = time.monotonic()
+        start_time: float = time.monotonic()
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
-            response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
+            response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
             response_body: Union[dict, str] = response.json()
@@ -4319,9 +4324,9 @@ async def admin_list_tags(
         tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
 
         # Convert to list of dicts for admin UI
-        result = []
+        result: List[Dict[str, Any]] = []
         for tag in tags:
-            tag_dict = {
+            tag_dict: Dict[str, Any] = {
                 "name": tag.name,
                 "tools": tag.stats.tools,
                 "resources": tag.stats.resources,

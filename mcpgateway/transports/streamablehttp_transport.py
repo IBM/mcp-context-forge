@@ -65,7 +65,7 @@ logger = logging_service.get_logger(__name__)
 tool_service = ToolService()
 mcp_app = Server("mcp-streamable-http-stateless")
 
-server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default=None)
+server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 request_headers_var = contextvars.ContextVar("request_headers", default={})
 
 # ------------------------------ Event store ------------------------------
