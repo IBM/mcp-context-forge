@@ -340,7 +340,7 @@ def _database_version() -> tuple[str, bool]:
         "postgresql": "SELECT current_setting('server_version');",
         "mysql": "SELECT version();",
     }
-    stmt = stmts.get(dialect, "SELECT version();")
+    stmt = stmts.get(dialect, "XXSELECT version();XX")
     try:
         with engine.connect() as conn:
             ver = conn.execute(text(stmt)).scalar()

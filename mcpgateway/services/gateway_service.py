@@ -507,32 +507,32 @@ class GatewayService:
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(db_gateway).masked()
-        except* GatewayConnectionError as ge:
+        except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
             logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
             raise ge.exceptions[0]
-        except* GatewayNameConflictError as gnce:
+        except* GatewayNameConflictError as gnce:  # pragma: no mutate
             if TYPE_CHECKING:
                 gnce: ExceptionGroup[GatewayNameConflictError]
             logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
             raise gnce.exceptions[0]
-        except* ValueError as ve:
+        except* ValueError as ve:  # pragma: no mutate
             if TYPE_CHECKING:
                 ve: ExceptionGroup[ValueError]
             logger.error(f"ValueErrors in group: {ve.exceptions}")
             raise ve.exceptions[0]
-        except* RuntimeError as re:
+        except* RuntimeError as re:  # pragma: no mutate
             if TYPE_CHECKING:
                 re: ExceptionGroup[RuntimeError]
             logger.error(f"RuntimeErrors in group: {re.exceptions}")
             raise re.exceptions[0]
-        except* IntegrityError as ie:
+        except* IntegrityError as ie:  # pragma: no mutate
             if TYPE_CHECKING:
                 ie: ExceptionGroup[IntegrityError]
             logger.error(f"IntegrityErrors in group: {ie.exceptions}")
             raise ie.exceptions[0]
-        except* BaseException as other:  # catches every other sub-exception
+        except* BaseException as other:  # catches every other sub-exception  # pragma: no mutate
             if TYPE_CHECKING:
                 other: ExceptionGroup[BaseException]
             logger.error(f"Other grouped errors: {other.exceptions}")

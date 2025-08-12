@@ -29,7 +29,7 @@ TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
 DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .pytype \
 	dist build site .eggs *.egg-info .cache htmlcov certs \
 	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
-	node_modules
+	node_modules .mutmut-cache html
 
 FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
 	$(PROJECT_NAME).sbom.json \
@@ -309,6 +309,81 @@ doctest-check:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pytest --doctest-modules mcpgateway/ --tb=no -q && \
 		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)"
+
+# =============================================================================
+# 🧬 MUTATION TESTING
+# =============================================================================
+# help: 🧬 MUTATION TESTING
+# help: mutmut-install       - Install mutmut in development virtualenv
+# help: mutmut-run           - Run mutation testing (sample of 20 mutants for quick results)
+# help: mutmut-run-full      - Run FULL mutation testing (all 11,000+ mutants - takes hours!)
+# help: mutmut-results       - Display mutation testing summary and surviving mutants
+# help: mutmut-html          - Generate browsable HTML report of mutation results
+# help: mutmut-ci            - CI-friendly mutation testing with score threshold enforcement
+# help: mutmut-clean         - Clean mutmut cache and results
+
+.PHONY: mutmut-install mutmut-run mutmut-results mutmut-html mutmut-ci mutmut-clean
+
+mutmut-install:
+	@echo "📥 Installing mutmut..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q mutmut==3.3.1"
+
+mutmut-run: mutmut-install
+	@echo "🧬 Running mutation testing (sample mode - 20 mutants)..."
+	@echo "⏳ This should take about 2-3 minutes..."
+	@echo "📝 Target: mcpgateway/ directory"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		cd $(PWD) && \
+		PYTHONPATH=$(PWD) python run_mutmut.py --sample"
+
+mutmut-run-full: mutmut-install
+	@echo "🧬 Running FULL mutation testing (all mutants)..."
+	@echo "⏰ WARNING: This will take a VERY long time (hours)!"
+	@echo "📝 Target: mcpgateway/ directory (11,000+ mutants)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		cd $(PWD) && \
+		PYTHONPATH=$(PWD) python run_mutmut.py --full"
+
+mutmut-results:
+	@echo "📊 Mutation testing results:"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		mutmut results || echo '⚠️  No mutation results found. Run make mutmut-run first.'"
+
+mutmut-html:
+	@echo "📄 Generating HTML mutation report..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		mutmut html || echo '⚠️  No mutation results found. Run make mutmut-run first.'"
+	@[ -f html/index.html ] && echo "✅ Report available at: file://$$(pwd)/html/index.html" || true
+
+mutmut-ci: mutmut-install
+	@echo "🔍 CI mutation testing with threshold check..."
+	@echo "⚠️  Excluding gateway_service.py (uses Python 3.11+ except* syntax)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		cd $(PWD) && \
+		PYTHONPATH=$(PWD) mutmut run && \
+		python3 -c 'import subprocess, sys; \
+			result = subprocess.run([\"mutmut\", \"results\"], capture_output=True, text=True); \
+			import re; \
+			match = re.search(r\"killed: (\\d+) out of (\\d+)\", result.stdout); \
+			if match: \
+				killed, total = int(match.group(1)), int(match.group(2)); \
+				score = (killed / total * 100) if total > 0 else 0; \
+				print(f\"Mutation score: {score:.1f}% ({killed}/{total} killed)\"); \
+				sys.exit(0 if score >= 75 else 1); \
+			else: \
+				print(\"Could not parse mutation results\"); \
+				sys.exit(1)' || \
+		{ echo '❌ Mutation score below 75% threshold'; exit 1; }"
+
+mutmut-clean:
+	@echo "🧹 Cleaning mutmut cache..."
+	@rm -rf .mutmut-cache
+	@rm -rf html
+	@echo "✅ Mutmut cache cleaned."
 
 # =============================================================================
 # 📊 METRICS
