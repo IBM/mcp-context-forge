@@ -76,6 +76,7 @@ command_outputs.md
 .ica.env
 ./snakefood.png
 ./snakefood.svg
+./playground
 
 .attic
 .vscode/settings.json
