@@ -1774,21 +1774,22 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         @original_app.post("/mcp")
         async def mcp_post(request: Request) -> Response:
             """
-            Handles POST requests to the `/mcp` endpoint, forwarding JSON payloads to stdio 
+            Handles POST requests to the `/mcp` endpoint, forwarding JSON payloads to stdio
             and optionally waiting for a correlated response.
 
-            The request body is expected to be a JSON object or newline-delimited JSON. 
-            If the JSON includes an "id" field, the function attempts to match it with 
+            The request body is expected to be a JSON object or newline-delimited JSON.
+            If the JSON includes an "id" field, the function attempts to match it with
             a response from stdio using a pubsub queue, within a timeout period.
 
             Args:
                 request (Request): The incoming FastAPI request containing the JSON payload.
 
             Returns:
-                Response: 
-                    - `200 OK` with matched JSON response if correlation succeeds.
-                    - `202 Accepted` if no matching response is received in time or for notifications.
-                    - `400 Bad Request` if the payload is not valid JSON.
+                Response: A FastAPI Response object.
+                    - 200 OK with matched JSON response if correlation succeeds.
+                    - 202 Accepted if no matching response is received in time or for notifications.
+                    - 400 Bad Request if the payload is not valid JSON.
+
             Example:
                 >>> import httpx
                 >>> response = httpx.post("http://localhost:8000/mcp", json={"id": 123, "method": "ping"})
