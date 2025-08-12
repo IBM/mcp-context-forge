@@ -19,12 +19,12 @@ version:
 author:
    type: str
    help: Who is the author?
-   default: {{_copier_conf.data.default_author_name}}
+   default: {{ _copier_conf.data['default_author_name'] }}
 
 email:
    type: str
    help: What's the author's e-mail?
-   default: {{_copier_conf.data.default_author_email}}
+   default: {{ _copier_conf.data['default_author_email'] }}
 
 description:
    type: str
