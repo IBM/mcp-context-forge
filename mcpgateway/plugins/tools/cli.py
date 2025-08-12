@@ -26,16 +26,20 @@ $ mcpplugins --help
 """
 
 # Standard
+import os
 from pathlib import Path
+import subprocess
 from typing import Optional
 
 # Third-Party
 from copier import Worker
 import typer
 from typing_extensions import Annotated
+import yaml
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.plugins.tools.models import InstallManifest
 
 # ---------------------------------------------------------------------------
 # Configuration defaults
@@ -45,8 +49,10 @@ DEFAULT_PROJECT_DIR = Path("./.")
 DEFAULT_INSTALL_MANIFEST = Path("plugins/install.yaml")
 DEFAULT_IMAGE_TAG = "contextforge-plugin:latest"  # TBD: add plugin name and version
 DEFAULT_IMAGE_BUILDER = "docker"
+DEFAULT_BUILD_CONTEXT = "."
 DEFAULT_CONTAINERFILE_PATH = Path("docker/Dockerfile")
 DEFAULT_VCS_REF = "main"
+DEFAULT_INSTALLER = "uv pip install"
 
 # ---------------------------------------------------------------------------
 # CLI (overridable via environment variables)
@@ -71,7 +77,6 @@ def bootstrap(
     answers_file: Optional[Annotated[typer.FileText, typer.Option("--answers_file", "-a", help="The answers file to be used for bootstrapping.")]] = None,
     defaults: Annotated[str, typer.Option("--vcs_ref", "-r", help="Bootstrap with defaults.")] = False,
 ):
-    print("Boostrapping a plugin project from template.")
     with Worker(
         src_path=template_url,
         dst_path=destination,
@@ -85,23 +90,36 @@ def bootstrap(
 @app.command(help="Installs plugins into a Python environment.")
 def install(
     install_manifest: Annotated[typer.FileText, typer.Option("--install_manifest", "-i", help="The install manifest describing which plugins to install.")] = DEFAULT_INSTALL_MANIFEST,
+    installer: Annotated[str, typer.Option("--installer", "-c", help="The install command to install plugins.")] = DEFAULT_INSTALLER,
 ):
-    print("Installing plugins")
+    typer.echo(f"Installing plugin packages from {install_manifest.name}")
+    data = yaml.safe_load(install_manifest)
+    manifest = InstallManifest.model_validate(data)
+    for pkg in manifest.packages:
+        typer.echo(f"Installing plugin package {pkg.package} from {pkg.repository}")
+        repository = os.path.expandvars(pkg.repository)
+        if pkg.extras:
+            cmd = f"{installer} \"{pkg.package}[{','.join(pkg.extras)}]@{repository}\""
+        else:
+            cmd = f'{installer} "{pkg.package}@{repository}"'
+        subprocess.run(cmd, shell=True)
 
 
 @app.command(help="Builds an MCP server to serve plugins as tools")
 def package(
-    install_manifest: Annotated[typer.FileText, typer.Option("--install_manifest", "-i", help="The install manifest describing which plugins to install.")] = DEFAULT_INSTALL_MANIFEST,
     image_tag: Annotated[str, typer.Option("--image_tag", "-t", help="The container image tag to generated container.")] = DEFAULT_IMAGE_TAG,
     containerfile: Annotated[Path, typer.Option("--containerfile", "-c", help="The Dockerfile used to build the container.")] = DEFAULT_CONTAINERFILE_PATH,
     builder: Annotated[str, typer.Option("--builder", "-b", help="The container builder, compatible with docker build.")] = DEFAULT_IMAGE_BUILDER,
+    build_context: Annotated[Path, typer.Option("--build_context", "-p", help="The container builder context, specified as a path.")] = DEFAULT_BUILD_CONTEXT,
 ):
-    print("Deleting user: Hiro Hamada")
+    typer.echo("Building MCP server image")
+    cmd = f"{builder} -f {containerfile} -t {image_tag} {build_context}"
+    subprocess.run(cmd, shell=True)
 
 
 def main() -> None:  # noqa: D401 - imperative mood is fine here
     app()
 
 
-if __name__ == "__main__":
-    app()
+if __name__ == "__main__":  # pragma: no cover - executed only when run directly
+    main()
