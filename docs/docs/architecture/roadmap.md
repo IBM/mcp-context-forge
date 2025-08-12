@@ -327,7 +327,8 @@
     **Due:** 02 Sep 2025 | **Status:** Open
     Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A)
 
-???+ danger "✨ Open Features (17)"
+???+ danger "✨ Open Features (18)"
+    - [**#727**](https://github.com/IBM/mcp-context-forge/issues/727) - Phoenix Observability Integration plugin
     - [**#706**](https://github.com/IBM/mcp-context-forge/issues/706) - ABAC Virtual Server Support
     - [**#636**](https://github.com/IBM/mcp-context-forge/issues/636) - Add PyInstaller support for building standalone binaries for all platforms
     - [**#570**](https://github.com/IBM/mcp-context-forge/issues/570) - Word wrap in codemirror (draft)
