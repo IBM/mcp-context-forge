@@ -1,4 +1,5 @@
 nav:
   - Overview: index.md
   - Roadmap: roadmap.md
+  - Security Features: security-features.md
   - Decision Records: adr
