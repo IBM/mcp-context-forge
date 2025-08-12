@@ -132,35 +132,64 @@
 
 These advanced security features are under consideration for future releases:
 
+#### MCP Server Verification & Trust
+
 * **MCP Server Attestation** - Cryptographic verification of MCP server identity and integrity before connection
 
 * **Signature Verification** - Digital signature validation for MCP server responses and tool executions
+
+* **MCP Server Code Scanning** - Automated security analysis of MCP server source code using multiple linters and security scanners (Bandit, Semgrep, CodeQL) before deployment
+
+* **Binary Analysis** - Static and dynamic analysis of compiled MCP server binaries for vulnerabilities
+
+#### Sandboxed Execution Environments
+
+* **Container Sandboxing** - Run MCP servers in isolated containers with strict security policies:
+  - **Read-only root filesystems** - Prevent runtime modifications
+  - **Minimal base images** - Using scratch-based or Red Hat UBI9-micro containers
+  - **Capability dropping** - Remove unnecessary Linux capabilities
+  - **Seccomp profiles** - Restrict system calls
+  - **AppArmor/SELinux policies** - Mandatory access controls
+  - **Network isolation** - Namespace and network policy restrictions
+  - **Resource limits** - CPU, memory, and I/O constraints
+
+* **gVisor Integration** - User-space kernel for additional isolation layer
+
+* **Firecracker MicroVMs** - Lightweight virtual machines for strong isolation
+
+* **WebAssembly Sandbox** - WASM-based secure execution for untrusted code
+
+#### Advanced Cryptography & Trust
 
 * **Confidential Computing** - Support for encrypted computation in trusted execution environments (TEEs)
 
 * **Hardware Security Module (HSM) Integration** - Hardware-backed key management and cryptographic operations
 
-* **Blockchain-Based Audit Trail** - Immutable distributed ledger for critical security events
-
 * **Homomorphic Encryption** - Process encrypted data without decryption for sensitive operations
 
 * **Zero-Knowledge Proofs** - Verify MCP server capabilities without revealing implementation details
 
+* **Quantum-Resistant Cryptography** - Post-quantum cryptographic algorithms for future-proofing
+
+#### Distributed Security & Governance
+
+* **Blockchain-Based Audit Trail** - Immutable distributed ledger for critical security events
+
 * **Federated Authorization** - Cross-domain authorization with SAML, OAuth 2.0, and OpenID Connect
+
+* **Secure Multi-Party Computation** - Enable multiple parties to compute on shared data without revealing inputs
+
+#### Runtime Protection & Monitoring
 
 * **Dynamic Security Posture Assessment** - Real-time security scoring and risk evaluation for connected servers
 
 * **Behavioral Analytics** - ML-based anomaly detection for unusual MCP server patterns
-
-* **Secure Multi-Party Computation** - Enable multiple parties to compute on shared data without revealing inputs
 
 * **Container Runtime Security** - Runtime protection with Falco, AppArmor, SELinux policies
 
 * **Service Mesh Integration** - Native support for Istio, Linkerd for advanced network security
 
 * **Certificate Pinning** - Prevent MITM attacks by validating specific certificates for MCP servers
-
-* **Quantum-Resistant Cryptography** - Post-quantum cryptographic algorithms for future-proofing
 
 ## Multi-Layered Defense Strategy
 
@@ -197,13 +226,22 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 
 ## Security Compliance & Standards
 
-### 🏆 Currently Implemented (v0.4.0)
+### 🏆 Currently Implemented (v0.5.0)
 
 * **Authentication**: JWT tokens with configurable secrets, Basic Auth support
 * **Input Validation**: Comprehensive validation across all API endpoints using Pydantic
 * **XSS Prevention**: Character restrictions, URL scheme validation, JSON depth limits
 * **Security Scanning**: 30+ security tools integrated, 100% Bandit pass rate
-* **Container Hardening**: Non-root execution, read-only filesystems, minimal base images
+* **Container Hardening**: 
+  - **Ultra-minimal scratch-based runtime** - Final image contains only Python runtime and application
+  - **Red Hat UBI9-based build** - Built from latest patched UBI9 (registry.access.redhat.com/ubi9/ubi:9.6)
+  - **Fully patched on every build** - Automatic security updates via `dnf upgrade -y`
+  - **Non-root execution** - Runs as UID 1001 with OpenShift compatibility
+  - **Stripped binaries** - All unnecessary symbols removed to reduce attack surface
+  - **No package managers in runtime** - DNF/YUM/RPM removed from final image
+  - **No setuid/setgid binaries** - All privileged binaries removed
+  - **Pre-compiled Python bytecode** - Optimized with -OO, stripping docstrings and assertions
+  - **Minimal attack surface** - No shell, no development tools, no documentation
 * **Secure Defaults**: Admin UI disabled by default, localhost-only binding
 * **Secret Detection**: Gitleaks, Dodgy integration preventing credential leaks
 
