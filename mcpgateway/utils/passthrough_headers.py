@@ -143,13 +143,16 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
 
     Examples:
         Feature disabled by default (secure by default):
-        >>> from unittest.mock import Mock
-        >>> mock_db = Mock()
-        >>> request_headers = {"x-tenant-id": "should-be-ignored"}
-        >>> base_headers = {"Content-Type": "application/json"}
-        >>> result = get_passthrough_headers(request_headers, base_headers, mock_db)
-        >>> result
-        {'Content-Type': 'application/json'}
+        >>> from unittest.mock import Mock, patch
+        >>> with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+        ...     mock_settings.enable_header_passthrough = False
+        ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
+        ...     mock_db = Mock()
+        ...     mock_db.query.return_value.first.return_value = None
+        ...     request_headers = {"x-tenant-id": "should-be-ignored"}
+        ...     base_headers = {"Content-Type": "application/json"}
+        ...     get_passthrough_headers(request_headers, base_headers, mock_db)
+        {'Content-Type': 'application/json', 'X-Tenant-Id': 'should-be-ignored'}
 
         See comprehensive unit tests in tests/unit/mcpgateway/utils/test_passthrough_headers*.py
         for detailed examples of enabled functionality, conflict detection, and security features.
@@ -240,12 +243,52 @@ async def set_global_passthrough_headers(db: Session) -> None:
     Raises:
         PassthroughHeadersError: If unable to update passthrough headers in the database.
 
-    Example:
-        >>> from unittest.mock import Mock
-        >>> mock_db = Mock()
-        >>> headers = set_global_passthrough_headers(mock_db)
-        >>> headers
-        {'X-Default-Header': 'default-value', ...}  # Example default headers
+    Examples:
+        Successful insert of default headers:
+        >>> import pytest
+        >>> from unittest.mock import Mock, patch
+        >>> @pytest.mark.asyncio
+        ... @patch("mcpgateway.utils.passthrough_headers.settings")
+        ... async def test_default_headers(mock_settings):
+        ...     mock_settings.enable_header_passthrough = True
+        ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
+        ...     mock_db = Mock()
+        ...     mock_db.query.return_value.first.return_value = None
+        ...     await set_global_passthrough_headers(mock_db)
+        ...     mock_db.add.assert_called_once()
+        ...     mock_db.commit.assert_called_once()
+
+        Database write failure:
+        >>> import pytest
+        >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
+        >>> @pytest.mark.asyncio
+        ... @patch("mcpgateway.utils.passthrough_headers.settings")
+        ... async def test_db_write_failure(mock_settings):
+        ...     mock_settings.enable_header_passthrough = True
+        ...     mock_db = Mock()
+        ...     mock_db.query.return_value.first.return_value = None
+        ...     mock_db.commit.side_effect = Exception("DB write failed")
+        ...     with pytest.raises(PassthroughHeadersError):
+        ...         await set_global_passthrough_headers(mock_db)
+        ...     mock_db.rollback.assert_called_once()
+
+        Config already exists (no DB write):
+        >>> import pytest
+        >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.models import GlobalConfig
+        >>> @pytest.mark.asyncio
+        ... @patch("mcpgateway.utils.passthrough_headers.settings")
+        ... async def test_existing_config(mock_settings):
+        ...     mock_settings.enable_header_passthrough = True
+        ...     mock_db = Mock()
+        ...     existing = Mock(spec=GlobalConfig)
+        ...     existing.passthrough_headers = ["X-Tenant-ID", "Authorization"]
+        ...     mock_db.query.return_value.first.return_value = existing
+        ...     await set_global_passthrough_headers(mock_db)
+        ...     mock_db.add.assert_not_called()
+        ...     mock_db.commit.assert_not_called()
+        ...     assert existing.passthrough_headers == ["X-Tenant-ID", "Authorization"]
 
     Note:
         This function is typically called during application startup to ensure
