@@ -1,301 +1,291 @@
-# MCP Gateway Observability with Phoenix
+# Observability
+
+MCP Gateway includes production-grade OpenTelemetry instrumentation for distributed tracing, enabling you to monitor performance, debug issues, and understand request flows across your gateway instances.
 
 ## Overview
 
-MCP Gateway integrates with [Arize Phoenix](https://github.com/Arize-ai/phoenix) for distributed tracing and observability. This provides visibility into:
+The observability implementation is **vendor-agnostic** and works with any OTLP-compatible backend:
 
-- Tool invocations
-- Prompt rendering
-- Resource fetching
-- Gateway federation
-- Plugin execution
-- Error tracking and performance metrics
-
-## Quick Start
-
-### 1. Start Phoenix
-
-Using Docker Compose:
-```bash
-docker-compose -f docker-compose.phoenix-simple.yml up -d
-```
-
-Or with the gateway:
-```bash
-docker-compose -f docker-compose.yml -f docker-compose.with-phoenix.yml up -d
-```
-
-### 2. Configure MCP Gateway
-
-Set environment variables:
-```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-export OTEL_SERVICE_NAME=mcp-gateway
-export OTEL_TRACES_EXPORTER=otlp
-```
-
-### 3. Start Gateway with Tracing
-
-```bash
-# Using make
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
-OTEL_SERVICE_NAME=mcp-gateway \
-make serve
-
-# Or use the helper script
-./serve-with-tracing.sh
-
-# Or with uvicorn directly
-uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444
-```
-
-### 4. View Traces
-
-Open Phoenix UI: http://localhost:6006
+- **[Arize Phoenix](https://github.com/Arize-ai/phoenix)** - AI/LLM-focused observability
+- **[Jaeger](https://www.jaegertracing.io/)** - Open source distributed tracing
+- **[Zipkin](https://zipkin.io/)** - Distributed tracing system
+- **[Grafana Tempo](https://grafana.com/oss/tempo/)** - High-scale distributed tracing
+- **Datadog, New Relic, Honeycomb** - Commercial APM solutions
+- **Console** - Debug output to stdout (development)
 
 ## What Gets Traced
 
-### Tool Operations
-- **Span name**: `tool.invoke`
-- **Attributes**:
-  - `tool.name` - Tool identifier
-  - `tool.id` - Database ID
-  - `tool.integration_type` - REST or MCP
-  - `tool.gateway_id` - Associated gateway
-  - `arguments_count` - Number of arguments
-  - `http.status_code` - Response status (REST tools)
-  - `duration.ms` - Execution time
-  - `error` - Error flag if failed
-  - `error.message` - Error details
+- **Tool invocations** - Full lifecycle with arguments, results, and timing
+- **Prompt rendering** - Template processing and message generation
+- **Resource fetching** - URI resolution, caching, and content retrieval
+- **Gateway federation** - Cross-gateway requests and health checks
+- **Plugin execution** - Pre/post hooks if plugins are enabled
+- **Errors and exceptions** - Full stack traces and error context
 
-### Prompt Rendering
-- **Span name**: `prompt.render`
-- **Attributes**:
-  - `prompt.name` - Prompt template name
-  - `arguments_count` - Template arguments
-  - `user` - User identifier
-  - `server_id` - Server context
-  - `messages.count` - Rendered messages
-  - `duration.ms` - Render time
+## Quick Start
 
-### Resource Fetching
-- **Span name**: `resource.read`
-- **Attributes**:
-  - `resource.uri` - Resource identifier
-  - `resource.type` - template or static
-  - `content.size` - Content size in bytes
-  - `http.url` - URL if HTTP resource
-  - `duration.ms` - Fetch time
+### 1. Install Dependencies
 
-### Gateway Federation
-- **Span name**: `gateway.forward_request`
-- **Attributes**:
-  - `gateway.name` - Target gateway
-  - `gateway.url` - Gateway endpoint
-  - `rpc.method` - RPC method name
-  - `rpc.service` - Service identifier
-  - `http.status_code` - Response status
-  - `peer.service` - Remote service name
+The observability packages are included in the Docker containers by default. For local development:
 
-### Health Checks
-- **Span name**: `gateway.health_check`
-- **Attributes**:
-  - `gateway.name` - Gateway being checked
-  - `gateway.transport` - SSE or StreamableHTTP
-  - `health.status` - healthy/unhealthy
-  - `http.status_code` - Response code
+```bash
+# Install with observability support
+pip install mcp-contextforge-gateway[observability]
 
-## Error Tracking
-
-All spans automatically record exceptions with:
-- Full stack traces
-- Error types and messages
-- Failed operation context
-- OpenTelemetry status codes
-
-Example error attributes:
-```
-error: true
-error.type: "ToolInvocationError"
-error.message: "Connection timeout"
+# Or add all backends
+pip install mcp-contextforge-gateway[observability-all]
 ```
 
-## Performance Monitoring
+### 2. Configure Environment
 
-Key metrics tracked:
-- `duration.ms` - Operation duration
-- `success` - Success/failure flag
-- Response sizes and counts
-- HTTP status codes
-- Queue depths (future)
+Set these environment variables (or add to `.env`):
 
-## Distributed Tracing
+```bash
+# Enable observability (default: true)
+export OTEL_ENABLE_OBSERVABILITY=true
 
-### Trace Context Propagation
+# Service identification
+export OTEL_SERVICE_NAME=mcp-gateway
+export OTEL_SERVICE_VERSION=0.5.0
+export OTEL_DEPLOYMENT_ENVIRONMENT=development
 
-When MCP Gateway calls other services, trace context is propagated via:
-- W3C Trace Context headers
-- OpenTelemetry baggage
-- Custom correlation IDs
+# Choose your backend (otlp, jaeger, zipkin, console, none)
+export OTEL_TRACES_EXPORTER=otlp
 
-### Parent-Child Relationships
-
-Operations create nested spans:
-```
-gateway.health_check_batch
-  └── gateway.health_check (gateway-1)
-  └── gateway.health_check (gateway-2)
-  └── gateway.health_check (gateway-3)
+# OTLP Configuration (for Phoenix, Tempo, etc.)
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+export OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+export OTEL_EXPORTER_OTLP_INSECURE=true
 ```
 
-## Configuration
+### 3. Start Your Backend
 
-### Environment Variables
+Choose your preferred observability backend:
+
+#### Phoenix (AI/LLM Focus)
+```bash
+docker run -d \
+  --name phoenix \
+  -p 6006:6006 \
+  -p 4317:4317 \
+  arizephoenix/phoenix:latest
+
+# View UI at http://localhost:6006
+```
+
+#### Jaeger
+```bash
+docker run -d \
+  --name jaeger \
+  -p 16686:16686 \
+  -p 14268:14268 \
+  jaegertracing/all-in-one
+
+# View UI at http://localhost:16686
+```
+
+#### Zipkin
+```bash
+docker run -d \
+  --name zipkin \
+  -p 9411:9411 \
+  openzipkin/zipkin
+
+# View UI at http://localhost:9411
+```
+
+#### Console (Development)
+```bash
+# For debugging - prints traces to stdout
+export OTEL_TRACES_EXPORTER=console
+```
+
+### 4. Run MCP Gateway
+
+```bash
+# Start the gateway (observability is enabled by default)
+mcpgateway
+
+# Or with Docker
+docker run -e OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317 \
+           ghcr.io/ibm/mcp-context-forge:latest
+```
+
+## Configuration Reference
+
+### Core Settings
+
+| Variable | Description | Default | Options |
+|----------|-------------|---------|---------|
+| `OTEL_ENABLE_OBSERVABILITY` | Master switch | `true` | `true`, `false` |
+| `OTEL_SERVICE_NAME` | Service identifier | `mcp-gateway` | Any string |
+| `OTEL_SERVICE_VERSION` | Service version | `0.5.0` | Any string |
+| `OTEL_DEPLOYMENT_ENVIRONMENT` | Environment tag | `development` | `development`, `staging`, `production` |
+| `OTEL_TRACES_EXPORTER` | Export backend | `otlp` | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
+| `OTEL_RESOURCE_ATTRIBUTES` | Custom attributes | - | `key=value,key2=value2` |
+
+### OTLP Configuration
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint | - | `http://localhost:4317` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Protocol | `grpc` | `grpc`, `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Auth headers | - | `api-key=secret,x-auth=token` |
+| `OTEL_EXPORTER_OTLP_INSECURE` | Skip TLS verify | `true` | `true`, `false` |
+
+### Alternative Backends
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Phoenix OTLP endpoint | None (tracing disabled) |
-| `OTEL_SERVICE_NAME` | Service identifier | mcp-gateway |
-| `OTEL_TRACES_EXPORTER` | Exporter type | otlp |
-| `OTEL_RESOURCE_ATTRIBUTES` | Additional attributes | None |
+| `OTEL_EXPORTER_JAEGER_ENDPOINT` | Jaeger collector | `http://localhost:14268/api/traces` |
+| `OTEL_EXPORTER_ZIPKIN_ENDPOINT` | Zipkin collector | `http://localhost:9411/api/v2/spans` |
 
-### Sampling Configuration
+### Performance Tuning
 
-Control trace sampling (future implementation):
-```bash
-# Sample 10% of traces
-export OTEL_TRACES_SAMPLER=traceidratio
-export OTEL_TRACES_SAMPLER_ARG=0.1
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OTEL_TRACES_SAMPLER` | Sampling strategy | `parentbased_traceidratio` |
+| `OTEL_TRACES_SAMPLER_ARG` | Sample rate (0.0-1.0) | `0.1` (10%) |
+| `OTEL_BSP_MAX_QUEUE_SIZE` | Max queued spans | `2048` |
+| `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` | Batch size | `512` |
+| `OTEL_BSP_SCHEDULE_DELAY` | Export interval (ms) | `5000` |
+
+## Understanding Traces
+
+### Span Attributes
+
+Each span includes standard attributes:
+
+- **Operation name** - e.g., `tool.invoke`, `prompt.render`, `resource.read`
+- **Service info** - Service name, version, environment
+- **User context** - User ID, tenant ID, request ID
+- **Timing** - Start time, duration, end time
+- **Status** - Success/error status with error details
+
+### Tool Invocation Spans
+
+```json
+{
+  "name": "tool.invoke",
+  "attributes": {
+    "tool.name": "github_search",
+    "tool.id": "550e8400-e29b-41d4-a716",
+    "tool.integration_type": "REST",
+    "arguments_count": 3,
+    "success": true,
+    "duration.ms": 234.5,
+    "http.status_code": 200
+  }
+}
 ```
 
-## Phoenix UI Features
+### Error Tracking
 
-### Trace Explorer
-- Search traces by operation, service, or attributes
-- Filter by time range, status, or duration
-- Visualize trace waterfall diagrams
+Failed operations include:
+- `error`: `true`
+- `error.type`: Exception class name
+- `error.message`: Error description
+- Full stack trace via `span.record_exception()`
 
-### Service Map
-- View service dependencies
-- Identify bottlenecks
-- Monitor service health
+## Production Deployment
 
-### Metrics Dashboard
-- Operation latencies (P50, P95, P99)
-- Error rates and types
-- Throughput and volume
+### Docker Compose
 
-### LLM-Specific Features
-- Token usage tracking
-- Prompt/completion analysis
-- Model performance comparison
-- Cost estimation
+Use the provided compose files:
+
+```bash
+# Start MCP Gateway with Phoenix observability
+docker-compose -f docker-compose.yml \
+               -f docker-compose.with-phoenix.yml up -d
+```
+
+### Kubernetes
+
+Add environment variables to your deployment:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-gateway
+spec:
+  template:
+    spec:
+      containers:
+      - name: gateway
+        image: ghcr.io/ibm/mcp-context-forge:latest
+        env:
+        - name: OTEL_ENABLE_OBSERVABILITY
+          value: "true"
+        - name: OTEL_TRACES_EXPORTER
+          value: "otlp"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector:4317"
+        - name: OTEL_SERVICE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['app.kubernetes.io/name']
+```
+
+### Sampling Strategies
+
+For production, adjust sampling to balance visibility and performance:
+
+```bash
+# Sample 1% of traces
+export OTEL_TRACES_SAMPLER=parentbased_traceidratio
+export OTEL_TRACES_SAMPLER_ARG=0.01
+
+# Always sample errors (coming in future update)
+# export OTEL_TRACES_SAMPLER=parentbased_always_on_errors
+```
 
 ## Troubleshooting
 
 ### No Traces Appearing
 
-1. Check Phoenix is running:
+1. Check observability is enabled:
+   ```bash
+   echo $OTEL_ENABLE_OBSERVABILITY  # Should be "true"
+   ```
+
+2. Verify endpoint is reachable:
+   ```bash
+   curl -v http://localhost:4317  # Should connect
+   ```
+
+3. Use console exporter for debugging:
+   ```bash
+   export OTEL_TRACES_EXPORTER=console
+   mcpgateway  # Traces will print to stdout
+   ```
+
+### High Memory Usage
+
+Reduce batch size and queue limits:
 ```bash
-docker ps | grep phoenix
-curl http://localhost:6006/health
+export OTEL_BSP_MAX_QUEUE_SIZE=512
+export OTEL_BSP_MAX_EXPORT_BATCH_SIZE=128
 ```
 
-2. Verify environment variables:
+### Missing Spans
+
+Check sampling rate:
 ```bash
-env | grep OTEL
+# Temporarily disable sampling
+export OTEL_TRACES_SAMPLER=always_on
 ```
 
-3. Check gateway logs for initialization:
-```
-✅ OpenTelemetry initialized with Phoenix endpoint: http://localhost:4317
-```
+## Performance Impact
 
-4. Test with sample traces:
-```bash
-python test_phoenix_integration.py
-```
+- **When disabled**: Zero overhead (no-op context managers)
+- **When enabled**: ~0.1-0.5ms per span
+- **Memory**: ~50MB for typical workload
+- **Network**: Batched exports every 5 seconds
 
-### Connection Errors
+## Next Steps
 
-If you see "Failed to export spans":
-- Verify Phoenix is accessible
-- Check firewall/network settings
-- Ensure correct OTLP endpoint
-
-### Performance Impact
-
-Tracing adds minimal overhead (~1-3ms per operation). To reduce impact:
-- Use sampling in production
-- Batch span exports
-- Filter noisy operations
-
-## Advanced Usage
-
-### Custom Spans
-
-Add tracing to custom code:
-
-```python
-from mcpgateway.observability import create_span
-
-async def my_operation():
-    with create_span("custom.operation", {
-        "custom.attribute": "value",
-        "user.id": user_id
-    }) as span:
-        result = await do_work()
-        span.set_attribute("result.size", len(result))
-        return result
-```
-
-### Trace Decorators
-
-Use decorators for cleaner code:
-
-```python
-from mcpgateway.observability import trace_operation
-
-@trace_operation("database.query", {"db.system": "postgresql"})
-async def query_database(sql):
-    return await db.execute(sql)
-```
-
-### Manual Context Propagation
-
-For external service calls:
-
-```python
-from opentelemetry import trace
-from opentelemetry.propagate import inject
-
-headers = {}
-inject(headers)  # Adds trace context headers
-await httpx.post(url, headers=headers)
-```
-
-## Best Practices
-
-1. **Use semantic conventions** - Follow OpenTelemetry standards for attribute names
-2. **Add meaningful attributes** - Include context that helps debugging
-3. **Handle errors properly** - Record exceptions with full context
-4. **Batch operations** - Group related operations under parent spans
-5. **Sample in production** - Use sampling to control costs and performance
-6. **Secure sensitive data** - Don't include passwords, tokens, or PII in traces
-7. **Monitor continuously** - Set up alerts for error rates and latencies
-
-## Integration with Other Tools
-
-Phoenix integrates with:
-- **Grafana** - Import traces for visualization
-- **Prometheus** - Export metrics
-- **Datadog** - Forward traces
-- **New Relic** - Send telemetry data
-- **Jaeger** - Alternative trace viewer
-
-## Resources
-
-- [Phoenix Documentation](https://docs.arize.com/phoenix)
-- [OpenTelemetry Python](https://opentelemetry.io/docs/languages/python/)
-- [MCP Gateway Plugins](./plugins.md)
-- [Performance Tuning](./performance.md)
+- See [Phoenix Integration Guide](phoenix.md) for AI/LLM-specific features
+- Review [OpenTelemetry Best Practices](https://opentelemetry.io/docs/best-practices/)
+- Configure dashboards in your APM solution
+- Set up alerting based on error rates and latencies
