@@ -32,19 +32,21 @@ classifiers = [
 ]
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
-
-# SPDX licence expression + explicit licence file (PEP 639)
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 
-# Maintainers
 maintainers = [
     {name = "{{author}}", email = "{{email}}"}
 ]
 
-# Authors
 authors = [
     {name = "{{author}}", email = "{{email}}"}
+]
+
+dependencies = [
+    "chuk-mcp-runtime>=0.6.5",
+    "chuk-mcp[full]>=0.5.1",
+    "mcp-contextforge-gateway",
 ]
 
 # URLs
@@ -54,16 +56,6 @@ Documentation = "https://ibm.github.io/mcp-context-forge/"
 Repository = "https://github.com/IBM/mcp-context-forge"
 "Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
 Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
-
-# ----------------------------------------------------------------
-# Runtime dependencies
-# ----------------------------------------------------------------
-
-dependencies = [
-    "chuk-mcp-runtime>=0.6.5",
-    "chuk-mcp[full]>=0.5.1",
-    "mcp-contextforge-gateway",
-]
 
 [tool.uv.sources]
 mcp-contextforge-gateway = { git = "https://github.com/terylt/mcp-context-forge.git", rev = "feat/remote_plugin_support" }
