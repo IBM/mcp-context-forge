@@ -365,10 +365,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[Union[types.Te
                 logger.warning(f"No content returned by tool: {name}")
                 return []
 
-            return cast(
-                List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]],
-                [types.TextContent(type=result.content[0].type, text=result.content[0].text)]
-            )
+            return cast(List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]], [types.TextContent(type=result.content[0].type, text=result.content[0].text)])
     except Exception as e:
         logger.exception(f"Error calling tool '{name}': {e}")
         return []

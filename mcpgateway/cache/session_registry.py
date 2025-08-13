@@ -857,7 +857,7 @@ class SessionRegistry(SessionBackend):
 
         elif self._backend == "database":
 
-            def _db_read_session(session_id: str) -> Any:
+            def _db_read_session(session_id: str) -> SessionRecord:
                 """Check if session still exists in the database.
 
                 Queries the SessionRecord table to verify that the session
@@ -892,7 +892,7 @@ class SessionRegistry(SessionBackend):
                 finally:
                     db_session.close()
 
-            def _db_read(session_id: str) -> Any:
+            def _db_read(session_id: str) -> SessionMessageRecord:
                 """Read pending message for a session from the database.
 
                 Retrieves the first (oldest) unprocessed message for the given
@@ -1042,7 +1042,7 @@ class SessionRegistry(SessionBackend):
         while True:
             try:
                 # Clean up expired sessions every 5 minutes
-                def _db_cleanup() -> Any:
+                def _db_cleanup() -> int:
                     """Remove expired sessions from the database.
 
                     Deletes all SessionRecord entries that haven't been accessed
