@@ -234,6 +234,7 @@ make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint ve
 
 # Rules
 - When using git commit always add a -s to sign commits
+- Don't include effor estimates, or 'phases'
 
 # TO test individual files, ensure you're activated the env first, ex:
 . /home/cmihai/.venv/mcpgateway/bin/activate && pytest --cov-report=annotate tests/unit/mcpgateway/test_translate.py

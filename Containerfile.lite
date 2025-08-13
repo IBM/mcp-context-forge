@@ -61,13 +61,14 @@ COPY pyproject.toml /app/
 # Create and populate virtual environment
 #  - Upgrade pip, setuptools, wheel, pdm, uv
 #  - Install project dependencies and package
+#  - Include observability packages for OpenTelemetry support
 #  - Remove build tools but keep runtime dist-info
 #  - Remove build caches and build artifacts
 # ----------------------------------------------------------------------------
 RUN set -euo pipefail \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
-    && /app/.venv/bin/uv pip install ".[redis,postgres]" \
+    && /app/.venv/bin/uv pip install ".[redis,postgres,observability]" \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
     && rm -rf /root/.cache /var/cache/dnf \
     && find /app/.venv -name "*.dist-info" -type d \

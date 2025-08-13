@@ -253,33 +253,33 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 
 ### 🚀 Upcoming Security Enhancements
 
-**Release 0.5.0 (August 2025)**
+**Release 0.5.0 - August 2025**
 - Enhanced authentication mechanisms
 - Configuration validation framework
 - Comprehensive audit logging
 - Security headers implementation
 
-**Release 0.6.0 (August 2025)**
+**Release 0.6.0 - August 2025**
 - Database-backed authentication
 - Multi-layer caching security
 - Circuit breakers implementation
 
-**Release 0.7.0 (September 2025)**
+**Release 0.7.0 - September 2025**
 - Full RBAC implementation
 - Multi-tenancy support
 - Correlation ID tracking
 
-**Release 0.8.0 (September 2025)**
+**Release 0.8.0 - September 2025**
 - Policy-as-Code engine
 - Advanced guardrails
 - DDoS protection
 
-**Release 0.9.0 (September 2025)**
+**Release 0.9.0 - September 2025**
 - Marketplace security
 - Protocol negotiation
 - Advanced connectivity
 
-**Release 1.0.0 (October 2025)**
+**Release 1.0.0 - October 2025**
 - Security audit completion
 - Production hardening
 - GA security certification

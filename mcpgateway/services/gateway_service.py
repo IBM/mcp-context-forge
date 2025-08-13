@@ -44,6 +44,7 @@ import logging
 import os
 import socket
 import tempfile
+import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
@@ -74,6 +75,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
@@ -1034,27 +1036,59 @@ class GatewayService:
             ... except Exception:
             ...     pass
         """
-        if not gateway.enabled:
-            raise GatewayConnectionError(f"Cannot forward request to inactive gateway: {gateway.name}")
+        start_time = time.monotonic()
 
-        try:
-            # Build RPC request
-            request = {"jsonrpc": "2.0", "id": 1, "method": method}
-            if params:
-                request["params"] = params
+        # Create trace span for gateway federation
+        with create_span(
+            "gateway.forward_request",
+            {
+                "gateway.name": gateway.name,
+                "gateway.id": str(gateway.id),
+                "gateway.url": gateway.url,
+                "rpc.method": method,
+                "rpc.service": "mcp-gateway",
+                "http.method": "POST",
+                "http.url": f"{gateway.url}/rpc",
+                "peer.service": gateway.name,
+            },
+        ) as span:
+            if not gateway.enabled:
+                raise GatewayConnectionError(f"Cannot forward request to inactive gateway: {gateway.name}")
 
-            # Directly use the persistent HTTP client (no async with)
-            response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=self._get_auth_headers())
-            response.raise_for_status()
-            result = response.json()
+            try:
+                # Build RPC request
+                request = {"jsonrpc": "2.0", "id": 1, "method": method}
+                if params:
+                    request["params"] = params
+                    if span:
+                        span.set_attribute("rpc.params_count", len(params))
 
-            # Update last seen timestamp
-            gateway.last_seen = datetime.now(timezone.utc)
-        except Exception:
-            raise GatewayConnectionError(f"Failed to forward request to {gateway.name}")
-        if "error" in result:
-            raise GatewayError(f"Gateway error: {result['error'].get('message')}")
-        return result.get("result")
+                # Directly use the persistent HTTP client (no async with)
+                response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=self._get_auth_headers())
+                response.raise_for_status()
+                result = response.json()
+
+                # Update last seen timestamp
+                gateway.last_seen = datetime.now(timezone.utc)
+
+                # Record success metrics
+                if span:
+                    span.set_attribute("http.status_code", response.status_code)
+                    span.set_attribute("success", True)
+                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+
+            except Exception:
+                if span:
+                    span.set_attribute("http.status_code", getattr(response, "status_code", 0))
+                raise GatewayConnectionError(f"Failed to forward request to {gateway.name}")
+
+            if "error" in result:
+                if span:
+                    span.set_attribute("rpc.error", True)
+                    span.set_attribute("rpc.error.message", result["error"].get("message", "Unknown error"))
+                raise GatewayError(f"Gateway error: {result['error'].get('message')}")
+
+            return result.get("result")
 
     async def _handle_gateway_failure(self, gateway: str) -> None:
         """Tracks and handles gateway failures during health checks.
@@ -1142,41 +1176,72 @@ class GatewayService:
             >>> isinstance(multi_result, bool)
             True
         """
-        # Reuse a single HTTP client for all requests
-        async with httpx.AsyncClient() as client:
-            for gateway in gateways:
-                logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
-                try:
-                    # Ensure auth_value is a dict
-                    auth_data = gateway.auth_value or {}
-                    headers = decode_auth(auth_data)
+        start_time = time.monotonic()
 
-                    # Perform the GET and raise on 4xx/5xx
-                    if (gateway.transport).lower() == "sse":
-                        timeout = httpx.Timeout(settings.health_check_timeout)
-                        async with client.stream("GET", gateway.url, headers=headers, timeout=timeout) as response:
-                            # This will raise immediately if status is 4xx/5xx
-                            response.raise_for_status()
-                    elif (gateway.transport).lower() == "streamablehttp":
-                        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
-                            async with ClientSession(read_stream, write_stream) as session:
-                                # Initialize the session
-                                response = await session.initialize()
+        # Create trace span for health check batch
+        with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
+            # Reuse a single HTTP client for all requests
+            async with httpx.AsyncClient() as client:
+                for gateway in gateways:
+                    # Create span for individual gateway health check
+                    with create_span(
+                        "gateway.health_check",
+                        {
+                            "gateway.name": gateway.name,
+                            "gateway.id": str(gateway.id),
+                            "gateway.url": gateway.url,
+                            "gateway.transport": gateway.transport,
+                            "gateway.enabled": gateway.enabled,
+                            "http.method": "GET",
+                            "http.url": gateway.url,
+                        },
+                    ) as span:
+                        logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
+                        try:
+                            # Ensure auth_value is a dict
+                            auth_data = gateway.auth_value or {}
+                            headers = decode_auth(auth_data)
 
-                    # Reactivate gateway if it was previously inactive and health check passed now
-                    if gateway.enabled and not gateway.reachable:
-                        with SessionLocal() as db:
-                            logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
-                            await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
+                            # Perform the GET and raise on 4xx/5xx
+                            if (gateway.transport).lower() == "sse":
+                                timeout = httpx.Timeout(settings.health_check_timeout)
+                                async with client.stream("GET", gateway.url, headers=headers, timeout=timeout) as response:
+                                    # This will raise immediately if status is 4xx/5xx
+                                    response.raise_for_status()
+                                    if span:
+                                        span.set_attribute("http.status_code", response.status_code)
+                            elif (gateway.transport).lower() == "streamablehttp":
+                                async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
+                                    async with ClientSession(read_stream, write_stream) as session:
+                                        # Initialize the session
+                                        response = await session.initialize()
 
-                    # Mark successful check
-                    gateway.last_seen = datetime.now(timezone.utc)
+                            # Reactivate gateway if it was previously inactive and health check passed now
+                            if gateway.enabled and not gateway.reachable:
+                                with SessionLocal() as db:
+                                    logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
+                                    await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
 
-                except Exception:
-                    await self._handle_gateway_failure(gateway)
+                            # Mark successful check
+                            gateway.last_seen = datetime.now(timezone.utc)
 
-        # All gateways passed
-        return True
+                            if span:
+                                span.set_attribute("health.status", "healthy")
+                                span.set_attribute("success", True)
+
+                        except Exception as e:
+                            if span:
+                                span.set_attribute("health.status", "unhealthy")
+                                span.set_attribute("error.message", str(e))
+                            await self._handle_gateway_failure(gateway)
+
+            # Set batch span success metrics
+            if batch_span:
+                batch_span.set_attribute("success", True)
+                batch_span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+
+            # All gateways passed
+            return True
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
         """

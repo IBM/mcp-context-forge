@@ -353,6 +353,21 @@ class Settings(BaseSettings):
     reload: bool = False
     debug: bool = False
 
+    # Observability (OpenTelemetry)
+    otel_enable_observability: bool = Field(default=True, description="Enable OpenTelemetry observability")
+    otel_traces_exporter: str = Field(default="otlp", description="Traces exporter: otlp, jaeger, zipkin, console, none")
+    otel_exporter_otlp_endpoint: Optional[str] = Field(default=None, description="OTLP endpoint (e.g., http://localhost:4317)")
+    otel_exporter_otlp_protocol: str = Field(default="grpc", description="OTLP protocol: grpc or http")
+    otel_exporter_otlp_insecure: bool = Field(default=True, description="Use insecure connection for OTLP")
+    otel_exporter_otlp_headers: Optional[str] = Field(default=None, description="OTLP headers (comma-separated key=value)")
+    otel_exporter_jaeger_endpoint: Optional[str] = Field(default=None, description="Jaeger endpoint")
+    otel_exporter_zipkin_endpoint: Optional[str] = Field(default=None, description="Zipkin endpoint")
+    otel_service_name: str = Field(default="mcp-gateway", description="Service name for traces")
+    otel_resource_attributes: Optional[str] = Field(default=None, description="Resource attributes (comma-separated key=value)")
+    otel_bsp_max_queue_size: int = Field(default=2048, description="Max queue size for batch span processor")
+    otel_bsp_max_export_batch_size: int = Field(default=512, description="Max export batch size")
+    otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
