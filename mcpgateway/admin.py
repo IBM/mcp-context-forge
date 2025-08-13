@@ -23,7 +23,6 @@ from functools import wraps
 import json
 import time
 from typing import Any, Dict, List, Optional, Union, cast
-from typing import Any, Dict, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -1415,7 +1414,7 @@ async def admin_ui(
         jwt_token (str): JWT token for authentication.
 
     Returns:
-        HTMLResponse: Rendered HTML template for the admin dashboard.
+        Any: Rendered HTML template for the admin dashboard.
 
     Examples:
         >>> import asyncio
@@ -1998,9 +1997,9 @@ async def admin_edit_tool(
         user (str): Authenticated user dependency.
 
     Returns:
-        RedirectResponse: A redirect response to the tools section of the admin
-        dashboard with a status code of 303 (See Other), or a JSON response with
-        an error message if the update fails.
+        Response: A redirect response to the tools section of the admin
+            dashboard with a status code of 303 (See Other), or a JSON response with
+            an error message if the update fails.
 
     Examples:
             Examples:
@@ -2809,7 +2808,6 @@ async def admin_edit_gateway(
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=503)
 
 
-
 @admin_router.post("/gateways/{gateway_id}/delete")
 async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
@@ -3051,7 +3049,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
-    try:        
+    try:
         resource = ResourceCreate(
             uri=str(form["uri"]),
             name=str(form["name"]),
@@ -3587,7 +3585,7 @@ async def admin_edit_prompt(
         user: Authenticated user.
 
     Returns:
-         JSONResponse: A JSON response indicating success or failure of the server update operation.
+         Response: A JSON response indicating success or failure of the server update operation.
 
     Examples:
         >>> import asyncio
