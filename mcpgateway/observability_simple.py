@@ -209,7 +209,28 @@ def trace_operation(operation_name: str, attributes: dict = None):
     """
 
     def decorator(func):
+        """Decorator that wraps the function with tracing.
+
+        Args:
+            func: The async function to wrap with tracing.
+
+        Returns:
+            The wrapped function with tracing capabilities.
+        """
+
         async def wrapper(*args, **kwargs):
+            """Async wrapper that adds tracing to the decorated function.
+
+            Args:
+                *args: Positional arguments passed to the wrapped function.
+                **kwargs: Keyword arguments passed to the wrapped function.
+
+            Returns:
+                The result of the wrapped function.
+
+            Raises:
+                Any exception raised by the wrapped function.
+            """
             if not tracer:
                 # No tracing configured, just run the function
                 return await func(*args, **kwargs)
@@ -269,12 +290,30 @@ def create_span(name: str, attributes: dict = None):
         # We need to set attributes after entering the context
         # So we'll create a wrapper that sets attributes
         class SpanWithAttributes:
+            """Context manager wrapper that adds attributes to a span.
+
+            This class wraps an OpenTelemetry span context and adds attributes
+            when entering the context. It also handles exception recording when
+            exiting the context.
+            """
+
             def __init__(self, span_context, attrs):
+                """Initialize the span wrapper.
+
+                Args:
+                    span_context: The OpenTelemetry span context to wrap.
+                    attrs: Dictionary of attributes to add to the span.
+                """
                 self.span_context = span_context
                 self.attrs = attrs
                 self.span = None
 
             def __enter__(self):
+                """Enter the context and set span attributes.
+
+                Returns:
+                    The OpenTelemetry span with attributes set.
+                """
                 self.span = self.span_context.__enter__()
                 if self.attrs and self.span:
                     for key, value in self.attrs.items():
@@ -283,6 +322,16 @@ def create_span(name: str, attributes: dict = None):
                 return self.span
 
             def __exit__(self, exc_type, exc_val, exc_tb):
+                """Exit the context and record any exceptions.
+
+                Args:
+                    exc_type: The exception type if an exception occurred.
+                    exc_val: The exception value if an exception occurred.
+                    exc_tb: The exception traceback if an exception occurred.
+
+                Returns:
+                    The result of the wrapped span context's __exit__ method.
+                """
                 # Record exception if one occurred
                 if exc_type is not None and self.span:
                     self.span.record_exception(exc_val)
