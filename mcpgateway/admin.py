@@ -2794,18 +2794,18 @@ async def admin_edit_gateway(
             content={"message": "Gateway updated successfully!", "success": True},
             status_code=200,
         )
-    except ValidationError as ve:
-        return JSONResponse(content=ErrorFormatter.format_validation_error(ve), status_code=422)
-    except GatewayConnectionError as gce:
-        return JSONResponse(content={"message": str(gce), "success": False}, status_code=502)
-    except IntegrityError as ie:
-        return JSONResponse(content=ErrorFormatter.format_database_error(ie), status_code=409)
-    except ValueError as ve:
-        return JSONResponse(content={"message": str(ve), "success": False}, status_code=400)
-    except RuntimeError as re:
-        return JSONResponse(content={"message": str(re), "success": False}, status_code=501)
     except Exception as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=503)
+        if isinstance(ex, GatewayConnectionError):
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
+        if isinstance(ex, ValueError):
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+        if isinstance(ex, RuntimeError):
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        if isinstance(ex, ValidationError):
+            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")

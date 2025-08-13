@@ -332,7 +332,7 @@ async def get_db() -> AsyncGenerator[Session, Any]:
 
 
 @mcp_app.call_tool()
-async def call_tool(name: str, arguments: Dict[str, Any]) -> List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]]:
+async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]]:
     """
     Handles tool invocation via the MCP Server.
 
