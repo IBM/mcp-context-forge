@@ -1,6 +1,27 @@
+{{/* -------------------------------------------------------------------
+     CONFIGMAP - Gateway Plain-Text Configuration
+     -------------------------------------------------------------------
+     - Renders a ConfigMap named postgres-config
+     - Each key/value becomes an environment variable.
+     - Use ONLY for non-secret data ( db host, port and related)
+     ------------------------------------------------------------------- */}}
+
+{{- if .Values.postgres.enabled }} 
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postgres-config
 data:
-  POSTGRES_DB: {{ .Values.postgres.credentials.database }}
+  POSTGRES_DB: {{ .Values.postgres.database | quote }}
+  POSTGRES_PORT: {{ .Values.postgres.service.port | quote }}
+  POSTGRES_HOST: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+{{- else if eq .Values.postgres.enabled false }} 
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+data:
+  POSTGRES_DB: {{ default "mcpgateway" .Values.postgres.db | quote }}
+  POSTGRES_PORT: {{ .Values.postgres.port | quote}}
+  POSTGRES_HOST: {{ .Values.postgres.host | quote }}
+{{- end }}

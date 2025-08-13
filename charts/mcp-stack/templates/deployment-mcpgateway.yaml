@@ -27,11 +27,17 @@ spec:
       labels:
         app: {{ include "mcp-stack.fullname" . }}-mcpgateway
 
-    spec:
+    spec: 
+      {{- if .Values.global.imagePullSecrets }}    
+      imagePullSecrets:
+      {{- range .Values.global.imagePullSecrets }}
+      - name: {{ . }}
+      {{- end }}
+      {{- end }}
       containers:
         - name: mcp-context-forge
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
-          imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
+          imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy | quote }}
 
           # Gateway's internal port
           ports:
@@ -45,27 +51,38 @@ spec:
           env:
             # ---------- POSTGRES ----------
             - name: POSTGRES_HOST
-              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              valueFrom:
+                configMapKeyRef:
+                  key: POSTGRES_HOST
+                  name: postgres-config
             - name: POSTGRES_PORT
-              value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              valueFrom:
+                configMapKeyRef:
+                  key: POSTGRES_PORT
+                  name: postgres-config
             - name: POSTGRES_DB
-              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
+              valueFrom:
+                configMapKeyRef:
+                  key: POSTGRES_DB
+                  name: postgres-config
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: POSTGRES_USER
+                  name: {{ if .Values.pgSecretMounts }}{{ .Values.pgSecretMounts.name }}{{ else }}{{ include "mcp-stack.postgresSecretName" . | trim }}{{ end }}
+                  key: {{ if .Values.pgSecretMounts }}{{ .Values.pgSecretMounts.userNameKey }}{{ else }}POSTGRES_USER{{ end }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: POSTGRES_PASSWORD
+                  name: {{ if .Values.pgSecretMounts }}{{ .Values.pgSecretMounts.name }}{{ else }}{{ include "mcp-stack.postgresSecretName" . | trim }}{{ end }}
+                  key: {{ if .Values.pgSecretMounts }}{{ .Values.pgSecretMounts.passwordKeyKey }}{{ else }}POSTGRES_PASSWORD{{ end }}
 
             # ---------- REDIS ----------
             - name: REDIS_HOST
-              value: {{ printf "%s-redis" (include "mcp-stack.fullname" .) }}
+              value: {{ if .Values.redis.host }}{{ .Values.redis.host }}{{ else }}{{ printf "%s-redis" (include "mcp-stack.fullname" .) }}{{ end }}
             - name: REDIS_PORT
-              value: "{{ .Values.mcpContextForge.env.redis.port }}"
+              value: "{{ .Values.redis.port }}"
+
+
 
             # ---------- DERIVED URLS ----------
             # These MUST be placed *after* the concrete vars above so the
@@ -80,8 +97,13 @@ spec:
           # BULK ENV-VARS - pulled from ConfigMap + Secret
           ################################################################
           envFrom:
+           {{- if .Values.mcpContextForge.secret.create }}   
             - secretRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+          {{- else }}
+            - secretRef:
+                name: {{ if .Values.mcpContextForge.mcpGatewaySecret }}{{ .Values.mcpContextForge.mcpGatewaySecret.name }}{{ end }}
+          {{- end }}
             - configMapRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-config
 

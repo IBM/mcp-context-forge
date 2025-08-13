@@ -95,20 +95,6 @@ mcpContextForge:
   ####################################################################
   env:
     host: 0.0.0.0               # bind address inside the container
-
-    postgres:
-      # host is auto-generated as <release>-mcp-stack-postgres
-      # host: postgres          # uncomment to override the generated name
-      port: 5432
-      db: postgresdb
-      userKey: POSTGRES_USER    # key in the secret that stores the username
-      passwordKey: POSTGRES_PASSWORD
-
-    redis:
-      # host is auto-generated as <release>-mcp-stack-redis
-      # host: redis             # uncomment to override the generated name
-      port: 6379
-
   ####################################################################
   # PLAIN-TEXT (NON-SECRET) SETTINGS
   # Rendered into a ConfigMap; readable by anyone with GET access.
@@ -195,6 +181,12 @@ mcpContextForge:
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
 
+    
+    # ─ Admin & auth ─
+    AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
+    JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
+    TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
+
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features
     RELOAD: "false"                  # auto-reload code on changes
@@ -207,35 +199,38 @@ mcpContextForge:
   # so their placeholders resolve at runtime. Override them if needed.
   ####################################################################
   secret:
-    # ─ Admin & auth ─
-    BASIC_AUTH_USER: admin                 # username for basic-auth login
-    BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
-    AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
-    JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
-    JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
-    TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
-    AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
-    # (derived URLs are defined in deployment-mcp.yaml)
-
-    # ─ Optional database / redis overrides ─
-    # DATABASE_URL: "postgresql://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
-    # REDIS_URL:    "redis://cache.acme.com:6379/0"                   # override the auto-generated URL
-
+  # create: true if want to create the secret, recommended only for personal/quick installs
+    create: false
+    regeneatePassword: false             # set to true to generate a new password each time
+    data:
+      BASIC_AUTH_USER: admin                 # username for basic-auth login
+      BASIC_AUTH_PASSWORD: ""                # Password for basic authentication.
+                                             # - If left empty and `regeneratePassword: true`, a random password will be generated at install and on every upgrade.
+                                             # - If left empty and `regeneratePassword: false`, the same password will be retained across upgrades.
+                                             # - If a value is provided, it will be used as-is regardless of `regeneratePassword`.
+      JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
+      AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
+  ###################################################################
+  # mcpSecret , sameple key value with description as follows
+  # JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens and
+  # AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
+  # BASIC_AUTH_USER: admin                 # username for basic-auth login
+  # BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
+  # Secrets must be manually created in the namespace and will be mounted to the MCP gateway deployment
+  # Define key as BASIC_AUTH_USER,BASIC_AUTH_PASSWORD, JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET
   ####################################################################
-  # Names of ConfigMap / Secret are resolved by templates; leave as-is.
-  ####################################################################
-  envFrom:
-    - secretRef:
-        name: mcp-gateway-secret
-    - configMapRef:
-        name: mcp-gateway-config
+  mcpGatewaySecret:
+  #   name: mcp-cf-gateway-secret
+  #   secretName: mcp-cf-gateway-secret
+  #   readOnly: true
+  #   optional: false
 
 ########################################################################
 # DATABASE MIGRATION (Alembic)
 # Runs as a Job before mcpgateway deployment
 ########################################################################
 migration:
-  enabled: true                             # Set to false to skip migrations
+  enabled: false                             # Set to false to skip migrations
 
   # Job configuration
   restartPolicy: Never                      # Job should not restart on failure
@@ -270,7 +265,7 @@ postgres:
   enabled: true
 
   image:
-    repository: postgres
+    repository: postgres ## docker.io/bitnami/postgresql:17.5.0  #More compatible with RHOCP
     tag: "17"
     pullPolicy: IfNotPresent
 
@@ -278,15 +273,14 @@ postgres:
     type: ClusterIP
     port: 5432
 
+  database: mcpgateway
+
   # PersistentVolumeClaim for data durability
   persistence:
     enabled: true
     storageClassName: manual     # pick a StorageClass (e.g. gp2, standard)
     accessModes: [ReadWriteMany]
     size: 5Gi
-
-  # Leave blank to autogenerate <release>-mcp-stack-postgres-secret.
-  existingSecret: ""
 
   credentials:                  # used only when existingSecret is blank
     database: postgresdb
@@ -321,6 +315,34 @@ postgres:
       timeoutSeconds: 3
       successThreshold: 1
       failureThreshold: 5
+  
+  # set this PostgreSQL hostname/port and db when using an external PostgreSQL database,(Postgres enabled should be false in that case)
+  # set this PostgreSQL hostname when using an external PostgreSQL database
+  host: ""
+  # set this PostgreSQL port when using an external PostgreSQL database
+  port:
+  # set this PostgreSQL database when using an external PostgreSQL database
+  db: ""
+  
+  ###################################################################
+  # Postgres server secret mounts, if providing externally managed Postgres. 
+  # Secrets must be manually created in the namespace.
+  # Define key POSTGRES_USER and POSTGRES_PASSWORD
+  ####################################################################
+  pgSecretMounts:
+  #  name: postgres-secret
+  #  secretName: postgres-secret
+  #  userNameKey: POSTGRES_USER
+  #  passwordKey: POSTGRES_PASSWORD
+  #  readOnly: true
+  #  optional: false
+
+# Whether to generate a secret resource for the PostgreSQL password. Useful if
+# global.postgresqlSecretName is managed outside of this helm chart and want to automate creating credentials.But its less secure to use in production
+  generatePostgresqlPasswordSecret:
+    enabled: false
+    postgresqlPassword: "" #Change with External PostgreSQL password , ideally not recommended to have this in values.yaml (prod)
+    postgresqlUsername: "" #Change with External PostgreSQL  username
 
 ########################################################################
 # REDIS CACHE
@@ -336,7 +358,11 @@ redis:
   service:
     type: ClusterIP
     port: 6379
-
+  
+  # set this Redis hostname/port using an external Redis (Redis enabled should be false in that case)
+  host: ""
+  port: 6379
+  
   # ─── Resource limits & requests ───
   resources:
     limits:

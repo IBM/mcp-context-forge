@@ -40,22 +40,30 @@ spec:
           env:
             # ---------- POSTGRES ----------
             - name: POSTGRES_HOST
-              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              valueFrom:
+                configMapKeyRef:
+                  key: POSTGRES_HOST
+                  name: postgres-config
             - name: POSTGRES_PORT
-              value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              valueFrom:
+                configMapKeyRef:
+                  key: POSTGRES_PORT
+                  name: postgres-config
             - name: POSTGRES_DB
-              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
+              valueFrom:
+                configMapKeyRef:
+                  key: POSTGRES_DB
+                  name: postgres-config
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: POSTGRES_USER
+                  name: {{ if .Values.pgSecretMounts }}{{ .Values.pgSecretMounts.name }}{{ else }}{{ include "mcp-stack.postgresSecretName" . | trim }}{{ end }}
+                  key: {{ if .Values.pgSecretMounts }}{{ .Values.pgSecretMounts.userNameKey }}{{ else }}POSTGRES_USER{{ end }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: POSTGRES_PASSWORD
-
+                  name: {{ if .Values.pgSecretMounts }}{{ .Values.pgSecretMounts.name }}{{ else }}{{ include "mcp-stack.postgresSecretName" . | trim }}{{ end }}
+                  key: {{ if .Values.pgSecretMounts }}{{ .Values.pgSecretMounts.passwordKeyKey }}{{ else }}POSTGRES_PASSWORD{{ end }}
             # ---------- DERIVED URLS ----------
             - name: DATABASE_URL
               value: >-
@@ -71,6 +79,8 @@ spec:
 
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
-        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+      {{- range .Values.global.imagePullSecrets }}
+      - name: {{ . }}
+      {{- end }}
       {{- end }}
 {{- end }}

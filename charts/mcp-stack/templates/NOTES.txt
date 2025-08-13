@@ -20,6 +20,7 @@
 {{- $pgadminSvc  := printf "%s-pgadmin"               $fullName }}
 
 {{- $gwSecret := printf "%s-gateway-secret" $fullName }}
+{{- $adminSecret := printf "%s-admin-secret" $fullName }}
 {{- $pgSecret := include "mcp-stack.postgresSecretName" . }}
 
 {{- /* ─── Secret look-ups (only used when $showSecrets=true) */}}
@@ -28,8 +29,10 @@
 {{- $pgPass        := "" }}
 {{- if $showSecrets }}
   {{- with (lookup "v1" "Secret" $ns $gwSecret) }}
-    {{- $basicAuthPass = index .data "BASIC_AUTH_PASSWORD" | b64dec }}
     {{- $jwtKey        = index .data "JWT_SECRET_KEY"      | b64dec }}
+  {{- end }}
+  {{- with (lookup "v1" "Secret" $ns $gwSecret) }}
+    {{- $basicAuthPass = index .data "BASIC_AUTH_PASSWORD" | b64dec }}
   {{- end }}
   {{- with (lookup "v1" "Secret" $ns $pgSecret) }}
     {{- $pgPass = index .data "POSTGRES_PASSWORD" | b64dec }}

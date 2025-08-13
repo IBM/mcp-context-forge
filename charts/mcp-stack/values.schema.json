@@ -203,47 +203,12 @@
               "type": "string",
               "description": "Host binding address",
               "default": "0.0.0.0"
-            },
-            "postgres": {
-              "type": "object",
-              "description": "PostgreSQL connection configuration",
-              "properties": {
-                "port": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 65535,
-                  "default": 5432
-                },
-                "db": {
-                  "type": "string",
-                  "default": "postgresdb"
-                },
-                "userKey": {
-                  "type": "string",
-                  "default": "POSTGRES_USER"
-                },
-                "passwordKey": {
-                  "type": "string",
-                  "default": "POSTGRES_PASSWORD"
-                }
-              },
-              "additionalProperties": false
-            },
-            "redis": {
-              "type": "object",
-              "description": "Redis connection configuration",
-              "properties": {
-                "port": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 65535,
-                  "default": 6379
-                }
-              },
-              "additionalProperties": false
             }
           },
-          "additionalProperties": false
+        "additionalProperties": false},        
+         "mcpGatewaySecret": {
+          "type": "object",
+          "description": "External Secret configuration"
         },
         "config": {
           "type": "object",
@@ -526,6 +491,22 @@
               "description": "File lock path",
               "default": "gateway_healthcheck_init.lock"
             },
+            "AUTH_REQUIRED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Require authentication",
+              "default": "true"
+            },
+            "JWT_ALGORITHM": {
+              "type": "string",
+              "description": "JWT algorithm",
+              "default": "HS256"
+            },
+            "TOKEN_EXPIRY": {
+              "type": "string",
+              "description": "Token expiry in minutes",
+              "default": "10080"
+            },
             "DEV_MODE": {
               "type": "string",
               "enum": ["true", "false"],
@@ -561,26 +542,10 @@
               "description": "Basic auth password",
               "default": "changeme"
             },
-            "AUTH_REQUIRED": {
-              "type": "string",
-              "enum": ["true", "false"],
-              "description": "Require authentication",
-              "default": "true"
-            },
             "JWT_SECRET_KEY": {
               "type": "string",
               "description": "JWT secret key",
               "default": "my-test-key"
-            },
-            "JWT_ALGORITHM": {
-              "type": "string",
-              "description": "JWT algorithm",
-              "default": "HS256"
-            },
-            "TOKEN_EXPIRY": {
-              "type": "string",
-              "description": "Token expiry in minutes",
-              "default": "10080"
             },
             "AUTH_ENCRYPTION_SECRET": {
               "type": "string",
@@ -759,6 +724,31 @@
           },
           "additionalProperties": false
         },
+                 "pgSecretMounts": {
+          "type": "object",
+          "description": "External Secret configuration"
+        },
+         "host": {
+          "type": "string",
+          "description": "PostgreSQL External Host configuration",
+          "default": "postgres" },
+            
+         "port": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 65535,
+            "default": null,
+            "description": "PostgreSQL port, leave null to let user set it manually for their external postgreSQL"
+          },              
+          "db": {
+            "type": "string",
+            "default": "postgresdb"
+          },
+          "database": {
+            "type": "string",
+            "default": "postgresdb",
+            "description": "PostgreSQL DB name for the default installation"
+          },
         "persistence": {
           "type": "object",
           "description": "PostgreSQL persistence configuration",
@@ -791,11 +781,25 @@
           },
           "additionalProperties": false
         },
-        "existingSecret": {
-          "type": "string",
-          "description": "Existing secret name",
-          "default": ""
-        },
+                "generatePostgresqlPasswordSecret": {
+          "type": "object",
+          "description": "PostgreSQL secret configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Create Secret of the externally deployed postgres",
+              "default": false
+            },
+           "postgresqlPassword": {
+            "type": "string",
+              "description": "Create Secret of the externally deployed postgres for password"
+           },
+           "postgresqlUsername": {
+              "type": "string",
+              "description": "Create Secret of the externally deployed postgre for username"
+           }},
+           "additionalProperties": false
+           },
         "credentials": {
           "type": "object",
           "description": "PostgreSQL credentials",
@@ -892,6 +896,16 @@
           },
           "additionalProperties": false
         },
+        "port": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535,
+        "default": 6379
+        },
+        "host": {
+        "type": "string",
+        "default": "redis"
+        },              
         "resources": {
           "$ref": "#/$defs/resources",
           "description": "Resource limits and requests"
