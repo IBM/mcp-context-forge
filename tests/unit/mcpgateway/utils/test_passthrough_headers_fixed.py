@@ -121,8 +121,11 @@ class TestPassthroughHeaders:
         # Check warning was logged
         assert any("Skipping Authorization header passthrough due to bearer auth" in record.message for record in caplog.records)
 
-    def test_feature_disabled_by_default(self):
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_feature_disabled_by_default(self, mock_settings):
         """Test that feature is disabled by default."""
+        mock_settings.enable_header_passthrough = False
+
         mock_db = Mock()
         request_headers = {"x-tenant-id": "test"}
         base_headers = {"Content-Type": "application/json"}
