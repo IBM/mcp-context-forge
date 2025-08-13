@@ -13,14 +13,7 @@ Exposes core MCP Gateway plugin components:
 """
 
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import PluginViolation
-from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework.models import GlobalContext, PluginViolation, PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework.errors import PluginViolationError, PluginError
 
-__all__ = [
-    "GlobalContext",
-    "PluginManager",
-    "PluginViolation",
-    "PluginViolationError",
-    "PromptPosthookPayload",
-    "PromptPrehookPayload",
-]
+__all__ = ["GlobalContext", "PluginError", "PluginManager", "PluginViolation", "PluginViolationError", "PromptPosthookPayload", "PromptPrehookPayload", "ToolPostInvokePayload", "ToolPreInvokePayload"]

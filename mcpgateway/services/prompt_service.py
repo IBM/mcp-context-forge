@@ -460,7 +460,7 @@ class PromptService:
                 request_id = uuid.uuid4().hex
             global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
             try:
-                pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(payload=PromptPrehookPayload(name, arguments), global_context=global_context, local_contexts=None)
+                pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(payload=PromptPrehookPayload(name=name, args=arguments), global_context=global_context, local_contexts=None)
 
                 if not pre_result.continue_processing:
                     # Plugin blocked the request

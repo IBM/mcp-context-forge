@@ -8,11 +8,14 @@ import pytest
 from mcpgateway.models import ResourceContent
 from mcpgateway.plugins.framework.base import Plugin, PluginRef
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import HookType, PluginCondition, PluginConfig, PluginMode
 # Registry is imported for mocking
-from mcpgateway.plugins.framework.plugin_types import (
+from mcpgateway.plugins.framework.models import (
     GlobalContext,
+    HookType,
+    PluginCondition,
+    PluginConfig,
     PluginContext,
+    PluginMode,
     PluginViolation,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
@@ -52,14 +55,11 @@ class TestResourceHooks:
         )
         plugin = Plugin(config)
         payload = ResourcePreFetchPayload(uri="file:///test.txt", metadata={})
-        context = PluginContext(GlobalContext(request_id="test-123"))
+        context = PluginContext(request_id="test-123")
 
-        result = await plugin.resource_pre_fetch(payload, context)
+        with pytest.raises(NotImplementedError, match="'resource_pre_fetch' not implemented"):
+            await plugin.resource_pre_fetch(payload, context)
 
-        # ResourcePreFetchResult is a type alias, check actual type
-        assert result.__class__.__name__ == "PluginResult"
-        assert result.continue_processing is True
-        assert result.modified_payload == payload
 
     @pytest.mark.asyncio
     async def test_plugin_resource_post_fetch_default(self):
@@ -76,14 +76,11 @@ class TestResourceHooks:
         plugin = Plugin(config)
         content = ResourceContent(type="resource", uri="file:///test.txt", text="Test content")
         payload = ResourcePostFetchPayload(uri="file:///test.txt", content=content)
-        context = PluginContext(GlobalContext(request_id="test-123"))
+        context = PluginContext(request_id="test-123")
 
-        result = await plugin.resource_post_fetch(payload, context)
+        with pytest.raises(NotImplementedError, match="'resource_post_fetch' not implemented"):
+            await plugin.resource_post_fetch(payload, context)
 
-        # ResourcePostFetchResult is a type alias, check actual type
-        assert result.__class__.__name__ == "PluginResult"
-        assert result.continue_processing is True
-        assert result.modified_payload == payload
 
     @pytest.mark.asyncio
     async def test_resource_hook_blocking(self):
@@ -113,7 +110,7 @@ class TestResourceHooks:
         )
         plugin = BlockingResourcePlugin(config)
         payload = ResourcePreFetchPayload(uri="file:///etc/passwd", metadata={})
-        context = PluginContext(GlobalContext(request_id="test-123"))
+        context = PluginContext(request_id="test-123")
 
         result = await plugin.resource_pre_fetch(payload, context)
 
@@ -160,7 +157,7 @@ class TestResourceHooks:
             text="Database config:\npassword: secret123\nport: 5432",
         )
         payload = ResourcePostFetchPayload(uri="test://config", content=content)
-        context = PluginContext(GlobalContext(request_id="test-123"))
+        context = PluginContext(request_id="test-123")
 
         result = await plugin.resource_post_fetch(payload, context)
 
@@ -447,7 +444,7 @@ class TestResourceHookIntegration:
         )
         plugin = URIModifierPlugin(config)
         payload = ResourcePreFetchPayload(uri="test://resource", metadata={})
-        context = PluginContext(GlobalContext(request_id="test-123"))
+        context = PluginContext(request_id="test-123")
 
         result = await plugin.resource_pre_fetch(payload, context)
 
@@ -481,7 +478,7 @@ class TestResourceHookIntegration:
         )
         plugin = MetadataEnricherPlugin(config)
         payload = ResourcePreFetchPayload(uri="test://resource", metadata={})
-        context = PluginContext(GlobalContext(request_id="test-123", user="testuser"))
+        context = PluginContext(request_id="test-123", user="testuser")
 
         result = await plugin.resource_pre_fetch(payload, context)
 

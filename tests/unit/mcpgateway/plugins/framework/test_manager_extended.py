@@ -13,10 +13,15 @@ import pytest
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import Config, HookType, PluginCondition, PluginConfig, PluginMode, PluginViolation
-from mcpgateway.plugins.framework.plugin_types import (
+from mcpgateway.plugins.framework.models import (
+    Config,
     GlobalContext,
+    HookType,
+    PluginCondition,
+    PluginConfig,
     PluginContext,
+    PluginMode,
+    PluginViolation,
     PluginResult,
     PromptPosthookPayload,
     PromptPrehookPayload,
@@ -447,7 +452,7 @@ async def test_manager_shutdown_behavior():
 async def test_manager_payload_size_validation():
     """Test payload size validation functionality."""
     from mcpgateway.plugins.framework.manager import PayloadSizeError, MAX_PAYLOAD_SIZE, PluginExecutor
-    from mcpgateway.plugins.framework.plugin_types import PromptPrehookPayload, PromptPosthookPayload
+    from mcpgateway.plugins.framework.models import PromptPrehookPayload, PromptPosthookPayload
 
     # Test payload size validation directly on executor (covers lines 252, 258)
     executor = PluginExecutor[PromptPrehookPayload]()
@@ -594,7 +599,7 @@ async def test_base_plugin_coverage():
     """Test base plugin functionality for complete coverage."""
     from mcpgateway.plugins.framework.base import Plugin, PluginRef
     from mcpgateway.plugins.framework.models import PluginConfig, HookType, PluginMode
-    from mcpgateway.plugins.framework.plugin_types import (
+    from mcpgateway.plugins.framework.models import (
         PluginContext, GlobalContext, PromptPrehookPayload, PromptPosthookPayload,
         ToolPreInvokePayload, ToolPostInvokePayload
     )
@@ -625,7 +630,7 @@ async def test_base_plugin_coverage():
     assert plugin_ref.mode == PluginMode.ENFORCE  # Default mode
 
     # Test NotImplementedError for prompt_pre_fetch (covers lines 151-155)
-    context = PluginContext(GlobalContext(request_id="test"))
+    context = PluginContext(request_id="test")
     payload = PromptPrehookPayload(name="test", args={})
 
     with pytest.raises(NotImplementedError, match="'prompt_pre_fetch' not implemented"):
@@ -641,30 +646,25 @@ async def test_base_plugin_coverage():
 
     # Test default tool_pre_invoke implementation (covers line 191)
     tool_payload = ToolPreInvokePayload(name="test_tool", args={"key": "value"})
-    tool_result = await plugin.tool_pre_invoke(tool_payload, context)
-
-    assert tool_result.continue_processing is True
-    assert tool_result.modified_payload is tool_payload
+    with pytest.raises(NotImplementedError, match="'tool_pre_invoke' not implemented"):
+        await plugin.tool_pre_invoke(tool_payload, context)
 
     # Test default tool_post_invoke implementation (covers line 211)
     tool_post_payload = ToolPostInvokePayload(name="test_tool", result={"result": "success"})
-    tool_post_result = await plugin.tool_post_invoke(tool_post_payload, context)
-
-    assert tool_post_result.continue_processing is True
-    assert tool_post_result.modified_payload is tool_post_payload
+    with pytest.raises(NotImplementedError, match="'tool_post_invoke' not implemented"):
+        await plugin.tool_post_invoke(tool_post_payload, context)
 
 
 @pytest.mark.asyncio
 async def test_plugin_types_coverage():
     """Test plugin types functionality for complete coverage."""
-    from mcpgateway.plugins.framework.plugin_types import (
-        PluginContext, GlobalContext, PluginViolationError
+    from mcpgateway.plugins.framework.models import (
+        PluginContext, PluginViolation
     )
-    from mcpgateway.plugins.framework.models import PluginViolation
+    from mcpgateway.plugins.framework.errors import PluginViolationError
 
     # Test PluginContext state methods (covers lines 266, 275)
-    global_ctx = GlobalContext(request_id="test", user="testuser")
-    plugin_ctx = PluginContext(global_ctx)
+    plugin_ctx = PluginContext(request_id="test", user="testuser")
 
     # Test get_state with default
     assert plugin_ctx.get_state("nonexistent", "default_value") == "default_value"
