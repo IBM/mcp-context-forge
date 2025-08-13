@@ -35,7 +35,7 @@ from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
 import re
-from typing import Any, AsyncGenerator, Dict, List, Union
+from typing import Any, AsyncGenerator, Dict, List, Union, cast
 from uuid import uuid4
 
 # Third-Party
@@ -67,7 +67,7 @@ tool_service: ToolService = ToolService()
 mcp_app: Server[Any] = Server("mcp-streamable-http-stateless")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
-request_headers_var = contextvars.ContextVar("request_headers", default={})
+request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
 
 # ------------------------------ Event store ------------------------------
 
@@ -365,7 +365,10 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[Union[types.Te
                 logger.warning(f"No content returned by tool: {name}")
                 return []
 
-            return [types.TextContent(type=result.content[0].type, text=result.content[0].text)]
+            return cast(
+                List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]],
+                [types.TextContent(type=result.content[0].type, text=result.content[0].text)]
+            )
     except Exception as e:
         logger.exception(f"Error calling tool '{name}': {e}")
         return []
