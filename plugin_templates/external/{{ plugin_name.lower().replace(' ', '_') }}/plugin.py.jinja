@@ -28,7 +28,7 @@ from mcpgateway.plugins.framework.plugin_types import (
 {% set class_name = class_parts|join -%}
 {% endif -%}
 class {{ class_name }}(Plugin):
-    """{{ description. }}"""
+    """{{ description }}."""
 
     def __init__(self, config: PluginConfig):
         """Entry init block for plugin.
