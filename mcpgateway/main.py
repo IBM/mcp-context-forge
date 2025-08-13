@@ -97,6 +97,7 @@ from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_auth_override, verify_jwt_token
@@ -190,6 +191,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if plugin_manager:
             await plugin_manager.initialize()
             logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
+
+        if settings.enable_header_passthrough:
+            db_gen = get_db()
+            db = next(db_gen)  # pylint: disable=stop-iteration-return
+            try:
+                await set_global_passthrough_headers(db)
+            finally:
+                db.close()
 
         await tool_service.initialize()
         await resource_service.initialize()

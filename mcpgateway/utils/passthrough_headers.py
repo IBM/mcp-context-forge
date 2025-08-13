@@ -50,6 +50,18 @@ HEADER_NAME_REGEX = re.compile(r"^[A-Za-z0-9\-]+$")
 MAX_HEADER_VALUE_LENGTH = 4096
 
 
+class PassthroughHeadersError(Exception):
+    """Base class for passthrough headers-related errors.
+
+    Examples:
+        >>> error = PassthroughHeadersError("Test error")
+        >>> str(error)
+        'Test error'
+        >>> isinstance(error, Exception)
+        True
+    """
+
+
 def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH) -> str:
     """Sanitize header value for security.
 
@@ -131,12 +143,15 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
 
     Examples:
         Feature disabled by default (secure by default):
-        >>> from unittest.mock import Mock
-        >>> mock_db = Mock()
-        >>> request_headers = {"x-tenant-id": "should-be-ignored"}
-        >>> base_headers = {"Content-Type": "application/json"}
-        >>> result = get_passthrough_headers(request_headers, base_headers, mock_db)
-        >>> result
+        >>> from unittest.mock import Mock, patch
+        >>> with patch(__name__ + ".settings") as mock_settings:
+        ...     mock_settings.enable_header_passthrough = False
+        ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
+        ...     mock_db = Mock()
+        ...     mock_db.query.return_value.first.return_value = None
+        ...     request_headers = {"x-tenant-id": "should-be-ignored"}
+        ...     base_headers = {"Content-Type": "application/json"}
+        ...     get_passthrough_headers(request_headers, base_headers, mock_db)
         {'Content-Type': 'application/json'}
 
         See comprehensive unit tests in tests/unit/mcpgateway/utils/test_passthrough_headers*.py
@@ -213,3 +228,88 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
 
     logger.debug(f"Final passthrough headers: {list(passthrough_headers.keys())}")
     return passthrough_headers
+
+
+async def set_global_passthrough_headers(db: Session) -> None:
+    """Set global passthrough headers in the database if not already configured.
+
+    This function checks if the global passthrough headers are already set in the
+    GlobalConfig table. If not, it initializes them with the default headers from
+    settings.default_passthrough_headers.
+
+    Args:
+        db (Session): SQLAlchemy database session for querying and updating GlobalConfig.
+
+    Raises:
+        PassthroughHeadersError: If unable to update passthrough headers in the database.
+
+    Examples:
+        Successful insert of default headers:
+        >>> import pytest
+        >>> from unittest.mock import Mock, patch
+        >>> @pytest.mark.asyncio
+        ... @patch("mcpgateway.utils.passthrough_headers.settings")
+        ... async def test_default_headers(mock_settings):
+        ...     mock_settings.enable_header_passthrough = True
+        ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
+        ...     mock_db = Mock()
+        ...     mock_db.query.return_value.first.return_value = None
+        ...     await set_global_passthrough_headers(mock_db)
+        ...     mock_db.add.assert_called_once()
+        ...     mock_db.commit.assert_called_once()
+
+        Database write failure:
+        >>> import pytest
+        >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
+        >>> @pytest.mark.asyncio
+        ... @patch("mcpgateway.utils.passthrough_headers.settings")
+        ... async def test_db_write_failure(mock_settings):
+        ...     mock_settings.enable_header_passthrough = True
+        ...     mock_db = Mock()
+        ...     mock_db.query.return_value.first.return_value = None
+        ...     mock_db.commit.side_effect = Exception("DB write failed")
+        ...     with pytest.raises(PassthroughHeadersError):
+        ...         await set_global_passthrough_headers(mock_db)
+        ...     mock_db.rollback.assert_called_once()
+
+        Config already exists (no DB write):
+        >>> import pytest
+        >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.models import GlobalConfig
+        >>> @pytest.mark.asyncio
+        ... @patch("mcpgateway.utils.passthrough_headers.settings")
+        ... async def test_existing_config(mock_settings):
+        ...     mock_settings.enable_header_passthrough = True
+        ...     mock_db = Mock()
+        ...     existing = Mock(spec=GlobalConfig)
+        ...     existing.passthrough_headers = ["X-Tenant-ID", "Authorization"]
+        ...     mock_db.query.return_value.first.return_value = existing
+        ...     await set_global_passthrough_headers(mock_db)
+        ...     mock_db.add.assert_not_called()
+        ...     mock_db.commit.assert_not_called()
+        ...     assert existing.passthrough_headers == ["X-Tenant-ID", "Authorization"]
+
+    Note:
+        This function is typically called during application startup to ensure
+        global configuration is in place before any gateway operations.
+    """
+    global_config = db.query(GlobalConfig).first()
+
+    if not global_config:
+        config_headers = settings.default_passthrough_headers
+        if config_headers:
+            allowed_headers = []
+            for header_name in config_headers:
+                # Validate header name
+                if not validate_header_name(header_name):
+                    logger.warning(f"Invalid header name '{header_name}' - skipping (must match pattern: {HEADER_NAME_REGEX.pattern})")
+                    continue
+
+                allowed_headers.append(header_name)
+        try:
+            db.add(GlobalConfig(passthrough_headers=allowed_headers))
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            raise PassthroughHeadersError(f"Failed to update passthrough headers: {str(e)}")

@@ -71,6 +71,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
@@ -176,14 +177,12 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 @admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
 @rate_limit(requests_per_minute=30)  # Lower limit for config endpoints
 async def get_global_passthrough_headers(
-    request: Request,  # pylint: disable=unused-argument
     db: Session = Depends(get_db),
     _user: str = Depends(require_auth),
 ) -> GlobalConfigRead:
     """Get the global passthrough headers configuration.
 
     Args:
-        request: HTTP request object
         db: Database session
         _user: Authenticated user
 
@@ -201,9 +200,11 @@ async def get_global_passthrough_headers(
         True
     """
     config = db.query(GlobalConfig).first()
-    if not config:
-        config = GlobalConfig()
-    return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
+    if config:
+        passthrough_headers = config.passthrough_headers
+    else:
+        passthrough_headers = []
+    return GlobalConfigRead(passthrough_headers=passthrough_headers)
 
 
 @admin_router.put("/config/passthrough-headers", response_model=GlobalConfigRead)
@@ -222,6 +223,9 @@ async def update_global_passthrough_headers(
         db: Database session
         _user: Authenticated user
 
+    Raises:
+        HTTPException: If there is a conflict or validation error
+
     Returns:
         GlobalConfigRead: The updated configuration
 
@@ -235,14 +239,25 @@ async def update_global_passthrough_headers(
         >>> inspect.iscoroutinefunction(update_global_passthrough_headers)
         True
     """
-    config = db.query(GlobalConfig).first()
-    if not config:
-        config = GlobalConfig(passthrough_headers=config_update.passthrough_headers)
-        db.add(config)
-    else:
-        config.passthrough_headers = config_update.passthrough_headers
-    db.commit()
-    return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
+    try:
+        config = db.query(GlobalConfig).first()
+        if not config:
+            config = GlobalConfig(passthrough_headers=config_update.passthrough_headers)
+            db.add(config)
+        else:
+            config.passthrough_headers = config_update.passthrough_headers
+        db.commit()
+        return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
+    except Exception as e:
+        if isinstance(e, IntegrityError):
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Passthrough headers conflict")
+        if isinstance(e, ValidationError):
+            db.rollback()
+            raise HTTPException(status_code=422, detail="Invalid passthrough headers format")
+        if isinstance(e, PassthroughHeadersError):
+            db.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @admin_router.get("/servers", response_model=List[ServerRead])
