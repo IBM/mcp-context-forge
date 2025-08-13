@@ -363,7 +363,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: 
         user (str): The authenticated user dependency.
 
     Returns:
-        ServerRead: The server details.
+        Dict[str, Any]: The server details.
 
     Raises:
         HTTPException: If the server is not found.
@@ -738,9 +738,9 @@ async def admin_edit_server(
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
-            name=str(form.get("name")),
-            description=str(form.get("description")),
-            icon=str(form.get("icon")),
+            name=form.get("name"),
+            description=form.get("description"),
+            icon=form.get("icon"),
             associated_tools=",".join(form.getlist("associatedTools")),
             associated_resources=form.get("associatedResources"),
             associated_prompts=form.get("associatedPrompts"),
@@ -2146,8 +2146,8 @@ async def admin_edit_tool(
         "description": form.get("description"),
         "request_type": form.get("requestType", "SSE"),
         "integration_type": form.get("integrationType", "REST"),
-        "headers": json.loads(str(form.get("headers")) or "{}"),
-        "input_schema": json.loads(str(form.get("input_schema")) or "{}"),
+        "headers": json.loads(form.get("headers") or "{}"),
+        "input_schema": json.loads(form.get("input_schema") or "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth_type": form.get("auth_type", ""),
         "auth_username": form.get("auth_username", ""),
