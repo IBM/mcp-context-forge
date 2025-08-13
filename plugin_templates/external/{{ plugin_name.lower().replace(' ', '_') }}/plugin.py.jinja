@@ -6,20 +6,22 @@ Authors: {{ author }}
 
 This module loads configurations for plugins.
 """
+
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.models import PluginConfig
 from mcpgateway.plugins.framework.plugin_types import (
-  PluginContext,
-  PromptPosthookPayload,
-  PromptPosthookResult,
-  PromptPrehookPayload,
-  PromptPrehookResult,
-  ToolPostInvokePayload,
-  ToolPostInvokeResult,
-  ToolPreInvokePayload,
-  ToolPreInvokeResult,
+    PluginContext,
+    PromptPosthookPayload,
+    PromptPosthookResult,
+    PromptPrehookPayload,
+    PromptPrehookResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
 )
+
 
 {% set class_parts = plugin_name.replace(' ', '_').replace('-','_').split('_') -%}
 {% if class_parts|length > 1 -%}
@@ -38,7 +40,6 @@ class {{ class_name }}(Plugin):
           config: the skill configuration
         """
         super().__init__(config)
-
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """The plugin hook run before a prompt is retrieved and rendered.

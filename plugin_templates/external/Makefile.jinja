@@ -94,7 +94,6 @@ lint-fix:
 	done; \
 	echo "🔧 Fixing lint issues in $$actual_target..."; \
 	$(MAKE) --no-print-directory black TARGET="$$actual_target"; \
-	$(MAKE) --no-print-directory isort TARGET="$$actual_target"; \
 	$(MAKE) --no-print-directory ruff-fix TARGET="$$actual_target"
 
 .PHONY: lint-check
@@ -114,7 +113,6 @@ lint-check:
 	done; \
 	echo "🔧 Fixing lint issues in $$actual_target..."; \
 	$(MAKE) --no-print-directory black-check TARGET="$$actual_target"; \
-	$(MAKE) --no-print-directory isort-check TARGET="$$actual_target"; \
 	$(MAKE) --no-print-directory ruff-check TARGET="$$actual_target"
 
 .PHONY: lock

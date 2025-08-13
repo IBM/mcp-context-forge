@@ -48,18 +48,17 @@ authors = [
 ]
 
 # URLs
-urls = [
-    Homepage = "https://ibm.github.io/mcp-context-forge/"
-    Documentation = "https://ibm.github.io/mcp-context-forge/"
-    Repository = "https://github.com/IBM/mcp-context-forge"
-    "Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
-    Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
-]
+[project.urls]
+Homepage = "https://ibm.github.io/mcp-context-forge/"
+Documentation = "https://ibm.github.io/mcp-context-forge/"
+Repository = "https://github.com/IBM/mcp-context-forge"
+"Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
+Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 
 # ----------------------------------------------------------------
 # Runtime dependencies
 # ----------------------------------------------------------------
-packages = [{include = "{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}", from = "src"}]
+
 dependencies = [
     "chuk-mcp-runtime>=0.6.5",
     "chuk-mcp[full]>=0.5.1",
