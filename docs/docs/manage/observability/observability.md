@@ -64,40 +64,74 @@ Choose your preferred observability backend:
 
 #### Phoenix (AI/LLM Focus)
 ```bash
+# Start Phoenix
 docker run -d \
   --name phoenix \
   -p 6006:6006 \
   -p 4317:4317 \
   arizephoenix/phoenix:latest
 
+# Configure environment
+export OTEL_TRACES_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+export OTEL_SERVICE_NAME=mcp-gateway
+
 # View UI at http://localhost:6006
 ```
 
 #### Jaeger
 ```bash
+# Start Jaeger
 docker run -d \
   --name jaeger \
   -p 16686:16686 \
   -p 14268:14268 \
   jaegertracing/all-in-one
 
+# Configure environment
+export OTEL_TRACES_EXPORTER=jaeger
+export OTEL_EXPORTER_JAEGER_ENDPOINT=http://localhost:14268/api/traces
+export OTEL_SERVICE_NAME=mcp-gateway
+
 # View UI at http://localhost:16686
 ```
 
 #### Zipkin
 ```bash
+# Start Zipkin
 docker run -d \
   --name zipkin \
   -p 9411:9411 \
   openzipkin/zipkin
 
+# Configure environment
+export OTEL_TRACES_EXPORTER=zipkin
+export OTEL_EXPORTER_ZIPKIN_ENDPOINT=http://localhost:9411/api/v2/spans
+export OTEL_SERVICE_NAME=mcp-gateway
+
 # View UI at http://localhost:9411
+```
+
+#### Grafana Tempo
+```bash
+# Start Tempo
+docker run -d \
+  --name tempo \
+  -p 4317:4317 \
+  -p 3200:3200 \
+  grafana/tempo:latest
+
+# Configure environment (uses OTLP)
+export OTEL_TRACES_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+export OTEL_SERVICE_NAME=mcp-gateway
 ```
 
 #### Console (Development)
 ```bash
 # For debugging - prints traces to stdout
 export OTEL_TRACES_EXPORTER=console
+export OTEL_SERVICE_NAME=mcp-gateway
 ```
 
 ### 4. Run MCP Gateway
@@ -239,6 +273,27 @@ export OTEL_TRACES_SAMPLER_ARG=0.01
 # Always sample errors (coming in future update)
 # export OTEL_TRACES_SAMPLER=parentbased_always_on_errors
 ```
+
+## Testing Your Setup
+
+### Generate Test Traces
+
+Use the trace generator helper to verify your observability backend is working:
+
+```bash
+# Activate virtual environment if needed
+. /home/cmihai/.venv/mcpgateway/bin/activate
+
+# Run the trace generator
+python tests/integration/helpers/trace_generator.py
+```
+
+This will send sample traces for:
+- Tool invocations
+- Prompt rendering
+- Resource fetching
+- Gateway federation
+- Complex workflows with nested spans
 
 ## Troubleshooting
 

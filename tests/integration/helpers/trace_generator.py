@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Simple test script to verify Phoenix observability is working.
-Run this after starting Phoenix and MCP Gateway.
+Trace generator helper for testing observability backends.
+
+This tool generates sample traces to verify that observability is working
+correctly with Phoenix, Jaeger, Zipkin, or other OTLP backends.
+
+Usage:
+    python tests/integration/helpers/trace_generator.py
 """
 
 import asyncio
 import os
 import sys
 
-# Add the current directory to path so we can import mcpgateway
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add the project root to path so we can import mcpgateway
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from mcpgateway.observability import init_telemetry, create_span
 import time
