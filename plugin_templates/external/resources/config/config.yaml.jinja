@@ -6,7 +6,7 @@ plugins:
     {% else -%}
     {% set class_name = class_parts|join -%}
     {% endif -%}
-    kind: "{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}.plugin..{{ class_name }}"
+    kind: "{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}.plugin.{{ class_name }}"
     description: "{{ description }}"
     version: "{{ version }}"
     author: "{{ author }}"
