@@ -152,7 +152,7 @@ MCP Gateway automatically traces:
 
 ### Tool Operations
 - Tool invocations with arguments
-- Gateway routing decisions  
+- Gateway routing decisions
 - Plugin pre/post processing
 - Execution timing and success status
 - Error details with stack traces
@@ -260,7 +260,7 @@ pip install opentelemetry-exporter-otlp-proto-grpc
 # For Jaeger
 pip install opentelemetry-exporter-jaeger
 
-# For Zipkin  
+# For Zipkin
 pip install opentelemetry-exporter-zipkin
 ```
 
