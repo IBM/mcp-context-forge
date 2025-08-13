@@ -7,7 +7,7 @@ SHELL := /bin/bash
 # Project variables
 PACKAGE_NAME = denylist
 CF_PROJECT_NAME = mcpgateway
-TARGET ?= src
+TARGET ?= {{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}
 
 # Virtual-environment variables
 VENVS_DIR := $(HOME)/.venv
@@ -129,7 +129,7 @@ test:
 .PHONY: clean
 clean:
 	find . -type f -name '*.py[co]' -delete -o -type d -name __pycache__ -delete
-	rm -rf *.egg-info  src/*.egg-info .pytest_cache tests/.pytest_cache build dist .ruff_cache .coverage
+	rm -rf *.egg-info .pytest_cache tests/.pytest_cache build dist .ruff_cache .coverage
 
 .PHONY: help
 help:
