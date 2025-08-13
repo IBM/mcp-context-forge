@@ -11,9 +11,9 @@ Exposes plugin framework components:
 - Models
 """
 
-# from mcpgateway.plugins.framework.base import Plugin
-# # from mcpgateway.plugins.framework.external.mcp.server import run_plugin_mcp_server
-# from mcpgateway.plugins.framework.loader.config import ConfigLoader
-# from mcpgateway.plugins.framework.manager import PluginManager
+from mcpgateway.plugins.framework.base import Plugin
+from mcpgateway.plugins.framework.external.mcp.server import run_plugin_mcp_server
+from mcpgateway.plugins.framework.loader.config import ConfigLoader
+from mcpgateway.plugins.framework.manager import PluginManager
 
-# __all__ = ["ConfigLoader", "Plugin", "PluginManager", "run_plugin_mcp_server"]
+__all__ = ["ConfigLoader", "Plugin", "PluginManager", "run_plugin_mcp_server"]
