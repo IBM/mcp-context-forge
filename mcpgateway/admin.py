@@ -22,11 +22,11 @@ from collections import defaultdict
 from functools import wraps
 import json
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 from typing import Any, Dict, List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import httpx
 from pydantic import ValidationError
@@ -77,16 +77,16 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
 # Initialize logging service first
-logging_service = LoggingService()
+logging_service: LoggingService = LoggingService()
 logger = logging_service.get_logger("mcpgateway")
 
 # Initialize services
-server_service = ServerService()
-tool_service = ToolService()
-prompt_service = PromptService()
-gateway_service = GatewayService()
-resource_service = ResourceService()
-root_service = RootService()
+server_service: ServerService = ServerService()
+tool_service: ToolService = ToolService()
+prompt_service: PromptService = PromptService()
+gateway_service: GatewayService = GatewayService()
+resource_service: ResourceService = ResourceService()
+root_service: RootService = RootService()
 
 # Set up basic authentication
 
@@ -458,7 +458,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: 
 
 
 @admin_router.post("/servers", response_model=ServerRead)
-async def admin_add_server(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+async def admin_add_server(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
     """
     Add a new server via the admin UI.
 
@@ -577,8 +577,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     # is_inactive_checked = form.get("is_inactive_checked", "false")
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
@@ -734,8 +734,8 @@ async def admin_edit_server(
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
@@ -1918,10 +1918,10 @@ async def admin_add_tool(
             request_type = "GET"
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
-    tool_data = {
+    tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "url": form.get("url"),
         "description": form.get("description"),
@@ -1968,7 +1968,7 @@ async def admin_edit_tool(
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> RedirectResponse:
+) -> Response:
     """
     Edit a tool via the admin UI.
 
@@ -2138,17 +2138,17 @@ async def admin_edit_tool(
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
-    tool_data = {
+    tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "url": form.get("url"),
         "description": form.get("description"),
         "request_type": form.get("requestType", "SSE"),
         "integration_type": form.get("integrationType", "REST"),
-        "headers": json.loads(form.get("headers") or "{}"),
-        "input_schema": json.loads(form.get("input_schema") or "{}"),
+        "headers": json.loads(str(form.get("headers")) or "{}"),
+        "input_schema": json.loads(str(form.get("input_schema")) or "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth_type": form.get("auth_type", ""),
         "auth_username": form.get("auth_username", ""),
@@ -2573,12 +2573,12 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     form = await request.form()
     try:
         # Parse tags from comma-separated string
-        tags_str = form.get("tags", "")
-        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+        tags_str = str(form.get("tags", ""))
+        tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = form.get("auth_headers")
-        auth_headers = []
+        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
                 auth_headers = json.loads(auth_headers_json)
@@ -2586,7 +2586,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 auth_headers = []
 
         # Handle passthrough_headers
-        passthrough_headers = form.get("passthrough_headers")
+        passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
             try:
                 passthrough_headers = json.loads(passthrough_headers)
@@ -2597,16 +2597,19 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             passthrough_headers = None
 
         gateway = GatewayCreate(
-            name=form["name"],
-            url=form["url"],
-            description=form.get("description"),
-            transport=form.get("transport", "SSE"),
-            auth_type=form.get("auth_type", ""),
-            auth_username=form.get("auth_username", ""),
-            auth_password=form.get("auth_password", ""),
-            auth_token=form.get("auth_token", ""),
-            auth_header_key=form.get("auth_header_key", ""),
-            auth_header_value=form.get("auth_header_value", ""),
+            name=str(form["name"]),
+            url=str(form["url"]),
+            description=str(form.get("description")),
+            tags=tags,
+            transport=str(form.get("transport", "SSE")),
+            auth_type=str(form.get("auth_type", "")),
+            auth_username=str(form.get("auth_username", "")),
+            auth_password=str(form.get("auth_password", "")),
+            auth_token=str(form.get("auth_token", "")),
+            auth_header_key=str(form.get("auth_header_key", "")),
+            auth_header_value=str(form.get("auth_header_value", "")),
+            auth_headers=auth_headers if auth_headers else None,
+            passthrough_headers=passthrough_headers,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -2748,11 +2751,11 @@ async def admin_edit_gateway(
     form = await request.form()
     try:
         # Parse tags from comma-separated string
-        tags_str = form.get("tags", "")
+        tags_str = str(form.get("tags", ""))
         tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = form.get("auth_headers")
+        auth_headers_json = str(form.get("auth_headers"))
         auth_headers = []
         if auth_headers_json:
             try:
@@ -2761,7 +2764,7 @@ async def admin_edit_gateway(
                 auth_headers = []
 
         # Handle passthrough_headers
-        passthrough_headers = form.get("passthrough_headers")
+        passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
             try:
                 passthrough_headers = json.loads(passthrough_headers)
@@ -2991,7 +2994,7 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user: str 
 
 
 @admin_router.post("/resources")
-async def admin_add_resource(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
+async def admin_add_resource(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Response:
     """
     Add a resource via the admin UI.
 
@@ -3045,16 +3048,16 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
+    tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
-    try:
+    try:        
         resource = ResourceCreate(
             uri=str(form["uri"]),
             name=str(form["name"]),
             description=str(form.get("description", "")),
             mime_type=str(form.get("mimeType", "")),
-            template=form.get("template"),  # defaults to None if not provided
+            template=cast(str | None, form.get("template")),
             content=str(form["content"]),
             tags=tags,
         )
@@ -3171,7 +3174,7 @@ async def admin_edit_resource(
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
+    tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
@@ -3180,7 +3183,7 @@ async def admin_edit_resource(
             description=str(form.get("description")),
             mime_type=str(form.get("mimeType")),
             content=str(form["content"]),
-            template=form.get("template"),
+            template=str(form.get("template")),
             tags=tags,
         )
         await resource_service.update_resource(db, uri, resource)
@@ -3198,19 +3201,6 @@ async def admin_edit_resource(
             return JSONResponse(status_code=409, content=error_message)
         logger.error(f"Error in admin_edit_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-    resource = ResourceUpdate(
-        name=str(form["name"]),
-        description=str(form.get("description")),
-        mime_type=str(form.get("mimeType")),
-        content=str(form["content"]),
-        template=str(form["template"])
-    )
-    await resource_service.update_resource(db, uri, resource)
-    root_path = request.scope.get("root_path", "")
-    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
-    if is_inactive_checked.lower() == "true":
-        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
 
 
 @admin_router.post("/resources/{uri:path}/delete")
@@ -3490,7 +3480,7 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user: str =
 
 
 @admin_router.post("/prompts")
-async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
     """Add a prompt via the admin UI.
 
     Expects form fields:
@@ -3542,7 +3532,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
+    tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
@@ -3581,7 +3571,7 @@ async def admin_edit_prompt(
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> RedirectResponse:
+) -> Response:
     """Edit a prompt via the admin UI.
 
     Expects form fields:
@@ -3650,14 +3640,10 @@ async def admin_edit_prompt(
     logger.debug(f"User {user} is editing prompt name {name}")
     form = await request.form()
 
-    # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
-
     args_json: str = str(form.get("arguments")) or "[]"
     arguments = json.loads(args_json)
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
+    tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
         prompt = PromptUpdate(
