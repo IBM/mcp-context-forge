@@ -1,2 +1,3 @@
 nav:
-  - Phoenix: phoenix-deployment.md
+  - Overview: observability.md
+  - Phoenix Integration: phoenix.md

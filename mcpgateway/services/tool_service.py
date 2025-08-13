@@ -39,6 +39,7 @@ from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.models import TextContent, ToolResult
+from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
@@ -687,159 +688,180 @@ class ToolService:
         start_time = time.monotonic()
         success = False
         error_message = None
-        try:
-            # Get combined headers for the tool including base headers, auth, and passthrough headers
-            # headers = self._get_combined_headers(db, tool, tool.headers or {}, request_headers)
-            headers = tool.headers or {}
-            if tool.integration_type == "REST":
-                credentials = decode_auth(tool.auth_value)
-                # Filter out empty header names/values to avoid "Illegal header name" errors
-                filtered_credentials = {k: v for k, v in credentials.items() if k and v}
-                headers.update(filtered_credentials)
 
-                # Only call get_passthrough_headers if we actually have request headers to pass through
-                if request_headers:
-                    headers = get_passthrough_headers(request_headers, headers, db)
+        # Create a trace span for the tool invocation
+        with create_span(
+            "tool.invoke",
+            {
+                "tool.name": name,
+                "tool.id": str(tool.id) if tool else "unknown",
+                "tool.integration_type": tool.integration_type if tool else "unknown",
+                "tool.gateway_id": str(tool.gateway_id) if tool and tool.gateway_id else None,
+                "arguments_count": len(arguments) if arguments else 0,
+                "has_headers": bool(request_headers),
+            },
+        ) as span:
+            try:
+                # Get combined headers for the tool including base headers, auth, and passthrough headers
+                # headers = self._get_combined_headers(db, tool, tool.headers or {}, request_headers)
+                headers = tool.headers or {}
+                if tool.integration_type == "REST":
+                    credentials = decode_auth(tool.auth_value)
+                    # Filter out empty header names/values to avoid "Illegal header name" errors
+                    filtered_credentials = {k: v for k, v in credentials.items() if k and v}
+                    headers.update(filtered_credentials)
 
-                # Build the payload based on integration type
-                payload = arguments.copy()
+                    # Only call get_passthrough_headers if we actually have request headers to pass through
+                    if request_headers:
+                        headers = get_passthrough_headers(request_headers, headers, db)
 
-                # Handle URL path parameter substitution
-                final_url = tool.url
-                if "{" in tool.url and "}" in tool.url:
-                    # Extract path parameters from URL template and arguments
-                    url_params = re.findall(r"\{(\w+)\}", tool.url)
-                    url_substitutions = {}
+                    # Build the payload based on integration type
+                    payload = arguments.copy()
 
-                    for param in url_params:
-                        if param in payload:
-                            url_substitutions[param] = payload.pop(param)  # Remove from payload
-                            final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
-                        else:
-                            raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
+                    # Handle URL path parameter substitution
+                    final_url = tool.url
+                    if "{" in tool.url and "}" in tool.url:
+                        # Extract path parameters from URL template and arguments
+                        url_params = re.findall(r"\{(\w+)\}", tool.url)
+                        url_substitutions = {}
 
-                # Use the tool's request_type rather than defaulting to POST.
-                method = tool.request_type.upper()
-                if method == "GET":
-                    response = await self._http_client.get(final_url, params=payload, headers=headers)
-                else:
-                    response = await self._http_client.request(method, final_url, json=payload, headers=headers)
-                response.raise_for_status()
+                        for param in url_params:
+                            if param in payload:
+                                url_substitutions[param] = payload.pop(param)  # Remove from payload
+                                final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
+                            else:
+                                raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
-                # Handle 204 No Content responses that have no body
-                if response.status_code == 204:
-                    tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                    # Use the tool's request_type rather than defaulting to POST.
+                    method = tool.request_type.upper()
+                    if method == "GET":
+                        response = await self._http_client.get(final_url, params=payload, headers=headers)
+                    else:
+                        response = await self._http_client.request(method, final_url, json=payload, headers=headers)
+                    response.raise_for_status()
+
+                    # Handle 204 No Content responses that have no body
+                    if response.status_code == 204:
+                        tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                        # Mark as successful only after all operations complete successfully
+                        success = True
+                    elif response.status_code not in [200, 201, 202, 206]:
+                        result = response.json()
+                        tool_result = ToolResult(
+                            content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
+                            is_error=True,
+                        )
+                        # Don't mark as successful for error responses - success remains False
+                    else:
+                        result = response.json()
+                        filtered_response = extract_using_jq(result, tool.jsonpath_filter)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
+                        # Mark as successful only after all operations complete successfully
+                        success = True
+                elif tool.integration_type == "MCP":
+                    transport = tool.request_type.lower()
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
+                    headers = decode_auth(gateway.auth_value if gateway else None)
+
+                    # Get combined headers including gateway auth and passthrough
+                    if request_headers:
+                        headers = get_passthrough_headers(request_headers, headers, db, gateway)
+
+                    async def connect_to_sse_server(server_url: str):
+                        """Connect to an MCP server running with SSE transport.
+
+                        Args:
+                            server_url: MCP Server SSE URL
+
+                        Returns:
+                            ToolResult: Result of tool call
+                        """
+                        async with sse_client(url=server_url, headers=headers) as streams:
+                            async with ClientSession(*streams) as session:
+                                await session.initialize()
+                                tool_call_result = await session.call_tool(tool.original_name, arguments)
+                        return tool_call_result
+
+                    async def connect_to_streamablehttp_server(server_url: str):
+                        """Connect to an MCP server running with Streamable HTTP transport.
+
+                        Args:
+                            server_url: MCP Server URL
+
+                        Returns:
+                            ToolResult: Result of tool call
+                        """
+                        async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, _get_session_id):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                await session.initialize()
+                                tool_call_result = await session.call_tool(tool.original_name, arguments)
+                        return tool_call_result
+
+                    tool_gateway_id = tool.gateway_id
+                    tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
+
+                    tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
+                    if transport == "sse":
+                        tool_call_result = await connect_to_sse_server(tool_gateway.url)
+                    elif transport == "streamablehttp":
+                        tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url)
+                    content = tool_call_result.model_dump(by_alias=True).get("content", [])
+
+                    filtered_response = extract_using_jq(content, tool.jsonpath_filter)
+                    tool_result = ToolResult(content=filtered_response)
                     # Mark as successful only after all operations complete successfully
                     success = True
-                elif response.status_code not in [200, 201, 202, 206]:
-                    result = response.json()
-                    tool_result = ToolResult(
-                        content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
-                        is_error=True,
-                    )
-                    # Don't mark as successful for error responses - success remains False
                 else:
-                    result = response.json()
-                    filtered_response = extract_using_jq(result, tool.jsonpath_filter)
-                    tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
-                    # Mark as successful only after all operations complete successfully
-                    success = True
-            elif tool.integration_type == "MCP":
-                transport = tool.request_type.lower()
-                gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
-                headers = decode_auth(gateway.auth_value if gateway else None)
+                    tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
-                # Get combined headers including gateway auth and passthrough
-                if request_headers:
-                    headers = get_passthrough_headers(request_headers, headers, db, gateway)
+                # Plugin hook: tool post-invoke
+                if self._plugin_manager:
+                    try:
+                        post_result, _ = await self._plugin_manager.tool_post_invoke(
+                            payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)), global_context=global_context, local_contexts=context_table
+                        )
+                        if not post_result.continue_processing:
+                            # Plugin blocked the request
+                            if post_result.violation:
+                                plugin_name = post_result.violation.plugin_name
+                                violation_reason = post_result.violation.reason
+                                violation_desc = post_result.violation.description
+                                violation_code = post_result.violation.code
+                                raise PluginViolationError(f"Tool result blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", post_result.violation)
+                            raise PluginViolationError("Tool result blocked by plugin")
 
-                async def connect_to_sse_server(server_url: str):
-                    """Connect to an MCP server running with SSE transport.
+                        # Use modified payload if provided
+                        if post_result.modified_payload:
+                            # Reconstruct ToolResult from modified result
+                            modified_result = post_result.modified_payload.result
+                            if isinstance(modified_result, dict) and "content" in modified_result:
+                                tool_result = ToolResult(content=modified_result["content"])
+                            else:
+                                # If result is not in expected format, convert it to text content
+                                tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
 
-                    Args:
-                        server_url: MCP Server SSE URL
-
-                    Returns:
-                        ToolResult: Result of tool call
-                    """
-                    async with sse_client(url=server_url, headers=headers) as streams:
-                        async with ClientSession(*streams) as session:
-                            await session.initialize()
-                            tool_call_result = await session.call_tool(tool.original_name, arguments)
-                    return tool_call_result
-
-                async def connect_to_streamablehttp_server(server_url: str):
-                    """Connect to an MCP server running with Streamable HTTP transport.
-
-                    Args:
-                        server_url: MCP Server URL
-
-                    Returns:
-                        ToolResult: Result of tool call
-                    """
-                    async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, _get_session_id):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            await session.initialize()
-                            tool_call_result = await session.call_tool(tool.original_name, arguments)
-                    return tool_call_result
-
-                tool_gateway_id = tool.gateway_id
-                tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
-
-                tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
-                if transport == "sse":
-                    tool_call_result = await connect_to_sse_server(tool_gateway.url)
-                elif transport == "streamablehttp":
-                    tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url)
-                content = tool_call_result.model_dump(by_alias=True).get("content", [])
-
-                filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                tool_result = ToolResult(content=filtered_response)
-                # Mark as successful only after all operations complete successfully
-                success = True
-            else:
-                tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
-
-            # Plugin hook: tool post-invoke
-            if self._plugin_manager:
-                try:
-                    post_result, _ = await self._plugin_manager.tool_post_invoke(
-                        payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)), global_context=global_context, local_contexts=context_table
-                    )
-                    if not post_result.continue_processing:
-                        # Plugin blocked the request
-                        if post_result.violation:
-                            plugin_name = post_result.violation.plugin_name
-                            violation_reason = post_result.violation.reason
-                            violation_desc = post_result.violation.description
-                            violation_code = post_result.violation.code
-                            raise PluginViolationError(f"Tool result blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", post_result.violation)
-                        raise PluginViolationError("Tool result blocked by plugin")
-
-                    # Use modified payload if provided
-                    if post_result.modified_payload:
-                        # Reconstruct ToolResult from modified result
-                        modified_result = post_result.modified_payload.result
-                        if isinstance(modified_result, dict) and "content" in modified_result:
-                            tool_result = ToolResult(content=modified_result["content"])
-                        else:
-                            # If result is not in expected format, convert it to text content
-                            tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
-
-                except PluginViolationError:
-                    raise
-                except Exception as e:
-                    logger.error(f"Error in post-tool invoke plugin hook: {e}")
-                    # Only fail if configured to do so
-                    if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                    except PluginViolationError:
                         raise
+                    except Exception as e:
+                        logger.error(f"Error in post-tool invoke plugin hook: {e}")
+                        # Only fail if configured to do so
+                        if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                            raise
 
-            return tool_result
-        except Exception as e:
-            error_message = str(e)
-            raise ToolInvocationError(f"Tool invocation failed: {error_message}")
-        finally:
-            await self._record_tool_metric(db, tool, start_time, success, error_message)
+                return tool_result
+            except Exception as e:
+                error_message = str(e)
+                # Set span error status
+                if span:
+                    span.set_attribute("error", True)
+                    span.set_attribute("error.message", str(e))
+                raise ToolInvocationError(f"Tool invocation failed: {error_message}")
+            finally:
+                # Add final span attributes
+                if span:
+                    span.set_attribute("success", success)
+                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                await self._record_tool_metric(db, tool, start_time, success, error_message)
 
     async def update_tool(self, db: Session, tool_id: str, tool_update: ToolUpdate) -> ToolRead:
         """

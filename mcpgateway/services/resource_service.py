@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 import mimetypes
 import os
 import re
+import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
 
@@ -45,6 +46,7 @@ from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
+from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -404,99 +406,122 @@ class ResourceService:
             >>> result == 'test'
             True
         """
-        # Generate request ID if not provided
-        if not request_id:
-            request_id = str(uuid.uuid4())
+        start_time = time.monotonic()
 
-        original_uri = uri
-        contexts = None
+        # Create trace span for resource reading
+        with create_span(
+            "resource.read",
+            {
+                "resource.uri": uri,
+                "user": user or "anonymous",
+                "server_id": server_id,
+                "request_id": request_id,
+                "http.url": uri if uri.startswith("http") else None,
+                "resource.type": "template" if ("{" in uri and "}" in uri) else "static",
+            },
+        ) as span:
+            # Generate request ID if not provided
+            if not request_id:
+                request_id = str(uuid.uuid4())
 
-        # Call pre-fetch hooks if plugin manager is available
-        if self._plugin_manager and PLUGINS_AVAILABLE:
-            # Initialize plugin manager if needed
-            if not self._plugin_manager._initialized:
-                await self._plugin_manager.initialize()
+            original_uri = uri
+            contexts = None
 
-            # Create plugin context
-            global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id)
+            # Call pre-fetch hooks if plugin manager is available
+            if self._plugin_manager and PLUGINS_AVAILABLE:
+                # Initialize plugin manager if needed
+                # pylint: disable=protected-access
+                if not self._plugin_manager._initialized:
+                    await self._plugin_manager.initialize()
+                # pylint: enable=protected-access
 
-            # Create pre-fetch payload
-            pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
+                # Create plugin context
+                global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id)
 
-            # Execute pre-fetch hooks
-            try:
-                pre_result, contexts = await self._plugin_manager.resource_pre_fetch(pre_payload, global_context)
+                # Create pre-fetch payload
+                pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
-                # Check if we should continue
-                if not pre_result.continue_processing:
-                    # Plugin blocked the resource fetch
-                    if pre_result.violation:
-                        logger.warning(f"Resource blocked by plugin: {pre_result.violation.reason} (URI: {uri})")
-                        raise ResourceError(f"Resource blocked: {pre_result.violation.reason}")
-                    raise ResourceError("Resource fetch blocked by plugin")
+                # Execute pre-fetch hooks
+                try:
+                    pre_result, contexts = await self._plugin_manager.resource_pre_fetch(pre_payload, global_context)
 
-                # Use modified URI if plugin changed it
-                if pre_result.modified_payload:
-                    uri = pre_result.modified_payload.uri
-                    logger.debug(f"Resource URI modified by plugin: {original_uri} -> {uri}")
-            except ResourceError:
-                raise
-            except Exception as e:
-                logger.error(f"Error in resource pre-fetch hooks: {e}")
-                # Continue without plugin processing if there's an error
+                    # Check if we should continue
+                    if not pre_result.continue_processing:
+                        # Plugin blocked the resource fetch
+                        if pre_result.violation:
+                            logger.warning(f"Resource blocked by plugin: {pre_result.violation.reason} (URI: {uri})")
+                            raise ResourceError(f"Resource blocked: {pre_result.violation.reason}")
+                        raise ResourceError("Resource fetch blocked by plugin")
 
-        # Original resource fetching logic
-        # Check for template
-        if "{" in uri and "}" in uri:
-            content = await self._read_template_resource(uri)
-        else:
-            # Find resource
-            resource = db.execute(select(DbResource).where(DbResource.uri == uri).where(DbResource.is_active)).scalar_one_or_none()
+                    # Use modified URI if plugin changed it
+                    if pre_result.modified_payload:
+                        uri = pre_result.modified_payload.uri
+                        logger.debug(f"Resource URI modified by plugin: {original_uri} -> {uri}")
+                except ResourceError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error in resource pre-fetch hooks: {e}")
+                    # Continue without plugin processing if there's an error
 
-            if not resource:
-                # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == uri).where(not_(DbResource.is_active))).scalar_one_or_none()
+            # Original resource fetching logic
+            # Check for template
+            if "{" in uri and "}" in uri:
+                content = await self._read_template_resource(uri)
+            else:
+                # Find resource
+                resource = db.execute(select(DbResource).where(DbResource.uri == uri).where(DbResource.is_active)).scalar_one_or_none()
 
-                if inactive_resource:
-                    raise ResourceNotFoundError(f"Resource '{uri}' exists but is inactive")
+                if not resource:
+                    # Check if inactive resource exists
+                    inactive_resource = db.execute(select(DbResource).where(DbResource.uri == uri).where(not_(DbResource.is_active))).scalar_one_or_none()
 
-                raise ResourceNotFoundError(f"Resource not found: {uri}")
+                    if inactive_resource:
+                        raise ResourceNotFoundError(f"Resource '{uri}' exists but is inactive")
 
-            content = resource.content
+                    raise ResourceNotFoundError(f"Resource not found: {uri}")
 
-        # Call post-fetch hooks if plugin manager is available
-        if self._plugin_manager and PLUGINS_AVAILABLE:
-            # Create post-fetch payload
-            post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
+                content = resource.content
 
-            # Execute post-fetch hooks
-            try:
-                post_result, _ = await self._plugin_manager.resource_post_fetch(
-                    post_payload,
-                    global_context,
-                    contexts,  # Pass contexts from pre-fetch
-                )
+            # Call post-fetch hooks if plugin manager is available
+            if self._plugin_manager and PLUGINS_AVAILABLE:
+                # Create post-fetch payload
+                post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
 
-                # Check if we should continue
-                if not post_result.continue_processing:
-                    # Plugin blocked the resource after fetching
-                    if post_result.violation:
-                        logger.warning(f"Resource content blocked by plugin: {post_result.violation.reason} (URI: {original_uri})")
-                        raise ResourceError(f"Resource content blocked: {post_result.violation.reason}")
-                    raise ResourceError("Resource content blocked by plugin")
+                # Execute post-fetch hooks
+                try:
+                    post_result, _ = await self._plugin_manager.resource_post_fetch(
+                        post_payload,
+                        global_context,
+                        contexts,  # Pass contexts from pre-fetch
+                    )
 
-                # Use modified content if plugin changed it
-                if post_result.modified_payload:
-                    content = post_result.modified_payload.content
-                    logger.debug(f"Resource content modified by plugin for URI: {original_uri}")
-            except ResourceError:
-                raise
-            except Exception as e:
-                logger.error(f"Error in resource post-fetch hooks: {e}")
-                # Continue with unmodified content if there's an error
+                    # Check if we should continue
+                    if not post_result.continue_processing:
+                        # Plugin blocked the resource after fetching
+                        if post_result.violation:
+                            logger.warning(f"Resource content blocked by plugin: {post_result.violation.reason} (URI: {original_uri})")
+                            raise ResourceError(f"Resource content blocked: {post_result.violation.reason}")
+                        raise ResourceError("Resource content blocked by plugin")
 
-        # Return content
-        return content
+                    # Use modified content if plugin changed it
+                    if post_result.modified_payload:
+                        content = post_result.modified_payload.content
+                        logger.debug(f"Resource content modified by plugin for URI: {original_uri}")
+                except ResourceError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Error in resource post-fetch hooks: {e}")
+                    # Continue with unmodified content if there's an error
+
+            # Set success attributes on span
+            if span:
+                span.set_attribute("success", True)
+                span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                if content:
+                    span.set_attribute("content.size", len(str(content)))
+
+            # Return content
+            return content
 
     async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool) -> ResourceRead:
         """

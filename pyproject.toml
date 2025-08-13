@@ -64,7 +64,7 @@ dependencies = [
     "pyjwt>=2.10.1",
     "python-json-logger>=3.3.0",
     "PyYAML>=6.0.2",
-    "sqlalchemy>=2.0.42",
+    "sqlalchemy>=2.0.43",
     "sse-starlette>=3.0.2",
     "starlette>=0.47.2",
     "uvicorn>=0.35.0",
@@ -89,6 +89,29 @@ alembic = [
     "alembic>=1.16.4",
 ]
 
+# Observability dependencies (optional)
+observability = [
+    "opentelemetry-api>=1.36.0",
+    "opentelemetry-exporter-otlp>=1.36.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
+    "opentelemetry-sdk>=1.36.0",
+]
+
+# Additional observability backends (optional)
+observability-jaeger = [
+    "opentelemetry-exporter-jaeger>=1.21.0",
+]
+
+observability-zipkin = [
+    "opentelemetry-exporter-zipkin>=1.36.0",
+]
+
+observability-all = [
+    "mcp-contextforge-gateway[observability]>=0.5.0",
+    "opentelemetry-exporter-jaeger>=1.21.0",
+    "opentelemetry-exporter-zipkin>=1.36.0",
+]
+
 # Async SQLite Driver (optional)
 aiosqlite = [
     "aiosqlite>=0.21.0",
@@ -110,7 +133,7 @@ dev = [
     "check-manifest>=0.50",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
-    "coverage>=7.10.2",
+    "coverage>=7.10.3",
     "coverage-badge>=1.1.2",
     "darglint>=1.8.1",
     "dlint>=0.16.0",
@@ -131,7 +154,7 @@ dev = [
     "pylint>=3.3.8",
     "pylint-pydantic>=0.3.5",
     "pyre-check>=0.9.25",
-    "pyrefly>=0.27.2",
+    "pyrefly>=0.28.1",
     "pyright>=1.1.403",
     "pyroma>=5.0",
     "pyspelling>=2.10",
@@ -159,7 +182,7 @@ dev = [
     "ty>=0.0.1a17",
     "types-tabulate>=0.9.0.20241207",
     "unimport>=1.2.1",
-    "uv>=0.8.8",
+    "uv>=0.8.9",
     "vulture>=2.14",
     "websockets>=15.0.1",
     "yamllint>=1.37.1",

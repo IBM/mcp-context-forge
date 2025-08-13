@@ -200,7 +200,7 @@ class TestResourceFilterPlugin:
         assert "password: [REDACTED]" in modified_text
         assert "api_key: [REDACTED]" in modified_text
         assert "secret: [REDACTED]" in modified_text
-        assert "username: admin" in modified_text  # Unchanged
+        assert "username: admin" in modified_text
         assert "pass123" not in modified_text
         assert "key456" not in modified_text
         assert "key789" not in modified_text
@@ -244,7 +244,7 @@ class TestResourceFilterPlugin:
 
         # Should skip processing if not validated
         assert result.continue_processing is True
-        assert result.modified_payload == payload  # Unchanged
+        assert result.modified_payload == payload
 
     @pytest.mark.asyncio
     async def test_empty_content_handling(self, plugin, context):
@@ -261,7 +261,7 @@ class TestResourceFilterPlugin:
         result = await plugin.resource_post_fetch(payload, context)
 
         assert result.continue_processing is True
-        assert result.modified_payload == payload  # Unchanged
+        assert result.modified_payload == payload
 
     @pytest.mark.asyncio
     async def test_invalid_uri_handling(self, plugin, context):
