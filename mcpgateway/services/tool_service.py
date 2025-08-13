@@ -150,7 +150,7 @@ class ToolService:
     - Active/inactive tool management.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the tool service.
 
         Examples:
