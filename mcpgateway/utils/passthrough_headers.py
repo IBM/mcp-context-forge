@@ -50,6 +50,18 @@ HEADER_NAME_REGEX = re.compile(r"^[A-Za-z0-9\-]+$")
 MAX_HEADER_VALUE_LENGTH = 4096
 
 
+class PassthroughHeadersError(Exception):
+    """Base class for passthrough headers-related errors.
+
+    Examples:
+        >>> error = PassthroughHeadersError("Test error")
+        >>> str(error)
+        'Test error'
+        >>> isinstance(error, Exception)
+        True
+    """
+
+
 def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH) -> str:
     """Sanitize header value for security.
 
@@ -213,3 +225,48 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
 
     logger.debug(f"Final passthrough headers: {list(passthrough_headers.keys())}")
     return passthrough_headers
+
+
+async def set_global_passthrough_headers(db: Session) -> None:
+    """Set global passthrough headers in the database if not already configured.
+
+    This function checks if the global passthrough headers are already set in the
+    GlobalConfig table. If not, it initializes them with the default headers from
+    settings.default_passthrough_headers.
+
+    Args:
+        db (Session): SQLAlchemy database session for querying and updating GlobalConfig.
+
+    Raises:
+        PassthroughHeadersError: If unable to update passthrough headers in the database.
+
+    Example:
+        >>> from unittest.mock import Mock
+        >>> mock_db = Mock()
+        >>> headers = set_global_passthrough_headers(mock_db)
+        >>> headers
+        {'X-Default-Header': 'default-value', ...}  # Example default headers
+
+    Note:
+        This function is typically called during application startup to ensure
+        global configuration is in place before any gateway operations.
+    """
+    global_config = db.query(GlobalConfig).first()
+
+    if not global_config:
+        config_headers = settings.default_passthrough_headers
+        if config_headers:
+            allowed_headers = []
+            for header_name in config_headers:
+                # Validate header name
+                if not validate_header_name(header_name):
+                    logger.warning(f"Invalid header name '{header_name}' - skipping (must match pattern: {HEADER_NAME_REGEX.pattern})")
+                    continue
+
+                allowed_headers.append(header_name)
+        try:
+            db.add(GlobalConfig(passthrough_headers=allowed_headers))
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            raise PassthroughHeadersError(f"Failed to update passthrough headers: {str(e)}")
