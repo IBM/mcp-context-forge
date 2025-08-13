@@ -39,7 +39,7 @@ class RootService:
     - Root permissions and access control
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize root service."""
         self._roots: Dict[str, Root] = {}
         self._subscribers: List[asyncio.Queue] = []
