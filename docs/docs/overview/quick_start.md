@@ -11,6 +11,18 @@ Pick an install method below, generate an auth token, then walk through a real t
 
 ## Installing and starting MCP Gateway
 
+=== "PyPI / uv"
+
+    !!! note
+        **Prereqs**: Install uv (https://docs.astral.sh/uv/getting-started/installation/)
+
+    ```bash
+    BASIC_AUTH_PASSWORD=pass \
+    MCPGATEWAY_UI_ENABLED=true \
+    MCPGATEWAY_ADMIN_API_ENABLED=true \
+    uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
+    ```
+
 === "PyPI / virtual-env"
 
     ### Local install via PyPI

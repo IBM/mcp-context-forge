@@ -1,1 +1,1 @@
-Plugins will go here..
+Plugins go here..

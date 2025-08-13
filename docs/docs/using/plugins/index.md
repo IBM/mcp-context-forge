@@ -1,7 +1,7 @@
 # Plugin Framework
 
 !!! warning "Experimental Feature"
-    The plugin framework is currently in **MVP stage** and marked as experimental. Only prompt hooks (`prompt_pre_fetch` and `prompt_post_fetch`) are implemented. Additional hooks for tools, resources, authentication, and server registration are planned for future releases.
+    The plugin framework is currently in **MVP stage** and marked as experimental. Prompt, tool, and resource hooks are implemented. Additional hooks for authentication and server registration are planned for future releases.
 
 ## Overview
 
@@ -94,7 +94,7 @@ are defined as follows:
 | **description** | The description of the plugin configuration. | A plugin for replacing bad words. |
 | **version** | The version of the plugin configuration. | 0.1 |
 | **author** | The team that wrote the plugin. | MCP Context Forge |
-| **hooks** | A list of hooks for which the plugin will be executed. Supported hooks: "prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"  | ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"] |
+| **hooks** | A list of hooks for which the plugin will be executed. Supported hooks: "prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch"  | ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch"] |
 | **tags** | Descriptive keywords that make the configuration searchable. | ["security", "filter"] |
 | **mode** | Mode of operation of the plugin. - enforce (stops during a violation), permissive (audits a violation but doesn't stop), disabled (disabled) | permissive |
 | **priority** | The priority in which the plugin will run - 0 is higher priority | 100 |
@@ -152,6 +152,7 @@ Users may only want plugins to be invoked on specific servers, tools, and prompt
 | **server_ids** | The list of MCP servers on which the plugin will trigger |
 | **tools** | The list of tools on which the plugin will be applied. |
 | **prompts** | The list of prompts on which the plugin will be applied. |
+| **resources** | The list of resource URIs on which the plugin will be applied. |
 | **user_patterns** | The list of users on which the plugin will be applied. |
 | **content_types** | The list of content types on which the plugin will trigger. |
 
@@ -165,6 +166,8 @@ Currently implemented hooks:
 | `prompt_post_fetch` | After prompt rendering | Filter/transform rendered prompts |
 | `tool_pre_invoke` | Before tool invocation | Validate/modify tool arguments, block dangerous operations |
 | `tool_post_invoke` | After tool execution | Filter/transform tool results, audit tool usage |
+| `resource_pre_fetch` | Before resource fetching | Validate URIs, check protocols, add metadata |
+| `resource_post_fetch` | After resource fetching | Filter content, redact sensitive data, validate size |
 
 ### Tool Hooks Details
 
@@ -180,9 +183,23 @@ Example use cases:
 - Input validation and sanitization
 - Output filtering and transformation
 
+### Resource Hooks Details
+
+The resource hooks enable plugins to intercept and modify resource fetching:
+
+- **`resource_pre_fetch`**: Receives the resource URI and metadata before fetching. Can modify the URI, add metadata, or block the fetch entirely.
+- **`resource_post_fetch`**: Receives the resource content after fetching. Can modify the content, redact sensitive information, or block it from being returned.
+
+Example use cases:
+- Protocol validation (block non-HTTPS resources)
+- Domain blocklisting/allowlisting
+- Content size limiting
+- Sensitive data redaction
+- Content transformation and filtering
+- Resource caching metadata
+
 Planned hooks (not yet implemented):
 
-- `resource_pre_fetch` / `resource_post_fetch` - Resource content filtering
 - `server_pre_register` / `server_post_register` - Server validation
 - `auth_pre_check` / `auth_post_check` - Custom authentication
 - `federation_pre_sync` / `federation_post_sync` - Gateway federation
@@ -203,7 +220,11 @@ from mcpgateway.plugins.framework.plugin_types import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
     ToolPostInvokePayload,
-    ToolPostInvokeResult
+    ToolPostInvokeResult,
+    ResourcePreFetchPayload,
+    ResourcePreFetchResult,
+    ResourcePostFetchPayload,
+    ResourcePostFetchResult
 )
 
 class MyPlugin(Plugin):
@@ -325,6 +346,62 @@ class MyPlugin(Plugin):
         context.metadata["execution_time"] = time.time()
 
         return ToolPostInvokeResult()
+
+    async def resource_pre_fetch(
+        self,
+        payload: ResourcePreFetchPayload,
+        context: PluginContext
+    ) -> ResourcePreFetchResult:
+        """Process resource before fetching."""
+
+        # Access resource URI and metadata
+        uri = payload.uri
+        metadata = payload.metadata
+
+        # Example: Block certain protocols
+        from urllib.parse import urlparse
+        parsed = urlparse(uri)
+        if parsed.scheme not in ["http", "https", "file"]:
+            return ResourcePreFetchResult(
+                continue_processing=False,
+                violation=PluginViolation(
+                    plugin_name=self.name,
+                    description=f"Protocol {parsed.scheme} not allowed",
+                    violation_code="PROTOCOL_BLOCKED",
+                    details={"uri": uri, "protocol": parsed.scheme}
+                )
+            )
+
+        # Example: Add metadata
+        metadata["validated_by"] = self.name
+        return ResourcePreFetchResult(
+            modified_payload=ResourcePreFetchPayload(uri, metadata)
+        )
+
+    async def resource_post_fetch(
+        self,
+        payload: ResourcePostFetchPayload,
+        context: PluginContext
+    ) -> ResourcePostFetchResult:
+        """Process resource after fetching."""
+
+        # Access resource content
+        uri = payload.uri
+        content = payload.content
+
+        # Example: Redact sensitive patterns from text content
+        if hasattr(content, 'text') and content.text:
+            # Redact email addresses
+            import re
+            content.text = re.sub(
+                r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+                '[EMAIL_REDACTED]',
+                content.text
+            )
+
+        return ResourcePostFetchResult(
+            modified_payload=ResourcePostFetchPayload(uri, content)
+        )
 
     async def shutdown(self):
         """Cleanup when plugin shuts down."""

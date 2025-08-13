@@ -7,3 +7,4 @@ nav:
   - tuning.md
   - securing.md
   - ui-customization.md
+  - observability

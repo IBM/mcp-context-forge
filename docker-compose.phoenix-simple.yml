@@ -1,0 +1,37 @@
+# Simplified Phoenix Observability Stack for MCP Gateway
+# 
+# Usage:
+#   Start Phoenix: docker-compose -f docker-compose.phoenix-simple.yml up -d
+#   Stop Phoenix: docker-compose -f docker-compose.phoenix-simple.yml down
+#   With MCP Gateway: docker-compose -f docker-compose.yml -f docker-compose.phoenix-simple.yml up -d
+
+services:
+  # ──────────────────────────────────────────────────────────────────────
+  # Phoenix Server - Simple SQLite setup for quick start
+  # ──────────────────────────────────────────────────────────────────────
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix
+    restart: unless-stopped
+    ports:
+      - "6006:6006"      # Phoenix UI and OTLP HTTP collector
+      - "4317:4317"      # OTLP gRPC collector
+    environment:
+      # SQLite Configuration (simple, no external DB needed)
+      - PHOENIX_WORKING_DIR=/data
+      - PHOENIX_ENABLE_AUTH=false
+      - PHOENIX_LOG_LEVEL=info
+      - PHOENIX_GRPC_PORT=4317
+      - PHOENIX_HTTP_PORT=6006
+    volumes:
+      - phoenix-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  phoenix-data:
+    driver: local

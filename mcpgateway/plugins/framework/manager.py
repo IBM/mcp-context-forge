@@ -46,13 +46,24 @@ from mcpgateway.plugins.framework.plugin_types import (
     PromptPosthookResult,
     PromptPrehookPayload,
     PromptPrehookResult,
+    ResourcePostFetchPayload,
+    ResourcePostFetchResult,
+    ResourcePreFetchPayload,
+    ResourcePreFetchResult,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
-from mcpgateway.plugins.framework.utils import post_prompt_matches, post_tool_matches, pre_prompt_matches, pre_tool_matches
+from mcpgateway.plugins.framework.utils import (
+    post_prompt_matches,
+    post_resource_matches,
+    post_tool_matches,
+    pre_prompt_matches,
+    pre_resource_matches,
+    pre_tool_matches,
+)
 
 # Use standard logging to avoid circular imports (plugins -> services -> plugins)
 logger = logging.getLogger(__name__)
@@ -356,6 +367,56 @@ async def post_tool_invoke(plugin: PluginRef, payload: ToolPostInvokePayload, co
     return await plugin.plugin.tool_post_invoke(payload, context)
 
 
+async def pre_resource_fetch(plugin: PluginRef, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
+    """Call plugin's resource pre-fetch hook.
+
+    Args:
+        plugin: The plugin to execute.
+        payload: The resource payload to be analyzed.
+        context: The plugin context.
+
+    Returns:
+        ResourcePreFetchResult with processing status.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
+        >>> from mcpgateway.plugins.framework.plugin_types import ResourcePreFetchPayload, PluginContext, GlobalContext
+        >>> # Assuming you have a plugin instance:
+        >>> # plugin_ref = PluginRef(my_plugin)
+        >>> payload = ResourcePreFetchPayload(uri="file:///data.txt", metadata={"cache": True})
+        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> # In async context:
+        >>> # result = await pre_resource_fetch(plugin_ref, payload, context)
+    """
+    return await plugin.plugin.resource_pre_fetch(payload, context)
+
+
+async def post_resource_fetch(plugin: PluginRef, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+    """Call plugin's resource post-fetch hook.
+
+    Args:
+        plugin: The plugin to execute.
+        payload: The resource content payload to be analyzed.
+        context: The plugin context.
+
+    Returns:
+        ResourcePostFetchResult with processing status.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
+        >>> from mcpgateway.plugins.framework.plugin_types import ResourcePostFetchPayload, PluginContext, GlobalContext
+        >>> from mcpgateway.models import ResourceContent
+        >>> # Assuming you have a plugin instance:
+        >>> # plugin_ref = PluginRef(my_plugin)
+        >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Data")
+        >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
+        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> # In async context:
+        >>> # result = await post_resource_fetch(plugin_ref, payload, context)
+    """
+    return await plugin.plugin.resource_post_fetch(payload, context)
+
+
 class PluginManager:
     """Plugin manager for managing the plugin lifecycle.
 
@@ -398,6 +459,8 @@ class PluginManager:
     _post_prompt_executor: PluginExecutor[PromptPosthookPayload] = PluginExecutor[PromptPosthookPayload]()
     _pre_tool_executor: PluginExecutor[ToolPreInvokePayload] = PluginExecutor[ToolPreInvokePayload]()
     _post_tool_executor: PluginExecutor[ToolPostInvokePayload] = PluginExecutor[ToolPostInvokePayload]()
+    _resource_pre_executor: PluginExecutor[ResourcePreFetchPayload] = PluginExecutor[ResourcePreFetchPayload]()
+    _resource_post_executor: PluginExecutor[ResourcePostFetchPayload] = PluginExecutor[ResourcePostFetchPayload]()
 
     # Context cleanup tracking
     _context_store: Dict[str, Tuple[PluginContextTable, float]] = {}
@@ -426,6 +489,8 @@ class PluginManager:
         self._post_prompt_executor.timeout = timeout
         self._pre_tool_executor.timeout = timeout
         self._post_tool_executor.timeout = timeout
+        self._resource_pre_executor.timeout = timeout
+        self._resource_post_executor.timeout = timeout
 
         # Initialize context tracking if not already done
         if not hasattr(self, "_context_store"):
@@ -776,6 +841,91 @@ class PluginManager:
         result = await self._post_tool_executor.execute(plugins, payload, global_context, post_tool_invoke, post_tool_matches, local_contexts)
 
         # Clean up stored context after post-invoke
+        if global_context.request_id in self._context_store:
+            del self._context_store[global_context.request_id]
+
+        return result
+
+    async def resource_pre_fetch(
+        self,
+        payload: ResourcePreFetchPayload,
+        global_context: GlobalContext,
+        local_contexts: Optional[PluginContextTable] = None,
+    ) -> tuple[ResourcePreFetchResult, PluginContextTable | None]:
+        """Execute pre-fetch hooks before a resource is fetched.
+
+        Args:
+            payload: The resource payload containing URI and metadata.
+            global_context: Shared context for all plugins with request metadata.
+            local_contexts: Optional existing contexts from previous hook executions.
+
+        Returns:
+            A tuple containing:
+            - ResourcePreFetchResult with processing status and modified payload
+            - PluginContextTable with plugin contexts for state management
+
+        Examples:
+            >>> manager = PluginManager("plugins/config.yaml")
+            >>> # In async context:
+            >>> # await manager.initialize()
+            >>> # payload = ResourcePreFetchPayload("file:///data.txt")
+            >>> # context = GlobalContext(request_id="123", server_id="srv1")
+            >>> # result, contexts = await manager.resource_pre_fetch(payload, context)
+            >>> # if result.continue_processing:
+            >>> #     # Use modified payload
+            >>> #     uri = result.modified_payload.uri
+        """
+        # Get plugins configured for this hook
+        plugins = self._registry.get_plugins_for_hook(HookType.RESOURCE_PRE_FETCH)
+
+        # Execute plugins
+        result = await self._resource_pre_executor.execute(plugins, payload, global_context, pre_resource_fetch, pre_resource_matches, local_contexts)
+
+        # Store context for potential post-fetch
+        if result[1]:
+            self._context_store[global_context.request_id] = (result[1], time.time())
+
+        # Periodic cleanup
+        await self._cleanup_old_contexts()
+
+        return result
+
+    async def resource_post_fetch(
+        self, payload: ResourcePostFetchPayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None
+    ) -> tuple[ResourcePostFetchResult, PluginContextTable | None]:
+        """Execute post-fetch hooks after a resource is fetched.
+
+        Args:
+            payload: The resource content payload containing fetched data.
+            global_context: Shared context for all plugins with request metadata.
+            local_contexts: Optional contexts from pre-fetch hook execution.
+
+        Returns:
+            A tuple containing:
+            - ResourcePostFetchResult with processing status and modified content
+            - PluginContextTable with updated plugin contexts
+
+        Examples:
+            >>> manager = PluginManager("plugins/config.yaml")
+            >>> # In async context:
+            >>> # await manager.initialize()
+            >>> # from mcpgateway.models import ResourceContent
+            >>> # content = ResourceContent(type="resource", uri="file:///data.txt", text="Data")
+            >>> # payload = ResourcePostFetchPayload("file:///data.txt", content)
+            >>> # context = GlobalContext(request_id="123", server_id="srv1")
+            >>> # contexts = self._context_store.get("123")  # From pre-fetch
+            >>> # result, _ = await manager.resource_post_fetch(payload, context, contexts)
+            >>> # if result.continue_processing:
+            >>> #     # Use modified result
+            >>> #     final_content = result.modified_payload.content
+        """
+        # Get plugins configured for this hook
+        plugins = self._registry.get_plugins_for_hook(HookType.RESOURCE_POST_FETCH)
+
+        # Execute plugins
+        result = await self._resource_post_executor.execute(plugins, payload, global_context, post_resource_fetch, post_resource_matches, local_contexts)
+
+        # Clean up stored context after post-fetch
         if global_context.request_id in self._context_store:
             del self._context_store[global_context.request_id]
 

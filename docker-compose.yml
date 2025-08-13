@@ -55,6 +55,14 @@ services:
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
 
+      # Phoenix Observability Integration (uncomment when using Phoenix)
+      # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://phoenix:4317}
+      # - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-mcp-gateway}
+      # - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
+      # - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-otlp}
+      # - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+
     depends_on:          # Default stack: Postgres + Redis + Alembic migration
       postgres:
         condition: service_healthy   # ▶ wait for DB
