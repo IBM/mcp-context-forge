@@ -97,6 +97,15 @@ class Plugin:
         return self._config.priority
 
     @property
+    def config(self) -> PluginConfig:
+        """Return the plugin's configuration.
+
+        Returns:
+            Plugin's configuration.
+        """
+        return self._config
+
+    @property
     def mode(self) -> PluginMode:
         """Return the plugin's mode.
 

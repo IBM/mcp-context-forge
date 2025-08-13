@@ -12,6 +12,7 @@ Module that contains plugin MCP client code to serve external plugins.
 from contextlib import AsyncExitStack
 import json
 import logging
+import os
 from typing import Any, Optional
 
 # Third-Party
@@ -93,7 +94,7 @@ class ExternalPlugin(Plugin):
         if not (is_python):
             raise ValueError("Server script must be a .py file")
 
-        server_params = StdioServerParameters(command=PYTHON, args=[server_script_path], env=None)
+        server_params = StdioServerParameters(command=PYTHON, args=[server_script_path], env=os.environ)
 
         stdio_transport = await self._exit_stack.enter_async_context(stdio_client(server_params))
         self._stdio, self._write = stdio_transport

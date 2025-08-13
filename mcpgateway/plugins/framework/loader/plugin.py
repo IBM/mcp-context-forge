@@ -15,7 +15,7 @@ from typing import cast, Type
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.constants import EXTERNAL_PLUGIN_TYPE
-from mcpgateway.plugins.framework.external.mcp import ExternalPlugin
+from mcpgateway.plugins.framework.external.mcp.client import ExternalPlugin
 from mcpgateway.plugins.framework.models import PluginConfig
 from mcpgateway.plugins.framework.utils import import_module, parse_class_name
 
