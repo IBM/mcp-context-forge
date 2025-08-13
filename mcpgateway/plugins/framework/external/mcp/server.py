@@ -78,6 +78,9 @@ async def prompt_pre_fetch(plugin_name: str, payload: dict, context: dict) -> di
         payload: the prompt name and arguments to be analyzed.
         context: the contextual and state information required for the execution of the hook.
 
+    Raises:
+        ValueError: if unable to retrieve a plugin.
+
     Returns:
         The transformed or filtered response from the plugin hook.
     """
@@ -105,6 +108,9 @@ async def prompt_post_fetch(plugin_name: str, payload: dict, context: dict) -> d
         plugin_name: The name of the plugin to execute.
         payload: The prompt payload to be analyzed.
         context: Contextual information about the hook call.
+
+    Raises:
+        ValueError: if unable to retrieve a plugin.
 
     Returns:
         The result of the plugin execution.
