@@ -271,7 +271,7 @@ pip install opentelemetry-exporter-zipkin
 Add tracing to your plugins or custom code:
 
 ```python
-from mcpgateway.observability_simple import create_span
+from mcpgateway.observability import create_span
 
 async def my_function():
     with create_span("custom.operation", {

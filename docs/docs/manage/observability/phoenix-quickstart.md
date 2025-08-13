@@ -40,7 +40,7 @@ python test_phoenix_integration.py
 ### Simple Example
 
 ```python
-from mcpgateway.observability_simple import init_telemetry, create_span
+from mcpgateway.observability import init_telemetry, create_span
 
 # Initialize once at startup
 tracer = init_telemetry()
@@ -56,7 +56,7 @@ async def my_function():
 ### In Tool Service
 
 ```python
-from mcpgateway.observability_simple import trace_operation
+from mcpgateway.observability import trace_operation
 
 class ToolService:
     @trace_operation("tool.invoke", {"tool.type": "mcp"})

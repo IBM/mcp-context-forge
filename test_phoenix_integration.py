@@ -12,7 +12,7 @@ import sys
 # Add the current directory to path so we can import mcpgateway
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from mcpgateway.observability_simple import init_telemetry, create_span
+from mcpgateway.observability import init_telemetry, create_span
 import time
 import random
 

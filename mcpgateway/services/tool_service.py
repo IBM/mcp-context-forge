@@ -39,7 +39,7 @@ from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.models import TextContent, ToolResult
-from mcpgateway.observability_simple import create_span
+from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.plugin_types import GlobalContext, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer

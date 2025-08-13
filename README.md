@@ -128,7 +128,8 @@ It currently supports:
 * Virtualization of legacy APIs as MCP-compliant tools and servers
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
 * An Admin UI for real-time management and configuration
-* Built-in auth, observability, retries, and rate-limiting
+* Built-in auth, retries, and rate-limiting
+* **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
 
 ![MCP Gateway Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
@@ -192,6 +193,35 @@ For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap
 * Auth: Basic, JWT, or custom schemes
 * Structured logs, health endpoints, metrics
 * 400+ tests, Makefile targets, live reload, pre-commit hooks
+
+</details>
+
+<details>
+<summary><strong>🔍 OpenTelemetry Observability</strong></summary>
+
+* **Vendor-agnostic tracing** with OpenTelemetry (OTLP) protocol support
+* **Multiple backend support**: Phoenix (LLM-focused), Jaeger, Zipkin, Tempo, DataDog, New Relic
+* **Distributed tracing** across federated gateways and services
+* **Automatic instrumentation** of tools, prompts, resources, and gateway operations
+* **LLM-specific metrics**: Token usage, costs, model performance
+* **Zero-overhead when disabled** with graceful degradation
+* **Easy configuration** via environment variables
+
+Quick start with Phoenix (LLM observability):
+```bash
+# Start Phoenix
+docker run -p 6006:6006 -p 4317:4317 arizephoenix/phoenix:latest
+
+# Configure gateway
+export OTEL_ENABLE_OBSERVABILITY=true
+export OTEL_TRACES_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
+# Run gateway - traces automatically sent to Phoenix
+mcpgateway
+```
+
+See [Observability Documentation](https://ibm.github.io/mcp-context-forge/manage/observability/) for detailed setup with other backends.
 
 </details>
 

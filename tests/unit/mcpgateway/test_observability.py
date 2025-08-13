@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for observability_simple module."""
+"""Tests for observability module."""
 
 # Standard
 import os
@@ -9,10 +9,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.observability_simple import create_span, init_telemetry, trace_operation
+from mcpgateway.observability import create_span, init_telemetry, trace_operation
 
 
-class TestObservabilitySimple:
+class TestObservability:
     """Test cases for observability module."""
 
     def setup_method(self):
@@ -31,8 +31,9 @@ class TestObservabilitySimple:
     def teardown_method(self):
         """Clean up after each test."""
         # Reset global tracer
-        import mcpgateway.observability_simple
-        mcpgateway.observability_simple.tracer = None
+        import mcpgateway.observability
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = None
 
     def test_init_telemetry_disabled_via_env(self):
         """Test that telemetry can be disabled via environment variable."""
@@ -56,9 +57,9 @@ class TestObservabilitySimple:
         result = init_telemetry()
         assert result is None
 
-    @patch("mcpgateway.observability_simple.OTLPSpanExporter")
-    @patch("mcpgateway.observability_simple.TracerProvider")
-    @patch("mcpgateway.observability_simple.BatchSpanProcessor")
+    @patch("mcpgateway.observability.OTLPSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.BatchSpanProcessor")
     def test_init_telemetry_otlp_success(self, mock_processor, mock_provider, mock_exporter):
         """Test successful OTLP initialization."""
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
@@ -76,9 +77,9 @@ class TestObservabilitySimple:
         provider_instance.add_span_processor.assert_called_once()
         assert result is not None
 
-    @patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter")
-    @patch("mcpgateway.observability_simple.TracerProvider")
-    @patch("opentelemetry.sdk.trace.export.SimpleSpanProcessor")
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
     def test_init_telemetry_console_exporter(self, mock_processor, mock_provider, mock_exporter):
         """Test console exporter initialization."""
         os.environ["OTEL_TRACES_EXPORTER"] = "console"
@@ -99,8 +100,8 @@ class TestObservabilitySimple:
         os.environ["OTEL_TRACES_EXPORTER"] = "console"
         os.environ["OTEL_RESOURCE_ATTRIBUTES"] = "env=prod,team=platform,version=1.0"
 
-        with patch("mcpgateway.observability_simple.Resource.create") as mock_resource:
-            with patch("mcpgateway.observability_simple.TracerProvider"):
+        with patch("mcpgateway.observability.Resource.create") as mock_resource:
+            with patch("mcpgateway.observability.TracerProvider"):
                 with patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter"):
                     init_telemetry()
 
@@ -116,9 +117,9 @@ class TestObservabilitySimple:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "api-key=secret,x-auth=token123"
 
-        with patch("mcpgateway.observability_simple.OTLPSpanExporter") as mock_exporter:
-            with patch("mcpgateway.observability_simple.TracerProvider"):
-                with patch("mcpgateway.observability_simple.BatchSpanProcessor"):
+        with patch("mcpgateway.observability.OTLPSpanExporter") as mock_exporter:
+            with patch("mcpgateway.observability.TracerProvider"):
+                with patch("mcpgateway.observability.BatchSpanProcessor"):
                     init_telemetry()
 
                     # Verify headers were parsed correctly
@@ -128,14 +129,15 @@ class TestObservabilitySimple:
 
     def test_create_span_no_tracer(self):
         """Test create_span when tracer is not initialized."""
-        import mcpgateway.observability_simple
-        mcpgateway.observability_simple.tracer = None
+        import mcpgateway.observability
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = None
 
         # Should return a no-op context manager
         with create_span("test.operation") as span:
             assert span is None
 
-    @patch("mcpgateway.observability_simple.tracer")
+    @patch("mcpgateway.observability._TRACER")
     def test_create_span_with_attributes(self, mock_tracer):
         """Test create_span with attributes."""
         # Setup mock
@@ -165,8 +167,9 @@ class TestObservabilitySimple:
     @pytest.mark.asyncio
     async def test_trace_operation_decorator_no_tracer(self):
         """Test trace_operation decorator when tracer is not initialized."""
-        import mcpgateway.observability_simple
-        mcpgateway.observability_simple.tracer = None
+        import mcpgateway.observability
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = None
 
         @trace_operation("test.operation")
         async def test_func():
@@ -176,7 +179,7 @@ class TestObservabilitySimple:
         assert result == "result"
 
     @pytest.mark.asyncio
-    @patch("mcpgateway.observability_simple.tracer")
+    @patch("mcpgateway.observability._TRACER")
     async def test_trace_operation_decorator_with_tracer(self, mock_tracer):
         """Test trace_operation decorator with tracer."""
         # Setup mock
@@ -198,7 +201,7 @@ class TestObservabilitySimple:
         mock_span.set_attribute.assert_any_call("status", "success")
 
     @pytest.mark.asyncio
-    @patch("mcpgateway.observability_simple.tracer")
+    @patch("mcpgateway.observability._TRACER")
     async def test_trace_operation_decorator_with_exception(self, mock_tracer):
         """Test trace_operation decorator exception handling."""
         # Setup mock
@@ -224,7 +227,7 @@ class TestObservabilitySimple:
         os.environ["OTEL_TRACES_EXPORTER"] = "jaeger"
 
         # Mock ImportError for Jaeger
-        with patch("mcpgateway.observability_simple.logger") as mock_logger:
+        with patch("mcpgateway.observability.logger") as mock_logger:
             result = init_telemetry()
 
             # Should log error and return None
@@ -236,7 +239,7 @@ class TestObservabilitySimple:
         os.environ["OTEL_TRACES_EXPORTER"] = "zipkin"
 
         # Mock ImportError for Zipkin
-        with patch("mcpgateway.observability_simple.logger") as mock_logger:
+        with patch("mcpgateway.observability.logger") as mock_logger:
             result = init_telemetry()
 
             # Should log error and return None
@@ -247,9 +250,9 @@ class TestObservabilitySimple:
         """Test unknown exporter type falls back to console."""
         os.environ["OTEL_TRACES_EXPORTER"] = "unknown_exporter"
 
-        with patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter") as mock_console:
-            with patch("mcpgateway.observability_simple.TracerProvider"):
-                with patch("mcpgateway.observability_simple.logger") as mock_logger:
+        with patch("mcpgateway.observability.ConsoleSpanExporter") as mock_console:
+            with patch("mcpgateway.observability.TracerProvider"):
+                with patch("mcpgateway.observability.logger") as mock_logger:
                     init_telemetry()
 
                     # Should warn and use console exporter
@@ -261,8 +264,8 @@ class TestObservabilitySimple:
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
 
-        with patch("mcpgateway.observability_simple.TracerProvider", side_effect=Exception("Test error")):
-            with patch("mcpgateway.observability_simple.logger") as mock_logger:
+        with patch("mcpgateway.observability.TracerProvider", side_effect=Exception("Test error")):
+            with patch("mcpgateway.observability.logger") as mock_logger:
                 result = init_telemetry()
 
                 # Should log error and return None
@@ -271,7 +274,7 @@ class TestObservabilitySimple:
 
     def test_create_span_none_attributes_filtered(self):
         """Test that None values in attributes are filtered out."""
-        import mcpgateway.observability_simple
+        import mcpgateway.observability
 
         # Setup mock tracer
         mock_span = MagicMock()
@@ -281,7 +284,8 @@ class TestObservabilitySimple:
 
         mock_tracer = MagicMock()
         mock_tracer.start_as_current_span.return_value = mock_context
-        mcpgateway.observability_simple.tracer = mock_tracer
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = mock_tracer
 
         # Test with None values
         attrs = {"key1": "value1", "key2": None, "key3": 42}

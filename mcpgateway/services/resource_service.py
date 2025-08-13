@@ -46,7 +46,7 @@ from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
-from mcpgateway.observability_simple import create_span
+from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -430,8 +430,10 @@ class ResourceService:
             # Call pre-fetch hooks if plugin manager is available
             if self._plugin_manager and PLUGINS_AVAILABLE:
                 # Initialize plugin manager if needed
+                # pylint: disable=protected-access
                 if not self._plugin_manager._initialized:
                     await self._plugin_manager.initialize()
+                # pylint: enable=protected-access
 
                 # Create plugin context
                 global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id)

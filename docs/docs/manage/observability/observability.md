@@ -237,7 +237,7 @@ Tracing adds minimal overhead (~1-3ms per operation). To reduce impact:
 Add tracing to custom code:
 
 ```python
-from mcpgateway.observability_simple import create_span
+from mcpgateway.observability import create_span
 
 async def my_operation():
     with create_span("custom.operation", {
@@ -254,7 +254,7 @@ async def my_operation():
 Use decorators for cleaner code:
 
 ```python
-from mcpgateway.observability_simple import trace_operation
+from mcpgateway.observability import trace_operation
 
 @trace_operation("database.query", {"db.system": "postgresql"})
 async def query_database(sql):

@@ -5,6 +5,7 @@ Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 """
 
 # Standard
+from contextlib import nullcontext
 import logging
 import os
 
@@ -12,10 +13,10 @@ import os
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
 from opentelemetry.trace import Status, StatusCode
 
-# Try to import gRPC exporter first, fall back to HTTP if not available
+# Try to import optional exporters
 try:
     # Third-Party
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -26,10 +27,29 @@ except ImportError:
     except ImportError:
         OTLPSpanExporter = None
 
+try:
+    # Third-Party
+    from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+except ImportError:
+    JaegerExporter = None
+
+try:
+    # Third-Party
+    from opentelemetry.exporter.zipkin.json import ZipkinExporter
+except ImportError:
+    ZipkinExporter = None
+
+try:
+    # Third-Party
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HTTPExporter
+except ImportError:
+    HTTPExporter = None
+
 logger = logging.getLogger(__name__)
 
-# Global tracer instance
-tracer = None
+# Global tracer instance - using UPPER_CASE for module-level constant
+# pylint: disable=invalid-name
+_TRACER = None
 
 
 def init_telemetry():
@@ -41,13 +61,17 @@ def init_telemetry():
     - OTEL_EXPORTER_JAEGER_ENDPOINT: Jaeger endpoint (for jaeger exporter)
     - OTEL_EXPORTER_ZIPKIN_ENDPOINT: Zipkin endpoint (for zipkin exporter)
     - OTEL_ENABLE_OBSERVABILITY: Set to 'false' to disable completely
+
+    Returns:
+        The initialized tracer instance or None if disabled.
     """
-    global tracer
+    # pylint: disable=global-statement
+    global _TRACER
 
     # Check if observability is explicitly disabled
     if os.getenv("OTEL_ENABLE_OBSERVABILITY", "true").lower() == "false":
         logger.info("Observability disabled via OTEL_ENABLE_OBSERVABILITY=false")
-        return
+        return None
 
     # Get exporter type from environment
     exporter_type = os.getenv("OTEL_TRACES_EXPORTER", "otlp").lower()
@@ -55,19 +79,19 @@ def init_telemetry():
     # Handle 'none' exporter (tracing disabled)
     if exporter_type == "none":
         logger.info("Tracing disabled via OTEL_TRACES_EXPORTER=none")
-        return
+        return None
 
     # Check if OTLP exporter is available for otlp type
     if exporter_type == "otlp" and OTLPSpanExporter is None:
         logger.info("OTLP exporter not available. Install with: pip install opentelemetry-exporter-otlp-proto-grpc")
-        return
+        return None
 
     # Check if endpoint is configured for otlp
     if exporter_type == "otlp":
         endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
         if not endpoint:
             logger.info("OTLP endpoint not configured, skipping telemetry init")
-            return
+            return None
 
     try:
         # Create resource attributes
@@ -110,59 +134,40 @@ def init_telemetry():
 
             if protocol == "grpc" and OTLPSpanExporter:
                 exporter = OTLPSpanExporter(endpoint=endpoint, headers=header_dict or None, insecure=insecure)
+            elif HTTPExporter:
+                # Use HTTP exporter as fallback
+                exporter = HTTPExporter(endpoint=endpoint.replace(":4317", ":4318") + "/v1/traces" if ":4317" in endpoint else endpoint, headers=header_dict or None)
             else:
-                # Try HTTP exporter as fallback
-                try:
-                    # Third-Party
-                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HTTPExporter
-
-                    exporter = HTTPExporter(endpoint=endpoint.replace(":4317", ":4318") + "/v1/traces" if ":4317" in endpoint else endpoint, headers=header_dict or None)
-                except ImportError:
-                    logger.error("HTTP OTLP exporter not available")
-                    return
+                logger.error("No OTLP exporter available")
+                return None
 
         elif exporter_type == "jaeger":
-            try:
-                # Third-Party
-                from opentelemetry.exporter.jaeger.thrift import JaegerExporter
-
+            if JaegerExporter:
                 endpoint = os.getenv("OTEL_EXPORTER_JAEGER_ENDPOINT", "http://localhost:14268/api/traces")
                 exporter = JaegerExporter(collector_endpoint=endpoint, username=os.getenv("OTEL_EXPORTER_JAEGER_USER"), password=os.getenv("OTEL_EXPORTER_JAEGER_PASSWORD"))
-            except ImportError:
+            else:
                 logger.error("Jaeger exporter not available. Install with: pip install opentelemetry-exporter-jaeger")
-                return
+                return None
 
         elif exporter_type == "zipkin":
-            try:
-                # Third-Party
-                from opentelemetry.exporter.zipkin.json import ZipkinExporter
-
+            if ZipkinExporter:
                 endpoint = os.getenv("OTEL_EXPORTER_ZIPKIN_ENDPOINT", "http://localhost:9411/api/v2/spans")
                 exporter = ZipkinExporter(endpoint=endpoint)
-            except ImportError:
+            else:
                 logger.error("Zipkin exporter not available. Install with: pip install opentelemetry-exporter-zipkin")
-                return
+                return None
 
         elif exporter_type == "console":
             # Console exporter for debugging
-            # Third-Party
-            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
-
             exporter = ConsoleSpanExporter()
 
         else:
             logger.warning(f"Unknown exporter type: {exporter_type}. Using console exporter.")
-            # Third-Party
-            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
-
             exporter = ConsoleSpanExporter()
 
         if exporter:
             # Add batch processor for better performance (except for console)
             if exporter_type == "console":
-                # Third-Party
-                from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-
                 span_processor = SimpleSpanProcessor(exporter)
             else:
                 span_processor = BatchSpanProcessor(
@@ -174,7 +179,7 @@ def init_telemetry():
             provider.add_span_processor(span_processor)
 
         # Get tracer
-        tracer = trace.get_tracer("mcp-gateway", "0.5.0", schema_url="https://opentelemetry.io/schemas/1.11.0")
+        _TRACER = trace.get_tracer("mcp-gateway", "0.5.0", schema_url="https://opentelemetry.io/schemas/1.11.0")
 
         logger.info(f"✅ OpenTelemetry initialized with {exporter_type} exporter")
         if exporter_type == "otlp":
@@ -184,7 +189,7 @@ def init_telemetry():
         elif exporter_type == "zipkin":
             logger.info(f"   Endpoint: {os.getenv('OTEL_EXPORTER_ZIPKIN_ENDPOINT', 'default')}")
 
-        return tracer
+        return _TRACER
 
     except Exception as e:
         logger.error(f"Failed to initialize OpenTelemetry: {e}")
@@ -231,12 +236,12 @@ def trace_operation(operation_name: str, attributes: dict = None):
             Raises:
                 Exception: Any exception raised by the wrapped function.
             """
-            if not tracer:
+            if not _TRACER:
                 # No tracing configured, just run the function
                 return await func(*args, **kwargs)
 
             # Create span for this operation
-            with tracer.start_as_current_span(operation_name) as span:
+            with _TRACER.start_as_current_span(operation_name) as span:
                 # Add attributes if provided
                 if attributes:
                     for key, value in attributes.items():
@@ -275,15 +280,12 @@ def create_span(name: str, attributes: dict = None):
             # Your code here
             pass
     """
-    if not tracer:
+    if not _TRACER:
         # Return a no-op context manager if tracing is not configured
-        # Standard
-        from contextlib import nullcontext
-
         return nullcontext()
 
     # Start span and return the context manager
-    span_context = tracer.start_as_current_span(name)
+    span_context = _TRACER.start_as_current_span(name)
 
     # If we have attributes and the span context is entered, set them
     if attributes:
@@ -349,4 +351,4 @@ def create_span(name: str, attributes: dict = None):
 
 
 # Initialize on module import
-tracer = init_telemetry()
+_TRACER = init_telemetry()

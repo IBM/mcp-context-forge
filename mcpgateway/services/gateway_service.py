@@ -75,7 +75,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.observability_simple import create_span
+from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks

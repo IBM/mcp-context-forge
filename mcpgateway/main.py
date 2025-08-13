@@ -60,7 +60,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.models import InitializeRequest, InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
-from mcpgateway.observability_simple import init_telemetry
+from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins import PluginManager, PluginViolationError
 from mcpgateway.schemas import (
     GatewayCreate,
