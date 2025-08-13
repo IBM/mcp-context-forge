@@ -1103,6 +1103,65 @@ LOG_FILE=gateway.log
 - File logging is **disabled by default** (no files created)
 - Set `LOG_TO_FILE=true` to enable optional file logging with JSON format
 
+### Observability (OpenTelemetry)
+
+MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed tracing. Works with Phoenix, Jaeger, Zipkin, Tempo, DataDog, New Relic, and any OTLP-compatible backend.
+
+| Setting                         | Description                                    | Default               | Options                                    |
+| ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
+| `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `true`                | `true`, `false`                           |
+| `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `0.5.0`               | string                                     |
+| `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
+| `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
+| `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
+
+**OTLP Configuration** (for Phoenix, Tempo, DataDog, etc.):
+
+| Setting                         | Description                                    | Default               | Options                                    |
+| ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`   | OTLP collector endpoint                        | (none)                | `http://localhost:4317`                   |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`   | OTLP protocol                                  | `grpc`                | `grpc`, `http/protobuf`                   |
+| `OTEL_EXPORTER_OTLP_HEADERS`    | Authentication headers                         | (empty)               | `api-key=secret,x-auth=token`             |
+| `OTEL_EXPORTER_OTLP_INSECURE`   | Skip TLS verification                          | `true`                | `true`, `false`                           |
+
+**Alternative Backends** (optional):
+
+| Setting                         | Description                                    | Default               | Options                                    |
+| ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
+| `OTEL_EXPORTER_JAEGER_ENDPOINT` | Jaeger collector endpoint                      | `http://localhost:14268/api/traces` | URL                             |
+| `OTEL_EXPORTER_ZIPKIN_ENDPOINT` | Zipkin collector endpoint                      | `http://localhost:9411/api/v2/spans` | URL                            |
+
+**Performance Tuning**:
+
+| Setting                         | Description                                    | Default               | Options                                    |
+| ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
+| `OTEL_TRACES_SAMPLER`           | Sampling strategy                              | `parentbased_traceidratio` | `always_on`, `always_off`, `traceidratio` |
+| `OTEL_TRACES_SAMPLER_ARG`       | Sample rate (0.0-1.0)                         | `0.1`                 | float (0.1 = 10% sampling)                |
+| `OTEL_BSP_MAX_QUEUE_SIZE`       | Max queued spans                              | `2048`                | int > 0                                    |
+| `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`| Max batch size for export                     | `512`                 | int > 0                                    |
+| `OTEL_BSP_SCHEDULE_DELAY`       | Export interval (ms)                          | `5000`                | int > 0                                    |
+
+**Quick Start with Phoenix**:
+```bash
+# Start Phoenix for LLM observability
+docker run -p 6006:6006 -p 4317:4317 arizephoenix/phoenix:latest
+
+# Configure gateway
+export OTEL_ENABLE_OBSERVABILITY=true
+export OTEL_TRACES_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
+# Run gateway - traces automatically sent to Phoenix
+mcpgateway
+```
+
+> 🔍 **What Gets Traced**: Tool invocations, prompt rendering, resource fetching, gateway federation, health checks, plugin execution (if enabled)
+>
+> 🚀 **Zero Overhead**: When `OTEL_ENABLE_OBSERVABILITY=false`, all tracing is disabled with no performance impact
+>
+> 📊 **View Traces**: Phoenix UI at `http://localhost:6006`, Jaeger at `http://localhost:16686`, or your configured backend
+
 ### Transport
 
 | Setting                   | Description                        | Default | Options                         |
