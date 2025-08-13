@@ -1,16 +1,25 @@
-"""Tests for custom skill."""
+"""Tests for plugin."""
+
+# Third-Party
 import pytest
-from skills_sdk.loader.plugin import PluginLoader
+
+# First-Party
+from mcpgateway.plugins.framework.manager import PluginManager
 
 
 @pytest.fixture(scope="module", autouse=True)
 def plugin():
     """Loads plugin loader and skill."""
-    loader = PluginLoader("./resources/config/config.yaml")
-    plugin = loader.get_skill("{{ plugin_name }}")
+    plugin = PluginManager("./resources/config/config.yaml")
+    await plugin.initialize()
     yield plugin
+    await plugin.shutdown()
 
 
-def test_{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}(plugin):
+def test_prompt_pre_hook(plugin):
     """Implement me."""
+    # payload = PromptPrehookPayload(...)
+    # global_context = GlobalContext(request_id="...")
+    # result, contexts = await plugin.prompt_pre_fetch(payload, global_context)
+    # assert result.modified_payload ...
     assert True
