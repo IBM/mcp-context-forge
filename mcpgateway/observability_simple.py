@@ -229,7 +229,7 @@ def trace_operation(operation_name: str, attributes: dict = None):
                 The result of the wrapped function.
 
             Raises:
-                Any exception raised by the wrapped function.
+                Exception: Any exception raised by the wrapped function.
             """
             if not tracer:
                 # No tracing configured, just run the function
