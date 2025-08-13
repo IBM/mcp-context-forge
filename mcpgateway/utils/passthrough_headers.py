@@ -152,7 +152,7 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
         ...     request_headers = {"x-tenant-id": "should-be-ignored"}
         ...     base_headers = {"Content-Type": "application/json"}
         ...     get_passthrough_headers(request_headers, base_headers, mock_db)
-        {'Content-Type': 'application/json', 'X-Tenant-Id': 'should-be-ignored'}
+        {'Content-Type': 'application/json'}
 
         See comprehensive unit tests in tests/unit/mcpgateway/utils/test_passthrough_headers*.py
         for detailed examples of enabled functionality, conflict detection, and security features.
