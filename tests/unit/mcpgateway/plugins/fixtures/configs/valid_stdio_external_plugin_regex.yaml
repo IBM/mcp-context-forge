@@ -4,7 +4,7 @@ plugins:
   - name: "ReplaceBadWordsPlugin"
     kind: "external"
     mcp:
-      proto: STDIO 
+      proto: STDIO
       script: mcpgateway/plugins/framework/external/mcp/server.py
 
 # Plugin directories to scan
