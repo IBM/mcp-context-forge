@@ -1829,7 +1829,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                         # stdio stdout lines may contain JSON objects or arrays
                         try:
                             parsed = json.loads(msg)
-                        except Exception:
+                        except (json.JSONDecodeError, ValueError):
                             # not JSON -> skip
                             continue
 
