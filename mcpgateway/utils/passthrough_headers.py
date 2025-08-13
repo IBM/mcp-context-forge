@@ -144,7 +144,7 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
     Examples:
         Feature disabled by default (secure by default):
         >>> from unittest.mock import Mock, patch
-        >>> with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+        >>> with patch(__name__ + ".settings") as mock_settings:
         ...     mock_settings.enable_header_passthrough = False
         ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
         ...     mock_db = Mock()
