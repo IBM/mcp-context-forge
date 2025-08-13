@@ -30,12 +30,18 @@ from mcpgateway.plugins.framework.models import (
 logger = logging.getLogger(__name__)
 
 config_file = os.environ.get("CFMCP_PLUGIN_CONFIG", "resources/plugins/config.yaml")
-global_plugin_manager = PluginManager(config_file)
+global_plugin_manager = None
 
 
 async def initialize() -> None:
     """Initialize the plugin manager with configured plugins."""
-    await global_plugin_manager.initialize()
+    try:
+        global global_plugin_manager
+        global_plugin_manager = PluginManager(config_file)
+        await global_plugin_manager.initialize()
+    except Exception:
+        logger.exception("Could not initialize external plugin server.")
+        raise
 
 
 @mcp_tool(name="get_plugin_configs", description="Get the plugin configurations installed on the server")
@@ -131,12 +137,12 @@ async def prompt_post_fetch(plugin_name: str, payload: dict, context: dict) -> d
         return convert_exception_to_error(ex, plugin_name=plugin_name).model_dump()
 
 
-async def server_main():
+async def run_plugin_mcp_server():
     """Initialize plugin manager and run mcp server."""
     await initialize()
     await main_async()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - executed only when run directly
     # launch
-    asyncio.run(server_main())
+    asyncio.run(run_plugin_mcp_server())
