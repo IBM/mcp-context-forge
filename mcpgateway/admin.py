@@ -75,9 +75,29 @@ from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
-# Initialize logging service first
-logging_service: LoggingService = LoggingService()
-logger = logging_service.get_logger("mcpgateway")
+# Import the shared logging service from main
+# This will be set by main.py when it imports admin_router
+logging_service: Optional[LoggingService] = None
+logger = None
+
+
+def set_logging_service(service: LoggingService):
+    """Set the logging service instance to use.
+
+    This should be called by main.py to share the same logging service.
+
+    Args:
+        service: The LoggingService instance to use
+    """
+    global logging_service, logger
+    logging_service = service
+    logger = logging_service.get_logger("mcpgateway.admin")
+
+
+# Fallback for testing - create a temporary instance if not set
+if logging_service is None:
+    logging_service = LoggingService()
+    logger = logging_service.get_logger("mcpgateway.admin")
 
 # Initialize services
 server_service: ServerService = ServerService()
@@ -4454,3 +4474,454 @@ async def admin_import_tools(
         # absolute catch-all: report instead of crashing
         logger.exception("Fatal error in admin_import_tools")
         return JSONResponse({"success": False, "message": str(ex)}, status_code=500)
+
+
+####################
+# Log Endpoints
+####################
+
+
+@admin_router.get("/logs")
+async def admin_get_logs(
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    level: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    request_id: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    order: str = "desc",
+    user: str = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Get filtered log entries from the in-memory buffer.
+
+    Args:
+        entity_type: Filter by entity type (tool, resource, server, gateway)
+        entity_id: Filter by entity ID
+        level: Minimum log level (debug, info, warning, error, critical)
+        start_time: ISO format start time
+        end_time: ISO format end time
+        request_id: Filter by request ID
+        search: Search in message text
+        limit: Maximum number of results (default 100, max 1000)
+        offset: Number of results to skip
+        order: Sort order (asc or desc)
+        user: Authenticated user
+
+    Returns:
+        Dictionary with logs and metadata
+
+    Raises:
+        HTTPException: If validation fails or service unavailable
+    """
+    # Standard
+    from datetime import datetime
+
+    # First-Party
+    from mcpgateway.models import LogLevel
+
+    # Get log storage from logging service
+    storage = logging_service.get_storage()
+    if not storage:
+        return {"logs": [], "total": 0, "stats": {}}
+
+    # Parse timestamps if provided
+    start_dt = None
+    end_dt = None
+    if start_time:
+        try:
+            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, f"Invalid start_time format: {start_time}")
+
+    if end_time:
+        try:
+            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, f"Invalid end_time format: {end_time}")
+
+    # Parse log level
+    log_level = None
+    if level:
+        try:
+            log_level = LogLevel(level.lower())
+        except ValueError:
+            raise HTTPException(400, f"Invalid log level: {level}")
+
+    # Limit max results
+    limit = min(limit, 1000)
+
+    # Get filtered logs
+    logs = await storage.get_logs(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        level=log_level,
+        start_time=start_dt,
+        end_time=end_dt,
+        request_id=request_id,
+        search=search,
+        limit=limit,
+        offset=offset,
+        order=order,
+    )
+
+    # Get statistics
+    stats = storage.get_stats()
+
+    return {
+        "logs": logs,
+        "total": stats.get("total_logs", 0),
+        "stats": stats,
+    }
+
+
+@admin_router.get("/logs/stream")
+async def admin_stream_logs(
+    request: Request,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    level: Optional[str] = None,
+    user: str = Depends(require_auth),
+):
+    """Stream real-time log updates via Server-Sent Events.
+
+    Args:
+        request: FastAPI request object
+        entity_type: Filter by entity type
+        entity_id: Filter by entity ID
+        level: Minimum log level
+        user: Authenticated user
+
+    Returns:
+        SSE response with real-time log updates
+
+    Raises:
+        HTTPException: If log level is invalid or service unavailable
+    """
+    # Standard
+    import json
+
+    # Third-Party
+    from fastapi.responses import StreamingResponse
+
+    # First-Party
+    from mcpgateway.models import LogLevel
+
+    # Get log storage from logging service
+    storage = logging_service.get_storage()
+    if not storage:
+        raise HTTPException(503, "Log storage not available")
+
+    # Parse log level filter
+    min_level = None
+    if level:
+        try:
+            min_level = LogLevel(level.lower())
+        except ValueError:
+            raise HTTPException(400, f"Invalid log level: {level}")
+
+    async def generate():
+        """Generate SSE events for log streaming.
+
+        Yields:
+            Formatted SSE events containing log data
+        """
+        try:
+            async for event in storage.subscribe():
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+
+                # Apply filters
+                log_data = event.get("data", {})
+
+                # Entity type filter
+                if entity_type and log_data.get("entity_type") != entity_type:
+                    continue
+
+                # Entity ID filter
+                if entity_id and log_data.get("entity_id") != entity_id:
+                    continue
+
+                # Level filter
+                if min_level:
+                    log_level = log_data.get("level")
+                    if log_level:
+                        try:
+                            if not storage._meets_level_threshold(LogLevel(log_level), min_level):
+                                continue
+                        except ValueError:
+                            continue
+
+                # Send SSE event
+                yield f"data: {json.dumps(event)}\n\n"
+
+        except Exception as e:
+            logger.error(f"Error in log streaming: {e}")
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable Nginx buffering
+        },
+    )
+
+
+@admin_router.get("/logs/file")
+async def admin_get_log_file(
+    filename: Optional[str] = None,
+    user: str = Depends(require_auth),
+):
+    """Download log file.
+
+    Args:
+        filename: Specific log file to download (optional)
+        user: Authenticated user
+
+    Returns:
+        File download response or list of available files
+
+    Raises:
+        HTTPException: If file doesn't exist or access denied
+    """
+    # Standard
+    from datetime import datetime
+    from pathlib import Path
+
+    # Third-Party
+    from fastapi.responses import FileResponse
+
+    # Check if file logging is enabled
+    if not settings.log_to_file or not settings.log_file:
+        raise HTTPException(404, "File logging is not enabled")
+
+    # Determine log directory
+    log_dir = Path(settings.log_folder) if settings.log_folder else Path(".")
+
+    if filename:
+        # Download specific file
+        file_path = log_dir / filename
+
+        # Security: Ensure file is within log directory
+        try:
+            file_path = file_path.resolve()
+            log_dir_resolved = log_dir.resolve()
+            if not str(file_path).startswith(str(log_dir_resolved)):
+                raise HTTPException(403, "Access denied")
+        except Exception:
+            raise HTTPException(400, "Invalid file path")
+
+        # Check if file exists
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(404, f"Log file not found: {filename}")
+
+        # Check if it's a log file
+        if not (file_path.suffix in [".log", ".jsonl", ".json"] or file_path.stem.startswith(Path(settings.log_file).stem)):
+            raise HTTPException(403, "Not a log file")
+
+        # Return file for download
+        return FileResponse(
+            path=file_path,
+            filename=file_path.name,
+            media_type="application/octet-stream",
+        )
+
+    else:
+        # List available log files
+        log_files = []
+
+        try:
+            # Main log file
+            main_log = log_dir / settings.log_file
+            if main_log.exists():
+                stat = main_log.stat()
+                log_files.append(
+                    {
+                        "name": main_log.name,
+                        "size": stat.st_size,
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "type": "main",
+                    }
+                )
+
+            # Rotated log files
+            if settings.log_rotation_enabled:
+                pattern = f"{Path(settings.log_file).stem}.*"
+                for file in log_dir.glob(pattern):
+                    if file.is_file():
+                        stat = file.stat()
+                        log_files.append(
+                            {
+                                "name": file.name,
+                                "size": stat.st_size,
+                                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                                "type": "rotated",
+                            }
+                        )
+
+            # Storage log file (JSON lines)
+            storage_log = log_dir / f"{Path(settings.log_file).stem}_storage.jsonl"
+            if storage_log.exists():
+                stat = storage_log.stat()
+                log_files.append(
+                    {
+                        "name": storage_log.name,
+                        "size": stat.st_size,
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "type": "storage",
+                    }
+                )
+
+            # Sort by modified time (newest first)
+            log_files.sort(key=lambda x: x["modified"], reverse=True)
+
+        except Exception as e:
+            logger.error(f"Error listing log files: {e}")
+            raise HTTPException(500, f"Error listing log files: {e}")
+
+        return {
+            "log_directory": str(log_dir),
+            "files": log_files,
+            "total": len(log_files),
+        }
+
+
+@admin_router.get("/logs/export")
+async def admin_export_logs(
+    format: str = "json",
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    level: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    request_id: Optional[str] = None,
+    search: Optional[str] = None,
+    user: str = Depends(require_auth),
+):
+    """Export filtered logs in JSON or CSV format.
+
+    Args:
+        format: Export format (json or csv)
+        entity_type: Filter by entity type
+        entity_id: Filter by entity ID
+        level: Minimum log level
+        start_time: ISO format start time
+        end_time: ISO format end time
+        request_id: Filter by request ID
+        search: Search in message text
+        user: Authenticated user
+
+    Returns:
+        File download response with exported logs
+
+    Raises:
+        HTTPException: If validation fails or export format invalid
+    """
+    # Standard
+    import csv
+    from datetime import datetime
+    import io
+
+    # First-Party
+    from mcpgateway.models import LogLevel
+
+    # Validate format
+    if format not in ["json", "csv"]:
+        raise HTTPException(400, f"Invalid format: {format}. Use 'json' or 'csv'")
+
+    # Get log storage from logging service
+    storage = logging_service.get_storage()
+    if not storage:
+        raise HTTPException(503, "Log storage not available")
+
+    # Parse timestamps if provided
+    start_dt = None
+    end_dt = None
+    if start_time:
+        try:
+            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, f"Invalid start_time format: {start_time}")
+
+    if end_time:
+        try:
+            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, f"Invalid end_time format: {end_time}")
+
+    # Parse log level
+    log_level = None
+    if level:
+        try:
+            log_level = LogLevel(level.lower())
+        except ValueError:
+            raise HTTPException(400, f"Invalid log level: {level}")
+
+    # Get all matching logs (no pagination for export)
+    logs = await storage.get_logs(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        level=log_level,
+        start_time=start_dt,
+        end_time=end_dt,
+        request_id=request_id,
+        search=search,
+        limit=10000,  # Reasonable max for export
+        offset=0,
+        order="desc",
+    )
+
+    # Generate filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"logs_export_{timestamp}.{format}"
+
+    if format == "json":
+        # Export as JSON
+        content = json.dumps(logs, indent=2, default=str)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    else:  # CSV format
+        # Create CSV content
+        output = io.StringIO()
+
+        if logs:
+            # Use first log to determine columns
+            fieldnames = [
+                "timestamp",
+                "level",
+                "entity_type",
+                "entity_id",
+                "entity_name",
+                "message",
+                "logger",
+                "request_id",
+            ]
+
+            writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+
+            for log in logs:
+                # Flatten the log entry for CSV
+                row = {k: log.get(k, "") for k in fieldnames}
+                writer.writerow(row)
+
+        content = output.getvalue()
+
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )

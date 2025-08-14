@@ -160,6 +160,115 @@ du -sh logs/*
 
 ---
 
+## 🖥️ Admin UI Log Viewer
+
+MCP Gateway includes a built-in log viewer in the Admin UI that provides real-time monitoring, filtering, and export capabilities without requiring direct file access.
+
+### Enabling the Log Viewer
+
+The log viewer is automatically available when the Admin UI is enabled:
+
+```bash
+# Enable Admin UI (includes log viewer)
+MCPGATEWAY_UI_ENABLED=true
+
+# Configure in-memory log buffer size (default: 1MB)
+LOG_BUFFER_SIZE_MB=2  # Increase for more log history
+```
+
+### Features
+
+#### Real-Time Monitoring
+- **Live streaming** via Server-Sent Events (SSE)
+- **Automatic updates** as new logs are generated
+- **Visual indicators** with pulse animation for new entries
+- **Color-coded severity levels**:
+  - Debug: Gray
+  - Info: Blue
+  - Warning: Yellow
+  - Error: Red
+  - Critical: Purple
+
+#### Filtering & Search
+- **Filter by log level**: Debug, Info, Warning, Error, Critical
+- **Filter by entity type**: Tool, Resource, Server, Gateway
+- **Full-text search**: Search within log messages
+- **Time range filtering**: Filter by date/time range
+- **Request ID tracing**: Track logs for specific requests
+
+#### Export Capabilities
+- **Export to JSON**: Download filtered logs as JSON file
+- **Export to CSV**: Download filtered logs as CSV file
+- **Download log files**: Direct access to rotated log files (if file logging enabled)
+
+### Accessing the Log Viewer
+
+1. Navigate to the Admin UI: `http://localhost:4444/admin`
+2. Click the **"Logs"** tab in the navigation
+3. Use the filter controls to refine your view:
+   - Select entity type from dropdown
+   - Choose minimum log level
+   - Enter search terms
+   - Set pagination options
+
+### API Endpoints
+
+The log viewer also exposes REST API endpoints for programmatic access:
+
+```bash
+# Get filtered logs
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:4444/admin/logs?level=error&limit=50"
+
+# Stream logs in real-time (SSE)
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:4444/admin/logs/stream"
+
+# Export logs as JSON
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:4444/admin/logs/export?format=json" \
+  -o logs.json
+
+# List available log files
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:4444/admin/logs/file"
+```
+
+### Buffer Management
+
+The log viewer uses an in-memory circular buffer with configurable size:
+
+- **Default size**: 1MB (approximately 2000-5000 log entries)
+- **Size-based eviction**: Oldest logs automatically removed when buffer is full
+- **No persistence**: Buffer is cleared on server restart
+- **Performance**: Minimal memory overhead with O(1) operations
+
+### Configuration Options
+
+| Variable              | Description                          | Default | Example |
+| -------------------- | ------------------------------------ | ------- | ------- |
+| `LOG_BUFFER_SIZE_MB` | In-memory buffer size for UI viewer | `1`     | `2`, `5`, `10` |
+
+### Best Practices
+
+1. **Adjust buffer size** based on your monitoring needs:
+   - Development: 1-2MB is usually sufficient
+   - Production: Consider 5-10MB for longer history
+
+2. **Use filters** to focus on relevant logs:
+   - Filter by error level during troubleshooting
+   - Filter by entity when debugging specific components
+
+3. **Export regularly** if you need to preserve logs:
+   - The buffer is in-memory only and clears on restart
+   - Export important logs to JSON/CSV for archival
+
+4. **Combine with file logging** for persistence:
+   - UI viewer for real-time monitoring
+   - File logs for long-term storage and analysis
+
+---
+
 ## 📡 Streaming Logs (Containers)
 
 ```bash

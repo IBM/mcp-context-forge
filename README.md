@@ -127,7 +127,7 @@ It currently supports:
 * Federation across multiple MCP and REST services
 * Virtualization of legacy APIs as MCP-compliant tools and servers
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
-* An Admin UI for real-time management and configuration
+* An Admin UI for real-time management, configuration, and log monitoring
 * Built-in auth, retries, and rate-limiting
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
@@ -190,6 +190,7 @@ For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap
 <summary><strong>📈 Admin UI, Observability & Dev Experience</strong></summary>
 
 * Admin UI built with HTMX + Alpine.js
+* Real-time log viewer with filtering, search, and export capabilities
 * Auth: Basic, JWT, or custom schemes
 * Structured logs, health endpoints, metrics
 * 400+ tests, Makefile targets, live reload, pre-commit hooks

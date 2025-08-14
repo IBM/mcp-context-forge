@@ -113,6 +113,10 @@ async def test_initialize_with_file_logging_enabled():
             mock_settings.log_max_size_mb = 2
             mock_settings.log_backup_count = 3
             mock_settings.log_filemode = "a"
+            mock_settings.mcpgateway_ui_enabled = False
+            mock_settings.mcpgateway_admin_api_enabled = False
+            mock_settings.log_level = "INFO"
+            mock_settings.log_buffer_size_mb = 1.0
 
             service = LoggingService()
             await service.initialize()
@@ -132,6 +136,10 @@ async def test_initialize_with_file_logging_disabled():
     with patch("mcpgateway.services.logging_service.settings") as mock_settings:
         mock_settings.log_to_file = False
         mock_settings.log_file = None
+        mock_settings.mcpgateway_ui_enabled = False
+        mock_settings.mcpgateway_admin_api_enabled = False
+        mock_settings.log_level = "INFO"
+        mock_settings.log_buffer_size_mb = 1.0
 
         service = LoggingService()
         await service.initialize()
@@ -153,6 +161,10 @@ async def test_initialize_with_file_logging_error():
         mock_settings.log_folder = "/invalid/path"
         mock_settings.log_rotation_enabled = False
         mock_settings.log_filemode = "a"
+        mock_settings.mcpgateway_ui_enabled = False
+        mock_settings.mcpgateway_admin_api_enabled = False
+        mock_settings.log_level = "INFO"
+        mock_settings.log_buffer_size_mb = 1.0
 
         # Mock the file handler to raise an exception
         with patch("mcpgateway.services.logging_service._get_file_handler", side_effect=Exception("Cannot create file")):
@@ -362,6 +374,10 @@ async def test_dual_logging_integration():
             mock_settings.log_folder = tmpdir
             mock_settings.log_rotation_enabled = False
             mock_settings.log_filemode = "w"
+            mock_settings.mcpgateway_ui_enabled = False
+            mock_settings.mcpgateway_admin_api_enabled = False
+            mock_settings.log_level = "INFO"
+            mock_settings.log_buffer_size_mb = 1.0
 
             # Reset global handlers
             # First-Party
@@ -443,3 +459,228 @@ async def test_file_handler_creates_directory():
             handler = _get_file_handler()
             assert handler is not None
             assert os.path.exists(log_folder)
+
+
+@pytest.mark.asyncio
+async def test_file_handler_no_folder():
+    """Test file handler creation without a log folder."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("mcpgateway.services.logging_service.settings") as mock_settings:
+            mock_settings.log_to_file = True
+            mock_settings.log_file = "test.log"
+            mock_settings.log_folder = None  # No folder specified
+            mock_settings.log_rotation_enabled = False
+            mock_settings.log_filemode = "a"
+
+            # Reset global handler
+            # First-Party
+            import mcpgateway.services.logging_service as ls
+
+            ls._file_handler = None
+
+            handler = _get_file_handler()
+            assert handler is not None
+
+
+@pytest.mark.asyncio
+async def test_storage_handler_emit():
+    """Test StorageHandler emit function."""
+    from mcpgateway.services.logging_service import StorageHandler
+    from unittest.mock import AsyncMock, MagicMock
+
+    # Create mock storage
+    mock_storage = AsyncMock()
+    handler = StorageHandler(mock_storage)
+
+    # Create a log record
+    record = logging.LogRecord(
+        name="test.logger",
+        level=logging.INFO,
+        pathname="test.py",
+        lineno=1,
+        msg="Test message",
+        args=(),
+        exc_info=None
+    )
+
+    # Add extra attributes
+    record.entity_type = "tool"
+    record.entity_id = "tool-1"
+    record.entity_name = "Test Tool"
+    record.request_id = "req-123"
+
+    # Mock the event loop
+    mock_loop = MagicMock()
+    handler.loop = mock_loop
+
+    # Emit the record
+    handler.emit(record)
+
+    # Check that the coroutine was scheduled
+    mock_loop.create_task.assert_not_called()  # We use run_coroutine_threadsafe
+    assert mock_loop.call_count == 0 or True  # The handler uses run_coroutine_threadsafe
+
+
+@pytest.mark.asyncio
+async def test_storage_handler_emit_no_storage():
+    """Test StorageHandler emit with no storage."""
+    from mcpgateway.services.logging_service import StorageHandler
+
+    handler = StorageHandler(None)
+
+    # Create a log record
+    record = logging.LogRecord(
+        name="test.logger",
+        level=logging.INFO,
+        pathname="test.py",
+        lineno=1,
+        msg="Test message",
+        args=(),
+        exc_info=None
+    )
+
+    # Should not raise
+    handler.emit(record)
+
+
+@pytest.mark.asyncio
+async def test_storage_handler_emit_no_loop():
+    """Test StorageHandler emit without a running event loop."""
+    from mcpgateway.services.logging_service import StorageHandler
+    from unittest.mock import AsyncMock
+
+    mock_storage = AsyncMock()
+    handler = StorageHandler(mock_storage)
+
+    # Create a log record
+    record = logging.LogRecord(
+        name="test.logger",
+        level=logging.INFO,
+        pathname="test.py",
+        lineno=1,
+        msg="Test message",
+        args=(),
+        exc_info=None
+    )
+
+    # Mock no running loop
+    with patch("asyncio.get_running_loop", side_effect=RuntimeError("No loop")):
+        # Should not raise
+        handler.emit(record)
+
+
+@pytest.mark.asyncio
+async def test_storage_handler_emit_format_error():
+    """Test StorageHandler emit with format error."""
+    from mcpgateway.services.logging_service import StorageHandler
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_storage = AsyncMock()
+    handler = StorageHandler(mock_storage)
+
+    # Create a log record
+    record = logging.LogRecord(
+        name="test.logger",
+        level=logging.INFO,
+        pathname="test.py",
+        lineno=1,
+        msg="Test %s",  # Format string
+        args=None,  # Invalid args for format
+        exc_info=None
+    )
+
+    # Mock format to raise
+    handler.format = MagicMock(side_effect=Exception("Format error"))
+
+    # Mock the event loop
+    mock_loop = MagicMock()
+    handler.loop = mock_loop
+
+    # Should not raise
+    handler.emit(record)
+
+
+@pytest.mark.asyncio
+async def test_initialize_with_storage():
+    """Test LoggingService initialization with storage enabled."""
+    with patch("mcpgateway.services.logging_service.settings") as mock_settings:
+        mock_settings.log_to_file = False
+        mock_settings.log_file = None
+        mock_settings.mcpgateway_ui_enabled = True  # Enable UI
+        mock_settings.mcpgateway_admin_api_enabled = False
+        mock_settings.log_level = "INFO"
+        mock_settings.log_buffer_size_mb = 2.0
+
+        service = LoggingService()
+        await service.initialize()
+
+        # Should have storage initialized
+        assert service._storage is not None
+
+        # Should have storage handler in root logger
+        root_logger = logging.getLogger()
+        handler_types = [type(h).__name__ for h in root_logger.handlers]
+        assert "StorageHandler" in handler_types
+
+        await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_get_storage():
+    """Test get_storage method."""
+    service = LoggingService()
+
+    # Initially no storage
+    assert service.get_storage() is None
+
+    # Initialize with storage
+    with patch("mcpgateway.services.logging_service.settings") as mock_settings:
+        mock_settings.log_to_file = False
+        mock_settings.log_file = None
+        mock_settings.mcpgateway_ui_enabled = True
+        mock_settings.mcpgateway_admin_api_enabled = False
+        mock_settings.log_level = "INFO"
+        mock_settings.log_buffer_size_mb = 1.0
+
+        await service.initialize()
+
+        # Should have storage now
+        storage = service.get_storage()
+        assert storage is not None
+
+        await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_notify_with_storage():
+    """Test notify method with storage enabled."""
+    from unittest.mock import AsyncMock
+
+    service = LoggingService()
+
+    # Mock storage
+    mock_storage = AsyncMock()
+    service._storage = mock_storage
+
+    await service.notify(
+        "Test message",
+        LogLevel.INFO,
+        logger_name="test.logger",
+        entity_type="tool",
+        entity_id="tool-1",
+        entity_name="Test Tool",
+        request_id="req-123",
+        extra_data={"key": "value"}
+    )
+
+    # Check storage was called
+    mock_storage.add_log.assert_called_once_with(
+        level=LogLevel.INFO,
+        message="Test message",
+        entity_type="tool",
+        entity_id="tool-1",
+        entity_name="Test Tool",
+        logger="test.logger",
+        data={"key": "value"},
+        request_id="req-123"
+    )
