@@ -67,6 +67,7 @@ from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Initialize logging service first
 logging_service: LoggingService = LoggingService()
@@ -1276,19 +1277,43 @@ class SessionRegistry(SessionBackend):
             >>> # Response: {}
         """
         result = {}
+
         if "method" in message and "id" in message:
-            method = message["method"]
-            params = message.get("params", {})
-            req_id = message["id"]
-            db = next(get_db())
-            if method == "initialize":
-                init_result = await self.handle_initialize_logic(params)
-                response = {
+            try:
+                method = message["method"]
+                params = message.get("params", {})
+                params["server_id"] = server_id
+                req_id = message["id"]
+
+                rpc_input = {
                     "jsonrpc": "2.0",
-                    "result": init_result.model_dump(by_alias=True, exclude_none=True),
+                    "method": method,
+                    "params": params,
                     "id": req_id,
                 }
-                await transport.send_message(response)
+                headers = {"Authorization": f"Bearer {user['token']}", "Content-Type": "application/json"}
+                rpc_url = base_url + "/rpc"
+                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
+                    rpc_response = await client.post(
+                        url=rpc_url,
+                        json=rpc_input,
+                        headers=headers,
+                    )
+                    result = rpc_response.json()
+                    result = result.get("result", {})
+
+                response = {"jsonrpc": "2.0", "result": result, "id": req_id}
+            except JSONRPCError as e:
+                result = e.to_dict()
+                response = {"jsonrpc": "2.0", "error": result["error"], "id": req_id}
+            except Exception as e:
+                result = {"code": -32000, "message": "Internal error", "data": str(e)}
+                response = {"jsonrpc": "2.0", "error": result, "id": req_id}
+
+            logging.debug(f"Sending sse message:{response}")
+            await transport.send_message(response)
+
+            if message["method"] == "initialize":
                 await transport.send_message(
                     {
                         "jsonrpc": "2.0",
@@ -1309,48 +1334,3 @@ class SessionRegistry(SessionBackend):
                             "params": {},
                         }
                     )
-            elif method == "tools/list":
-                if server_id:
-                    tools = await tool_service.list_server_tools(db, server_id=server_id)
-                else:
-                    tools = await tool_service.list_tools(db)
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
-            elif method == "resources/list":
-                if server_id:
-                    resources = await resource_service.list_server_resources(db, server_id=server_id)
-                else:
-                    resources = await resource_service.list_resources(db)
-                result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
-            elif method == "prompts/list":
-                if server_id:
-                    prompts = await prompt_service.list_server_prompts(db, server_id=server_id)
-                else:
-                    prompts = await prompt_service.list_prompts(db)
-                result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
-            elif method == "prompts/get":
-                prompts = await prompt_service.get_prompt(db, name=params.get("name"), arguments=params.get("arguments", {}))
-                result = prompts.model_dump(by_alias=True, exclude_none=True)
-            elif method == "ping":
-                result = {}
-            elif method == "tools/call":
-                rpc_input = {
-                    "jsonrpc": "2.0",
-                    "method": message["params"]["name"],
-                    "params": message["params"]["arguments"],
-                    "id": 1,
-                }
-                headers = {"Authorization": f"Bearer {user['token']}", "Content-Type": "application/json"}
-                rpc_url = base_url + "/rpc"
-                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
-                    rpc_response = await client.post(
-                        url=rpc_url,
-                        json=rpc_input,
-                        headers=headers,
-                    )
-                    result = rpc_response.json()
-            else:
-                result = {}
-
-            response = {"jsonrpc": "2.0", "result": result, "id": req_id}
-            logging.info(f"Sending sse message:{response}")
-            await transport.send_message(response)

@@ -1324,7 +1324,7 @@ class TestUtilityAPIs:
 
         assert response.status_code == 200
         result = response.json()
-        assert result == {}  # ping returns empty result
+        assert result == {"jsonrpc": "2.0", "result": {}, "id": "test-123"}  # ping returns empty result
 
     async def test_rpc_list_tools(self, client: AsyncClient, mock_auth):
         """Test POST /rpc - tools/list method."""
@@ -1334,7 +1334,7 @@ class TestUtilityAPIs:
 
         assert response.status_code == 200
         result = response.json()
-        assert isinstance(result, list)
+        assert isinstance(result.get("result", {}).get("tools"), list)
 
     async def test_rpc_invalid_method(self, client: AsyncClient, mock_auth):
         """Test POST /rpc with invalid method."""
