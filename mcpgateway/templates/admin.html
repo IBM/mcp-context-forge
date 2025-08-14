@@ -963,18 +963,39 @@
           </h3>
           <form id="add-tool-form">
             <div class="grid grid-cols-1 gap-6">
-              <div>
-                <label
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Name</label
-                >
-                <input
-                  type="text"
-                  name="name"
-                  required
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                />
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                    Gateway Name
+                  </label>
+                  <input
+                    type="text"
+                    name="gateway_name"
+                    id="add-tool-gateway-name"
+                    placeholder="e.g., local-gateway"
+                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Optional for REST tools; populated for MCP-imported tools.
+                  </p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                    Original Name
+                  </label>
+                  <input
+                    type="text"
+                    name="original_name"
+                    id="add-tool-original-name"
+                    placeholder="e.g., list-files"
+                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Tool's name as provided by the gateway.
+                  </p>
+                </div>
               </div>
+
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -2635,19 +2656,32 @@
               <div class="mt-4">
                 <form id="edit-tool-form" method="POST">
                   <div class="grid grid-cols-1 gap-6">
-                    <div>
-                      <label
-                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                        >Name</label
-                      >
-                      <input
-                        type="text"
-                        name="name"
-                        required
-                        id="edit-tool-name"
-                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      />
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Gateway Name
+                        </label>
+                        <input
+                          type="text"
+                          name="gateway_name"
+                          id="edit-tool-gateway-name"
+                          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Original Name
+                        </label>
+                        <input
+                          type="text"
+                          name="original_name"
+                          id="edit-tool-original-name"
+                          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        />
+                      </div>
                     </div>
+
                     <div>
                       <label
                         class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -2681,9 +2715,11 @@
                         name="integrationType"
                         id="edit-tool-type"
                         class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        onchange="handleEditIntegrationTypeChange()"
                       >
 
                         <option value="REST">REST</option>
+                        <option value="MCP">MCP</option>
                       </select>
                     </div>
                     <div>
@@ -2696,7 +2732,7 @@
                         id="edit-tool-request-type"
                         class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       >
-                        <!-- Will be populated dynamically -->
+
                       </select>
                     </div>
                     <div>
@@ -3846,5 +3882,35 @@
         });
       });
     </script>
+    <script>
+      function handleEditIntegrationTypeChange() {
+        const typeSel = document.getElementById('edit-tool-type');
+        const reqSel  = document.getElementById('edit-tool-request-type');
+        if (!typeSel || !reqSel) return;
+
+        const isREST = typeSel.value === 'REST';
+        // For REST tools, enable HTTP verbs; for MCP, disable & clear to avoid bad values.
+        reqSel.disabled = !isREST;
+        if (!isREST) {
+          reqSel.value = '';
+        }
+      }
+
+      // When the Edit modal is shown, re-evaluate enable/disable based on prefilled value.
+      (function () {
+        const modal = document.getElementById('tool-edit-modal');
+        if (!modal) return;
+
+        const observer = new MutationObserver(() => {
+          const isOpen = !modal.classList.contains('hidden');
+          if (isOpen) {
+            // Defer one tick so existing JS can prefill values first.
+            setTimeout(handleEditIntegrationTypeChange, 0);
+          }
+        });
+        observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+      })();
+    </script>
+
   </body>
 </html>
