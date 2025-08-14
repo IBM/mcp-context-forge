@@ -52,7 +52,7 @@ class TestStdioProcess(unittest.TestCase):
 
             # Start process
             await self.stdio.start()
-            
+
             assert self.stdio.process is not None
             assert self.stdio._stdout_reader_task is not None
             mock_create.assert_called_once()
@@ -72,11 +72,11 @@ class TestStdioProcess(unittest.TestCase):
             mock_create.return_value = mock_process
 
             await self.stdio.start()
-            
+
             # Send message
             message = '{"jsonrpc": "2.0", "id": 1, "method": "test"}'
             await self.stdio.send(message)
-            
+
             mock_process.stdin.write.assert_called_once()
             mock_process.stdin.drain.assert_called_once()
 
@@ -131,11 +131,11 @@ class TestReverseProxyClient(unittest.TestCase):
             mock_ws.connect = AsyncMock()
             mock_connection = AsyncMock()
             mock_ws.connect.return_value = mock_connection
-            
+
             with patch.object(self.client.stdio_process, "start", AsyncMock()):
                 with patch.object(self.client, "_register", AsyncMock()):
                     await self.client.connect()
-            
+
             assert self.client.state == ConnectionState.CONNECTED
             assert self.client.connection is not None
             mock_ws.connect.assert_called_once()
@@ -153,10 +153,10 @@ class TestReverseProxyClient(unittest.TestCase):
         """Test sending message to gateway."""
         self.client.connection = AsyncMock()
         self.client.use_websocket = True
-        
+
         message = '{"type": "heartbeat"}'
         await self.client._send_to_gateway(message)
-        
+
         self.client.connection.send.assert_called_once_with(message)
 
     @pytest.mark.asyncio
@@ -169,11 +169,11 @@ class TestReverseProxyClient(unittest.TestCase):
     async def test_handle_stdio_message(self):
         """Test handling message from stdio."""
         self.client.connection = AsyncMock()
-        
+
         # Mock JSON-RPC response
         message = '{"jsonrpc": "2.0", "id": 1, "result": "test"}'
         await self.client._handle_stdio_message(message)
-        
+
         # Should wrap and forward to gateway
         self.client.connection.send.assert_called_once()
         sent_data = json.loads(self.client.connection.send.call_args[0][0])
@@ -188,9 +188,9 @@ class TestReverseProxyClient(unittest.TestCase):
                 "type": MessageType.REQUEST.value,
                 "payload": {"jsonrpc": "2.0", "id": 1, "method": "test"}
             })
-            
+
             await self.client._handle_gateway_message(message)
-            
+
             mock_send.assert_called_once()
             sent_payload = json.loads(mock_send.call_args[0][0])
             assert sent_payload["method"] == "test"
@@ -199,13 +199,13 @@ class TestReverseProxyClient(unittest.TestCase):
     async def test_handle_gateway_message_heartbeat(self):
         """Test handling heartbeat from gateway."""
         self.client.connection = AsyncMock()
-        
+
         message = json.dumps({
             "type": MessageType.HEARTBEAT.value
         })
-        
+
         await self.client._handle_gateway_message(message)
-        
+
         # Should respond with heartbeat
         self.client.connection.send.assert_called_once()
         sent_data = json.loads(self.client.connection.send.call_args[0][0])
@@ -218,10 +218,10 @@ class TestReverseProxyClient(unittest.TestCase):
         self.client.connection = AsyncMock()
         self.client._keepalive_task = AsyncMock()
         self.client._receive_task = AsyncMock()
-        
+
         with patch.object(self.client.stdio_process, "stop", AsyncMock()):
             await self.client.disconnect()
-        
+
         assert self.client.state == ConnectionState.DISCONNECTED
         self.client.connection.close.assert_called_once()
 
@@ -229,14 +229,14 @@ class TestReverseProxyClient(unittest.TestCase):
     async def test_run_with_reconnect(self):
         """Test run with reconnection logic."""
         self.client.max_retries = 1
-        
+
         with patch.object(self.client, "connect", AsyncMock()) as mock_connect:
             # Simulate connection failure then shutdown
             mock_connect.side_effect = [Exception("Connection failed")]
             self.client.state = ConnectionState.SHUTTING_DOWN
-            
+
             await self.client.run_with_reconnect()
-            
+
             assert self.client.retry_count == 1
 
 
@@ -262,7 +262,7 @@ class TestParseArgs(unittest.TestCase):
             "--keepalive", "60",
             "--log-level", "DEBUG",
         ])
-        
+
         assert args.local_stdio == "uvx mcp-server-git"
         assert args.gateway == "wss://gateway.example.com"
         assert args.token == "secret-token"

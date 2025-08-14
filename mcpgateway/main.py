@@ -2690,7 +2690,9 @@ app.include_router(tag_router)
 
 # Include reverse proxy router if enabled
 try:
+    # First-Party
     from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
+
     app.include_router(reverse_proxy_router)
     logger.info("Reverse proxy router included")
 except ImportError:

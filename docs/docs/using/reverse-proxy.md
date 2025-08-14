@@ -294,7 +294,7 @@ Reverse-proxied servers automatically appear in the gateway's server catalog and
    ```bash
    # Shorter interval for unstable networks
    --keepalive 15
-   
+
    # Longer interval for stable networks
    --keepalive 60
    ```
@@ -303,7 +303,7 @@ Reverse-proxied servers automatically appear in the gateway's server catalog and
    ```bash
    # Quick reconnect with limited retries
    --reconnect-delay 0.5 --max-retries 20
-   
+
    # Slow reconnect with infinite retries
    --reconnect-delay 5 --max-retries 0
    ```
@@ -320,7 +320,7 @@ servers:
   - name: git-server
     command: "uvx mcp-server-git"
     gateway: "https://gateway1.example.com"
-    
+
   - name: filesystem-server
     command: "uvx mcp-server-filesystem --directory /data"
     gateway: "https://gateway2.example.com"

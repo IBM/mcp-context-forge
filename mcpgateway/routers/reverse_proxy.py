@@ -8,22 +8,20 @@ to connect and tunnel their local MCP servers through the gateway.
 
 # Standard
 import asyncio
-import json
-import logging
-import uuid
 from datetime import datetime
+import json
 from typing import Any, Dict, Optional
+import uuid
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user
-from mcpgateway.database import get_db
-from mcpgateway.models import User
+from mcpgateway.db import get_db
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.verify_credentials import require_auth
 
 # Initialize logging
 logging_service = LoggingService()
@@ -34,14 +32,14 @@ router = APIRouter(prefix="/reverse-proxy", tags=["reverse-proxy"])
 
 class ReverseProxySession:
     """Manages a reverse proxy session."""
-    
-    def __init__(self, session_id: str, websocket: WebSocket, user: Optional[User] = None):
+
+    def __init__(self, session_id: str, websocket: WebSocket, user: Optional[str | dict] = None):
         """Initialize reverse proxy session.
-        
+
         Args:
             session_id: Unique session identifier.
             websocket: WebSocket connection.
-            user: Authenticated user (if any).
+            user: Authenticated user info (if any).
         """
         self.session_id = session_id
         self.websocket = websocket
@@ -51,10 +49,10 @@ class ReverseProxySession:
         self.last_activity = datetime.utcnow()
         self.message_count = 0
         self.bytes_transferred = 0
-        
+
     async def send_message(self, message: Dict[str, Any]) -> None:
         """Send message to the client.
-        
+
         Args:
             message: Message dictionary to send.
         """
@@ -62,10 +60,10 @@ class ReverseProxySession:
         await self.websocket.send_text(data)
         self.bytes_transferred += len(data)
         self.last_activity = datetime.utcnow()
-        
+
     async def receive_message(self) -> Dict[str, Any]:
         """Receive message from the client.
-        
+
         Returns:
             Parsed message dictionary.
         """
@@ -78,25 +76,25 @@ class ReverseProxySession:
 
 class ReverseProxyManager:
     """Manages all reverse proxy sessions."""
-    
+
     def __init__(self):
         """Initialize the manager."""
         self.sessions: Dict[str, ReverseProxySession] = {}
         self._lock = asyncio.Lock()
-        
+
     async def add_session(self, session: ReverseProxySession) -> None:
         """Add a new session.
-        
+
         Args:
             session: Session to add.
         """
         async with self._lock:
             self.sessions[session.session_id] = session
             LOGGER.info(f"Added reverse proxy session: {session.session_id}")
-            
+
     async def remove_session(self, session_id: str) -> None:
         """Remove a session.
-        
+
         Args:
             session_id: Session ID to remove.
         """
@@ -104,21 +102,21 @@ class ReverseProxyManager:
             if session_id in self.sessions:
                 del self.sessions[session_id]
                 LOGGER.info(f"Removed reverse proxy session: {session_id}")
-                
+
     def get_session(self, session_id: str) -> Optional[ReverseProxySession]:
         """Get a session by ID.
-        
+
         Args:
             session_id: Session ID to get.
-            
+
         Returns:
             Session if found, None otherwise.
         """
         return self.sessions.get(session_id)
-        
+
     def list_sessions(self) -> list[Dict[str, Any]]:
         """List all active sessions.
-        
+
         Returns:
             List of session information dictionaries.
         """
@@ -130,7 +128,7 @@ class ReverseProxyManager:
                 "last_activity": session.last_activity.isoformat(),
                 "message_count": session.message_count,
                 "bytes_transferred": session.bytes_transferred,
-                "user": session.user.username if session.user else None,
+                "user": session.user if isinstance(session.user, str) else session.user.get("sub") if isinstance(session.user, dict) else None,
             }
             for session in self.sessions.values()
         ]
@@ -143,19 +141,19 @@ manager = ReverseProxyManager()
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     """WebSocket endpoint for reverse proxy connections.
-    
+
     Args:
         websocket: WebSocket connection.
         db: Database session.
     """
     await websocket.accept()
-    
+
     # Get session ID from headers or generate new one
     session_id = websocket.headers.get("X-Session-ID", uuid.uuid4().hex)
-    
+
     # Check authentication
     user = None
     auth_header = websocket.headers.get("Authorization", "")
@@ -167,69 +165,55 @@ async def websocket_endpoint(
             LOGGER.warning(f"Authentication failed: {e}")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
             return
-    
+
     # Create session
     session = ReverseProxySession(session_id, websocket, user)
     await manager.add_session(session)
-    
+
     try:
         LOGGER.info(f"Reverse proxy connected: {session_id}")
-        
+
         # Main message loop
         while True:
             try:
                 message = await session.receive_message()
                 msg_type = message.get("type")
-                
+
                 if msg_type == "register":
                     # Register the server
                     session.server_info = message.get("server", {})
                     LOGGER.info(f"Registered server for session {session_id}: {session.server_info.get('name')}")
-                    
+
                     # Send acknowledgment
-                    await session.send_message({
-                        "type": "register_ack",
-                        "sessionId": session_id,
-                        "status": "success"
-                    })
-                    
+                    await session.send_message({"type": "register_ack", "sessionId": session_id, "status": "success"})
+
                 elif msg_type == "unregister":
                     # Unregister the server
                     LOGGER.info(f"Unregistering server for session {session_id}")
                     break
-                    
+
                 elif msg_type == "heartbeat":
                     # Respond to heartbeat
-                    await session.send_message({
-                        "type": "heartbeat",
-                        "sessionId": session_id,
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                    
+                    await session.send_message({"type": "heartbeat", "sessionId": session_id, "timestamp": datetime.utcnow().isoformat()})
+
                 elif msg_type in ("response", "notification"):
                     # Handle MCP response/notification from the proxied server
                     # TODO: Route to appropriate MCP client
                     LOGGER.debug(f"Received {msg_type} from session {session_id}")
-                    
+
                 else:
                     LOGGER.warning(f"Unknown message type from session {session_id}: {msg_type}")
-                    
+
             except WebSocketDisconnect:
                 LOGGER.info(f"WebSocket disconnected: {session_id}")
                 break
             except json.JSONDecodeError as e:
                 LOGGER.error(f"Invalid JSON from session {session_id}: {e}")
-                await session.send_message({
-                    "type": "error",
-                    "message": "Invalid JSON format"
-                })
+                await session.send_message({"type": "error", "message": "Invalid JSON format"})
             except Exception as e:
                 LOGGER.error(f"Error handling message from session {session_id}: {e}")
-                await session.send_message({
-                    "type": "error",
-                    "message": str(e)
-                })
-                
+                await session.send_message({"type": "error", "message": str(e)})
+
     finally:
         await manager.remove_session(session_id)
         LOGGER.info(f"Reverse proxy session ended: {session_id}")
@@ -237,88 +221,84 @@ async def websocket_endpoint(
 
 @router.get("/sessions")
 async def list_sessions(
-    current_user: User = Depends(get_current_user),
+    request: Request,
+    current_user: str | dict = Depends(require_auth),
 ):
     """List all active reverse proxy sessions.
-    
+
     Args:
-        current_user: Authenticated user.
-        
+        request: HTTP request.
+        current_user: Authenticated user info.
+
     Returns:
         List of session information.
     """
-    return {
-        "sessions": manager.list_sessions(),
-        "total": len(manager.sessions)
-    }
+    return {"sessions": manager.list_sessions(), "total": len(manager.sessions)}
 
 
 @router.delete("/sessions/{session_id}")
 async def disconnect_session(
     session_id: str,
-    current_user: User = Depends(get_current_user),
+    request: Request,
+    current_user: str | dict = Depends(require_auth),
 ):
     """Disconnect a reverse proxy session.
-    
+
     Args:
         session_id: Session ID to disconnect.
-        current_user: Authenticated user.
-        
+        request: HTTP request.
+        current_user: Authenticated user info.
+
     Returns:
         Disconnection status.
+
+    Raises:
+        HTTPException: If session is not found.
     """
     session = manager.get_session(session_id)
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {session_id} not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
     # Close the WebSocket connection
     await session.websocket.close()
     await manager.remove_session(session_id)
-    
+
     return {"status": "disconnected", "session_id": session_id}
 
 
 @router.post("/sessions/{session_id}/request")
 async def send_request_to_session(
     session_id: str,
-    request: Dict[str, Any],
-    current_user: User = Depends(get_current_user),
+    mcp_request: Dict[str, Any],
+    request: Request,
+    current_user: str | dict = Depends(require_auth),
 ):
     """Send an MCP request to a reverse proxy session.
-    
+
     Args:
         session_id: Session ID to send request to.
-        request: MCP request to send.
-        current_user: Authenticated user.
-        
+        mcp_request: MCP request to send.
+        request: HTTP request.
+        current_user: Authenticated user info.
+
     Returns:
         Request acknowledgment.
+
+    Raises:
+        HTTPException: If session is not found or request fails.
     """
     session = manager.get_session(session_id)
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {session_id} not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
     # Wrap the request in reverse proxy envelope
-    message = {
-        "type": "request",
-        "sessionId": session_id,
-        "payload": request
-    }
-    
+    message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
+
     try:
         await session.send_message(message)
         return {"status": "sent", "session_id": session_id}
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to send request: {e}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send request: {e}")
 
 
 @router.get("/sse/{session_id}")
@@ -327,44 +307,39 @@ async def sse_endpoint(
     request: Request,
 ):
     """SSE endpoint for receiving messages from a reverse proxy session.
-    
+
     Args:
         session_id: Session ID to subscribe to.
         request: HTTP request.
-        
+
     Returns:
         SSE stream.
+
+    Raises:
+        HTTPException: If session is not found.
     """
     session = manager.get_session(session_id)
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {session_id} not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+
     async def event_generator():
-        """Generate SSE events."""
+        """Generate SSE events.
+
+        Yields:
+            dict: SSE event data.
+        """
         try:
             # Send initial connection event
-            yield {
-                "event": "connected",
-                "data": json.dumps({
-                    "sessionId": session_id,
-                    "serverInfo": session.server_info
-                })
-            }
-            
+            yield {"event": "connected", "data": json.dumps({"sessionId": session_id, "serverInfo": session.server_info})}
+
             # TODO: Implement message queue for SSE delivery
             while not await request.is_disconnected():
                 await asyncio.sleep(30)  # Keepalive
-                yield {
-                    "event": "keepalive",
-                    "data": json.dumps({"timestamp": datetime.utcnow().isoformat()})
-                }
-                
+                yield {"event": "keepalive", "data": json.dumps({"timestamp": datetime.utcnow().isoformat()})}
+
         except asyncio.CancelledError:
             pass
-            
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -372,5 +347,5 @@ async def sse_endpoint(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-        }
+        },
     )

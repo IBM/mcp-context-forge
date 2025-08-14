@@ -1,5 +1,5 @@
 # Example configuration for MCP Reverse Proxy
-# 
+#
 # Usage:
 #   python3 -m mcpgateway.reverse_proxy --config reverse-proxy-config.yaml
 
@@ -27,8 +27,8 @@ log_level: "INFO"     # DEBUG, INFO, WARNING, ERROR, CRITICAL
 #     local_stdio: "uvx mcp-server-git"
 #     gateway: "https://gateway1.example.com"
 #     token: "token1"
-#   
-#   - name: "filesystem-server"  
+#
+#   - name: "filesystem-server"
 #     local_stdio: "uvx mcp-server-filesystem --directory /data"
 #     gateway: "https://gateway2.example.com"
 #     token: "token2"
