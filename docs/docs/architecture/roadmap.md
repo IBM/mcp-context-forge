@@ -222,11 +222,12 @@
 
 ## Release 0.6.0 - Security, Scale & Smart Automation
 
-!!! danger "Release 0.6.0 - In Progress (32%)"
+!!! danger "Release 0.6.0 - In Progress (35%)"
     **Due:** 19 Aug 2025 | **Status:** Open
     Security, Scale & Smart Automation
 
-??? abstract "✨ Features (9 completed, 31 remaining)"
+??? abstract "✨ Features (10 completed, 31 remaining)"
+    - ✅ [**#735**](https://github.com/IBM/mcp-context-forge/issues/735) - Epic: Vendor Agnostic OpenTelemetry Observability Support
     - [**#720**](https://github.com/IBM/mcp-context-forge/issues/720) - Add CLI for authoring and packaging plugins
     - ✅ [**#705**](https://github.com/IBM/mcp-context-forge/issues/705) - Option to completely remove Bearer token auth to MCP gateway
     - [**#699**](https://github.com/IBM/mcp-context-forge/issues/699) - Metrics Enhancement (export all data, capture all metrics, fix last used timestamps, UI improvements)
@@ -268,7 +269,8 @@
     - [**#87**](https://github.com/IBM/mcp-context-forge/issues/87) - Epic: Secure JWT Token Catalog with Per-User Expiry and Revocation
     - [**#80**](https://github.com/IBM/mcp-context-forge/issues/80) - Publish a multi-architecture container (including ARM64) support
 
-??? abstract "🐛 Bugs (14 completed, 8 remaining)"
+??? abstract "🐛 Bugs (16 completed, 7 remaining)"
+    - ✅ [**#728**](https://github.com/IBM/mcp-context-forge/issues/728) - Streamable HTTP Translation Feature: Connects but Fails to List Tools, Resources, or Support Tool Calls
     - ✅ [**#716**](https://github.com/IBM/mcp-context-forge/issues/716) - Resources and Prompts not displaying in Admin Dashboard while Tools are visible
     - ✅ [**#696**](https://github.com/IBM/mcp-context-forge/issues/696) - SSE Tool Invocation Fails After Integration Type Migration post PR #678
     - ✅ [**#694**](https://github.com/IBM/mcp-context-forge/issues/694) - Enhanced Validation Missing in GatewayCreate
@@ -282,7 +284,7 @@
     - ✅ [**#557**](https://github.com/IBM/mcp-context-forge/issues/557) - [BUG] Cleanup tool descriptions to remove newlines and truncate text
     - ✅ [**#526**](https://github.com/IBM/mcp-context-forge/issues/526) - Unable to add multiple headers when adding a gateway through UI (draft)
     - ✅ [**#520**](https://github.com/IBM/mcp-context-forge/issues/520) - Resource mime-type is always stored as text/plain
-    - [**#481**](https://github.com/IBM/mcp-context-forge/issues/481) - Intermittent test_resource_cache.py::test_expiration - AssertionError: assert 'bar' is None (draft)
+    - ✅ [**#481**](https://github.com/IBM/mcp-context-forge/issues/481) - Intermittent test_resource_cache.py::test_expiration - AssertionError: assert 'bar' is None (draft)
     - [**#464**](https://github.com/IBM/mcp-context-forge/issues/464) - MCP Server "Active" status not getting updated under "Gateways/MCP Servers" when the MCP Server shutdown.
     - ✅ [**#452**](https://github.com/IBM/mcp-context-forge/issues/452) - integrationType should only support REST, not MCP (Remove Integration Type: MCP) (draft)
     - [**#448**](https://github.com/IBM/mcp-context-forge/issues/448) - [Bug]:MCP server with custom base path "/api" instead of "mcp" or "sse" is not working
@@ -514,15 +516,18 @@
 !!! warning "Issues Without Release Assignment"
     The following issues are currently open but not assigned to any specific release:
 
-??? abstract "✨ Features (3 completed, 2 open)"
-    - ✅ [**#708**](https://github.com/IBM/mcp-context-forge/issues/708) - MCP Elicitation (v2025-06-18
+??? abstract "✨ Features (3 completed, 4 open)"
+    - [**#738**](https://github.com/IBM/mcp-context-forge/issues/738) - Configuration Database for Dynamic Settings Management
+    - [**#737**](https://github.com/IBM/mcp-context-forge/issues/737) - Bulk Tool Import
+    - [**#732**](https://github.com/IBM/mcp-context-forge/issues/732) - Enhance Handling of Long Tool Descriptions
+    - ✅ [**#708**](https://github.com/IBM/mcp-context-forge/issues/708) - MCP Elicitation (v2025-06-18)
     - ✅ [**#689**](https://github.com/IBM/mcp-context-forge/issues/689) - Getting "Unknown SSE event: keepalive" when trying to use virtual servers
     - [**#683**](https://github.com/IBM/mcp-context-forge/issues/683) - Debug headers and passthrough headers, e.g. X-Tenant-Id, X-Trace-Id, Authorization for time server (go) (draft)
     - [**#679**](https://github.com/IBM/mcp-context-forge/issues/679) - [Feature] Add enabled field to plugins/config.yaml
     - ✅ [**#306**](https://github.com/IBM/mcp-context-forge/issues/306) - Quick Start (manual install) gunicorn fails
 
-??? abstract "🐛 Bugs (7 completed, 2 open)"
-    - [**#715**](https://github.com/IBM/mcp-context-forge/issues/715) - [Bug]:Tool Edit Screen Issues – Field Mismatch & MCP Tool Validation Error
+??? abstract "🐛 Bugs (8 completed, 2 open)"
+    - ✅ [**#715**](https://github.com/IBM/mcp-context-forge/issues/715) - [Bug]:Tool Edit Screen Issues – Field Mismatch & MCP Tool Validation Error
     - ✅ [**#704**](https://github.com/IBM/mcp-context-forge/issues/704) - Virtual Servers don't actually work as advertised v0.5.0
     - [**#700**](https://github.com/IBM/mcp-context-forge/issues/700) - Move async_testing to tests/async (draft)
     - ✅ [**#560**](https://github.com/IBM/mcp-context-forge/issues/560) - Can't list tools when running inside of a docker
