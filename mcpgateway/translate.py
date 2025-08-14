@@ -127,7 +127,7 @@ import uuid
 # Third-Party
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
@@ -1633,13 +1633,13 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     LOGGER.info(f"Starting multi-protocol server for command: {cmd}")
     LOGGER.info(f"Protocols: SSE={expose_sse}, StreamableHTTP={expose_streamable_http}")
 
-    # Create the pubsub for SSE if needed
-    pubsub = _PubSub() if expose_sse else None
+    # Create a shared pubsub whenever either protocol needs stdout observations
+    pubsub = _PubSub() if (expose_sse or expose_streamable_http) else None
 
     # Create the stdio endpoint
-    stdio = StdIOEndpoint(cmd, pubsub) if expose_sse else None
+    stdio = StdIOEndpoint(cmd, pubsub) if (expose_sse or expose_streamable_http) else None
 
-    # Create the FastAPI app
+    # Create fastapi app and middleware
     app = FastAPI()
 
     # Add CORS middleware if specified
@@ -1652,9 +1652,12 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             allow_headers=["*"],
         )
 
-    # Add SSE endpoints if requested
-    if expose_sse and stdio:
+    # Start stdio if at least one transport requires it
+    if stdio:
         await stdio.start()
+
+    # SSE endpoints
+    if expose_sse and stdio and pubsub:
 
         @app.get(sse_path)
         async def get_sse(request: Request) -> EventSourceResponse:
@@ -1746,9 +1749,14 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         """
         return PlainTextResponse("ok")
 
-    # Add streamable HTTP endpoint if requested
+    # Streamable HTTP support
     streamable_server = None
     streamable_manager = None
+    streamable_context = None
+
+    # Keep a reference to the original FastAPI app so we can wrap it with an ASGI
+    # layer that delegates `/mcp` scopes to the StreamableHTTPSessionManager if present.
+    original_app = app
 
     if expose_streamable_http:
         # Create an MCP server instance
@@ -1761,39 +1769,110 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             json_response=json_response,
         )
 
-        # Store the original app before modifying
-        original_app = app
+        # Register POST /mcp on the FastAPI app as the canonical client->server POST
+        # path for Streamable HTTP. This forwards JSON-RPC notifications/requests to stdio.
+        @original_app.post("/mcp")
+        async def mcp_post(request: Request) -> Response:
+            """
+            Handles POST requests to the `/mcp` endpoint, forwarding JSON payloads to stdio
+            and optionally waiting for a correlated response.
 
-        # Create a custom middleware for handling MCP requests
-        async def mcp_middleware(scope, receive, send):
-            """Middleware to handle MCP requests via streamable HTTP.
+            The request body is expected to be a JSON object or newline-delimited JSON.
+            If the JSON includes an "id" field, the function attempts to match it with
+            a response from stdio using a pubsub queue, within a timeout period.
 
             Args:
-                scope: ASGI scope dictionary.
-                receive: ASGI receive callable.
-                send: ASGI send callable.
+                request (Request): The incoming FastAPI request containing the JSON payload.
 
-            Examples:
-                >>> async def test_middleware():
-                ...     scope = {"type": "http", "path": "/mcp"}
-                ...     async def receive(): return {}
-                ...     async def send(msg): return None
-                ...     # Would route to streamable_manager for /mcp
-                ...     return scope["path"] == "/mcp"
-                >>> import asyncio
-                >>> asyncio.run(test_middleware())
+            Returns:
+                Response: A FastAPI Response object.
+                    - 200 OK with matched JSON response if correlation succeeds.
+                    - 202 Accepted if no matching response is received in time or for notifications.
+                    - 400 Bad Request if the payload is not valid JSON.
+
+            Example:
+                >>> import httpx
+                >>> response = httpx.post("http://localhost:8000/mcp", json={"id": 123, "method": "ping"})
+                >>> response.status_code in (200, 202)
                 True
+                >>> response.text  # May be the matched JSON or "accepted"
+                '{"id": 123, "result": "pong"}'  # or "accepted"
             """
-            if scope["type"] == "http" and scope["path"] == "/mcp":
-                await streamable_manager.handle_request(scope, receive, send)
+            # Read and validate JSON
+            body = await request.body()
+            try:
+                obj = json.loads(body)
+            except Exception as exc:
+                return PlainTextResponse(f"Invalid JSON payload: {exc}", status_code=status.HTTP_400_BAD_REQUEST)
+
+            # Forward raw newline-delimited JSON to stdio
+            await stdio.send(body.decode().rstrip() + "\n")
+
+            # If it's a request (has an id) -> attempt to correlate response from stdio
+            if isinstance(obj, dict) and "id" in obj:
+                if not pubsub:
+                    return PlainTextResponse("accepted", status_code=status.HTTP_202_ACCEPTED)
+
+                queue = pubsub.subscribe()
+                try:
+                    timeout = 10.0  # seconds; tuneable
+                    deadline = asyncio.get_event_loop().time() + timeout
+                    while True:
+                        remaining = max(0.0, deadline - asyncio.get_event_loop().time())
+                        if remaining == 0:
+                            break
+                        try:
+                            msg = await asyncio.wait_for(queue.get(), timeout=remaining)
+                        except asyncio.TimeoutError:
+                            break
+
+                        # stdio stdout lines may contain JSON objects or arrays
+                        try:
+                            parsed = json.loads(msg)
+                        except (json.JSONDecodeError, ValueError):
+                            # not JSON -> skip
+                            continue
+
+                        candidates = parsed if isinstance(parsed, list) else [parsed]
+                        for candidate in candidates:
+                            if isinstance(candidate, dict) and candidate.get("id") == obj.get("id"):
+                                # return the matched response as JSON
+                                return JSONResponse(candidate)
+
+                    # timeout -> accept and return 202
+                    return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)
+                finally:
+                    pubsub.unsubscribe(queue)
+
+            # Notification -> return 202
+            return PlainTextResponse("accepted", status_code=status.HTTP_202_ACCEPTED)
+
+        # ASGI wrapper to route GET/other /mcp scopes to streamable_manager.handle_request
+        async def mcp_asgi_wrapper(scope, receive, send):
+            """
+            ASGI middleware that intercepts HTTP requests to the `/mcp` endpoint.
+
+            If the request is an HTTP call to `/mcp` and a `streamable_manager` is available,
+            it can handle the request (currently commented out). All other requests are
+            passed to the original FastAPI application.
+
+            Args:
+                scope (dict): The ASGI scope dictionary containing request metadata.
+                receive (Callable): An awaitable that yields incoming ASGI events.
+                send (Callable): An awaitable used to send ASGI events.
+            """
+            if scope.get("type") == "http" and scope.get("path") == "/mcp" and streamable_manager:
+                # Let StreamableHTTPSessionManager handle session-oriented streaming
+                # await streamable_manager.handle_request(scope, receive, send)
+                await original_app(scope, receive, send)
             else:
-                # Pass through to the original app for other routes
+                # Delegate everything else to the original FastAPI app
                 await original_app(scope, receive, send)
 
-        # Replace the app with our middleware wrapper
-        app = mcp_middleware
+        # Replace the app used by uvicorn with the ASGI wrapper
+        app = mcp_asgi_wrapper
 
-    # Run the server
+    # ---------------------- Server lifecycle ----------------------
     config = uvicorn.Config(
         app,
         host=host,
@@ -1821,8 +1900,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
 
-    # Start streamable HTTP manager if needed
-    streamable_context = None
+    # If we have a streamable manager, start its context so it can accept ASGI /mcp
     if streamable_manager:
         streamable_context = streamable_manager.run()
         await streamable_context.__aenter__()  # pylint: disable=unnecessary-dunder-call,no-member
