@@ -113,6 +113,10 @@ async def test_initialize_with_file_logging_enabled():
             mock_settings.log_max_size_mb = 2
             mock_settings.log_backup_count = 3
             mock_settings.log_filemode = "a"
+            mock_settings.mcpgateway_ui_enabled = False
+            mock_settings.admin_api_enabled = False
+            mock_settings.log_level = "INFO"
+            mock_settings.log_buffer_size_mb = 1.0
 
             service = LoggingService()
             await service.initialize()
@@ -132,6 +136,10 @@ async def test_initialize_with_file_logging_disabled():
     with patch("mcpgateway.services.logging_service.settings") as mock_settings:
         mock_settings.log_to_file = False
         mock_settings.log_file = None
+        mock_settings.mcpgateway_ui_enabled = False
+        mock_settings.admin_api_enabled = False
+        mock_settings.log_level = "INFO"
+        mock_settings.log_buffer_size_mb = 1.0
 
         service = LoggingService()
         await service.initialize()
@@ -153,6 +161,10 @@ async def test_initialize_with_file_logging_error():
         mock_settings.log_folder = "/invalid/path"
         mock_settings.log_rotation_enabled = False
         mock_settings.log_filemode = "a"
+        mock_settings.mcpgateway_ui_enabled = False
+        mock_settings.admin_api_enabled = False
+        mock_settings.log_level = "INFO"
+        mock_settings.log_buffer_size_mb = 1.0
 
         # Mock the file handler to raise an exception
         with patch("mcpgateway.services.logging_service._get_file_handler", side_effect=Exception("Cannot create file")):
@@ -362,6 +374,10 @@ async def test_dual_logging_integration():
             mock_settings.log_folder = tmpdir
             mock_settings.log_rotation_enabled = False
             mock_settings.log_filemode = "w"
+            mock_settings.mcpgateway_ui_enabled = False
+            mock_settings.admin_api_enabled = False
+            mock_settings.log_level = "INFO"
+            mock_settings.log_buffer_size_mb = 1.0
 
             # Reset global handlers
             # First-Party

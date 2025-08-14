@@ -51,7 +51,18 @@ class LogEntry:
         data: Optional[Dict[str, Any]] = None,
         request_id: Optional[str] = None,
     ):
-        """Initialize a log entry."""
+        """Initialize a log entry.
+
+        Args:
+            level: Severity level of the log
+            message: The log message
+            entity_type: Type of entity (tool, resource, server, gateway)
+            entity_id: ID of the related entity
+            entity_name: Name of the related entity for display
+            logger: Logger name/source
+            data: Additional structured data
+            request_id: Associated request ID for tracing
+        """
         self.id = str(uuid.uuid4())
         self.timestamp = datetime.now(timezone.utc)
         self.level = level
@@ -76,7 +87,11 @@ class LogEntry:
         self._size += sys.getsizeof(self.request_id) if self.request_id else 0
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
+        """Convert to dictionary for JSON serialization.
+
+        Returns:
+            Dictionary representation of the log entry
+        """
         return {
             "id": self.id,
             "timestamp": self.timestamp.isoformat(),
@@ -156,13 +171,7 @@ class LogStorageService:
         self._buffer.append(log_entry)
         self._current_size_bytes += log_entry._size
 
-        # Remove old entries if size limit exceeded
-        while self._current_size_bytes > self._max_size_bytes and self._buffer:
-            old_entry = self._buffer.popleft()
-            self._current_size_bytes -= old_entry._size
-            self._remove_from_indices(old_entry)
-
-        # Update indices
+        # Update indices BEFORE eviction so they can be cleaned up properly
         if entity_id:
             key = f"{entity_type}:{entity_id}" if entity_type else entity_id
             if key not in self._entity_index:
@@ -174,13 +183,23 @@ class LogStorageService:
                 self._request_index[request_id] = []
             self._request_index[request_id].append(log_entry.id)
 
+        # Remove old entries if size limit exceeded
+        while self._current_size_bytes > self._max_size_bytes and self._buffer:
+            old_entry = self._buffer.popleft()
+            self._current_size_bytes -= old_entry._size
+            self._remove_from_indices(old_entry)
+
         # Notify subscribers
         await self._notify_subscribers(log_entry)
 
         return log_entry
 
     def _remove_from_indices(self, entry: LogEntry) -> None:
-        """Remove entry from indices when evicted from buffer."""
+        """Remove entry from indices when evicted from buffer.
+
+        Args:
+            entry: LogEntry to remove from indices
+        """
         # Remove from entity index
         if entry.entity_id:
             key = f"{entry.entity_type}:{entry.entity_id}" if entry.entity_type else entry.entity_id

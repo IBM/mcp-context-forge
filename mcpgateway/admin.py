@@ -85,6 +85,9 @@ def set_logging_service(service: LoggingService):
     """Set the logging service instance to use.
 
     This should be called by main.py to share the same logging service.
+
+    Args:
+        service: The LoggingService instance to use
     """
     global logging_service, logger
     logging_service = service
@@ -4509,6 +4512,9 @@ async def admin_get_logs(
 
     Returns:
         Dictionary with logs and metadata
+
+    Raises:
+        HTTPException: If validation fails or service unavailable
     """
     # Standard
     from datetime import datetime
@@ -4590,6 +4596,9 @@ async def admin_stream_logs(
 
     Returns:
         SSE response with real-time log updates
+
+    Raises:
+        HTTPException: If log level is invalid or service unavailable
     """
     # Standard
     import json
@@ -4614,7 +4623,11 @@ async def admin_stream_logs(
             raise HTTPException(400, f"Invalid log level: {level}")
 
     async def generate():
-        """Generate SSE events for log streaming."""
+        """Generate SSE events for log streaming.
+
+        Yields:
+            Formatted SSE events containing log data
+        """
         try:
             async for event in storage.subscribe():
                 # Check if client disconnected
@@ -4672,6 +4685,9 @@ async def admin_get_log_file(
 
     Returns:
         File download response or list of available files
+
+    Raises:
+        HTTPException: If file doesn't exist or access denied
     """
     # Standard
     from datetime import datetime
@@ -4802,6 +4818,9 @@ async def admin_export_logs(
 
     Returns:
         File download response with exported logs
+
+    Raises:
+        HTTPException: If validation fails or export format invalid
     """
     # Standard
     import csv

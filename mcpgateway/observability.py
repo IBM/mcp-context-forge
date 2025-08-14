@@ -244,7 +244,7 @@ def trace_operation(operation_name: str, attributes: dict = None):
             The wrapped function with tracing capabilities.
         """
 
-        # If OpenTelemetry is not available, return the function unchanged
+        # If OpenTelemetry is not available, return the function unmodified
         if not OTEL_AVAILABLE:
             return func
 
