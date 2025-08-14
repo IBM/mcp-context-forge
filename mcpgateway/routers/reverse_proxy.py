@@ -222,13 +222,13 @@ async def websocket_endpoint(
 @router.get("/sessions")
 async def list_sessions(
     request: Request,
-    current_user: str | dict = Depends(require_auth),
+    _: str | dict = Depends(require_auth),
 ):
     """List all active reverse proxy sessions.
 
     Args:
         request: HTTP request.
-        current_user: Authenticated user info.
+        _: Authenticated user info (used for auth check).
 
     Returns:
         List of session information.
@@ -240,14 +240,14 @@ async def list_sessions(
 async def disconnect_session(
     session_id: str,
     request: Request,
-    current_user: str | dict = Depends(require_auth),
+    _: str | dict = Depends(require_auth),
 ):
     """Disconnect a reverse proxy session.
 
     Args:
         session_id: Session ID to disconnect.
         request: HTTP request.
-        current_user: Authenticated user info.
+        _: Authenticated user info (used for auth check).
 
     Returns:
         Disconnection status.
@@ -271,7 +271,7 @@ async def send_request_to_session(
     session_id: str,
     mcp_request: Dict[str, Any],
     request: Request,
-    current_user: str | dict = Depends(require_auth),
+    _: str | dict = Depends(require_auth),
 ):
     """Send an MCP request to a reverse proxy session.
 
@@ -279,7 +279,7 @@ async def send_request_to_session(
         session_id: Session ID to send request to.
         mcp_request: MCP request to send.
         request: HTTP request.
-        current_user: Authenticated user info.
+        _: Authenticated user info (used for auth check).
 
     Returns:
         Request acknowledgment.

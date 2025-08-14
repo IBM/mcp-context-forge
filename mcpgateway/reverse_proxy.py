@@ -706,6 +706,7 @@ async def main(argv: Optional[List[str]] = None) -> None:
     shutdown_event = asyncio.Event()
 
     def signal_handler():
+        """Handle shutdown signals gracefully."""
         LOGGER.info("Shutdown signal received")
         shutdown_event.set()
 
