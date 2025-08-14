@@ -59,7 +59,7 @@ from mcpgateway.config import jsonpath_modifier, settings
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
-from mcpgateway.models import InitializeRequest, InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
+from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins import PluginManager, PluginViolationError
 from mcpgateway.schemas import (
@@ -2225,7 +2225,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
         logger.debug(f"User {user} made an RPC request")
         body = await request.json()
         method = body["method"]
-        id = body.get("id") if "body" in locals() else None
+        req_id = body.get("id") if "body" in locals() else None
         params = body.get("params", {})
         cursor = params.get("cursor")  # Extract cursor parameter
 
@@ -2260,9 +2260,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
                 result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
             else:
                 result = {"contents": [result]}
-        elif method == "resources/templates/list":
-            result = {}
-            pass #TODO: Implement method for listing resource templates
         elif method == "prompts/list":
             prompts = await prompt_service.list_prompts(db, cursor=cursor)
             result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
@@ -2292,32 +2289,29 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
                 result = await gateway_service.forward_request(db, method, params)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
+        # TODO: Implement methods
+        elif method == "resources/templates/list":
+            result = {}
         elif method.startswith("roots/"):
             result = {}
-            pass #TODO: Implement methods for roots
         elif method.startswith("notifications/"):
             result = {}
-            pass #TODO: Implement methods for notifications
         elif method.startswith("sampling/"):
             result = {}
-            pass #TODO: Implement methods for sampling
         elif method.startswith("elicitation/"):
             result = {}
-            pass #TODO: Implement methods for elicitation
         elif method.startswith("completion/"):
             result = {}
-            pass #TODO: Implement methods for completion
         elif method.startswith("logging/"):
             result = {}
-            pass #TODO: Implement methods for logging
         else:
             raise JSONRPCError(-32000, "Invalid method", params)
 
-        return {"jsonrpc": "2.0", "result": result, "id": id}
+        return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
     except JSONRPCError as e:
         error = e.to_dict()
-        return {"jsonrpc": "2.0", "error": error["error"], "id": id}
+        return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
     except Exception as e:
         if isinstance(e, ValueError):
             return JSONResponse(content={"message": "Method invalid"}, status_code=422)
@@ -2325,7 +2319,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
         return {
             "jsonrpc": "2.0",
             "error": {"code": -32000, "message": "Internal error", "data": str(e)},
-            "id": id,
+            "id": req_id,
         }
 
 

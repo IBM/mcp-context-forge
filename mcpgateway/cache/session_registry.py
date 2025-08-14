@@ -832,7 +832,7 @@ class SessionRegistry(SessionBackend):
             transport = self.get_session_sync(session_id)
             if transport:
                 message = json.loads(str(self._session_message.get("message")))
-                await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                await self.generate_response(message=message, transport=transport, _server_id=server_id, user=user, base_url=base_url)
 
         elif self._backend == "redis":
             pubsub = self._redis.pubsub()
@@ -848,7 +848,7 @@ class SessionRegistry(SessionBackend):
                         message = json.loads(message)
                     transport = self.get_session_sync(session_id)
                     if transport:
-                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                        await self.generate_response(message=message, transport=transport, _server_id=server_id, user=user, base_url=base_url)
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
             finally:
@@ -990,7 +990,7 @@ class SessionRegistry(SessionBackend):
                         transport = self.get_session_sync(session_id)
                         if transport:
                             logger.info("Ready to respond")
-                            await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                            await self.generate_response(message=message, transport=transport, _server_id=server_id, user=user, base_url=base_url)
 
                             await asyncio.to_thread(_db_remove, session_id, record.message)
 
@@ -1247,7 +1247,7 @@ class SessionRegistry(SessionBackend):
             instructions=("MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."),
         )
 
-    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any], base_url: str) -> None:
+    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, _server_id: Optional[str], user: Dict[str, Any], base_url: str) -> None:
         """Generate and send response for incoming MCP protocol message.
 
         Processes MCP protocol messages and generates appropriate responses based on
@@ -1257,7 +1257,7 @@ class SessionRegistry(SessionBackend):
         Args:
             message: Incoming MCP message as JSON. Must contain 'method' and 'id' fields.
             transport: SSE transport to send responses through.
-            server_id: Optional server ID for scoped operations.
+            _server_id: Optional server ID for scoped operations.
             user: User information containing authentication token.
             base_url: Base URL for constructing RPC endpoints.
 
