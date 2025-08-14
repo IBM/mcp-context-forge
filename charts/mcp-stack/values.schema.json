@@ -628,12 +628,12 @@
     },
     "migration": {
       "type": "object",
-      "description": "Database migration configuration",
+      "description": "DEPRECATED: no-op (migrations are automated now). Kept for backward compatibility.",
       "properties": {
         "enabled": {
           "type": "boolean",
           "description": "Enable database migrations",
-          "default": true
+          "default": false
         },
         "restartPolicy": {
           "type": "string",

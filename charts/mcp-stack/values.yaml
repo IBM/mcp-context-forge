@@ -235,7 +235,7 @@ mcpContextForge:
 # Runs as a Job before mcpgateway deployment
 ########################################################################
 migration:
-  enabled: true                             # Set to false to skip migrations
+  enabled: false                             # DEPRECATED: ignored; migrations are automated now.
 
   # Job configuration
   restartPolicy: Never                      # Job should not restart on failure
