@@ -45,6 +45,7 @@ import os
 import tempfile
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING
+from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
@@ -275,9 +276,6 @@ class GatewayService:
             >>> GatewayService.normalize_url('https://example.com/api')
             'https://example.com/api'
         """
-        # Standard
-        from urllib.parse import urlparse, urlunparse
-
         parsed = urlparse(url)
         hostname = parsed.hostname
 
