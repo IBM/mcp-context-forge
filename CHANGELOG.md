@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [Unreleased]
+
+### Added
+
+#### **Admin UI Log Viewer** (#138)
+* **Real-time log monitoring** - Built-in log viewer in Admin UI with live streaming via Server-Sent Events
+* **Advanced filtering** - Filter by log level, entity type, time range, and full-text search
+* **Export capabilities** - Export filtered logs to JSON or CSV format
+* **In-memory buffer** - Configurable circular buffer (default 1MB) with automatic size-based eviction
+* **Color-coded severity** - Visual indicators for debug, info, warning, error, and critical levels
+* **API endpoints** - REST API for programmatic access to logs, streaming, and export
+* **Request tracing** - Track logs by request ID for debugging distributed operations
+
+---
+
 ## [0.5.0] - 2025-08-06 - Enterprise Operability, Auth, Configuration & Observability
 
 ### Overview

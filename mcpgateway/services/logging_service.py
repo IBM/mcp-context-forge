@@ -23,6 +23,7 @@ from pythonjsonlogger import jsonlogger  # You may need to install python-json-l
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.models import LogLevel
+from mcpgateway.services.log_storage_service import LogStorageService
 
 # Create a text formatter
 text_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -84,6 +85,79 @@ def _get_text_handler() -> logging.StreamHandler:
     return _text_handler
 
 
+class StorageHandler(logging.Handler):
+    """Custom logging handler that stores logs in LogStorageService."""
+
+    def __init__(self, storage_service):
+        """Initialize the storage handler.
+
+        Args:
+            storage_service: The LogStorageService instance to store logs in
+        """
+        super().__init__()
+        self.storage = storage_service
+        self.loop = None
+
+    def emit(self, record):
+        """Emit a log record to storage.
+
+        Args:
+            record: The LogRecord to emit
+        """
+        if not self.storage:
+            return
+
+        # Map Python log levels to MCP LogLevel
+        level_map = {
+            "DEBUG": LogLevel.DEBUG,
+            "INFO": LogLevel.INFO,
+            "WARNING": LogLevel.WARNING,
+            "ERROR": LogLevel.ERROR,
+            "CRITICAL": LogLevel.CRITICAL,
+        }
+
+        log_level = level_map.get(record.levelname, LogLevel.INFO)
+
+        # Extract entity context from record if available
+        entity_type = getattr(record, "entity_type", None)
+        entity_id = getattr(record, "entity_id", None)
+        entity_name = getattr(record, "entity_name", None)
+        request_id = getattr(record, "request_id", None)
+
+        # Format the message
+        try:
+            message = self.format(record)
+        except Exception:
+            message = record.getMessage()
+
+        # Store the log asynchronously
+        try:
+            # Get or create event loop
+            if not self.loop:
+                try:
+                    self.loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # No running loop, can't store
+                    return
+
+            # Schedule the coroutine
+            asyncio.run_coroutine_threadsafe(
+                self.storage.add_log(
+                    level=log_level,
+                    message=message,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    entity_name=entity_name,
+                    logger=record.name,
+                    request_id=request_id,
+                ),
+                self.loop,
+            )
+        except Exception:
+            # Silently fail to avoid logging recursion
+            pass
+
+
 class LoggingService:
     """MCP logging service.
 
@@ -99,6 +173,7 @@ class LoggingService:
         self._level = LogLevel.INFO
         self._subscribers: List[asyncio.Queue] = []
         self._loggers: Dict[str, logging.Logger] = {}
+        self._storage = None  # Will be initialized if admin UI is enabled
 
     async def initialize(self) -> None:
         """Initialize logging service.
@@ -134,6 +209,18 @@ class LoggingService:
         # Configure uvicorn loggers to use our handlers (for access logs)
         # Note: This needs to be done both at init and dynamically as uvicorn creates loggers later
         self._configure_uvicorn_loggers()
+
+        # Initialize log storage if admin UI is enabled
+        if settings.mcpgateway_ui_enabled or settings.mcpgateway_admin_api_enabled:
+            self._storage = LogStorageService()
+
+            # Add storage handler to capture all logs
+            storage_handler = StorageHandler(self._storage)
+            storage_handler.setFormatter(text_formatter)
+            storage_handler.setLevel(getattr(logging, settings.log_level.upper()))
+            root_logger.addHandler(storage_handler)
+
+            logging.info(f"Log storage initialized with {settings.log_buffer_size_mb}MB buffer")
 
         logging.info("Logging service initialized")
 
@@ -206,13 +293,28 @@ class LoggingService:
 
         await self.notify(f"Log level set to {level}", LogLevel.INFO, "logging")
 
-    async def notify(self, data: Any, level: LogLevel, logger_name: Optional[str] = None) -> None:
+    async def notify(
+        self,
+        data: Any,
+        level: LogLevel,
+        logger_name: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_name: Optional[str] = None,
+        request_id: Optional[str] = None,
+        extra_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Send log notification to subscribers.
 
         Args:
             data: Log message data
             level: Log severity level
             logger_name: Optional logger name
+            entity_type: Type of entity (tool, resource, server, gateway)
+            entity_id: ID of the related entity
+            entity_name: Name of the related entity
+            request_id: Associated request ID for tracing
+            extra_data: Additional structured data
 
         Examples:
             >>> from mcpgateway.services.logging_service import LoggingService
@@ -256,6 +358,19 @@ class LoggingService:
         log_method = level_map.get(level, "info")
         log_func = getattr(logger, log_method)
         log_func(data)
+
+        # Store in log storage if available
+        if self._storage:
+            await self._storage.add_log(
+                level=level,
+                message=str(data),
+                entity_type=entity_type,
+                entity_id=entity_id,
+                entity_name=entity_name,
+                logger=logger_name,
+                data=extra_data,
+                request_id=request_id,
+            )
 
         # Notify subscribers
         for queue in self._subscribers:
@@ -339,3 +454,11 @@ class LoggingService:
         """
         self._configure_uvicorn_loggers()
         logging.info("Uvicorn loggers reconfigured for dual logging")
+
+    def get_storage(self) -> Optional[LogStorageService]:
+        """Get the log storage service if available.
+
+        Returns:
+            LogStorageService instance or None if not initialized
+        """
+        return self._storage

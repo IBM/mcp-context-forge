@@ -52,7 +52,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
 from mcpgateway import __version__
-from mcpgateway.admin import admin_router
+from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
@@ -109,6 +109,9 @@ from mcpgateway.version import router as version_router
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger("mcpgateway")
+
+# Share the logging service with admin module
+set_logging_service(logging_service)
 
 # Note: Logging configuration is handled by LoggingService during startup
 # Don't use basicConfig here as it conflicts with our dual logging setup
