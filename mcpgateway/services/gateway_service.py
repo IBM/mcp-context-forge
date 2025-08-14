@@ -256,7 +256,7 @@ class GatewayService:
     def normalize_url(url: str) -> str:
         """
         Normalize a URL by ensuring it's properly formatted.
-        
+
         Special handling for localhost to prevent duplicates:
         - Converts 127.0.0.1 to localhost for consistency
         - Preserves all other domain names as-is for CDN/load balancer support
@@ -275,11 +275,12 @@ class GatewayService:
             >>> GatewayService.normalize_url('https://example.com/api')
             'https://example.com/api'
         """
+        # Standard
         from urllib.parse import urlparse, urlunparse
-        
+
         parsed = urlparse(url)
         hostname = parsed.hostname
-        
+
         # Special case: normalize 127.0.0.1 to localhost to prevent duplicates
         # but preserve all other domains as-is for CDN/load balancer support
         if hostname == "127.0.0.1":
@@ -288,7 +289,7 @@ class GatewayService:
                 netloc += f":{parsed.port}"
             normalized = parsed._replace(netloc=netloc)
             return urlunparse(normalized)
-        
+
         # For all other URLs, preserve the domain name
         return url
 
