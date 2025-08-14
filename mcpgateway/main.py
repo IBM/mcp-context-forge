@@ -2227,6 +2227,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
         method = body["method"]
         req_id = body.get("id") if "body" in locals() else None
         params = body.get("params", {})
+        server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
 
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
@@ -2236,10 +2237,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "tools/list":
-            tools = await tool_service.list_tools(db, cursor=cursor)
+            if server_id:
+                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+            else:
+                tools = await tool_service.list_tools(db, cursor=cursor)
             result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
         elif method == "list_tools":  # Legacy endpoint
-            tools = await tool_service.list_tools(db, cursor=cursor)
+            if server_id:
+                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+            else:
+                tools = await tool_service.list_tools(db, cursor=cursor)
             result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
         elif method == "list_gateways":
             gateways = await gateway_service.list_gateways(db, include_inactive=False)
@@ -2248,7 +2255,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
-            resources = await resource_service.list_resources(db)
+            if server_id:
+                resources = await resource_service.list_server_resources(db, server_id)
+            else:
+                resources = await resource_service.list_resources(db)
             result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
         elif method == "resources/read":
             uri = params.get("uri")
@@ -2261,7 +2271,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
             else:
                 result = {"contents": [result]}
         elif method == "prompts/list":
-            prompts = await prompt_service.list_prompts(db, cursor=cursor)
+            if server_id:
+                prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
+            else:
+                prompts = await prompt_service.list_prompts(db, cursor=cursor)
             result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
         elif method == "prompts/get":
             name = params.get("name")
