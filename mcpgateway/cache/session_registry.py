@@ -1277,6 +1277,7 @@ class SessionRegistry(SessionBackend):
             >>> # Response: {}
         """
         result = {}
+
         if "method" in message and "id" in message:
             try:
                 method = message["method"]
