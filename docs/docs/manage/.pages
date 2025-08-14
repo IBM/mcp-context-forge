@@ -1,6 +1,7 @@
 nav:
   - index.md
   - backup.md
+  - bulk-import.md
   - logging.md
   - logging-examples.md
   - upgrade.md

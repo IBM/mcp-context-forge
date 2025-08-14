@@ -47,6 +47,7 @@ from mcpgateway.admin import (
     admin_get_resource,
     admin_get_server,
     admin_get_tool,
+    admin_import_tools,
     admin_list_gateways,
     admin_list_prompts,
     admin_list_resources,
@@ -517,6 +518,235 @@ class TestAdminToolRoutes:
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
         mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True)
+
+
+class TestAdminBulkImportRoutes:
+    """Test admin routes for bulk tool import functionality."""
+
+    def setup_method(self):
+        """Clear rate limit storage before each test."""
+        from mcpgateway.admin import rate_limit_storage
+        rate_limit_storage.clear()
+
+    @patch.object(ToolService, "register_tool")
+    async def test_bulk_import_success(self, mock_register_tool, mock_request, mock_db):
+        """Test successful bulk import of multiple tools."""
+        mock_register_tool.return_value = None
+
+        # Prepare valid JSON payload
+        tools_data = [
+            {
+                "name": "tool1",
+                "url": "http://api.example.com/tool1",
+                "integration_type": "REST",
+                "request_type": "GET"
+            },
+            {
+                "name": "tool2",
+                "url": "http://api.example.com/tool2",
+                "integration_type": "REST",
+                "request_type": "POST",
+                "input_schema": {"type": "object", "properties": {"data": {"type": "string"}}}
+            }
+        ]
+
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value=tools_data)
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result_data = json.loads(result.body)
+
+        assert result.status_code == 200
+        assert result_data["success"] is True
+        assert result_data["created_count"] == 2
+        assert result_data["failed_count"] == 0
+        assert len(result_data["created"]) == 2
+        assert mock_register_tool.call_count == 2
+
+    @patch.object(ToolService, "register_tool")
+    async def test_bulk_import_partial_failure(self, mock_register_tool, mock_request, mock_db):
+        """Test bulk import with some tools failing validation."""
+        from mcpgateway.services.tool_service import ToolError
+        from sqlalchemy.exc import IntegrityError
+
+        # First tool succeeds, second fails with IntegrityError, third fails with ToolError
+        mock_register_tool.side_effect = [
+            None,  # First tool succeeds
+            IntegrityError("Duplicate entry", None, None),  # Second fails
+            ToolError("Invalid configuration")  # Third fails
+        ]
+
+        tools_data = [
+            {"name": "success_tool", "url": "http://api.example.com/1", "integration_type": "REST", "request_type": "GET"},
+            {"name": "duplicate_tool", "url": "http://api.example.com/2", "integration_type": "REST", "request_type": "GET"},
+            {"name": "invalid_tool", "url": "http://api.example.com/3", "integration_type": "REST", "request_type": "GET"}
+        ]
+
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value=tools_data)
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result_data = json.loads(result.body)
+
+        assert result.status_code == 200
+        assert result_data["success"] is False
+        assert result_data["created_count"] == 1
+        assert result_data["failed_count"] == 2
+        assert len(result_data["errors"]) == 2
+
+    async def test_bulk_import_validation_errors(self, mock_request, mock_db):
+        """Test bulk import with validation errors."""
+        tools_data = [
+            {"name": "valid_tool", "url": "http://api.example.com", "integration_type": "REST", "request_type": "GET"},
+            {"missing_name": True},  # Missing required field
+            {"name": "invalid_request", "url": "http://api.example.com", "integration_type": "REST", "request_type": "INVALID"},  # Invalid enum
+            {"name": None, "url": "http://api.example.com"}  # None for required field
+        ]
+
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value=tools_data)
+
+        with patch.object(ToolService, "register_tool") as mock_register:
+            mock_register.return_value = None
+            result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+            result_data = json.loads(result.body)
+
+            assert result.status_code == 200
+            assert result_data["success"] is False
+            assert result_data["created_count"] == 1
+            assert result_data["failed_count"] == 3
+            # Verify error details are present
+            for error in result_data["errors"]:
+                assert "error" in error
+                assert "index" in error
+
+    async def test_bulk_import_empty_array(self, mock_request, mock_db):
+        """Test bulk import with empty array."""
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value=[])
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result_data = json.loads(result.body)
+
+        assert result.status_code == 200
+        assert result_data["success"] is True
+        assert result_data["created_count"] == 0
+        assert result_data["failed_count"] == 0
+
+    async def test_bulk_import_not_array(self, mock_request, mock_db):
+        """Test bulk import with non-array payload."""
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value={"name": "tool", "url": "http://example.com"})
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result_data = json.loads(result.body)
+
+        assert result.status_code == 422
+        assert result_data["success"] is False
+        assert "array" in result_data["message"].lower()
+
+    async def test_bulk_import_exceeds_max_batch(self, mock_request, mock_db):
+        """Test bulk import exceeding maximum batch size."""
+        # Create 201 tools (exceeds max_batch of 200)
+        tools_data = [
+            {"name": f"tool_{i}", "url": f"http://api.example.com/{i}", "integration_type": "REST", "request_type": "GET"}
+            for i in range(201)
+        ]
+
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value=tools_data)
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result_data = json.loads(result.body)
+
+        assert result.status_code == 413
+        assert result_data["success"] is False
+        assert "200" in result_data["message"]
+
+    async def test_bulk_import_form_data(self, mock_request, mock_db):
+        """Test bulk import via form data instead of JSON."""
+        tools_json = json.dumps([
+            {"name": "form_tool", "url": "http://api.example.com", "integration_type": "REST", "request_type": "GET"}
+        ])
+
+        form_data = FakeForm({"tools_json": tools_json})
+        mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        with patch.object(ToolService, "register_tool") as mock_register:
+            mock_register.return_value = None
+            result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+            result_data = json.loads(result.body)
+
+            assert result.status_code == 200
+            assert result_data["success"] is True
+            assert result_data["created_count"] == 1
+
+    async def test_bulk_import_invalid_json_payload(self, mock_request, mock_db):
+        """Test bulk import with invalid JSON."""
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(side_effect=json.JSONDecodeError("Invalid", "", 0))
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result_data = json.loads(result.body)
+
+        assert result.status_code == 422
+        assert result_data["success"] is False
+        assert "Invalid JSON" in result_data["message"]
+
+    async def test_bulk_import_form_invalid_json(self, mock_request, mock_db):
+        """Test bulk import via form with invalid JSON string."""
+        form_data = FakeForm({"tools_json": "{invalid json["})
+        mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result_data = json.loads(result.body)
+
+        assert result.status_code == 422
+        assert result_data["success"] is False
+        assert "Invalid JSON" in result_data["message"]
+
+    async def test_bulk_import_form_missing_field(self, mock_request, mock_db):
+        """Test bulk import via form with missing JSON field."""
+        form_data = FakeForm({})
+        mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result_data = json.loads(result.body)
+
+        assert result.status_code == 422
+        assert result_data["success"] is False
+        assert "Missing" in result_data["message"]
+
+    @patch.object(ToolService, "register_tool")
+    async def test_bulk_import_unexpected_exception(self, mock_register_tool, mock_request, mock_db):
+        """Test bulk import handling unexpected exceptions."""
+        mock_register_tool.side_effect = RuntimeError("Unexpected error")
+
+        tools_data = [
+            {"name": "error_tool", "url": "http://api.example.com", "integration_type": "REST", "request_type": "GET"}
+        ]
+
+        mock_request.headers = {"content-type": "application/json"}
+        mock_request.json = AsyncMock(return_value=tools_data)
+
+        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result_data = json.loads(result.body)
+
+        assert result.status_code == 200
+        assert result_data["success"] is False
+        assert result_data["failed_count"] == 1
+        assert "Unexpected error" in result_data["errors"][0]["error"]["message"]
+
+    async def test_bulk_import_rate_limiting(self, mock_request, mock_db):
+        """Test that bulk import endpoint has rate limiting."""
+        from mcpgateway.admin import admin_import_tools
+
+        # Check that the function has rate_limit decorator
+        assert hasattr(admin_import_tools, "__wrapped__")
+        # The rate limit decorator should be applied
 
 
 class TestAdminResourceRoutes:

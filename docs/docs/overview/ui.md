@@ -35,6 +35,7 @@ It provides tabbed access to:
 | Action | How |
 |--------|-----|
 | Register a tool | Use the Tools tab → Add Tool form |
+| Bulk import tools | Use API endpoint `/admin/tools/import` (see [Bulk Import](../manage/bulk-import.md)) |
 | View prompt output | Go to Prompts → click View |
 | Toggle server activity | Use the "Activate/Deactivate" buttons in Servers tab |
 | Delete a resource | Navigate to Resources → click Delete (after confirming) |

@@ -128,6 +128,18 @@
 
     The token is used for all API interactions and can be configured to expire using `-exp`.
 
+???+ tip "📥 How do I bulk import multiple tools at once?"
+    Use the `/admin/tools/import` endpoint to import up to 200 tools in a single request:
+
+    ```bash
+    curl -X POST http://localhost:4444/admin/tools/import \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      --data-binary @tools.json
+    ```
+
+    See the [Bulk Import guide](../manage/bulk-import.md) for details on format and error handling.
+
 ???+ example "🛡️ How do I enable TLS and configure CORS?"
     - Use `make podman-run-ssl` for self-signed certs or drop your own certificate under `certs`.
     - Set `ALLOWED_ORIGINS` or `CORS_ENABLED` for CORS headers.
