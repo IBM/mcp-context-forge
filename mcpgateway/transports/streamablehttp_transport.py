@@ -35,7 +35,7 @@ from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
 import re
-from typing import List, Union
+from typing import Any, AsyncGenerator, List, Union
 from uuid import uuid4
 
 # Third-Party
@@ -45,6 +45,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage
+from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_401_UNAUTHORIZED
@@ -62,11 +63,11 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 # Initialize ToolService and MCP Server
-tool_service = ToolService()
-mcp_app = Server("mcp-streamable-http-stateless")
+tool_service: ToolService = ToolService()
+mcp_app: Server[Any] = Server("mcp-streamable-http-stateless")
 
-server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default=None)
-request_headers_var = contextvars.ContextVar("request_headers", default={})
+server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
+request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
 
 # ------------------------------ Event store ------------------------------
 
@@ -305,7 +306,7 @@ class InMemoryEventStore(EventStore):
 
 
 @asynccontextmanager
-async def get_db():
+async def get_db() -> AsyncGenerator[Session, Any]:
     """
     Asynchronous context manager for database sessions.
 
@@ -536,7 +537,7 @@ class SessionManagerWrapper:
 # ------------------------- Authentication for /mcp routes ------------------------------
 
 
-async def streamable_http_auth(scope, receive, send):
+async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     """
     Perform authentication check in middleware context (ASGI scope).
 
@@ -584,6 +585,8 @@ async def streamable_http_auth(scope, receive, send):
         if scheme.lower() == "bearer" and credentials:
             token = credentials
     try:
+        if token is None:
+            raise Exception()
         await verify_credentials(token)
     except Exception:
         response = JSONResponse(

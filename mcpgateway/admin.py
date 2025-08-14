@@ -22,10 +22,10 @@ from collections import defaultdict
 from functools import wraps
 import json
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, cast, Dict, List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import httpx
 from pydantic import ValidationError
@@ -76,16 +76,16 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
 # Initialize logging service first
-logging_service = LoggingService()
+logging_service: LoggingService = LoggingService()
 logger = logging_service.get_logger("mcpgateway")
 
 # Initialize services
-server_service = ServerService()
-tool_service = ToolService()
-prompt_service = PromptService()
-gateway_service = GatewayService()
-resource_service = ResourceService()
-root_service = RootService()
+server_service: ServerService = ServerService()
+tool_service: ToolService = ToolService()
+prompt_service: PromptService = PromptService()
+gateway_service: GatewayService = GatewayService()
+resource_service: ResourceService = ResourceService()
+root_service: RootService = RootService()
 
 # Set up basic authentication
 
@@ -255,7 +255,7 @@ async def admin_list_servers(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> List[ServerRead]:
+) -> List[Dict[str, Any]]:
     """
     List servers for the admin UI with an option to include inactive servers.
 
@@ -353,7 +353,7 @@ async def admin_list_servers(
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
-async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
+async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, Any]:
     """
     Retrieve server details for the admin UI.
 
@@ -363,7 +363,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: 
         user (str): The authenticated user dependency.
 
     Returns:
-        ServerRead: The server details.
+        Dict[str, Any]: The server details.
 
     Raises:
         HTTPException: If the server is not found.
@@ -576,8 +576,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     # is_inactive_checked = form.get("is_inactive_checked", "false")
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
         logger.debug(f"User {user} is adding a new server with name: {form['name']}")
@@ -603,29 +603,15 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
     except CoreValidationError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-
+    except ServerError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    except ValueError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+    except ValidationError as ex:
+        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    except IntegrityError as ex:
+        return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
-        if isinstance(ex, ServerError):
-            # Custom server logic error — 500 Internal Server Error makes sense
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-
-        if isinstance(ex, ValueError):
-            # Invalid input — 400 Bad Request is appropriate
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-
-        if isinstance(ex, RuntimeError):
-            # Unexpected error during runtime — 500 is suitable
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-
-        if isinstance(ex, ValidationError):
-            # Pydantic or input validation failure — 422 Unprocessable Entity is correct
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-
-        if isinstance(ex, IntegrityError):
-            # DB constraint violation — 409 Conflict is appropriate
-            return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
-
-        # For any other unhandled error, default to 500
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -747,9 +733,8 @@ async def admin_edit_server(
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
-
+    tags_str = str(form.get("tags", ""))
+    tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
         logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
@@ -876,8 +861,8 @@ async def admin_toggle_server(
     """
     form = await request.form()
     logger.debug(f"User {user} is toggling server ID {server_id} with activate: {form.get('activate')}")
-    activate = form.get("activate", "true").lower() == "true"
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    activate = str(form.get("activate", "true")).lower() == "true"
+    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await server_service.toggle_server_status(db, server_id, activate)
     except Exception as e:
@@ -967,7 +952,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         logger.error(f"Error deleting server: {e}")
 
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
 
     if is_inactive_checked.lower() == "true":
@@ -980,7 +965,7 @@ async def admin_list_resources(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> List[ResourceRead]:
+) -> List[Dict[str, Any]]:
     """
     List resources for the admin UI with an option to include inactive resources.
 
@@ -1089,7 +1074,7 @@ async def admin_list_prompts(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> List[PromptRead]:
+) -> List[Dict[str, Any]]:
     """
     List prompts for the admin UI with an option to include inactive prompts.
 
@@ -1197,7 +1182,7 @@ async def admin_list_gateways(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> List[GatewayRead]:
+) -> List[Dict[str, Any]]:
     """
     List gateways for the admin UI with an option to include inactive gateways.
 
@@ -1389,8 +1374,8 @@ async def admin_toggle_gateway(
     """
     logger.debug(f"User {user} is toggling gateway ID {gateway_id}")
     form = await request.form()
-    activate = form.get("activate", "true").lower() == "true"
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    activate = str(form.get("activate", "true")).lower() == "true"
+    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
 
     try:
         await gateway_service.toggle_gateway_status(db, gateway_id, activate)
@@ -1410,7 +1395,7 @@ async def admin_ui(
     db: Session = Depends(get_db),
     user: str = Depends(require_basic_auth),
     jwt_token: str = Depends(get_jwt_token),
-) -> HTMLResponse:
+) -> Any:
     """
     Render the admin dashboard HTML page.
 
@@ -1429,7 +1414,7 @@ async def admin_ui(
         jwt_token (str): JWT token for authentication.
 
     Returns:
-        HTMLResponse: Rendered HTML template for the admin dashboard.
+        Any: Rendered HTML template for the admin dashboard.
 
     Examples:
         >>> import asyncio
@@ -1569,7 +1554,7 @@ async def admin_list_tools(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> List[ToolRead]:
+) -> List[Dict[str, Any]]:
     """
     List tools for the admin UI with an option to include inactive tools.
 
@@ -1690,7 +1675,7 @@ async def admin_list_tools(
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
-async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
+async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, Any]:
     """
     Retrieve specific tool details for the admin UI.
 
@@ -1932,10 +1917,10 @@ async def admin_add_tool(
             request_type = "GET"
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
-    tool_data = {
+    tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "url": form.get("url"),
         "description": form.get("description"),
@@ -1982,7 +1967,7 @@ async def admin_edit_tool(
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> Union[RedirectResponse, JSONResponse]:
+) -> Response:
     """
     Edit a tool via the admin UI.
 
@@ -2012,9 +1997,9 @@ async def admin_edit_tool(
         user (str): Authenticated user dependency.
 
     Returns:
-        RedirectResponse: A redirect response to the tools section of the admin
-        dashboard with a status code of 303 (See Other), or a JSON response with
-        an error message if the update fails.
+        Response: A redirect response to the tools section of the admin
+            dashboard with a status code of 303 (See Other), or a JSON response with
+            an error message if the update fails.
 
     Examples:
             Examples:
@@ -2152,10 +2137,10 @@ async def admin_edit_tool(
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
-    tool_data = {
+    tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "url": form.get("url"),
         "description": form.get("description"),
@@ -2271,7 +2256,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         logger.error(f"Error deleting tool: {e}")
 
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
 
     if is_inactive_checked.lower() == "true":
@@ -2371,8 +2356,8 @@ async def admin_toggle_tool(
     """
     logger.debug(f"User {user} is toggling tool ID {tool_id}")
     form = await request.form()
-    activate = form.get("activate", "true").lower() == "true"
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    activate = str(form.get("activate", "true")).lower() == "true"
+    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
     except Exception as e:
@@ -2385,7 +2370,7 @@ async def admin_toggle_tool(
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
-async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
+async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, Any]:
     """Get gateway details for the admin UI.
 
     Args:
@@ -2587,12 +2572,12 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     form = await request.form()
     try:
         # Parse tags from comma-separated string
-        tags_str = form.get("tags", "")
-        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+        tags_str = str(form.get("tags", ""))
+        tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = form.get("auth_headers")
-        auth_headers = []
+        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers: list[dict[str, Any]] = []
         if auth_headers_json:
             try:
                 auth_headers = json.loads(auth_headers_json)
@@ -2600,7 +2585,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 auth_headers = []
 
         # Handle passthrough_headers
-        passthrough_headers = form.get("passthrough_headers")
+        passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
             try:
                 passthrough_headers = json.loads(passthrough_headers)
@@ -2611,17 +2596,17 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             passthrough_headers = None
 
         gateway = GatewayCreate(
-            name=form["name"],
-            url=form["url"],
-            description=form.get("description"),
+            name=str(form["name"]),
+            url=str(form["url"]),
+            description=str(form.get("description")),
             tags=tags,
-            transport=form.get("transport", "SSE"),
-            auth_type=form.get("auth_type", ""),
-            auth_username=form.get("auth_username", ""),
-            auth_password=form.get("auth_password", ""),
-            auth_token=form.get("auth_token", ""),
-            auth_header_key=form.get("auth_header_key", ""),
-            auth_header_value=form.get("auth_header_value", ""),
+            transport=str(form.get("transport", "SSE")),
+            auth_type=str(form.get("auth_type", "")),
+            auth_username=str(form.get("auth_username", "")),
+            auth_password=str(form.get("auth_password", "")),
+            auth_token=str(form.get("auth_token", "")),
+            auth_header_key=str(form.get("auth_header_key", "")),
+            auth_header_value=str(form.get("auth_header_value", "")),
             auth_headers=auth_headers if auth_headers else None,
             passthrough_headers=passthrough_headers,
         )
@@ -2641,17 +2626,17 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             status_code=200,
         )
 
+    except GatewayConnectionError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
+    except ValueError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+    except RuntimeError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    except ValidationError as ex:
+        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    except IntegrityError as ex:
+        return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
-        if isinstance(ex, GatewayConnectionError):
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-        if isinstance(ex, ValueError):
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-        if isinstance(ex, RuntimeError):
-            return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        if isinstance(ex, ValidationError):
-            return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-        if isinstance(ex, IntegrityError):
-            return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -2765,11 +2750,11 @@ async def admin_edit_gateway(
     form = await request.form()
     try:
         # Parse tags from comma-separated string
-        tags_str = form.get("tags", "")
-        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+        tags_str = str(form.get("tags", ""))
+        tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         # Parse auth_headers JSON if present
-        auth_headers_json = form.get("auth_headers")
+        auth_headers_json = str(form.get("auth_headers"))
         auth_headers = []
         if auth_headers_json:
             try:
@@ -2778,7 +2763,7 @@ async def admin_edit_gateway(
                 auth_headers = []
 
         # Handle passthrough_headers
-        passthrough_headers = form.get("passthrough_headers")
+        passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
             try:
                 passthrough_headers = json.loads(passthrough_headers)
@@ -2789,17 +2774,18 @@ async def admin_edit_gateway(
             passthrough_headers = None
 
         gateway = GatewayUpdate(  # Pydantic validation happens here
-            name=form.get("name"),
-            url=form["url"],
-            description=form.get("description"),
+            name=str(form.get("name")),
+            url=str(form["url"]),
+            description=str(form.get("description")),
+            transport=str(form.get("transport", "SSE")),
             tags=tags,
-            transport=form.get("transport", "SSE"),
-            auth_type=form.get("auth_type", None),
-            auth_username=form.get("auth_username", None),
-            auth_password=form.get("auth_password", None),
-            auth_token=form.get("auth_token", None),
-            auth_header_key=form.get("auth_header_key", None),
-            auth_header_value=form.get("auth_header_value", None),
+            auth_type=str(form.get("auth_type", "")),
+            auth_username=str(form.get("auth_username", "")),
+            auth_password=str(form.get("auth_password", "")),
+            auth_token=str(form.get("auth_token", "")),
+            auth_header_key=str(form.get("auth_header_key", "")),
+            auth_header_value=str(form.get("auth_header_value", "")),
+            auth_value=str(form.get("auth_value", "")),
             auth_headers=auth_headers if auth_headers else None,
             passthrough_headers=passthrough_headers,
         )
@@ -2901,7 +2887,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         logger.error(f"Error deleting gateway: {e}")
 
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
 
     if is_inactive_checked.lower() == "true":
@@ -3006,7 +2992,7 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user: str 
 
 
 @admin_router.post("/resources")
-async def admin_add_resource(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
+async def admin_add_resource(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Response:
     """
     Add a resource via the admin UI.
 
@@ -3060,17 +3046,17 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
         resource = ResourceCreate(
-            uri=form["uri"],
-            name=form["name"],
-            description=form.get("description"),
-            mime_type=form.get("mimeType"),
-            template=form.get("template"),  # defaults to None if not provided
-            content=form["content"],
+            uri=str(form["uri"]),
+            name=str(form["name"]),
+            description=str(form.get("description", "")),
+            mime_type=str(form.get("mimeType", "")),
+            template=cast(str | None, form.get("template")),
+            content=str(form["content"]),
             tags=tags,
         )
         await resource_service.register_resource(db, resource)
@@ -3186,15 +3172,16 @@ async def admin_edit_resource(
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
         resource = ResourceUpdate(
-            name=form["name"],
-            description=form.get("description"),
-            mime_type=form.get("mimeType"),
-            content=form["content"],
+            name=str(form["name"]),
+            description=str(form.get("description")),
+            mime_type=str(form.get("mimeType")),
+            content=str(form["content"]),
+            template=str(form.get("template")),
             tags=tags,
         )
         await resource_service.update_resource(db, uri, resource)
@@ -3272,7 +3259,7 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
     logger.debug(f"User {user} is deleting resource URI {uri}")
     await resource_service.delete_resource(db, uri)
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
@@ -3377,8 +3364,8 @@ async def admin_toggle_resource(
     """
     logger.debug(f"User {user} is toggling resource ID {resource_id}")
     form = await request.form()
-    activate = form.get("activate", "true").lower() == "true"
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    activate = str(form.get("activate", "true")).lower() == "true"
+    is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await resource_service.toggle_resource_status(db, resource_id, activate)
     except Exception as e:
@@ -3491,7 +3478,7 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user: str =
 
 
 @admin_router.post("/prompts")
-async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
+async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
     """Add a prompt via the admin UI.
 
     Expects form fields:
@@ -3543,16 +3530,19 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     form = await request.form()
 
     # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    tags_str = str(form.get("tags", ""))
+    tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
-        args_json = form.get("arguments") or "[]"
+        args_json = "[]"
+        args_value = form.get("arguments")
+        if isinstance(args_value, str):
+            args_json = args_value
         arguments = json.loads(args_json)
         prompt = PromptCreate(
-            name=form["name"],
-            description=form.get("description"),
-            template=form["template"],
+            name=str(form["name"]),
+            description=str(form.get("description")),
+            template=str(form["template"]),
             arguments=arguments,
             tags=tags,
         )
@@ -3579,7 +3569,7 @@ async def admin_edit_prompt(
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
-) -> JSONResponse:
+) -> Response:
     """Edit a prompt via the admin UI.
 
     Expects form fields:
@@ -3595,7 +3585,7 @@ async def admin_edit_prompt(
         user: Authenticated user.
 
     Returns:
-         JSONResponse: A JSON response indicating success or failure of the server update operation.
+         Response: A JSON response indicating success or failure of the server update operation.
 
     Examples:
         >>> import asyncio
@@ -3648,25 +3638,23 @@ async def admin_edit_prompt(
     logger.debug(f"User {user} is editing prompt name {name}")
     form = await request.form()
 
-    # Parse tags from comma-separated string
-    tags_str = form.get("tags", "")
-    tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
-
-    args_json = form.get("arguments") or "[]"
+    args_json: str = str(form.get("arguments")) or "[]"
     arguments = json.loads(args_json)
+    # Parse tags from comma-separated string
+    tags_str = str(form.get("tags", ""))
+    tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
         prompt = PromptUpdate(
-            name=form["name"],
-            description=form.get("description"),
-            template=form["template"],
+            name=str(form["name"]),
+            description=str(form.get("description")),
+            template=str(form["template"]),
             arguments=arguments,
             tags=tags,
         )
         await prompt_service.update_prompt(db, name, prompt)
 
         root_path = request.scope.get("root_path", "")
-        is_inactive_checked = form.get("is_inactive_checked", "false")
-
+        is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
         if is_inactive_checked.lower() == "true":
             return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
         # return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
@@ -3744,7 +3732,7 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
     logger.debug(f"User {user} is deleting prompt name {name}")
     await prompt_service.delete_prompt(db, name)
     form = await request.form()
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
@@ -3849,8 +3837,8 @@ async def admin_toggle_prompt(
     """
     logger.debug(f"User {user} is toggling prompt ID {prompt_id}")
     form = await request.form()
-    activate = form.get("activate", "true").lower() == "true"
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    activate: bool = str(form.get("activate", "true")).lower() == "true"
+    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     try:
         await prompt_service.toggle_prompt_status(db, prompt_id, activate)
     except Exception as e:
@@ -3906,8 +3894,11 @@ async def admin_add_root(request: Request, user: str = Depends(require_auth)) ->
     """
     logger.debug(f"User {user} is adding a new root")
     form = await request.form()
-    uri = form["uri"]
-    name = form.get("name")
+    uri = str(form["uri"])
+    name_value = form.get("name")
+    name: str | None = None
+    if isinstance(name_value, str):
+        name = name_value
     await root_service.add_root(uri, name)
     root_path = request.scope.get("root_path", "")
     return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
@@ -3970,7 +3961,7 @@ async def admin_delete_root(uri: str, request: Request, user: str = Depends(requ
     await root_service.remove_root(uri)
     form = await request.form()
     root_path = request.scope.get("root_path", "")
-    is_inactive_checked = form.get("is_inactive_checked", "false")
+    is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
     return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
@@ -4250,12 +4241,12 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
     full_url = full_url.rstrip("/")
     logger.debug(f"User {user} testing server at {request.base_url}.")
     try:
-        start_time = time.monotonic()
+        start_time: float = time.monotonic()
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
-            response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
+            response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
-            response_body: Union[dict, str] = response.json()
+            response_body: Union[Dict[str, Any], str] = response.json()
         except json.JSONDecodeError:
             response_body = {"details": response.text}
 
@@ -4319,9 +4310,9 @@ async def admin_list_tags(
         tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
 
         # Convert to list of dicts for admin UI
-        result = []
+        result: List[Dict[str, Any]] = []
         for tag in tags:
-            tag_dict = {
+            tag_dict: Dict[str, Any] = {
                 "name": tag.name,
                 "tools": tag.stats.tools,
                 "resources": tag.stats.resources,

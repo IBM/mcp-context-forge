@@ -69,12 +69,12 @@ from mcpgateway.transports import SSETransport
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
 # Initialize logging service first
-logging_service = LoggingService()
+logging_service: LoggingService = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-tool_service = ToolService()
-resource_service = ResourceService()
-prompt_service = PromptService()
+tool_service: ToolService = ToolService()
+resource_service: ResourceService = ResourceService()
+prompt_service: PromptService = PromptService()
 
 try:
     # Third-Party
@@ -423,7 +423,7 @@ class SessionRegistry(SessionBackend):
             # Store session in database
             try:
 
-                def _db_add():
+                def _db_add() -> None:
                     """Store session record in the database.
 
                     Creates a new SessionRecord entry in the database for tracking
@@ -520,7 +520,7 @@ class SessionRegistry(SessionBackend):
         elif self._backend == "database":
             try:
 
-                def _db_check():
+                def _db_check() -> bool:
                     """Check if a session exists in the database.
 
                     Queries the SessionRecord table to determine if a session with
@@ -614,7 +614,7 @@ class SessionRegistry(SessionBackend):
         elif self._backend == "database":
             try:
 
-                def _db_remove():
+                def _db_remove() -> None:
                     """Delete session record from the database.
 
                     Removes the SessionRecord entry with the specified session_id
@@ -649,7 +649,7 @@ class SessionRegistry(SessionBackend):
 
         logger.info(f"Removed session: {session_id}")
 
-    async def broadcast(self, session_id: str, message: dict) -> None:
+    async def broadcast(self, session_id: str, message: Dict[str, Any]) -> None:
         """Broadcast a message to a session.
 
         Sends a message to the specified session. The behavior depends on the backend:
@@ -691,7 +691,7 @@ class SessionRegistry(SessionBackend):
             else:
                 msg_json = json.dumps(str(message))
 
-            self._session_message = {"session_id": session_id, "message": msg_json}
+            self._session_message: Dict[str, Any] = {"session_id": session_id, "message": msg_json}
 
         elif self._backend == "redis":
             try:
@@ -710,7 +710,7 @@ class SessionRegistry(SessionBackend):
                 else:
                     msg_json = json.dumps(str(message))
 
-                def _db_add():
+                def _db_add() -> None:
                     """Store message in the database for inter-process communication.
 
                     Creates a new SessionMessageRecord entry containing the session_id
@@ -791,7 +791,7 @@ class SessionRegistry(SessionBackend):
     async def respond(
         self,
         server_id: Optional[str],
-        user: json,
+        user: Dict[str, Any],
         session_id: str,
         base_url: str,
     ) -> None:
@@ -830,7 +830,7 @@ class SessionRegistry(SessionBackend):
             # if self._session_message:
             transport = self.get_session_sync(session_id)
             if transport:
-                message = json.loads(self._session_message.get("message"))
+                message = json.loads(str(self._session_message.get("message")))
                 await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
         elif self._backend == "redis":
@@ -857,7 +857,7 @@ class SessionRegistry(SessionBackend):
 
         elif self._backend == "database":
 
-            def _db_read_session(session_id):
+            def _db_read_session(session_id: str) -> SessionRecord:
                 """Check if session still exists in the database.
 
                 Queries the SessionRecord table to verify that the session
@@ -892,7 +892,7 @@ class SessionRegistry(SessionBackend):
                 finally:
                     db_session.close()
 
-            def _db_read(session_id):
+            def _db_read(session_id: str) -> SessionMessageRecord:
                 """Read pending message for a session from the database.
 
                 Retrieves the first (oldest) unprocessed message for the given
@@ -927,7 +927,7 @@ class SessionRegistry(SessionBackend):
                 finally:
                     db_session.close()
 
-            def _db_remove(session_id, message):
+            def _db_remove(session_id: str, message: str) -> None:
                 """Remove processed message from the database.
 
                 Deletes a specific message record after it has been successfully
@@ -960,7 +960,7 @@ class SessionRegistry(SessionBackend):
                 finally:
                     db_session.close()
 
-            async def message_check_loop(session_id):
+            async def message_check_loop(session_id: str) -> None:
                 """Poll database for messages and deliver to local transport.
 
                 Continuously checks the database for new messages directed to
@@ -1042,7 +1042,7 @@ class SessionRegistry(SessionBackend):
         while True:
             try:
                 # Clean up expired sessions every 5 minutes
-                def _db_cleanup():
+                def _db_cleanup() -> int:
                     """Remove expired sessions from the database.
 
                     Deletes all SessionRecord entries that haven't been accessed
@@ -1093,7 +1093,7 @@ class SessionRegistry(SessionBackend):
                             continue
 
                         # Refresh session in database
-                        def _refresh_session(session_id=session_id):
+                        def _refresh_session(session_id: str = session_id) -> bool:
                             """Update session's last accessed timestamp in the database.
 
                             Refreshes the last_accessed field for an active session to
@@ -1184,7 +1184,7 @@ class SessionRegistry(SessionBackend):
                 await asyncio.sleep(300)  # Sleep longer on error
 
     # Handle initialize logic
-    async def handle_initialize_logic(self, body: dict) -> InitializeResult:
+    async def handle_initialize_logic(self, body: Dict[str, Any]) -> InitializeResult:
         """Process MCP protocol initialization request.
 
         Validates the protocol version and returns server capabilities and information.
@@ -1240,14 +1240,13 @@ class SessionRegistry(SessionBackend):
                 resources={"subscribe": True, "listChanged": True},
                 tools={"listChanged": True},
                 logging={},
-                roots={"listChanged": True},
-                sampling={},
+                # roots={"listChanged": True}
             ),
             serverInfo=Implementation(name=settings.app_name, version=__version__),
             instructions=("MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."),
         )
 
-    async def generate_response(self, message: json, transport: SSETransport, server_id: Optional[str], user: dict, base_url: str):
+    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any], base_url: str) -> None:
         """Generate and send response for incoming MCP protocol message.
 
         Processes MCP protocol messages and generates appropriate responses based on
