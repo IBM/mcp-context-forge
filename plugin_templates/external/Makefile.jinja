@@ -79,6 +79,8 @@ print-image:
 	@echo "Development image: $(IMAGE_LOCAL_DEV)"
 	@echo "Push image: $(IMAGE_PUSH)"
 
+{% raw %}
+
 # Function to get the actual image name as it appears in image list
 define get_image_name
 $(shell $(CONTAINER_RUNTIME) images --format "{{.Repository}}:{{.Tag}}" | grep -E "(localhost/)?$(IMAGE_BASE):$(IMAGE_TAG)" | head -1)
@@ -286,6 +288,8 @@ show-runtime:
 	@echo "Current runtime: $(CONTAINER_RUNTIME)"
 	@echo "Detected from: $$(command -v $(CONTAINER_RUNTIME) || echo 'not found')"  # Added
 	@echo "To switch: make use-docker or make use-podman"
+
+{% endraw %}
 
 # =============================================================================
 # Targets
