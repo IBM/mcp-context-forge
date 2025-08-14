@@ -224,6 +224,9 @@ class Settings(BaseSettings):
     log_max_size_mb: int = 1  # Max file size in MB before rotation (default: 1MB)
     log_backup_count: int = 5  # Number of backup files to keep (default: 5)
 
+    # Log Buffer (for in-memory storage in admin UI)
+    log_buffer_size_mb: float = 1.0  # Size of in-memory log buffer in MB
+
     # Transport
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds

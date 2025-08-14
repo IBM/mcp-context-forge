@@ -110,6 +110,12 @@ from mcpgateway.version import router as version_router
 logging_service = LoggingService()
 logger = logging_service.get_logger("mcpgateway")
 
+# First-Party
+# Share the logging service with admin module
+from mcpgateway.admin import set_logging_service
+
+set_logging_service(logging_service)
+
 # Note: Logging configuration is handled by LoggingService during startup
 # Don't use basicConfig here as it conflicts with our dual logging setup
 
