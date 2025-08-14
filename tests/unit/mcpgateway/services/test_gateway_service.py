@@ -1134,6 +1134,47 @@ class TestGatewayService:
         with pytest.raises(SQLIntegrityError):
             await gateway_service.update_gateway(test_db, 1, gateway_update)
 
+    def test_normalize_url_preserves_domain(self):
+        """Test that normalize_url preserves domain names but normalizes localhost."""
+        # Test with various domain formats
+        test_cases = [
+            # Regular domains should be preserved as-is
+            ("http://example.com", "http://example.com"),
+            ("https://api.example.com:8080/path", "https://api.example.com:8080/path"),
+            ("https://my-app.cloud-provider.region.example.com/sse",
+             "https://my-app.cloud-provider.region.example.com/sse"),
+            ("https://cdn.service.com/api/v1", "https://cdn.service.com/api/v1"),
+
+            # localhost should remain localhost
+            ("http://localhost:8000", "http://localhost:8000"),
+            ("https://localhost/api", "https://localhost/api"),
+
+            # 127.0.0.1 should be normalized to localhost to prevent duplicates
+            ("http://127.0.0.1:8080/path", "http://localhost:8080/path"),
+            ("https://127.0.0.1/sse", "https://localhost/sse"),
+        ]
+
+        for input_url, expected in test_cases:
+            result = GatewayService.normalize_url(input_url)
+            assert result == expected, f"normalize_url({input_url}) should return {expected}, got {result}"
+
+    def test_normalize_url_prevents_localhost_duplicates(self):
+        """Test that normalization prevents localhost/127.0.0.1 duplicates."""
+        # These URLs should all normalize to the same value
+        equivalent_urls = [
+            "http://127.0.0.1:8080/sse",
+            "http://localhost:8080/sse",
+        ]
+
+        normalized = [GatewayService.normalize_url(url) for url in equivalent_urls]
+
+        # All should normalize to localhost version
+        assert all(n == "http://localhost:8080/sse" for n in normalized), \
+            f"All localhost variants should normalize to same URL, got: {normalized}"
+
+        # They should all be the same (no duplicates possible)
+        assert len(set(normalized)) == 1, "All localhost variants should produce identical normalized URLs"
+
     @pytest.mark.asyncio
     async def test_update_gateway_with_transport_change(self, gateway_service, mock_gateway, test_db):
         """Test updating gateway transport type."""

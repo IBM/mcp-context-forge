@@ -42,7 +42,6 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import os
-import socket
 import tempfile
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING
@@ -257,29 +256,40 @@ class GatewayService:
     @staticmethod
     def normalize_url(url: str) -> str:
         """
-        Normalize a URL by resolving the hostname to its IP address.
+        Normalize a URL by ensuring it's properly formatted.
+
+        Special handling for localhost to prevent duplicates:
+        - Converts 127.0.0.1 to localhost for consistency
+        - Preserves all other domain names as-is for CDN/load balancer support
 
         Args:
             url (str): The URL to normalize.
 
         Returns:
-            str: The normalized URL with the hostname replaced by its IP address.
+            str: The normalized URL.
 
         Examples:
             >>> GatewayService.normalize_url('http://localhost:8080/path')
-            'http://127.0.0.1:8080/path'
+            'http://localhost:8080/path'
+            >>> GatewayService.normalize_url('http://127.0.0.1:8080/path')
+            'http://localhost:8080/path'
+            >>> GatewayService.normalize_url('https://example.com/api')
+            'https://example.com/api'
         """
         parsed = urlparse(url)
         hostname = parsed.hostname
-        try:
-            ip = socket.gethostbyname(hostname)
-        except Exception:
-            ip = hostname
-        netloc = ip
-        if parsed.port:
-            netloc += f":{parsed.port}"
-        normalized = parsed._replace(netloc=netloc)
-        return urlunparse(normalized)
+
+        # Special case: normalize 127.0.0.1 to localhost to prevent duplicates
+        # but preserve all other domains as-is for CDN/load balancer support
+        if hostname == "127.0.0.1":
+            netloc = "localhost"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            normalized = parsed._replace(netloc=netloc)
+            return urlunparse(normalized)
+
+        # For all other URLs, preserve the domain name
+        return url
 
     async def _validate_gateway_url(self, url: str, headers: dict, transport_type: str, timeout: Optional[int] = None):
         """
