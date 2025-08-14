@@ -2688,6 +2688,15 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 
+# Include reverse proxy router if enabled
+try:
+    # First-Party
+    from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
+
+    app.include_router(reverse_proxy_router)
+    logger.info("Reverse proxy router included")
+except ImportError:
+    logger.debug("Reverse proxy router not available")
 
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled

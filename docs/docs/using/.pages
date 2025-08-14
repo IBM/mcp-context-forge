@@ -2,6 +2,7 @@ nav:
   - index.md
   - mcpgateway-wrapper.md
   - mcpgateway-translate.md
+  - reverse-proxy.md
   - Clients: clients
   - Agents: agents
   - Servers: servers

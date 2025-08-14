@@ -407,6 +407,19 @@ class LoggingService:
 
         Returns:
             True if should log
+
+        Examples:
+            >>> from mcpgateway.models import LogLevel
+            >>> service = LoggingService()
+            >>> service._level = LogLevel.WARNING
+            >>> service._should_log(LogLevel.ERROR)
+            True
+            >>> service._should_log(LogLevel.INFO)
+            False
+            >>> service._should_log(LogLevel.WARNING)
+            True
+            >>> service._should_log(LogLevel.DEBUG)
+            False
         """
         level_values = {
             LogLevel.DEBUG: 0,
