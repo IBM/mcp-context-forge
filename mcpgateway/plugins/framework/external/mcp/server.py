@@ -29,7 +29,7 @@ from mcpgateway.plugins.framework.models import (
 
 logger = logging.getLogger(__name__)
 
-config_file = os.environ.get("CFMCP_PLUGIN_CONFIG", "resources/plugins/config.yaml")
+config_file = os.environ.get("PLUGINS_CONFIG_PATH", os.path.join(".", "resources", "plugins", "config.yaml"))
 global_plugin_manager = None
 
 
