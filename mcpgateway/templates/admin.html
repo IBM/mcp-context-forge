@@ -4230,6 +4230,22 @@
         }
       }
 
+      function showErrorMessage(message) {
+        const toast = document.createElement('div');
+        toast.className = 'fixed top-4 right-4 bg-red-600 text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-pulse';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 5000);
+      }
+
+      function showSuccessMessage(message) {
+        const toast = document.createElement('div');
+        toast.className = 'fixed top-4 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+      }
+
       async function showLogFiles() {
         try {
           const headers = {};
@@ -4243,30 +4259,89 @@
             credentials: 'same-origin'
           });
 
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+          }
 
           const data = await response.json();
 
           if (data.files && data.files.length > 0) {
-            const fileList = data.files.map(file =>
-              `<li class="mb-2">
-                <a href="/admin/logs/file?filename=${encodeURIComponent(file.name)}"
-                   class="text-blue-600 hover:underline" download>
-                  ${file.name} (${(file.size / 1024).toFixed(1)} KB)
-                </a>
-              </li>`
-            ).join('');
-
-            // Create a simple modal or use alert for now
-            const modalContent = `Available log files in ${data.log_directory}:\n${data.files.map(f => f.name).join('\n')}`;
-            alert(modalContent);
-            // TODO: Implement proper modal display
+            // Create a modal to show available files
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+              <div class="bg-white rounded-lg p-6 max-w-md w-full max-h-96 overflow-y-auto">
+                <h3 class="text-lg font-bold mb-4">Available Log Files</h3>
+                <p class="text-sm text-gray-600 mb-4">Directory: ${data.log_directory}</p>
+                <ul class="space-y-2">
+                  ${data.files.map(file => `
+                    <li class="flex justify-between items-center p-2 hover:bg-gray-100 rounded">
+                      <div>
+                        <div class="font-medium">${file.name}</div>
+                        <div class="text-xs text-gray-500">
+                          ${(file.size / 1024).toFixed(1)} KB - ${new Date(file.modified).toLocaleString()}
+                        </div>
+                      </div>
+                      <button onclick="downloadLogFile('${file.name}')" 
+                              class="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
+                        Download
+                      </button>
+                    </li>
+                  `).join('')}
+                </ul>
+                <button onclick="this.closest('.fixed').remove()" 
+                        class="mt-4 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 w-full">
+                  Close
+                </button>
+              </div>
+            `;
+            document.body.appendChild(modal);
           } else {
             showErrorMessage('No log files available');
           }
         } catch (error) {
           console.error('Error fetching log files:', error);
-          showErrorMessage('Failed to fetch log files');
+          showErrorMessage(error.message || 'Failed to fetch log files');
+        }
+      }
+
+      async function downloadLogFile(filename) {
+        try {
+          const headers = {};
+          const token = localStorage.getItem('token');
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+          }
+
+          const response = await fetch(`${window.ROOT_PATH || ''}/admin/logs/file?filename=${encodeURIComponent(filename)}`, {
+            headers: headers,
+            credentials: 'same-origin'
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+          }
+
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+
+          // Close the modal if it exists
+          const modal = document.querySelector('.fixed.inset-0');
+          if (modal) modal.remove();
+          
+          showSuccessMessage(`Downloaded: ${filename}`);
+        } catch (error) {
+          console.error('Error downloading log file:', error);
+          showErrorMessage(error.message || 'Failed to download log file');
         }
       }
 
