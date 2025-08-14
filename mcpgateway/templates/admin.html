@@ -1070,11 +1070,63 @@
             </table>
           </div>
         </div>
-
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
-          <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
-            Add New Tool
-          </h3>
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold dark:text-gray-200">Add New Tool</h3>
+          <button 
+            id="open-bulk-import"
+            type="button"
+            class="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700"
+          >
+            + Bulk Import Tools
+          </button>
+          <!-- Right before </body> tag -->
+<script>
+// Super simple version - no dependencies
+window.addEventListener('load', function() {
+  console.log('Setting up bulk import...');
+  
+  const button = document.getElementById('open-bulk-import');
+  const modal = document.getElementById('bulk-import-modal');
+  
+  console.log('Button found:', !!button);
+  console.log('Modal found:', !!modal);
+  
+  if (button && modal) {
+    button.onclick = function(e) {
+      e.preventDefault();
+      console.log('Button clicked!');
+      modal.style.display = 'block';
+      modal.classList.remove('hidden');
+      return false;
+    };
+    
+    // Close button
+    const closeBtn = document.getElementById('close-bulk-import');
+    if (closeBtn) {
+      closeBtn.onclick = function() {
+        modal.style.display = 'none';
+        modal.classList.add('hidden');
+      };
+    }
+    
+    // Click backdrop to close
+    const backdrop = document.getElementById('bulk-import-backdrop');
+    if (backdrop) {
+      backdrop.onclick = function() {
+        modal.style.display = 'none';
+        modal.classList.add('hidden');
+      };
+    }
+  } else {
+    console.error('Missing elements!', {button: !!button, modal: !!modal});
+  }
+});
+</script>
+
+          </div>
+
+
           <form id="add-tool-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
@@ -1302,8 +1354,63 @@
             </div>
           </form>
         </div>
-      </div>
+        <!-- Modal -->
+        <div id="bulk-import-modal" class="fixed inset-0 z-[60] hidden">
+          <div id="bulk-import-backdrop" class="absolute inset-0 bg-black/50"></div>
+          <div role="dialog" aria-modal="true"
+              class="relative mx-auto my-12 w-full max-w-2xl rounded-xl bg-white p-0 shadow-xl dark:bg-gray-900">
+            <div class="flex items-center justify-between border-b px-5 py-3 dark:border-gray-700">
+              <h3 class="text-base font-semibold dark:text-gray-100">Bulk Import Tools</h3>
+              <button id="close-bulk-import" data-close-bulk-import
+                      class="rounded p-1 text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+                      aria-label="Close">✕</button>
+            </div>
 
+            <form id="bulk-import-form"
+                  hx-post="{{ root_path }}/admin/tools/import"
+                  hx-target="#bulk-import-result"
+                  hx-swap="innerHTML"
+                  hx-indicator="#bulk-import-indicator"
+                  enctype="multipart/form-data"
+                  class="space-y-4 p-5">
+              <p class="text-sm text-gray-600 dark:text-gray-400">
+                Paste a JSON array or upload a <code>.json</code> file. Max 200 tools.
+              </p>
+
+              <label class="block text-sm font-medium dark:text-gray-300" for="tools_json">JSON Data</label>
+              <textarea id="tools_json" name="tools_json" rows="8"
+                class="mt-1 block w-full rounded-md border border-gray-300 font-mono text-sm shadow-sm
+                      focus:border-indigo-500 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                placeholder='[{"name":"tool_name","url":"https://...","integration_type":"REST","request_type":"GET"}]'></textarea>
+
+              <div>
+                <label class="block text-sm font-medium dark:text-gray-300" for="tools_file">Or upload JSON file</label>
+                <input id="tools_file" name="tools_file" type="file" accept="application/json,.json"
+                      class="mt-1 block w-full text-sm dark:text-gray-300" />
+              </div>
+
+              <div class="flex items-center gap-3 pt-1">
+                <button type="submit"
+                  class="inline-flex justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white
+                        hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                  Import Tools
+                </button>
+                <span id="bulk-import-indicator" class="htmx-indicator flex items-center text-sm text-gray-500 dark:text-gray-400">
+                  <svg class="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  Processing...
+                </span>
+              </div>
+
+              <div id="bulk-import-result" class="pt-2"></div>
+            </form>
+          </div>
+        </div>
+
+      
       <!-- Resources Panel -->
       <div id="resources-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">

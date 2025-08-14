@@ -6905,3 +6905,81 @@ window.updateAuthHeadersJSON = updateAuthHeadersJSON;
 window.loadAuthHeaders = loadAuthHeaders;
 
 console.log("🛡️ ContextForge MCP Gateway admin.js initialized");
+
+
+// ===================================================================
+// BULK IMPORT TOOLS — MODAL WIRING
+// ===================================================================
+
+(function initBulkImportModal() {
+  // ensure it runs after the DOM is ready
+  window.addEventListener("DOMContentLoaded", function () {
+    const openBtn  = safeGetElement("open-bulk-import", true);
+    const modalId  = "bulk-import-modal";
+    const modal    = safeGetElement(modalId, true);
+
+    if (!openBtn || !modal) {
+      console.warn("Bulk Import modal wiring skipped (missing button or modal).");
+      return;
+    }
+
+    // avoid double-binding if admin.js gets evaluated more than once
+    if (openBtn.dataset.wired === "1") return;
+    openBtn.dataset.wired = "1";
+
+    const closeBtn = safeGetElement("close-bulk-import", true);
+    const backdrop = safeGetElement("bulk-import-backdrop", true);
+    const resultEl = safeGetElement("import-result", true);
+
+    const focusTarget =
+      modal.querySelector("#tools_json") ||
+      modal.querySelector("#tools_file") ||
+      modal.querySelector("[data-autofocus]");
+
+    // helpers
+    const open = (e) => {
+      if (e) e.preventDefault();
+      // clear previous results each time we open
+      if (resultEl) resultEl.innerHTML = "";
+      openModal(modalId);
+      // prevent background scroll
+      document.documentElement.classList.add("overflow-hidden");
+      document.body.classList.add("overflow-hidden");
+      if (focusTarget) setTimeout(() => focusTarget.focus(), 0);
+      return false;
+    };
+
+    const close = () => {
+      // also clear results on close to keep things tidy
+      closeModal(modalId, "import-result");
+      document.documentElement.classList.remove("overflow-hidden");
+      document.body.classList.remove("overflow-hidden");
+    };
+
+    // wire events
+    openBtn.addEventListener("click", open);
+
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        close();
+      });
+    }
+
+    // click on backdrop only (not the dialog content) closes the modal
+    if (backdrop) {
+      backdrop.addEventListener("click", (e) => {
+        if (e.target === backdrop) close();
+      });
+    }
+
+    // ESC to close
+    modal.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        close();
+      }
+    });
+
+  });
+})();
