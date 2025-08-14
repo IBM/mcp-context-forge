@@ -2144,8 +2144,6 @@ async def admin_edit_tool(
         "name": form.get("name"),
         "url": form.get("url"),
         "description": form.get("description"),
-        "request_type": form.get("requestType", "SSE"),
-        "integration_type": form.get("integrationType", "REST"),
         "headers": json.loads(form.get("headers") or "{}"),
         "input_schema": json.loads(form.get("input_schema") or "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
@@ -2157,6 +2155,12 @@ async def admin_edit_tool(
         "auth_header_value": form.get("auth_header_value", ""),
         "tags": tags,
     }
+    # Only include integration_type if it's provided (not disabled in form)
+    if "integrationType" in form:
+        tool_data["integration_type"] = form.get("integrationType")
+    # Only include request_type if it's provided (not disabled in form)
+    if "requestType" in form:
+        tool_data["request_type"] = form.get("requestType")
     logger.debug(f"Tool update data built: {tool_data}")
     try:
         tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
