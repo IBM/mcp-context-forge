@@ -576,3 +576,228 @@ async def test_request_index_cleanup():
             # None of the evicted logs should be in the index
             for log_id in first_logs:
                 assert log_id not in service._request_index["req-123"], f"Evicted log {log_id} still in request index"
+
+
+@pytest.mark.asyncio
+async def test_get_logs_ascending_order():
+    """Test getting logs in ascending order."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+
+        service = LogStorageService()
+
+        # Add some logs
+        for i in range(5):
+            await service.add_log(
+                level=LogLevel.INFO,
+                message=f"Log {i}"
+            )
+
+        result = await service.get_logs(order="asc")
+
+        assert len(result) == 5
+        assert result[0]["message"] == "Log 0"  # Oldest first
+        assert result[4]["message"] == "Log 4"  # Most recent last
+
+
+@pytest.mark.asyncio
+async def test_get_logs_with_entity_id_no_type():
+    """Test filtering logs by entity ID without entity type."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+
+        service = LogStorageService()
+
+        # Add logs with entity ID but no type
+        await service.add_log(
+            level=LogLevel.INFO,
+            message="Log with just ID",
+            entity_id="entity-1"  # No entity_type
+        )
+
+        await service.add_log(
+            level=LogLevel.INFO,
+            message="Another log",
+            entity_id="entity-2"
+        )
+
+        # Filter by entity ID only
+        result = await service.get_logs(entity_id="entity-1")
+        assert len(result) == 1
+        assert result[0]["message"] == "Log with just ID"
+
+
+@pytest.mark.asyncio
+async def test_remove_from_indices_value_error():
+    """Test _remove_from_indices handles ValueError gracefully."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+
+        service = LogStorageService()
+
+        # Create a log entry
+        entry = LogEntry(
+            level=LogLevel.INFO,
+            message="Test",
+            entity_type="tool",
+            entity_id="tool-1",
+            request_id="req-1"
+        )
+
+        # Add to indices manually
+        service._entity_index["tool:tool-1"] = ["other-id"]  # Wrong ID
+        service._request_index["req-1"] = ["other-id"]  # Wrong ID
+
+        # Should not raise ValueError
+        service._remove_from_indices(entry)
+
+        # Indices should still have the other ID
+        assert "tool:tool-1" in service._entity_index
+        assert "req-1" in service._request_index
+
+
+@pytest.mark.asyncio
+async def test_remove_from_indices_empty_cleanup():
+    """Test _remove_from_indices removes empty index entries."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+
+        service = LogStorageService()
+
+        # Create a log entry
+        entry = LogEntry(
+            level=LogLevel.INFO,
+            message="Test",
+            entity_type="tool",
+            entity_id="tool-1",
+            request_id="req-1"
+        )
+
+        # Add to indices with the correct ID
+        service._entity_index["tool:tool-1"] = [entry.id]
+        service._request_index["req-1"] = [entry.id]
+
+        # Remove from indices
+        service._remove_from_indices(entry)
+
+        # Empty indices should be deleted
+        assert "tool:tool-1" not in service._entity_index
+        assert "req-1" not in service._request_index
+
+
+@pytest.mark.asyncio
+async def test_notify_subscribers_queue_full():
+    """Test _notify_subscribers handles full queues gracefully."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+
+        service = LogStorageService()
+
+        # Create a queue with size 1
+        queue = asyncio.Queue(maxsize=1)
+
+        # Fill it
+        await queue.put({"dummy": "data"})
+
+        service._subscribers.append(queue)
+
+        # Create a log entry
+        entry = LogEntry(level=LogLevel.INFO, message="Test")
+
+        # Should not raise even though queue is full
+        await service._notify_subscribers(entry)
+
+        # Queue should still be in subscribers
+        assert queue in service._subscribers
+
+
+@pytest.mark.asyncio
+async def test_notify_subscribers_dead_queue():
+    """Test _notify_subscribers removes dead queues."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+
+        service = LogStorageService()
+
+        # Create a mock queue that raises an exception
+        from unittest.mock import MagicMock
+        mock_queue = MagicMock()
+        mock_queue.put_nowait.side_effect = Exception("Queue is broken")
+
+        service._subscribers.append(mock_queue)
+
+        # Create a log entry
+        entry = LogEntry(level=LogLevel.INFO, message="Test")
+
+        # Should not raise
+        await service._notify_subscribers(entry)
+
+        # Dead queue should be removed
+        assert mock_queue not in service._subscribers
+
+
+@pytest.mark.asyncio
+async def test_get_stats_with_entities():
+    """Test get_stats with entity distribution."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+
+        service = LogStorageService()
+
+        # Add logs with different entity types
+        await service.add_log(
+            level=LogLevel.INFO,
+            message="Tool log 1",
+            entity_type="tool",
+            entity_id="tool-1"
+        )
+        await service.add_log(
+            level=LogLevel.INFO,
+            message="Tool log 2",
+            entity_type="tool",
+            entity_id="tool-2"
+        )
+        await service.add_log(
+            level=LogLevel.INFO,
+            message="Resource log",
+            entity_type="resource",
+            entity_id="res-1"
+        )
+        await service.add_log(
+            level=LogLevel.INFO,
+            message="No entity log"
+        )
+
+        stats = service.get_stats()
+
+        assert stats["entity_distribution"]["tool"] == 2
+        assert stats["entity_distribution"]["resource"] == 1
+        assert stats["unique_entities"] == 3  # tool:tool-1, tool:tool-2, resource:res-1
+
+
+@pytest.mark.asyncio
+async def test_log_entry_to_dict():
+    """Test LogEntry.to_dict method."""
+    entry = LogEntry(
+        level=LogLevel.WARNING,
+        message="Test warning",
+        entity_type="server",
+        entity_id="server-1",
+        entity_name="Main Server",
+        logger="test.logger",
+        data={"custom": "data"},
+        request_id="req-abc"
+    )
+
+    result = entry.to_dict()
+
+    assert result["id"] == entry.id
+    assert result["level"] == LogLevel.WARNING
+    assert result["message"] == "Test warning"
+    assert result["entity_type"] == "server"
+    assert result["entity_id"] == "server-1"
+    assert result["entity_name"] == "Main Server"
+    assert result["logger"] == "test.logger"
+    assert result["data"] == {"custom": "data"}
+    assert result["request_id"] == "req-abc"
+    assert "timestamp" in result
