@@ -2255,6 +2255,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
         elif method == "resources/list":
             resources = await resource_service.list_resources(db)
             result = [r.model_dump(by_alias=True, exclude_none=True) for r in resources]
+        elif method == "resources/read":
+            uri = params.get("uri")
+            request_id = params.get("requestId", None)
+            if not uri:
+                raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+            result = await resource_service.read_resource(db, uri, request_id=request_id, user=user)
+            if hasattr(result, "model_dump"):
+                result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "prompts/list":
             prompts = await prompt_service.list_prompts(db, cursor=cursor)
             result = [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]
@@ -2281,11 +2289,11 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
 
-        response = result
-        return response
+        return {"jsonrpc": "2.0", "result": result, "id": body.get("id") if "body" in locals() else None}
 
     except JSONRPCError as e:
-        return e.to_dict()
+        error = e.to_dict()
+        return {"jsonrpc": "2.0", "error": error["error"], "id": body.get("id") if "body" in locals() else None}
     except Exception as e:
         if isinstance(e, ValueError):
             return JSONResponse(content={"message": "Method invalid"}, status_code=422)

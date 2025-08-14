@@ -247,7 +247,7 @@ class TestIntegrationScenarios:
         rpc_body = {"jsonrpc": "2.0", "id": 7, "method": "test_tool", "params": {"foo": "bar"}}
         resp = test_client.post("/rpc/", json=rpc_body, headers=auth_headers)
         assert resp.status_code == 200
-        assert resp.json()["content"][0]["text"] == "ok"
+        assert resp.json()["result"]["content"][0]["text"] == "ok"
         mock_invoke.assert_awaited_once_with(db=ANY, name="test_tool", arguments={"foo": "bar"}, request_headers=ANY)
 
     # --------------------------------------------------------------------- #
