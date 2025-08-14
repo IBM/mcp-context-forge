@@ -1,0 +1,34 @@
+# Example configuration for MCP Reverse Proxy
+#
+# Usage:
+#   python3 -m mcpgateway.reverse_proxy --config reverse-proxy-config.yaml
+
+# Local MCP server command to run via stdio
+local_stdio: "uvx mcp-server-git"
+
+# Remote gateway URL (WebSocket or SSE endpoint)
+gateway: "https://gateway.example.com"
+
+# Bearer token for authentication (optional)
+# Can also be set via REVERSE_PROXY_TOKEN environment variable
+# token: "your-bearer-token-here"
+
+# Connection settings
+reconnect_delay: 2.0  # Initial reconnection delay in seconds
+max_retries: 0        # Maximum reconnection attempts (0 = infinite)
+keepalive: 30         # Heartbeat interval in seconds
+
+# Logging configuration
+log_level: "INFO"     # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# Multiple server example (requires custom script to parse)
+# servers:
+#   - name: "git-server"
+#     local_stdio: "uvx mcp-server-git"
+#     gateway: "https://gateway1.example.com"
+#     token: "token1"
+#
+#   - name: "filesystem-server"
+#     local_stdio: "uvx mcp-server-filesystem --directory /data"
+#     gateway: "https://gateway2.example.com"
+#     token: "token2"

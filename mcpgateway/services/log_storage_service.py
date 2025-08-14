@@ -91,6 +91,23 @@ class LogEntry:
 
         Returns:
             Dictionary representation of the log entry
+
+        Examples:
+            >>> from mcpgateway.models import LogLevel
+            >>> entry = LogEntry(LogLevel.INFO, "Test message", entity_type="tool", entity_id="123")
+            >>> d = entry.to_dict()
+            >>> str(d['level'])
+            'LogLevel.INFO'
+            >>> d['message']
+            'Test message'
+            >>> d['entity_type']
+            'tool'
+            >>> d['entity_id']
+            '123'
+            >>> 'timestamp' in d
+            True
+            >>> 'id' in d
+            True
         """
         return {
             "id": self.id,
@@ -330,6 +347,18 @@ class LogStorageService:
 
         Returns:
             True if log level meets or exceeds minimum
+
+        Examples:
+            >>> from mcpgateway.models import LogLevel
+            >>> service = LogStorageService()
+            >>> service._meets_level_threshold(LogLevel.ERROR, LogLevel.WARNING)
+            True
+            >>> service._meets_level_threshold(LogLevel.INFO, LogLevel.WARNING)
+            False
+            >>> service._meets_level_threshold(LogLevel.CRITICAL, LogLevel.ERROR)
+            True
+            >>> service._meets_level_threshold(LogLevel.DEBUG, LogLevel.DEBUG)
+            True
         """
         level_values = {
             LogLevel.DEBUG: 0,
@@ -364,6 +393,22 @@ class LogStorageService:
 
         Returns:
             Dictionary with storage statistics
+
+        Examples:
+            >>> service = LogStorageService()
+            >>> stats = service.get_stats()
+            >>> 'total_logs' in stats
+            True
+            >>> 'buffer_size_bytes' in stats
+            True
+            >>> 'buffer_size_mb' in stats
+            True
+            >>> stats['total_logs']
+            0
+            >>> stats['unique_entities']
+            0
+            >>> stats['unique_requests']
+            0
         """
         level_counts = {}
         entity_counts = {}
@@ -393,6 +438,18 @@ class LogStorageService:
 
         Returns:
             Number of logs cleared
+
+        Examples:
+            >>> from mcpgateway.models import LogLevel
+            >>> service = LogStorageService()
+            >>> import asyncio
+            >>> entry = asyncio.run(service.add_log(LogLevel.INFO, "Test"))
+            >>> isinstance(entry, LogEntry)
+            True
+            >>> service.clear()
+            1
+            >>> len(service._buffer)
+            0
         """
         count = len(self._buffer)
         self._buffer.clear()
