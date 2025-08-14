@@ -114,7 +114,7 @@ async def test_initialize_with_file_logging_enabled():
             mock_settings.log_backup_count = 3
             mock_settings.log_filemode = "a"
             mock_settings.mcpgateway_ui_enabled = False
-            mock_settings.admin_api_enabled = False
+            mock_settings.mcpgateway_admin_api_enabled = False
             mock_settings.log_level = "INFO"
             mock_settings.log_buffer_size_mb = 1.0
 
@@ -137,7 +137,7 @@ async def test_initialize_with_file_logging_disabled():
         mock_settings.log_to_file = False
         mock_settings.log_file = None
         mock_settings.mcpgateway_ui_enabled = False
-        mock_settings.admin_api_enabled = False
+        mock_settings.mcpgateway_admin_api_enabled = False
         mock_settings.log_level = "INFO"
         mock_settings.log_buffer_size_mb = 1.0
 
@@ -162,7 +162,7 @@ async def test_initialize_with_file_logging_error():
         mock_settings.log_rotation_enabled = False
         mock_settings.log_filemode = "a"
         mock_settings.mcpgateway_ui_enabled = False
-        mock_settings.admin_api_enabled = False
+        mock_settings.mcpgateway_admin_api_enabled = False
         mock_settings.log_level = "INFO"
         mock_settings.log_buffer_size_mb = 1.0
 
@@ -375,7 +375,7 @@ async def test_dual_logging_integration():
             mock_settings.log_rotation_enabled = False
             mock_settings.log_filemode = "w"
             mock_settings.mcpgateway_ui_enabled = False
-            mock_settings.admin_api_enabled = False
+            mock_settings.mcpgateway_admin_api_enabled = False
             mock_settings.log_level = "INFO"
             mock_settings.log_buffer_size_mb = 1.0
 
@@ -607,7 +607,7 @@ async def test_initialize_with_storage():
         mock_settings.log_to_file = False
         mock_settings.log_file = None
         mock_settings.mcpgateway_ui_enabled = True  # Enable UI
-        mock_settings.admin_api_enabled = False
+        mock_settings.mcpgateway_admin_api_enabled = False
         mock_settings.log_level = "INFO"
         mock_settings.log_buffer_size_mb = 2.0
 
@@ -638,7 +638,7 @@ async def test_get_storage():
         mock_settings.log_to_file = False
         mock_settings.log_file = None
         mock_settings.mcpgateway_ui_enabled = True
-        mock_settings.admin_api_enabled = False
+        mock_settings.mcpgateway_admin_api_enabled = False
         mock_settings.log_level = "INFO"
         mock_settings.log_buffer_size_mb = 1.0
 

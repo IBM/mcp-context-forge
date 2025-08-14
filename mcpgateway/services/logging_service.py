@@ -211,7 +211,7 @@ class LoggingService:
         self._configure_uvicorn_loggers()
 
         # Initialize log storage if admin UI is enabled
-        if settings.mcpgateway_ui_enabled or settings.admin_api_enabled:
+        if settings.mcpgateway_ui_enabled or settings.mcpgateway_admin_api_enabled:
             self._storage = LogStorageService()
 
             # Add storage handler to capture all logs
