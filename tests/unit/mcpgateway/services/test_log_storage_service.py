@@ -27,7 +27,7 @@ async def test_log_entry_creation():
         data={"key": "value"},
         request_id="req-123"
     )
-    
+
     assert entry.id  # Should have auto-generated UUID
     assert entry.level == LogLevel.INFO
     assert entry.entity_type == "tool"
@@ -47,7 +47,7 @@ async def test_log_entry_size_calculation():
         level=LogLevel.INFO,
         message="Test message",
     )
-    
+
     # Size should be approximately the size of the serialized data
     expected_size = sys.getsizeof(json.dumps({
         "id": entry.id,
@@ -55,7 +55,7 @@ async def test_log_entry_size_calculation():
         "level": "info",
         "message": "Test message",
     }))
-    
+
     # Allow some variance for object overhead
     assert abs(entry._size - expected_size) < 100
 
@@ -65,9 +65,9 @@ async def test_log_storage_service_initialization():
     """Test LogStorageService initialization with default settings."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         assert service._max_size_bytes == 1024 * 1024
         assert service._current_size_bytes == 0
         assert len(service._buffer) == 0
@@ -81,14 +81,14 @@ async def test_add_log_basic():
     """Test adding a basic log entry."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         await service.add_log(
             level=LogLevel.INFO,
             message="Test log message"
         )
-        
+
         assert len(service._buffer) == 1
         assert service._buffer[0].message == "Test log message"
         assert service._buffer[0].level == LogLevel.INFO
@@ -100,9 +100,9 @@ async def test_add_log_with_entity():
     """Test adding log with entity information."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         await service.add_log(
             level=LogLevel.INFO,
             message="Entity log",
@@ -110,12 +110,12 @@ async def test_add_log_with_entity():
             entity_id="tool-1",
             entity_name="Test Tool"
         )
-        
+
         assert len(service._buffer) == 1
         assert service._buffer[0].entity_type == "tool"
         assert service._buffer[0].entity_id == "tool-1"
         assert service._buffer[0].entity_name == "Test Tool"
-        
+
         # Check entity index
         assert "tool:tool-1" in service._entity_index
         assert len(service._entity_index["tool:tool-1"]) == 1
@@ -126,18 +126,18 @@ async def test_add_log_with_request_id():
     """Test adding log with request ID."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         await service.add_log(
             level=LogLevel.INFO,
             message="Request log",
             request_id="req-123"
         )
-        
+
         assert len(service._buffer) == 1
         assert service._buffer[0].request_id == "req-123"
-        
+
         # Check request index
         assert "req-123" in service._request_index
         assert len(service._request_index["req-123"]) == 1
@@ -149,16 +149,16 @@ async def test_size_based_eviction():
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         # Set very small buffer (1KB)
         mock_settings.log_buffer_size_mb = 0.001  # 1KB
-        
+
         service = LogStorageService()
-        
+
         # Add logs until we exceed the buffer
         for i in range(100):
             await service.add_log(
                 level=LogLevel.INFO,
                 message=f"Log message {i} " + "x" * 100  # Make each log reasonably sized
             )
-        
+
         # Buffer should not exceed max size
         assert service._current_size_bytes <= service._max_size_bytes
         # Should have evicted some logs
@@ -172,18 +172,18 @@ async def test_get_logs_no_filters():
     """Test getting logs without filters."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Add some logs
         for i in range(5):
             await service.add_log(
                 level=LogLevel.INFO,
                 message=f"Log {i}"
             )
-        
+
         result = await service.get_logs()
-        
+
         assert len(result) == 5
         assert result[0]["message"] == "Log 4"  # Most recent first
         assert result[4]["message"] == "Log 0"  # Oldest last
@@ -194,21 +194,21 @@ async def test_get_logs_with_limit_offset():
     """Test getting logs with pagination."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Add 10 logs
         for i in range(10):
             await service.add_log(
                 level=LogLevel.INFO,
                 message=f"Log {i}"
             )
-        
+
         # Get first page
         result = await service.get_logs(limit=3, offset=0)
         assert len(result) == 3
         assert result[0]["message"] == "Log 9"
-        
+
         # Get second page
         result = await service.get_logs(limit=3, offset=3)
         assert len(result) == 3
@@ -220,20 +220,20 @@ async def test_get_logs_filter_by_level():
     """Test filtering logs by level."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Add logs with different levels
         await service.add_log(level=LogLevel.DEBUG, message="Debug log")
         await service.add_log(level=LogLevel.INFO, message="Info log")
         await service.add_log(level=LogLevel.WARNING, message="Warning log")
         await service.add_log(level=LogLevel.ERROR, message="Error log")
-        
+
         # Filter by ERROR level (returns ERROR and higher)
         result = await service.get_logs(level=LogLevel.ERROR)
         assert len(result) == 1
         assert result[0]["message"] == "Error log"
-        
+
         # Filter by WARNING level (returns WARNING, ERROR, and higher)
         result = await service.get_logs(level=LogLevel.WARNING)
         assert len(result) == 2  # Warning and Error
@@ -247,9 +247,9 @@ async def test_get_logs_filter_by_entity():
     """Test filtering logs by entity."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Add logs with different entities
         await service.add_log(
             level=LogLevel.INFO,
@@ -269,11 +269,11 @@ async def test_get_logs_filter_by_entity():
             entity_type="tool",
             entity_id="tool-2"
         )
-        
+
         # Filter by entity type
         result = await service.get_logs(entity_type="tool")
         assert len(result) == 2
-        
+
         # Filter by specific entity
         result = await service.get_logs(entity_type="tool", entity_id="tool-1")
         assert len(result) == 1
@@ -285,9 +285,9 @@ async def test_get_logs_filter_by_request_id():
     """Test filtering logs by request ID."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Add logs with different request IDs
         await service.add_log(
             level=LogLevel.INFO,
@@ -304,7 +304,7 @@ async def test_get_logs_filter_by_request_id():
             message="Request 1 log 2",
             request_id="req-1"
         )
-        
+
         # Filter by request ID
         result = await service.get_logs(request_id="req-1")
         assert len(result) == 2
@@ -316,20 +316,20 @@ async def test_get_logs_search():
     """Test searching logs by message content."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Add logs with different messages
         await service.add_log(level=LogLevel.INFO, message="Starting server on port 8000")
         await service.add_log(level=LogLevel.INFO, message="Connection established")
         await service.add_log(level=LogLevel.ERROR, message="Failed to start server")
         await service.add_log(level=LogLevel.INFO, message="Server shutdown complete")
-        
+
         # Search for "server"
         result = await service.get_logs(search="server")
         assert len(result) == 3
         assert all("server" in log["message"].lower() for log in result)
-        
+
         # Case-insensitive search
         result = await service.get_logs(search="SERVER")
         assert len(result) == 3
@@ -340,12 +340,12 @@ async def test_get_logs_time_range():
     """Test filtering logs by time range."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Add logs with specific timestamps
         now = datetime.now(timezone.utc)
-        
+
         # Create log with past timestamp
         old_entry = LogEntry(
             level=LogLevel.INFO,
@@ -355,10 +355,10 @@ async def test_get_logs_time_range():
         old_entry.timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
         service._buffer.append(old_entry)
         service._current_size_bytes += old_entry._size
-        
+
         # Add current log
         await service.add_log(level=LogLevel.INFO, message="Current log")
-        
+
         # Filter by time range (should only include current log)
         future_time = datetime(2025, 12, 31, tzinfo=timezone.utc)
         result = await service.get_logs(
@@ -374,9 +374,9 @@ async def test_clear_logs():
     """Test clearing all logs."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Add some logs
         for i in range(5):
             await service.add_log(
@@ -386,15 +386,15 @@ async def test_clear_logs():
                 entity_id=f"tool-{i}",
                 request_id=f"req-{i}"
             )
-        
+
         assert len(service._buffer) == 5
         assert len(service._entity_index) > 0
         assert len(service._request_index) > 0
         assert service._current_size_bytes > 0
-        
+
         # Clear logs (not async)
         count = service.clear()
-        
+
         assert count == 5
         assert len(service._buffer) == 0
         assert len(service._entity_index) == 0
@@ -407,18 +407,18 @@ async def test_get_stats():
     """Test getting log statistics."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Add logs with different levels
         await service.add_log(level=LogLevel.DEBUG, message="Debug")
         await service.add_log(level=LogLevel.INFO, message="Info 1")
         await service.add_log(level=LogLevel.INFO, message="Info 2")
         await service.add_log(level=LogLevel.WARNING, message="Warning")
         await service.add_log(level=LogLevel.ERROR, message="Error")
-        
+
         stats = service.get_stats()
-        
+
         assert stats["total_logs"] == 5
         assert stats["buffer_size_bytes"] > 0
         assert stats["buffer_size_bytes"] == service._current_size_bytes
@@ -434,19 +434,19 @@ async def test_subscribe_to_logs():
     """Test subscribing to log updates."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Create subscription
         subscription = service.subscribe()
         subscriber_task = asyncio.create_task(anext(subscription))
-        
+
         # Give subscriber time to register
         await asyncio.sleep(0.01)
-        
+
         # Add a log
         await service.add_log(level=LogLevel.INFO, message="Test log")
-        
+
         # Get the log from subscription
         try:
             log = await asyncio.wait_for(subscriber_task, timeout=1.0)
@@ -463,27 +463,27 @@ async def test_multiple_subscribers():
     """Test multiple subscribers receive logs."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         mock_settings.log_buffer_size_mb = 1.0
-        
+
         service = LogStorageService()
-        
+
         # Create multiple subscriptions
         sub1 = service.subscribe()
         sub2 = service.subscribe()
-        
+
         task1 = asyncio.create_task(anext(sub1))
         task2 = asyncio.create_task(anext(sub2))
-        
+
         # Give subscribers time to register
         await asyncio.sleep(0.01)
-        
+
         # Add a log
         await service.add_log(level=LogLevel.INFO, message="Broadcast log")
-        
+
         # Both subscribers should receive the log
         try:
             log1 = await asyncio.wait_for(task1, timeout=1.0)
             log2 = await asyncio.wait_for(task2, timeout=1.0)
-            
+
             assert log1["data"]["message"] == "Broadcast log"
             assert log2["data"]["message"] == "Broadcast log"
         finally:
@@ -506,9 +506,9 @@ async def test_entity_index_cleanup():
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         # Very small buffer to force eviction
         mock_settings.log_buffer_size_mb = 0.0001  # 100 bytes
-        
+
         service = LogStorageService()
-        
+
         # Add multiple logs with the same entity to ensure we can track cleanup
         first_logs = []
         for i in range(3):
@@ -519,19 +519,19 @@ async def test_entity_index_cleanup():
                 entity_id="tool-1"
             )
             first_logs.append(log.id)
-        
+
         # Add many large logs without entity to force eviction
         for i in range(100):
             await service.add_log(
                 level=LogLevel.INFO,
                 message=f"Big log {i}" + "x" * 100  # Make it big enough to force eviction
             )
-        
+
         # Check that all first logs were evicted
         buffer_ids = {log.id for log in service._buffer}
         for log_id in first_logs:
             assert log_id not in buffer_ids, f"Log {log_id} should have been evicted"
-        
+
         # The entity index should be cleaned up
         entity_key = "tool:tool-1"
         if entity_key in service._entity_index:
@@ -546,9 +546,9 @@ async def test_request_index_cleanup():
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
         # Very small buffer to force eviction
         mock_settings.log_buffer_size_mb = 0.0001  # 100 bytes
-        
+
         service = LogStorageService()
-        
+
         # Add multiple logs with same request ID
         first_logs = []
         for i in range(3):
@@ -558,19 +558,19 @@ async def test_request_index_cleanup():
                 request_id="req-123"
             )
             first_logs.append(log.id)
-        
+
         # Add many large logs to force eviction
         for i in range(100):
             await service.add_log(
                 level=LogLevel.INFO,
                 message=f"Big log {i}" + "x" * 100
             )
-        
+
         # Check that all first logs were evicted
         buffer_ids = {log.id for log in service._buffer}
         for log_id in first_logs:
             assert log_id not in buffer_ids, f"Log {log_id} should have been evicted"
-        
+
         # Check that the index doesn't contain stale references
         if "req-123" in service._request_index:
             # None of the evicted logs should be in the index

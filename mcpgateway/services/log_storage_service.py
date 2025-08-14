@@ -316,7 +316,7 @@ class LogStorageService:
         filtered.sort(key=lambda x: x.timestamp, reverse=(order == "desc"))
 
         # Paginate
-        paginated = filtered[offset : offset + limit]
+        paginated = filtered[offset:offset + limit]
 
         # Convert to dictionaries
         return [log.to_dict() for log in paginated]
