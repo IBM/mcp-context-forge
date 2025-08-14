@@ -4283,14 +4283,14 @@
                           ${(file.size / 1024).toFixed(1)} KB - ${new Date(file.modified).toLocaleString()}
                         </div>
                       </div>
-                      <button onclick="downloadLogFile('${file.name}')" 
+                      <button onclick="downloadLogFile('${file.name}')"
                               class="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
                         Download
                       </button>
                     </li>
                   `).join('')}
                 </ul>
-                <button onclick="this.closest('.fixed').remove()" 
+                <button onclick="this.closest('.fixed').remove()"
                         class="mt-4 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 w-full">
                   Close
                 </button>
@@ -4337,7 +4337,7 @@
           // Close the modal if it exists
           const modal = document.querySelector('.fixed.inset-0');
           if (modal) modal.remove();
-          
+
           showSuccessMessage(`Downloaded: ${filename}`);
         } catch (error) {
           console.error('Error downloading log file:', error);
