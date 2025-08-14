@@ -23,7 +23,7 @@ Examples:
 
 # Standard
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 import uuid
 
 # Third-Party
@@ -32,7 +32,7 @@ from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, F
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 
 # First-Party
@@ -1276,7 +1276,7 @@ listen(Prompt, "before_insert", validate_prompt_schema)
 listen(Prompt, "before_update", validate_prompt_schema)
 
 
-def get_db():
+def get_db() -> Generator[Session, Any, None]:
     """
     Dependency to get database session.
 

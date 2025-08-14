@@ -109,7 +109,7 @@ class ResourceService:
     - Active/inactive status management
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the resource service."""
         self._event_subscribers: Dict[str, List[asyncio.Queue]] = {}
         self._template_cache: Dict[str, ResourceTemplate] = {}
