@@ -85,7 +85,16 @@ DEFAULT_REQUEST_TIMEOUT = 90  # seconds
 
 
 class ConnectionState(Enum):
-    """Connection state enumeration."""
+    """Connection state enumeration.
+
+    Examples:
+        >>> ConnectionState.DISCONNECTED.value
+        'disconnected'
+        >>> ConnectionState.CONNECTED.value
+        'connected'
+        >>> ConnectionState.CONNECTING.value
+        'connecting'
+    """
 
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
@@ -95,7 +104,16 @@ class ConnectionState(Enum):
 
 
 class MessageType(Enum):
-    """Control message types for the reverse proxy protocol."""
+    """Control message types for the reverse proxy protocol.
+
+    Examples:
+        >>> MessageType.REGISTER.value
+        'register'
+        >>> MessageType.REQUEST.value
+        'request'
+        >>> MessageType.HEARTBEAT.value
+        'heartbeat'
+    """
 
     # Control messages
     REGISTER = "register"
@@ -576,6 +594,23 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     Returns:
         Parsed arguments.
+
+    Examples:
+        >>> import os
+        >>> os.environ['REVERSE_PROXY_GATEWAY'] = 'https://example.com'
+        >>> args = parse_args(['--local-stdio', 'mcp-server'])
+        >>> args.local_stdio
+        'mcp-server'
+        >>> args.gateway
+        'https://example.com'
+        >>> args.log_level
+        'INFO'
+        >>> args = parse_args(['--local-stdio', 'mcp-server', '--verbose'])
+        >>> args.log_level
+        'DEBUG'
+        >>> args = parse_args(['--local-stdio', 'mcp-server', '--max-retries', '5'])
+        >>> args.max_retries
+        5
     """
     parser = argparse.ArgumentParser(
         prog="mcpgateway.reverse_proxy",

@@ -119,6 +119,15 @@ class ReverseProxyManager:
 
         Returns:
             List of session information dictionaries.
+
+        Examples:
+            >>> from fastapi import WebSocket
+            >>> manager = ReverseProxyManager()
+            >>> sessions = manager.list_sessions()
+            >>> sessions
+            []
+            >>> isinstance(sessions, list)
+            True
         """
         return [
             {
