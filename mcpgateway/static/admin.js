@@ -6908,78 +6908,61 @@ console.log("🛡️ ContextForge MCP Gateway admin.js initialized");
 
 
 // ===================================================================
-// BULK IMPORT TOOLS — MODAL WIRING
+// BULK IMPORT MODAL WIRING
 // ===================================================================
 
-(function initBulkImportModal() {
-  // ensure it runs after the DOM is ready
-  window.addEventListener("DOMContentLoaded", function () {
+function clearBulkImportResult() {
+    const resultEl = safeGetElement("import-result", true);
+    if (resultEl) resultEl.innerHTML = "";
+    const indicator = safeGetElement("import-indicator", true);
+    if (indicator) indicator.classList.add("hidden");
+}
+
+function setupBulkImportModal() {
     const openBtn  = safeGetElement("open-bulk-import", true);
-    const modalId  = "bulk-import-modal";
-    const modal    = safeGetElement(modalId, true);
+    const modal    = safeGetElement("bulk-import-modal", true);
+    const backdrop = safeGetElement("bulk-import-backdrop", true);
+    const closeBtn = safeGetElement("close-bulk-import", true);
 
-    if (!openBtn || !modal) {
-      console.warn("Bulk Import modal wiring skipped (missing button or modal).");
-      return;
-    }
-
-    // avoid double-binding if admin.js gets evaluated more than once
-    if (openBtn.dataset.wired === "1") return;
+    if (!openBtn || !modal) return;
+    if (openBtn.dataset.wired === "1") return; // prevent double wiring
     openBtn.dataset.wired = "1";
 
-    const closeBtn = safeGetElement("close-bulk-import", true);
-    const backdrop = safeGetElement("bulk-import-backdrop", true);
-    const resultEl = safeGetElement("import-result", true);
-
-    const focusTarget =
-      modal.querySelector("#tools_json") ||
-      modal.querySelector("#tools_file") ||
-      modal.querySelector("[data-autofocus]");
-
-    // helpers
-    const open = (e) => {
-      if (e) e.preventDefault();
-      // clear previous results each time we open
-      if (resultEl) resultEl.innerHTML = "";
-      openModal(modalId);
-      // prevent background scroll
-      document.documentElement.classList.add("overflow-hidden");
-      document.body.classList.add("overflow-hidden");
-      if (focusTarget) setTimeout(() => focusTarget.focus(), 0);
-      return false;
-    };
-
-    const close = () => {
-      // also clear results on close to keep things tidy
-      closeModal(modalId, "import-result");
-      document.documentElement.classList.remove("overflow-hidden");
-      document.body.classList.remove("overflow-hidden");
-    };
-
-    // wire events
-    openBtn.addEventListener("click", open);
-
-    if (closeBtn) {
-      closeBtn.addEventListener("click", (e) => {
+    // OPEN → clear results, open modal, focus JSON/FILE
+    openBtn.addEventListener("click", (e) => {
         e.preventDefault();
-        close();
-      });
-    }
-
-    // click on backdrop only (not the dialog content) closes the modal
-    if (backdrop) {
-      backdrop.addEventListener("click", (e) => {
-        if (e.target === backdrop) close();
-      });
-    }
-
-    // ESC to close
-    modal.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        close();
-      }
+        clearBulkImportResult();
+        openModal("bulk-import-modal");
+        setTimeout(() => {
+            const ta = modal.querySelector('textarea[name="tools_json"]');
+            const file = modal.querySelector('input[type="file"]');
+            (ta || file)?.focus?.();
+        }, 0);
     });
 
-  });
-})();
+    // CLOSE BUTTON → close & clear
+    if (closeBtn) {
+        closeBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            closeModal("bulk-import-modal", "import-result");
+        });
+    }
+
+    // BACKDROP → close & clear
+    if (backdrop) {
+        backdrop.addEventListener("click", () => {
+            closeModal("bulk-import-modal", "import-result");
+        });
+    }
+
+    // ESC → close & clear
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && AppState.isModalActive("bulk-import-modal")) {
+            closeModal("bulk-import-modal", "import-result");
+        }
+    });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    try { setupBulkImportModal(); } catch (_) { /* no-op */ }
+});
