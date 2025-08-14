@@ -1276,7 +1276,6 @@ class SessionRegistry(SessionBackend):
             >>> # Response: {}
         """
         result = {}
-
         if "method" in message and "id" in message:
             method = message["method"]
             params = message.get("params", {})
@@ -1328,6 +1327,9 @@ class SessionRegistry(SessionBackend):
                 else:
                     prompts = await prompt_service.list_prompts(db)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+            elif method == "prompts/get":
+                prompts = await prompt_service.get_prompt(db, name=params.get("name"), arguments=params.get("arguments", {}))
+                result = prompts.model_dump(by_alias=True, exclude_none=True)
             elif method == "ping":
                 result = {}
             elif method == "tools/call":
