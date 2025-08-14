@@ -9,12 +9,27 @@ from contextlib import nullcontext
 import logging
 import os
 
-# Third-Party
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
-from opentelemetry.trace import Status, StatusCode
+# Try to import OpenTelemetry core components - make them truly optional
+OTEL_AVAILABLE = False
+try:
+    # Third-Party
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
+    from opentelemetry.trace import Status, StatusCode
+
+    OTEL_AVAILABLE = True
+except ImportError:
+    # OpenTelemetry not installed - set to None for graceful degradation
+    trace = None
+    Resource = None
+    TracerProvider = None
+    BatchSpanProcessor = None
+    ConsoleSpanExporter = None
+    SimpleSpanProcessor = None
+    Status = None
+    StatusCode = None
 
 # Try to import optional exporters
 try:
@@ -71,6 +86,12 @@ def init_telemetry():
     # Check if observability is explicitly disabled
     if os.getenv("OTEL_ENABLE_OBSERVABILITY", "true").lower() == "false":
         logger.info("Observability disabled via OTEL_ENABLE_OBSERVABILITY=false")
+        return None
+
+    # Check if OpenTelemetry is available
+    if not OTEL_AVAILABLE:
+        logger.warning("OpenTelemetry not installed. Telemetry features will be disabled.")
+        logger.info("To enable telemetry, install with: pip install mcp-contextforge-gateway[observability]")
         return None
 
     # Get exporter type from environment
@@ -223,6 +244,10 @@ def trace_operation(operation_name: str, attributes: dict = None):
             The wrapped function with tracing capabilities.
         """
 
+        # If OpenTelemetry is not available, return the function unchanged
+        if not OTEL_AVAILABLE:
+            return func
+
         async def wrapper(*args, **kwargs):
             """Async wrapper that adds tracing to the decorated function.
 
@@ -280,8 +305,8 @@ def create_span(name: str, attributes: dict = None):
             # Your code here
             pass
     """
-    if not _TRACER:
-        # Return a no-op context manager if tracing is not configured
+    if not _TRACER or not OTEL_AVAILABLE:
+        # Return a no-op context manager if tracing is not configured or available
         return nullcontext()
 
     # Start span and return the context manager
@@ -337,12 +362,14 @@ def create_span(name: str, attributes: dict = None):
                 # Record exception if one occurred
                 if exc_type is not None and self.span:
                     self.span.record_exception(exc_val)
-                    self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
+                    if OTEL_AVAILABLE and Status and StatusCode:
+                        self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
                     self.span.set_attribute("error", True)
                     self.span.set_attribute("error.type", exc_type.__name__)
                     self.span.set_attribute("error.message", str(exc_val))
                 elif self.span:
-                    self.span.set_status(Status(StatusCode.OK))
+                    if OTEL_AVAILABLE and Status and StatusCode:
+                        self.span.set_status(Status(StatusCode.OK))
                 return self.span_context.__exit__(exc_type, exc_val, exc_tb)
 
         return SpanWithAttributes(span_context, attributes)
