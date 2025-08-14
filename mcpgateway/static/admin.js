@@ -1994,6 +1994,12 @@ async function editTool(toolId) {
         // Prefill integration type from DB and set request types accordingly
         if (typeField) {
             typeField.value = tool.integrationType || "REST";
+            // Disable integration type field for MCP tools (cannot be changed)
+            if (tool.integrationType === "MCP") {
+                typeField.disabled = true;
+            } else {
+                typeField.disabled = false;
+            }
             updateEditToolRequestTypes(tool.requestType || null); // preselect from DB
         }
 
