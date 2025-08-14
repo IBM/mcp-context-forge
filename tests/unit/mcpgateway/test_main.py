@@ -977,21 +977,31 @@ class TestRPCEndpoints:
     def test_rpc_tool_invocation(self, mock_invoke_tool, test_client, auth_headers):
         """Test tool invocation via JSON-RPC."""
         mock_invoke_tool.return_value = {
-            "content": [{"type": "text", "text": "Tool response"}],
-            "is_error": False,
+            "content": [
+            {
+                "type": "text",
+                "text": "Tool response"
+            }
+            ],
+            "is_error": False
         }
 
         req = {
             "jsonrpc": "2.0",
             "id": "test-id",
-            "method": "test_tool",
-            "params": {"param": "value"},
+            "method": "tools/call",
+            "params": {
+                "name": "test_tool",
+                "arguments": {
+                    "param": "value"
+                }
+            }
         }
         response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
         body = response.json()
-        assert body["content"][0]["text"] == "Tool response"
+        assert body["result"]["content"][0]["text"] == "Tool response"
         mock_invoke_tool.assert_called_once_with(db=ANY, name="test_tool", arguments={"param": "value"}, request_headers=ANY)
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
@@ -1013,7 +1023,7 @@ class TestRPCEndpoints:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["messages"][0]["content"]["text"] == "Rendered prompt"
+        assert body["result"]["messages"][0]["content"]["text"] == "Rendered prompt"
         mock_get_prompt.assert_called_once_with(ANY, "test_prompt", {"param": "value"})
 
     @patch("mcpgateway.main.tool_service.list_tools")
@@ -1034,7 +1044,7 @@ class TestRPCEndpoints:
 
         assert response.status_code == 200
         body = response.json()
-        assert isinstance(body, list)
+        assert isinstance(body["result"]["tools"], list)
         mock_list_tools.assert_called_once()
 
     @patch("mcpgateway.main.RPCRequest")
