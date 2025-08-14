@@ -1334,7 +1334,7 @@ class TestUtilityAPIs:
 
         assert response.status_code == 200
         result = response.json()
-        assert isinstance(result.get("result"), list)
+        assert isinstance(result.get("result", {}).get("tools"), list)
 
     async def test_rpc_invalid_method(self, client: AsyncClient, mock_auth):
         """Test POST /rpc with invalid method."""

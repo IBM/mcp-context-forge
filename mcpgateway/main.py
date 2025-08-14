@@ -2225,36 +2225,31 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
         logger.debug(f"User {user} made an RPC request")
         body = await request.json()
         method = body["method"]
-        # rpc_id = body.get("id")
+        id = body.get("id") if "body" in locals() else None
         params = body.get("params", {})
         cursor = params.get("cursor")  # Extract cursor parameter
 
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
-        if method == "tools/list":
+        if method == "initialize":
+            result = await session_registry.handle_initialize_logic(body.get("params", {}))
+            if hasattr(result, "model_dump"):
+                result = result.model_dump(by_alias=True, exclude_none=True)
+        elif method == "tools/list":
             tools = await tool_service.list_tools(db, cursor=cursor)
-            result = [t.model_dump(by_alias=True, exclude_none=True) for t in tools]
+            result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
         elif method == "list_tools":  # Legacy endpoint
             tools = await tool_service.list_tools(db, cursor=cursor)
-            result = [t.model_dump(by_alias=True, exclude_none=True) for t in tools]
-        elif method == "initialize":
-            result = initialize(
-                InitializeRequest(
-                    protocol_version=params.get("protocolVersion") or params.get("protocol_version", ""),
-                    capabilities=params.get("capabilities", {}),
-                    client_info=params.get("clientInfo") or params.get("client_info", {}),
-                ),
-                user,
-            ).model_dump(by_alias=True, exclude_none=True)
+            result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
         elif method == "list_gateways":
             gateways = await gateway_service.list_gateways(db, include_inactive=False)
-            result = [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]
+            result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
         elif method == "list_roots":
             roots = await root_service.list_roots()
-            result = [r.model_dump(by_alias=True, exclude_none=True) for r in roots]
+            result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
             resources = await resource_service.list_resources(db)
-            result = [r.model_dump(by_alias=True, exclude_none=True) for r in resources]
+            result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
         elif method == "resources/read":
             uri = params.get("uri")
             request_id = params.get("requestId", None)
@@ -2262,10 +2257,15 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
             result = await resource_service.read_resource(db, uri, request_id=request_id, user=user)
             if hasattr(result, "model_dump"):
-                result = result.model_dump(by_alias=True, exclude_none=True)
+                result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
+            else:
+                result = {"contents": [result]}
+        elif method == "resources/templates/list":
+            result = {}
+            pass #TODO: Implement method for listing resource templates
         elif method == "prompts/list":
             prompts = await prompt_service.list_prompts(db, cursor=cursor)
-            result = [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]
+            result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
         elif method == "prompts/get":
             name = params.get("name")
             arguments = params.get("arguments", {})
@@ -2277,23 +2277,47 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
         elif method == "ping":
             # Per the MCP spec, a ping returns an empty result.
             result = {}
-        else:
+        elif method == "tools/call":
             # Get request headers
             headers = {k.lower(): v for k, v in request.headers.items()}
+            name = params.get("name")
+            arguments = params.get("arguments", {})
+            if not name:
+                raise JSONRPCError(-32602, "Missing tool name in parameters", params)
             try:
-                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers)
+                result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=headers)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
                 result = await gateway_service.forward_request(db, method, params)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
+        elif method.startswith("roots/"):
+            result = {}
+            pass #TODO: Implement methods for roots
+        elif method.startswith("notifications/"):
+            result = {}
+            pass #TODO: Implement methods for notifications
+        elif method.startswith("sampling/"):
+            result = {}
+            pass #TODO: Implement methods for sampling
+        elif method.startswith("elicitation/"):
+            result = {}
+            pass #TODO: Implement methods for elicitation
+        elif method.startswith("completion/"):
+            result = {}
+            pass #TODO: Implement methods for completion
+        elif method.startswith("logging/"):
+            result = {}
+            pass #TODO: Implement methods for logging
+        else:
+            raise JSONRPCError(-32000, "Invalid method", params)
 
-        return {"jsonrpc": "2.0", "result": result, "id": body.get("id") if "body" in locals() else None}
+        return {"jsonrpc": "2.0", "result": result, "id": id}
 
     except JSONRPCError as e:
         error = e.to_dict()
-        return {"jsonrpc": "2.0", "error": error["error"], "id": body.get("id") if "body" in locals() else None}
+        return {"jsonrpc": "2.0", "error": error["error"], "id": id}
     except Exception as e:
         if isinstance(e, ValueError):
             return JSONResponse(content={"message": "Method invalid"}, status_code=422)
@@ -2301,7 +2325,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
         return {
             "jsonrpc": "2.0",
             "error": {"code": -32000, "message": "Internal error", "data": str(e)},
-            "id": body.get("id") if "body" in locals() else None,
+            "id": id,
         }
 
 

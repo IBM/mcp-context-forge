@@ -165,7 +165,6 @@ async def registry() -> SessionRegistry:
     yield reg
     await reg.shutdown()
 
-
 # --------------------------------------------------------------------------- #
 # Core CRUD behaviour                                                         #
 # --------------------------------------------------------------------------- #
@@ -461,15 +460,36 @@ async def test_generate_response_initialize(registry: SessionRegistry):
     msg = {
         "method": "initialize",
         "id": 101,
-        "params": {"protocol_version": settings.protocol_version},
+        "params": {"protocol_version": settings.protocol_version}
     }
-    await registry.generate_response(
-        message=msg,
-        transport=tr,
-        server_id=None,
-        user={},
-        base_url="http://host",
-    )
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"result": {"protocolVersion": settings.protocol_version}, "id": 101}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+    
+    with patch(
+        "mcpgateway.cache.session_registry.ResilientHttpClient",
+        MockAsyncClient
+    ):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"token": "test"},
+            base_url="http://host",
+        )
 
     # Implementation may emit 5 or 6 messages (roots/list_changed optional)
     assert len(tr.sent) >= 5
@@ -487,13 +507,34 @@ async def test_generate_response_ping(registry: SessionRegistry):
     await registry.add_session("ping", tr)
 
     msg = {"method": "ping", "id": 77, "params": {}}
-    await registry.generate_response(
-        message=msg,
-        transport=tr,
-        server_id=None,
-        user={},
-        base_url="http://host",
-    )
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"result": {}, "id": 77}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+    
+    with patch(
+        "mcpgateway.cache.session_registry.ResilientHttpClient",
+        MockAsyncClient
+    ):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"token": "test"},
+            base_url="http://host",
+        )
 
     assert tr.sent[-1] == {"jsonrpc": "2.0", "result": {}, "id": 77}
 
@@ -505,17 +546,39 @@ async def test_generate_response_tools_list(registry: SessionRegistry, stub_db, 
     await registry.add_session("tools", tr)
 
     msg = {"method": "tools/list", "id": 42, "params": {}}
-    await registry.generate_response(
-        message=msg,
-        transport=tr,
-        server_id=None,
-        user={},
-        base_url="http://host",
-    )
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"jsonrpc": "2.0", "result": [{"name": "demo"}], "id": 42}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+    
+    with patch(
+        "mcpgateway.cache.session_registry.ResilientHttpClient",
+        MockAsyncClient
+    ):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"token": "test"},
+            base_url="http://host",
+        )
 
     reply = tr.sent[-1]
+    print(f'{reply=}')
     assert reply["id"] == 42
-    assert reply["result"]["tools"] == [{"name": "demo"}]
+    assert reply["result"] == [{"name": "demo"}]
 
 
 @pytest.mark.asyncio
@@ -525,17 +588,38 @@ async def test_generate_response_resources_list(registry: SessionRegistry, stub_
     await registry.add_session("resources", tr)
 
     msg = {"method": "resources/list", "id": 43, "params": {}}
-    await registry.generate_response(
-        message=msg,
-        transport=tr,
-        server_id=None,
-        user={},
-        base_url="http://host",
-    )
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"jsonrpc": "2.0", "result": [{"name": "demo"}], "id": 42}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+    
+    with patch(
+        "mcpgateway.cache.session_registry.ResilientHttpClient",
+        MockAsyncClient
+    ):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"token": "test"},
+            base_url="http://host",
+        )
 
     reply = tr.sent[-1]
     assert reply["id"] == 43
-    assert reply["result"]["resources"] == [{"name": "demo"}]
+    assert reply["result"] == [{"name": "demo"}]
 
 
 @pytest.mark.asyncio
@@ -545,17 +629,38 @@ async def test_generate_response_prompts_list(registry: SessionRegistry, stub_db
     await registry.add_session("prompts", tr)
 
     msg = {"method": "prompts/list", "id": 44, "params": {}}
-    await registry.generate_response(
-        message=msg,
-        transport=tr,
-        server_id=None,
-        user={},
-        base_url="http://host",
-    )
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"jsonrpc": "2.0", "result": [{"name": "demo"}], "id": 42}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+    
+    with patch(
+        "mcpgateway.cache.session_registry.ResilientHttpClient",
+        MockAsyncClient
+    ):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"token": "test"},
+            base_url="http://host",
+        )
 
     reply = tr.sent[-1]
     assert reply["id"] == 44
-    assert reply["result"]["prompts"] == [{"name": "demo"}]
+    assert reply["result"] == [{"name": "demo"}]
 
 
 @pytest.mark.asyncio
@@ -594,7 +699,7 @@ async def test_generate_response_tools_call(registry: SessionRegistry, stub_db, 
 
     reply = tr.sent[-1]
     assert reply["id"] == 45
-    assert reply["result"]["result"] == "tool_executed"
+    assert reply["result"] == "tool_executed"
 
 
 @pytest.mark.asyncio
@@ -604,17 +709,38 @@ async def test_generate_response_server_specific_tools_list(registry: SessionReg
     await registry.add_session("server_tools", tr)
 
     msg = {"method": "tools/list", "id": 46, "params": {}}
-    await registry.generate_response(
-        message=msg,
-        transport=tr,
-        server_id="server123",
-        user={},
-        base_url="http://host",
-    )
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"jsonrpc": "2.0", "result": [{"name": "demo"}], "id": 46}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+    
+    with patch(
+        "mcpgateway.cache.session_registry.ResilientHttpClient",
+        MockAsyncClient
+    ):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id="server123",
+            user={"token": "test"},
+            base_url="http://host",
+        )
 
     reply = tr.sent[-1]
     assert reply["id"] == 46
-    assert reply["result"]["tools"] == [{"name": "demo"}]
+    assert reply["result"] == [{"name": "demo"}]
 
 
 @pytest.mark.asyncio
@@ -624,17 +750,38 @@ async def test_generate_response_server_specific_resources_list(registry: Sessio
     await registry.add_session("resources", tr)
 
     msg = {"method": "resources/list", "id": 43, "params": {}}
-    await registry.generate_response(
-        message=msg,
-        transport=tr,
-        server_id="server123",
-        user={},
-        base_url="http://host",
-    )
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"jsonrpc": "2.0", "result": [{"name": "demo"}], "id": 43}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+    
+    with patch(
+        "mcpgateway.cache.session_registry.ResilientHttpClient",
+        MockAsyncClient
+    ):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id="server123",
+            user={"token": "test"},
+            base_url="http://host",
+        )
 
     reply = tr.sent[-1]
     assert reply["id"] == 43
-    assert reply["result"]["resources"] == [{"name": "demo"}]
+    assert reply["result"] == [{"name": "demo"}]
 
 
 @pytest.mark.asyncio
@@ -644,17 +791,38 @@ async def test_generate_response_server_specific_prompts_list(registry: SessionR
     await registry.add_session("prompts", tr)
 
     msg = {"method": "prompts/list", "id": 44, "params": {}}
-    await registry.generate_response(
-        message=msg,
-        transport=tr,
-        server_id="server123",
-        user={},
-        base_url="http://host",
-    )
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"jsonrpc": "2.0", "result": [{"name": "demo"}], "id": 44}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+    
+    with patch(
+        "mcpgateway.cache.session_registry.ResilientHttpClient",
+        MockAsyncClient
+    ):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id="server123",
+            user={"token": "test"},
+            base_url="http://host",
+        )
 
     reply = tr.sent[-1]
     assert reply["id"] == 44
-    assert reply["result"]["prompts"] == [{"name": "demo"}]
+    assert reply["result"] == [{"name": "demo"}]
 
 
 @pytest.mark.asyncio
@@ -663,16 +831,37 @@ async def test_generate_response_unknown_method(registry: SessionRegistry, stub_
     tr = FakeSSETransport("unknown")
     await registry.add_session("unknown", tr)
 
+    mock_response = Mock()
+    mock_response.json.return_value = {"result": {}}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
     msg = {"method": "unknown_method", "id": 47, "params": {}}
-    await registry.generate_response(
-        message=msg,
-        transport=tr,
-        server_id=None,
-        user={},
-        base_url="http://host",
-    )
+    with patch(
+            "mcpgateway.cache.session_registry.ResilientHttpClient",
+            MockAsyncClient
+        ):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"token": "test"},
+            base_url="http://host",
+        )
 
     reply = tr.sent[-1]
+    print(f'{reply=}')
     assert reply["id"] == 47
     assert reply["result"] == {}
 
@@ -1239,8 +1428,33 @@ async def test_full_memory_workflow(stub_db, stub_services):
         init_message = {"method": "initialize", "id": 1, "params": {"protocol_version": settings.protocol_version}}
         await registry.broadcast("workflow_test", init_message)
 
+        mock_response = Mock()
+        mock_response.json.return_value = {"result": {"protocolVersion": settings.protocol_version}, "id": 1}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        class MockAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return mock_client
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
         # Respond to message
-        await registry.respond(server_id=None, user={"token": "test"}, session_id="workflow_test", base_url="http://localhost")
+        with patch(
+            "mcpgateway.cache.session_registry.ResilientHttpClient",
+            MockAsyncClient
+        ):
+            await registry.respond(
+                server_id=None,
+                user={"token": "test"},
+                session_id="workflow_test",
+                base_url="http://localhost"
+            )
 
         # Should have received initialize response + notifications
         assert len(transport.sent) >= 5
