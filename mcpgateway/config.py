@@ -149,6 +149,7 @@ class Settings(BaseSettings):
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
+    mcpgateway_bulk_import_enabled: bool = True
 
     # Security
     skip_ssl_verify: bool = False

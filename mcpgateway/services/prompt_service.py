@@ -471,7 +471,6 @@ class PromptService:
                 "request_id": request_id or "none",
             },
         ) as span:
-
             if self._plugin_manager:
                 if not request_id:
                     request_id = uuid.uuid4().hex

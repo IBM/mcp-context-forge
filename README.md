@@ -1044,8 +1044,10 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | ------------------------------ | -------------------------------------- | ------- | ------- |
 | `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
+| `MCPGATEWAY_BULK_IMPORT_ENABLED` | Enable bulk import endpoint for tools | `true`  | bool    |
 
-> 🖥️ Set both to `false` to disable management UI and APIs in production.
+> 🖥️ Set both UI and Admin API to `false` to disable management UI and APIs in production.
+> 📥 The bulk import endpoint allows importing up to 200 tools in a single request via `/admin/tools/import`.
 
 ### Security
 

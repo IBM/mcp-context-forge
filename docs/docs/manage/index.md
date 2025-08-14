@@ -11,6 +11,7 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 | Page | Description |
 |------|-------------|
 | [Backups](backup.md) | How to persist and restore your database, configs, and resource state |
+| [Bulk Import](bulk-import.md) | Import multiple tools at once for migrations and team onboarding |
 | [Logging](logging.md) | Configure structured logging, log destinations, and log rotation |
 
 ---

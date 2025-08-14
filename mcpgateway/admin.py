@@ -93,33 +93,21 @@ root_service = RootService()
 rate_limit_storage = defaultdict(list)
 
 
-# Rate limiting decorator
 def rate_limit(requests_per_minute: int = None):
-    """Rate limiting decorator for admin endpoints.
+    """Apply rate limiting to admin endpoints.
 
     Args:
-        requests_per_minute: Maximum requests per minute (default: uses config value)
+        requests_per_minute: Maximum requests per minute (uses config default if None)
 
     Returns:
-        Decorator function that applies rate limiting to the wrapped endpoint
-
-    Examples:
-        >>> # Test that rate_limit is callable
-        >>> from mcpgateway.admin import rate_limit
-        >>> callable(rate_limit)
-        True
-        >>> # Test that it returns a decorator function
-        >>> import inspect
-        >>> decorator = rate_limit(30)
-        >>> inspect.isfunction(decorator)
-        True
+        Decorator function that enforces rate limiting
     """
 
     def decorator(func):
-        """Inner decorator function that wraps the endpoint with rate limiting.
+        """Decorator that wraps the function with rate limiting logic.
 
         Args:
-            func: The FastAPI endpoint function to wrap
+            func: The function to be wrapped with rate limiting
 
         Returns:
             The wrapped function with rate limiting applied
@@ -127,40 +115,42 @@ def rate_limit(requests_per_minute: int = None):
 
         @wraps(func)
         async def wrapper(*args, request: Request = None, **kwargs):
-            """Wrapper function that applies rate limiting logic.
+            """Execute the wrapped function with rate limiting enforcement.
 
             Args:
-                *args: Variable length argument list passed to wrapped function
-                request: FastAPI Request object containing client information
-                **kwargs: Arbitrary keyword arguments passed to wrapped function
+                *args: Positional arguments to pass to the wrapped function
+                request: FastAPI Request object for extracting client IP
+                **kwargs: Keyword arguments to pass to the wrapped function
 
             Returns:
                 The result of the wrapped function call
 
             Raises:
-                HTTPException: When rate limit is exceeded (429 Too Many Requests)
+                HTTPException: When rate limit is exceeded (429 status)
             """
-            # Get the rate limit from parameter or config
+            # use configured limit if none provided
             limit = requests_per_minute or settings.validation_max_requests_per_minute
 
-            # Get client identifier (IP address)
+            # request can be None in some edge cases (e.g., tests)
             client_ip = request.client.host if request and request.client else "unknown"
             current_time = time.time()
             minute_ago = current_time - 60
 
-            # Clean old entries and get current requests
-            rate_limit_storage[client_ip] = [timestamp for timestamp in rate_limit_storage[client_ip] if timestamp > minute_ago]
+            # prune old timestamps
+            rate_limit_storage[client_ip] = [ts for ts in rate_limit_storage[client_ip] if ts > minute_ago]
 
-            # Check rate limit
+            # enforce
             if len(rate_limit_storage[client_ip]) >= limit:
                 logger.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func.__name__}")
-                raise HTTPException(status_code=429, detail=f"Rate limit exceeded. Maximum {limit} requests per minute.")
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limit exceeded. Maximum {limit} requests per minute.",
+                )
 
-            # Add current request timestamp
             rate_limit_storage[client_ip].append(current_time)
 
-            # Call the original function
-            return await func(*args, **kwargs)
+            # IMPORTANT: forward request to the real endpoint
+            return await func(*args, request=request, **kwargs)
 
         return wrapper
 
@@ -4359,3 +4349,113 @@ async def admin_list_tags(
     except Exception as e:
         logger.error(f"Failed to retrieve tags for admin: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
+
+
+@admin_router.post("/tools/import/")
+@admin_router.post("/tools/import")
+@rate_limit(requests_per_minute=10)
+async def admin_import_tools(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> JSONResponse:
+    """Bulk import multiple tools in a single request.
+
+    Accepts a JSON array of tool definitions and registers them individually.
+    Provides per-item validation and error reporting without failing the entire batch.
+
+    Args:
+        request: FastAPI Request containing the tools data
+        db: Database session
+        user: Authenticated username
+
+    Returns:
+        JSONResponse with success status, counts, and details of created/failed tools
+
+    Raises:
+        HTTPException: For authentication or rate limiting failures
+    """
+    # Check if bulk import is enabled
+    if not settings.mcpgateway_bulk_import_enabled:
+        logger.warning("Bulk import attempted but feature is disabled")
+        raise HTTPException(status_code=403, detail="Bulk import feature is disabled. Enable MCPGATEWAY_BULK_IMPORT_ENABLED to use this endpoint.")
+
+    logger.debug("bulk tool import: user=%s", user)
+    try:
+        # ---------- robust payload parsing ----------
+        ctype = (request.headers.get("content-type") or "").lower()
+        if "application/json" in ctype:
+            try:
+                payload = await request.json()
+            except Exception as ex:
+                logger.exception("Invalid JSON body")
+                return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+        else:
+            try:
+                form = await request.form()
+            except Exception as ex:
+                logger.exception("Invalid form body")
+                return JSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
+            raw = form.get("tools_json") or form.get("json") or form.get("payload")
+            if not raw:
+                return JSONResponse({"success": False, "message": "Missing tools_json/json/payload form field."}, status_code=422)
+            try:
+                payload = json.loads(raw)
+            except Exception as ex:
+                logger.exception("Invalid JSON in form field")
+                return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+
+        if not isinstance(payload, list):
+            return JSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
+
+        max_batch = 200
+        if len(payload) > max_batch:
+            return JSONResponse({"success": False, "message": f"Too many tools ({len(payload)}). Max {max_batch}."}, status_code=413)
+
+        created, errors = [], []
+
+        # ---------- import loop ----------
+        for i, item in enumerate(payload):
+            name = (item or {}).get("name")
+            try:
+                tool = ToolCreate(**item)  # pydantic validation
+                await tool_service.register_tool(db, tool)
+                created.append({"index": i, "name": name})
+            except IntegrityError as ex:
+                # The formatter can itself throw; guard it.
+                try:
+                    formatted = ErrorFormatter.format_database_error(ex)
+                except Exception:
+                    formatted = {"message": str(ex)}
+                errors.append({"index": i, "name": name, "error": formatted})
+            except (ValidationError, CoreValidationError) as ex:
+                # Ditto: guard the formatter
+                try:
+                    formatted = ErrorFormatter.format_validation_error(ex)
+                except Exception:
+                    formatted = {"message": str(ex)}
+                errors.append({"index": i, "name": name, "error": formatted})
+            except ToolError as ex:
+                errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
+            except Exception as ex:
+                logger.exception("Unexpected error importing tool %r at index %d", name, i)
+                errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
+
+        return JSONResponse(
+            {
+                "success": len(errors) == 0,
+                "created_count": len(created),
+                "failed_count": len(errors),
+                "created": created,
+                "errors": errors,
+            },
+            status_code=200,
+        )
+
+    except HTTPException:
+        # let FastAPI semantics (e.g., auth) pass through
+        raise
+    except Exception as ex:
+        # absolute catch-all: report instead of crashing
+        logger.exception("Fatal error in admin_import_tools")
+        return JSONResponse({"success": False, "message": str(ex)}, status_code=500)

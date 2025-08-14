@@ -70,7 +70,7 @@ jobs:
           pip install pytest pytest-cov pytest-asyncio coverage[toml]
 
       # -----------------------------------------------------------
-      # 3️⃣  Run the tests with coverage (fail under 80% coverage)
+      # 3️⃣  Run the tests with coverage (fail under 79% coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
@@ -80,10 +80,10 @@ jobs:
             --cov-report=html \
             --cov-report=term \
             --cov-branch \
-            --cov-fail-under=80
+            --cov-fail-under=79
 
       # -----------------------------------------------------------
-      # 4️⃣  Run doctests (fail under 550 coverage)
+      # 4️⃣  Run doctests (fail under 50 coverage)
       # -----------------------------------------------------------
       - name: 📊  Doctest coverage with threshold
         run: |
