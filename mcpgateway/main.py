@@ -2318,7 +2318,22 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
         elif method.startswith("logging/"):
             result = {}
         else:
-            raise JSONRPCError(-32000, "Invalid method", params)
+            # Backward compatibility: Try to invoke as a tool directly
+            # This allows both old format (method=tool_name) and new format (method=tools/call)
+            headers = {k.lower(): v for k, v in request.headers.items()}
+            try:
+                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers)
+                if hasattr(result, "model_dump"):
+                    result = result.model_dump(by_alias=True, exclude_none=True)
+            except (ValueError, Exception):
+                # If not a tool, try forwarding to gateway
+                try:
+                    result = await gateway_service.forward_request(db, method, params)
+                    if hasattr(result, "model_dump"):
+                        result = result.model_dump(by_alias=True, exclude_none=True)
+                except Exception:
+                    # If all else fails, return invalid method error
+                    raise JSONRPCError(-32000, "Invalid method", params)
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
