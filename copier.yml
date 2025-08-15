@@ -9,7 +9,7 @@ template_type:
 
 plugin_name:
    type: str
-   help:  What is the plugin name? (e.g., MyFilter)
+   help: What is the plugin name? (e.g., MyFilter)
 
 version:
    type: str
