@@ -155,7 +155,7 @@ class StorageHandler(logging.Handler):
             )
         except Exception:
             # Silently fail to avoid logging recursion
-            pass
+            pass  # nosec B110 - Intentional to prevent logging recursion
 
 
 class LoggingService:
