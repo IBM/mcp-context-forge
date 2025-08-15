@@ -2331,7 +2331,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
                     result = await gateway_service.forward_request(db, method, params)
                     if hasattr(result, "model_dump"):
                         result = result.model_dump(by_alias=True, exclude_none=True)
-                except:
+                except Exception:
                     # If all else fails, return invalid method error
                     raise JSONRPCError(-32000, "Invalid method", params)
 
