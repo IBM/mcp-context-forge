@@ -28,8 +28,6 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 ![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
 
-## Table of Contents
-
 <!-- vscode-markdown-toc -->
 ## Table of Contents
 
