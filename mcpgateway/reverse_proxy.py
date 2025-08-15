@@ -239,7 +239,7 @@ class StdioProcess:
                     except Exception as e:
                         LOGGER.error(f"Handler error: {e}")
 
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # pylint: disable=try-except-raise
             raise
         except Exception as e:
             LOGGER.error(f"Error reading stdout: {e}")
@@ -698,7 +698,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         if not yaml:
             parser.error("PyYAML package required for configuration file support")
 
-        with open(args.config, "r") as f:
+        with open(args.config, "r", encoding="utf-8") as f:
             if args.config.endswith((".yaml", ".yml")):
                 config = yaml.safe_load(f)
             else:
