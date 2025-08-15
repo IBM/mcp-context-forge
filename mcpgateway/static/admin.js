@@ -6905,3 +6905,209 @@ window.updateAuthHeadersJSON = updateAuthHeadersJSON;
 window.loadAuthHeaders = loadAuthHeaders;
 
 console.log("🛡️ ContextForge MCP Gateway admin.js initialized");
+
+// ===================================================================
+// BULK IMPORT MODAL WIRING
+// ===================================================================
+
+function clearBulkImportResult() {
+    const resultEl = safeGetElement("import-result", true);
+    if (resultEl) {
+        resultEl.innerHTML = "";
+    }
+    const indicator = safeGetElement("import-indicator", true);
+    if (indicator) {
+        indicator.classList.add("hidden");
+    }
+}
+
+function setupBulkImportModal() {
+    const openBtn = safeGetElement("open-bulk-import", true);
+    const modal = safeGetElement("bulk-import-modal", true);
+    const backdrop = safeGetElement("bulk-import-backdrop", true);
+    const closeBtn = safeGetElement("close-bulk-import", true);
+
+    if (!openBtn || !modal) {
+        return;
+    }
+    if (openBtn.dataset.wired === "1") {
+        return; // prevent double wiring
+    }
+    openBtn.dataset.wired = "1";
+
+    // OPEN → clear results, open modal, focus JSON/FILE
+    openBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        clearBulkImportResult();
+        openModal("bulk-import-modal");
+        setTimeout(() => {
+            const ta = modal.querySelector('textarea[name="tools_json"]');
+            const file = modal.querySelector('input[type="file"]');
+            (ta || file)?.focus?.();
+        }, 0);
+    });
+
+    // CLOSE BUTTON → close & clear
+    if (closeBtn) {
+        closeBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            closeModal("bulk-import-modal", "import-result");
+        });
+    }
+
+    // BACKDROP → close & clear
+    if (backdrop) {
+        backdrop.addEventListener("click", () => {
+            closeModal("bulk-import-modal", "import-result");
+        });
+    }
+
+    // ESC → close & clear
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && AppState.isModalActive("bulk-import-modal")) {
+            closeModal("bulk-import-modal", "import-result");
+        }
+    });
+
+    // FORM SUBMISSION → handle bulk import
+    const form = safeGetElement("bulk-import-form", true);
+    if (form) {
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const resultEl = safeGetElement("import-result", true);
+            const indicator = safeGetElement("bulk-import-indicator", true);
+
+            try {
+                const formData = new FormData();
+
+                // Get JSON from textarea or file
+                const jsonTextarea = form.querySelector('[name="tools_json"]');
+                const fileInput = form.querySelector('[name="tools_file"]');
+
+                let hasData = false;
+
+                // Check for file upload first (takes precedence)
+                if (fileInput && fileInput.files.length > 0) {
+                    formData.append('tools_file', fileInput.files[0]);
+                    hasData = true;
+                } else if (jsonTextarea && jsonTextarea.value.trim()) {
+                    // Validate JSON before sending
+                    try {
+                        const toolsData = JSON.parse(jsonTextarea.value);
+                        if (!Array.isArray(toolsData)) {
+                            throw new Error("JSON must be an array of tools");
+                        }
+                        formData.append('tools', jsonTextarea.value);
+                        hasData = true;
+                    } catch (err) {
+                        if (resultEl) {
+                            resultEl.innerHTML = `
+                                <div class="mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                    <p class="font-semibold">Invalid JSON</p>
+                                    <p class="text-sm mt-1">${escapeHtml(err.message)}</p>
+                                </div>
+                            `;
+                        }
+                        return;
+                    }
+                }
+
+                if (!hasData) {
+                    if (resultEl) {
+                        resultEl.innerHTML = `
+                            <div class="mt-2 p-3 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
+                                <p class="text-sm">Please provide JSON data or upload a file</p>
+                            </div>
+                        `;
+                    }
+                    return;
+                }
+
+                // Show loading state
+                if (indicator) {
+                    indicator.style.display = 'flex';
+                }
+
+                // Submit to backend
+                const response = await fetchWithTimeout(
+                    `${window.ROOT_PATH}/admin/tools/import`,
+                    {
+                        method: 'POST',
+                        body: formData
+                    }
+                );
+
+                const result = await response.json();
+
+                // Display results
+                if (resultEl) {
+                    if (result.success) {
+                        resultEl.innerHTML = `
+                            <div class="mt-2 p-3 bg-green-100 border border-green-400 text-green-700 rounded">
+                                <p class="font-semibold">Import Successful</p>
+                                <p class="text-sm mt-1">${escapeHtml(result.message)}</p>
+                            </div>
+                        `;
+
+                        // Close modal and refresh page after delay
+                        setTimeout(() => {
+                            closeModal('bulk-import-modal');
+                            window.location.reload();
+                        }, 2000);
+                    } else if (result.imported > 0) {
+                        // Partial success
+                        let detailsHtml = '';
+                        if (result.details && result.details.failed) {
+                            detailsHtml = '<ul class="mt-2 text-sm list-disc list-inside">';
+                            result.details.failed.forEach(item => {
+                                detailsHtml += `<li><strong>${escapeHtml(item.name)}:</strong> ${escapeHtml(item.error)}</li>`;
+                            });
+                            detailsHtml += '</ul>';
+                        }
+
+                        resultEl.innerHTML = `
+                            <div class="mt-2 p-3 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
+                                <p class="font-semibold">Partial Import</p>
+                                <p class="text-sm mt-1">${escapeHtml(result.message)}</p>
+                                ${detailsHtml}
+                            </div>
+                        `;
+                    } else {
+                        // Complete failure
+                        resultEl.innerHTML = `
+                            <div class="mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                <p class="font-semibold">Import Failed</p>
+                                <p class="text-sm mt-1">${escapeHtml(result.message)}</p>
+                            </div>
+                        `;
+                    }
+                }
+            } catch (error) {
+                console.error('Bulk import error:', error);
+                if (resultEl) {
+                    resultEl.innerHTML = `
+                        <div class="mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                            <p class="font-semibold">Import Error</p>
+                            <p class="text-sm mt-1">${escapeHtml(error.message || 'An unexpected error occurred')}</p>
+                        </div>
+                    `;
+                }
+            } finally {
+                // Hide loading state
+                if (indicator) {
+                    indicator.style.display = 'none';
+                }
+            }
+
+            return false;
+        });
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    try {
+        setupBulkImportModal();
+    } catch (_) {}
+});

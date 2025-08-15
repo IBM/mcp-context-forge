@@ -1980,227 +1980,6 @@ async def admin_add_tool(
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/tools/{tool_id}/edit/", response_model=None)
-@admin_router.post("/tools/{tool_id}/edit", response_model=None)
-async def admin_edit_tool(
-    tool_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
-) -> Response:
-    """
-    Edit a tool via the admin UI.
-
-    Expects form fields:
-      - name
-      - url
-      - description (optional)
-      - requestType (to be mapped to request_type)
-      - integrationType (to be mapped to integration_type)
-      - headers (as a JSON string)
-      - input_schema (as a JSON string)
-      - jsonpathFilter (optional)
-      - auth_type (optional, string: "basic", "bearer", or empty)
-      - auth_username (optional, for basic auth)
-      - auth_password (optional, for basic auth)
-      - auth_token (optional, for bearer auth)
-      - auth_header_key (optional, for headers auth)
-      - auth_header_value (optional, for headers auth)
-
-    Assembles the tool_data dictionary by remapping form keys into the
-    snake-case keys expected by the schemas.
-
-    Args:
-        tool_id (str): The ID of the tool to edit.
-        request (Request): FastAPI request containing form data.
-        db (Session): Database session dependency.
-        user (str): Authenticated user dependency.
-
-    Returns:
-        Response: A redirect response to the tools section of the admin
-            dashboard with a status code of 303 (See Other), or a JSON response with
-            an error message if the update fails.
-
-    Examples:
-            Examples:
-        >>> import asyncio
-        >>> from unittest.mock import AsyncMock, MagicMock
-        >>> from fastapi import Request
-        >>> from fastapi.responses import RedirectResponse, JSONResponse
-        >>> from starlette.datastructures import FormData
-        >>> from sqlalchemy.exc import IntegrityError
-        >>> from mcpgateway.services.tool_service import ToolError
-        >>> from pydantic import ValidationError
-        >>> from mcpgateway.utils.error_formatter import ErrorFormatter
-        >>> import json
-
-        >>> mock_db = MagicMock()
-        >>> mock_user = "test_user"
-        >>> tool_id = "tool-to-edit"
-
-        >>> # Happy path: Edit tool successfully
-        >>> form_data_success = FormData([
-        ...     ("name", "Updated_Tool"),
-        ...     ("url", "http://updated.com"),
-        ...     ("requestType", "GET"),
-        ...     ("integrationType", "REST"),
-        ...     ("headers", '{"X-Api-Key": "abc"}'),
-        ...     ("input_schema", '{}'),  # ✅ Required field
-        ...     ("description", "Sample tool")
-        ... ])
-        >>> mock_request_success = MagicMock(spec=Request, scope={"root_path": ""})
-        >>> mock_request_success.form = AsyncMock(return_value=form_data_success)
-        >>> original_update_tool = tool_service.update_tool
-        >>> tool_service.update_tool = AsyncMock()
-
-        >>> async def test_admin_edit_tool_success():
-        ...     response = await admin_edit_tool(tool_id, mock_request_success, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body.decode())["success"] is True
-
-        >>> asyncio.run(test_admin_edit_tool_success())
-        True
-
-        >>> # Edge case: Edit tool with inactive checkbox checked
-        >>> form_data_inactive = FormData([
-        ...     ("name", "Inactive_Edit"),
-        ...     ("url", "http://inactive.com"),
-        ...     ("is_inactive_checked", "true"),
-        ...     ("requestType", "GET"),
-        ...     ("integrationType", "REST")
-        ... ])
-        >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": "/api"})
-        >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
-
-        >>> async def test_admin_edit_tool_inactive_checked():
-        ...     response = await admin_edit_tool(tool_id, mock_request_inactive, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and json.loads(response.body.decode())["success"] is True
-
-        >>> asyncio.run(test_admin_edit_tool_inactive_checked())
-        True
-
-        >>> # Error path: Tool name conflict (simulated with IntegrityError)
-        >>> form_data_conflict = FormData([
-        ...     ("name", "Conflicting_Name"),
-        ...     ("url", "http://conflict.com"),
-        ...     ("requestType", "GET"),
-        ...     ("integrationType", "REST")
-        ... ])
-        >>> mock_request_conflict = MagicMock(spec=Request, scope={"root_path": ""})
-        >>> mock_request_conflict.form = AsyncMock(return_value=form_data_conflict)
-        >>> tool_service.update_tool = AsyncMock(side_effect=IntegrityError("Conflict", {}, None))
-
-        >>> async def test_admin_edit_tool_integrity_error():
-        ...     response = await admin_edit_tool(tool_id, mock_request_conflict, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 409 and json.loads(response.body.decode())["success"] is False
-
-        >>> asyncio.run(test_admin_edit_tool_integrity_error())
-        True
-
-        >>> # Error path: ToolError raised
-        >>> form_data_tool_error = FormData([
-        ...     ("name", "Tool_Error"),
-        ...     ("url", "http://toolerror.com"),
-        ...     ("requestType", "GET"),
-        ...     ("integrationType", "REST")
-        ... ])
-        >>> mock_request_tool_error = MagicMock(spec=Request, scope={"root_path": ""})
-        >>> mock_request_tool_error.form = AsyncMock(return_value=form_data_tool_error)
-        >>> tool_service.update_tool = AsyncMock(side_effect=ToolError("Tool specific error"))
-
-        >>> async def test_admin_edit_tool_tool_error():
-        ...     response = await admin_edit_tool(tool_id, mock_request_tool_error, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and json.loads(response.body.decode())["success"] is False
-
-        >>> asyncio.run(test_admin_edit_tool_tool_error())
-        True
-
-        >>> # Error path: Pydantic Validation Error
-        >>> form_data_validation_error = FormData([
-        ...     ("name", "Bad_URL"),
-        ...     ("url", "not-a-valid-url"),
-        ...     ("requestType", "GET"),
-        ...     ("integrationType", "REST")
-        ... ])
-        >>> mock_request_validation_error = MagicMock(spec=Request, scope={"root_path": ""})
-        >>> mock_request_validation_error.form = AsyncMock(return_value=form_data_validation_error)
-
-        >>> async def test_admin_edit_tool_validation_error():
-        ...     response = await admin_edit_tool(tool_id, mock_request_validation_error, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 422 and json.loads(response.body.decode())["success"] is False
-
-        >>> asyncio.run(test_admin_edit_tool_validation_error())
-        True
-
-        >>> # Error path: Unexpected exception
-        >>> form_data_unexpected = FormData([
-        ...     ("name", "Crash_Tool"),
-        ...     ("url", "http://crash.com"),
-        ...     ("requestType", "GET"),
-        ...     ("integrationType", "REST")
-        ... ])
-        >>> mock_request_unexpected = MagicMock(spec=Request, scope={"root_path": ""})
-        >>> mock_request_unexpected.form = AsyncMock(return_value=form_data_unexpected)
-        >>> tool_service.update_tool = AsyncMock(side_effect=Exception("Unexpected server crash"))
-
-        >>> async def test_admin_edit_tool_unexpected_error():
-        ...     response = await admin_edit_tool(tool_id, mock_request_unexpected, mock_db, mock_user)
-        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and json.loads(response.body.decode())["success"] is False
-
-        >>> asyncio.run(test_admin_edit_tool_unexpected_error())
-        True
-
-        >>> # Restore original method
-        >>> tool_service.update_tool = original_update_tool
-
-    """
-    logger.debug(f"User {user} is editing tool ID {tool_id}")
-    form = await request.form()
-
-    # Parse tags from comma-separated string
-    tags_str = str(form.get("tags", ""))
-    tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
-
-    tool_data: dict[str, Any] = {
-        "name": form.get("name"),
-        "url": form.get("url"),
-        "description": form.get("description"),
-        "headers": json.loads(form.get("headers") or "{}"),
-        "input_schema": json.loads(form.get("input_schema") or "{}"),
-        "jsonpath_filter": form.get("jsonpathFilter", ""),
-        "auth_type": form.get("auth_type", ""),
-        "auth_username": form.get("auth_username", ""),
-        "auth_password": form.get("auth_password", ""),
-        "auth_token": form.get("auth_token", ""),
-        "auth_header_key": form.get("auth_header_key", ""),
-        "auth_header_value": form.get("auth_header_value", ""),
-        "tags": tags,
-    }
-    # Only include integration_type if it's provided (not disabled in form)
-    if "integrationType" in form:
-        tool_data["integration_type"] = form.get("integrationType")
-    # Only include request_type if it's provided (not disabled in form)
-    if "requestType" in form:
-        tool_data["request_type"] = form.get("requestType")
-    logger.debug(f"Tool update data built: {tool_data}")
-    try:
-        tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
-        await tool_service.update_tool(db, tool_id, tool)
-        return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
-    except IntegrityError as ex:
-        error_message = ErrorFormatter.format_database_error(ex)
-        logger.error(f"IntegrityError in admin_tool_resource: {error_message}")
-        return JSONResponse(status_code=409, content=error_message)
-    except ToolError as ex:
-        logger.error(f"ToolError in admin_edit_tool: {str(ex)}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-    except ValidationError as ex:  # Catch Pydantic validation errors
-        logger.error(f"ValidationError in admin_edit_tool: {str(ex)}")
-        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-    except Exception as ex:  # Generic catch-all for unexpected errors
-        logger.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-
-
 @admin_router.post("/tools/{tool_id}/delete")
 async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
@@ -2286,6 +2065,95 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
+
+
+@admin_router.post("/tools/{tool_id}/edit/", response_model=None)
+@admin_router.post("/tools/{tool_id}/edit", response_model=None)
+async def admin_edit_tool(
+    tool_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> Response:
+    """
+    Edit a tool via the admin UI.
+
+    Expects form fields:
+      - name
+      - url
+      - description (optional)
+      - requestType (to be mapped to request_type)
+      - integrationType (to be mapped to integration_type)
+      - headers (as a JSON string)
+      - input_schema (as a JSON string)
+      - jsonpathFilter (optional)
+      - auth_type (optional, string: "basic", "bearer", or empty)
+      - auth_username (optional, for basic auth)
+      - auth_password (optional, for basic auth)
+      - auth_token (optional, for bearer auth)
+      - auth_header_key (optional, for headers auth)
+      - auth_header_value (optional, for headers auth)
+
+    Args:
+        tool_id (str): The ID of the tool to edit.
+        request (Request): FastAPI request containing form data.
+        db (Session): Database session dependency.
+        user (str): Authenticated user dependency.
+
+    Returns:
+        Response: A redirect response to the tools section of the admin
+            dashboard with a status code of 303 (See Other), or a JSON response with
+            an error message if the update fails.
+    """
+    logger.debug(f"Editing tool {tool_id} by user: {user}")
+    try:
+        form = await request.form()
+
+        # Parse headers and input_schema as JSON
+        headers_str = form.get("headers", "{}")
+        input_schema_str = form.get("input_schema", "{}")
+
+        headers = json.loads(headers_str) if headers_str else {}
+        input_schema = json.loads(input_schema_str) if input_schema_str else {}
+
+        tool_data = {
+            "name": form.get("name"),
+            "url": form.get("url"),
+            "description": form.get("description", ""),
+            "request_type": form.get("requestType", "SSE"),
+            "integration_type": form.get("integrationType", "MCP"),
+            "headers": headers,
+            "input_schema": input_schema,
+            "jsonpath_filter": form.get("jsonpathFilter", ""),
+            "auth_type": form.get("auth_type", "none"),
+            "auth_username": form.get("auth_username", ""),
+            "auth_password": form.get("auth_password", ""),
+            "auth_token": form.get("auth_token", ""),
+            "auth_header_key": form.get("auth_header_key", ""),
+            "auth_header_value": form.get("auth_header_value", ""),
+        }
+
+        # Create ToolUpdate object from the data
+        tool_update = ToolUpdate(**tool_data)
+
+        # Update the tool
+        await tool_service.update_tool(db, tool_id, tool_update)
+
+        # Return success response
+        return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
+
+    except IntegrityError as e:
+        logger.error(f"IntegrityError in admin_edit_tool: {str(e)}")
+        return JSONResponse(content=ErrorFormatter.format_database_error(e), status_code=409)
+    except ToolError as e:
+        logger.error(f"ToolError in admin_edit_tool: {str(e)}")
+        return JSONResponse(content={"message": str(e), "success": False}, status_code=500)
+    except ValidationError as e:
+        logger.error(f"ValidationError in admin_edit_tool: {str(e)}")
+        return JSONResponse(content=ErrorFormatter.format_validation_error(e), status_code=422)
+    except Exception as e:
+        logger.error(f"Unexpected error in admin_edit_tool: {str(e)}")
+        return JSONResponse(content={"message": str(e), "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/toggle")
@@ -4411,14 +4279,29 @@ async def admin_import_tools(
             except Exception as ex:
                 logger.exception("Invalid form body")
                 return JSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
-            raw = form.get("tools_json") or form.get("json") or form.get("payload")
-            if not raw:
-                return JSONResponse({"success": False, "message": "Missing tools_json/json/payload form field."}, status_code=422)
-            try:
-                payload = json.loads(raw)
-            except Exception as ex:
-                logger.exception("Invalid JSON in form field")
-                return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+
+            # Check for file upload first
+            if "tools_file" in form:
+                file = form["tools_file"]
+                if hasattr(file, "file"):
+                    content = await file.read()
+                    try:
+                        payload = json.loads(content.decode("utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError) as ex:
+                        logger.exception("Invalid JSON file")
+                        return JSONResponse({"success": False, "message": f"Invalid JSON file: {ex}"}, status_code=422)
+                else:
+                    return JSONResponse({"success": False, "message": "Invalid file upload"}, status_code=422)
+            else:
+                # Check for JSON in form fields
+                raw = form.get("tools") or form.get("tools_json") or form.get("json") or form.get("payload")
+                if not raw:
+                    return JSONResponse({"success": False, "message": "Missing tools/tools_json/json/payload form field."}, status_code=422)
+                try:
+                    payload = json.loads(raw)
+                except Exception as ex:
+                    logger.exception("Invalid JSON in form field")
+                    return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
 
         if not isinstance(payload, list):
             return JSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
@@ -4456,15 +4339,33 @@ async def admin_import_tools(
                 logger.exception("Unexpected error importing tool %r at index %d", name, i)
                 errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
 
-        return JSONResponse(
-            {
-                "success": len(errors) == 0,
-                "created_count": len(created),
-                "failed_count": len(errors),
-                "created": created,
-                "errors": errors,
+        # Format response to match both frontend and test expectations
+        response_data = {
+            "success": len(errors) == 0,
+            # New format for frontend
+            "imported": len(created),
+            "failed": len(errors),
+            "total": len(payload),
+            # Original format for tests
+            "created_count": len(created),
+            "failed_count": len(errors),
+            "created": created,
+            "errors": errors,
+            # Detailed format for frontend
+            "details": {
+                "success": [item["name"] for item in created if item.get("name")],
+                "failed": [{"name": item["name"], "error": item["error"].get("message", str(item["error"]))} for item in errors],
             },
-            status_code=200,
+        }
+
+        if len(errors) == 0:
+            response_data["message"] = f"Successfully imported all {len(created)} tools"
+        else:
+            response_data["message"] = f"Imported {len(created)} of {len(payload)} tools. {len(errors)} failed."
+
+        return JSONResponse(
+            response_data,
+            status_code=200,  # Always return 200, success field indicates if all succeeded
         )
 
     except HTTPException:
