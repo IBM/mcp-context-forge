@@ -6911,68 +6911,67 @@ console.log("🛡️ ContextForge MCP Gateway admin.js initialized");
 // ===================================================================
 
 function clearBulkImportResult() {
-  const resultEl = safeGetElement("import-result", true);
-  if (resultEl) {
-    resultEl.innerHTML = "";
-  }
-  const indicator = safeGetElement("import-indicator", true);
-  if (indicator) {
-    indicator.classList.add("hidden");
-  }
+    const resultEl = safeGetElement("import-result", true);
+    if (resultEl) {
+        resultEl.innerHTML = "";
+    }
+    const indicator = safeGetElement("import-indicator", true);
+    if (indicator) {
+        indicator.classList.add("hidden");
+    }
 }
 
 function setupBulkImportModal() {
-  const openBtn = safeGetElement("open-bulk-import", true);
-  const modal = safeGetElement("bulk-import-modal", true);
-  const backdrop = safeGetElement("bulk-import-backdrop", true);
-  const closeBtn = safeGetElement("close-bulk-import", true);
+    const openBtn = safeGetElement("open-bulk-import", true);
+    const modal = safeGetElement("bulk-import-modal", true);
+    const backdrop = safeGetElement("bulk-import-backdrop", true);
+    const closeBtn = safeGetElement("close-bulk-import", true);
 
-  if (!openBtn || !modal) {
-    return;
-  }
-  if (openBtn.dataset.wired === "1") {
-    return; // prevent double wiring
-  }
-  openBtn.dataset.wired = "1";
-
-  // OPEN → clear results, open modal, focus JSON/FILE
-  openBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    clearBulkImportResult();
-    openModal("bulk-import-modal");
-    setTimeout(() => {
-      const ta = modal.querySelector('textarea[name="tools_json"]');
-      const file = modal.querySelector('input[type="file"]');
-      (ta || file)?.focus?.();
-    }, 0);
-  });
-
-  // CLOSE BUTTON → close & clear
-  if (closeBtn) {
-    closeBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      closeModal("bulk-import-modal", "import-result");
-    });
-  }
-
-  // BACKDROP → close & clear
-  if (backdrop) {
-    backdrop.addEventListener("click", () => {
-      closeModal("bulk-import-modal", "import-result");
-    });
-  }
-
-  // ESC → close & clear
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && AppState.isModalActive("bulk-import-modal")) {
-      closeModal("bulk-import-modal", "import-result");
+    if (!openBtn || !modal) {
+        return;
     }
-  });
+    if (openBtn.dataset.wired === "1") {
+        return; // prevent double wiring
+    }
+    openBtn.dataset.wired = "1";
+
+    // OPEN → clear results, open modal, focus JSON/FILE
+    openBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        clearBulkImportResult();
+        openModal("bulk-import-modal");
+        setTimeout(() => {
+            const ta = modal.querySelector('textarea[name="tools_json"]');
+            const file = modal.querySelector('input[type="file"]');
+            (ta || file)?.focus?.();
+        }, 0);
+    });
+
+    // CLOSE BUTTON → close & clear
+    if (closeBtn) {
+        closeBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            closeModal("bulk-import-modal", "import-result");
+        });
+    }
+
+    // BACKDROP → close & clear
+    if (backdrop) {
+        backdrop.addEventListener("click", () => {
+            closeModal("bulk-import-modal", "import-result");
+        });
+    }
+
+    // ESC → close & clear
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && AppState.isModalActive("bulk-import-modal")) {
+            closeModal("bulk-import-modal", "import-result");
+        }
+    });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  try {
-    setupBulkImportModal();
-  } catch (_) {
-  }
+    try {
+        setupBulkImportModal();
+    } catch (_) {}
 });
