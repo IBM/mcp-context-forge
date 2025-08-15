@@ -40,10 +40,9 @@
     />
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
     <style>
-      /* HTMX indicator visibility */
-      .htmx-indicator { display: none !important; }
-      .htmx-request .htmx-indicator { display: flex !important; }
-      .htmx-request.htmx-indicator { display: flex !important; }
+      /* HTMX indicator visibility for bulk import only */
+      #bulk-import-indicator { display: none; }
+      .htmx-request #bulk-import-indicator { display: flex !important; }
     </style>
   </head>
 
