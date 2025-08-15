@@ -30,6 +30,7 @@ from mcpgateway.plugins.framework.models import (
     PromptPosthookResult,
     PromptPrehookPayload,
     PromptPrehookResult,
+    ResourcePreFetchResult,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -217,7 +218,7 @@ class Plugin:
                                    """
         )
 
-    async def resource_pre_fetch(self, payload, context):
+    async def resource_pre_fetch(self, payload, context) -> ResourcePreFetchResult:
         """Plugin hook run before a resource is fetched.
 
         Args:
@@ -233,7 +234,7 @@ class Plugin:
                                    """
         )
 
-    async def resource_post_fetch(self, payload, context):
+    async def resource_post_fetch(self, payload, context) -> ResourcePreFetchResult:
         """Plugin hook run after a resource is fetched.
 
         Args:
