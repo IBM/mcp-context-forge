@@ -40,7 +40,7 @@ class LogEntry:
 
     __slots__ = ("id", "timestamp", "level", "entity_type", "entity_id", "entity_name", "message", "logger", "data", "request_id", "_size")
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments
         self,
         level: LogLevel,
         message: str,
@@ -147,7 +147,7 @@ class LogStorageService:
         self._entity_index: Dict[str, List[str]] = {}  # entity_key -> [log_ids]
         self._request_index: Dict[str, List[str]] = {}  # request_id -> [log_ids]
 
-    async def add_log(
+    async def add_log(  # pylint: disable=too-many-positional-arguments
         self,
         level: LogLevel,
         message: str,
@@ -186,7 +186,7 @@ class LogStorageService:
 
         # Add to buffer and update size
         self._buffer.append(log_entry)
-        self._current_size_bytes += log_entry._size
+        self._current_size_bytes += log_entry._size  # pylint: disable=protected-access
 
         # Update indices BEFORE eviction so they can be cleaned up properly
         if entity_id:
@@ -203,7 +203,7 @@ class LogStorageService:
         # Remove old entries if size limit exceeded
         while self._current_size_bytes > self._max_size_bytes and self._buffer:
             old_entry = self._buffer.popleft()
-            self._current_size_bytes -= old_entry._size
+            self._current_size_bytes -= old_entry._size  # pylint: disable=protected-access
             self._remove_from_indices(old_entry)
 
         # Notify subscribers
@@ -265,7 +265,7 @@ class LogStorageService:
         for queue in dead_subscribers:
             self._subscribers.remove(queue)
 
-    async def get_logs(
+    async def get_logs(  # pylint: disable=too-many-positional-arguments
         self,
         entity_type: Optional[str] = None,
         entity_id: Optional[str] = None,
@@ -330,7 +330,7 @@ class LogStorageService:
             filtered.append(log)
 
         # Sort
-        filtered.sort(key=lambda x: x.timestamp, reverse=(order == "desc"))
+        filtered.sort(key=lambda x: x.timestamp, reverse=order == "desc")
 
         # Paginate
         paginated = filtered[offset : offset + limit]  # noqa: E203
