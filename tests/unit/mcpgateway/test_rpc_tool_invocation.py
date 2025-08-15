@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Test RPC tool invocation after PR #746 changes."""
 
 import json

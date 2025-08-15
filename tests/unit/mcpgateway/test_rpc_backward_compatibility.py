@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Test backward compatibility for tool invocation after PR #746."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
