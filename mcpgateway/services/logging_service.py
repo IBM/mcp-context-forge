@@ -293,7 +293,7 @@ class LoggingService:
 
         await self.notify(f"Log level set to {level}", LogLevel.INFO, "logging")
 
-    async def notify(
+    async def notify(  # pylint: disable=too-many-positional-arguments
         self,
         data: Any,
         level: LogLevel,
