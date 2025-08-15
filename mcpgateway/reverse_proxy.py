@@ -72,7 +72,7 @@ LOGGER = logging_service.get_logger("mcpgateway.reverse_proxy")
 
 # Environment variable names
 ENV_GATEWAY = "REVERSE_PROXY_GATEWAY"
-ENV_TOKEN = "REVERSE_PROXY_TOKEN"
+ENV_TOKEN = "REVERSE_PROXY_TOKEN"  # nosec B105 - environment variable name, not a secret
 ENV_RECONNECT_DELAY = "REVERSE_PROXY_RECONNECT_DELAY"
 ENV_MAX_RETRIES = "REVERSE_PROXY_MAX_RETRIES"
 ENV_LOG_LEVEL = "REVERSE_PROXY_LOG_LEVEL"
@@ -540,7 +540,7 @@ class ReverseProxyClient:
                 }
                 await self._send_to_gateway(json.dumps(unregister))
             except Exception:
-                pass
+                pass  # nosec B110 - Intentionally swallow errors during cleanup
 
         # Close connection
         if self.connection:
