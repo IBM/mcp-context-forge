@@ -204,6 +204,7 @@ class PluginConfig(BaseModel):
         version (str): version of the plugin.
         hooks (list[str]): a list of the hook points where the plugin will be called.
         tags (list[str]): a list of tags for making the plugin searchable.
+        enabled (bool): whether the plugin is enabled and should be loaded.
         mode (bool): whether the plugin is active.
         priority (int): indicates the order in which the plugin is run. Lower = higher priority.
         conditions (Optional[list[PluginCondition]]): the conditions on which the plugin is run.
@@ -219,6 +220,7 @@ class PluginConfig(BaseModel):
     version: str
     hooks: list[HookType]
     tags: list[str]
+    enabled: bool = True  # Default to enabled for backward compatibility
     mode: PluginMode = PluginMode.ENFORCE
     priority: int = 100  # Lower = higher priority
     conditions: Optional[list[PluginCondition]] = None  # When to apply
