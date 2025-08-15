@@ -39,6 +39,12 @@
       rel="stylesheet"
     />
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
+    <style>
+      /* HTMX indicator visibility */
+      .htmx-indicator { display: none !important; }
+      .htmx-request .htmx-indicator { display: flex !important; }
+      .htmx-request.htmx-indicator { display: flex !important; }
+    </style>
   </head>
 
   <body class="bg-gray-100 dark:bg-gray-900">
@@ -1353,7 +1359,7 @@
                         hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                   Import Tools
                 </button>
-                <span id="bulk-import-indicator" class="htmx-indicator flex items-center text-sm text-gray-500 dark:text-gray-400">
+                <span id="bulk-import-indicator" class="htmx-indicator hidden items-center text-sm text-gray-500 dark:text-gray-400">
                   <svg class="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                     <path class="opacity-75" fill="currentColor"
