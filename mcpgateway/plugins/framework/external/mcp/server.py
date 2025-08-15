@@ -81,7 +81,7 @@ async def get_plugin_config(name: str) -> dict:
     """Return a plugin configuration give a plugin name.
 
     Args:
-        name: the name of the plugin of which to return the plugin configuration.
+        name: The name of the plugin of which to return the plugin configuration.
 
     Returns:
         A list of plugin configurations.
@@ -99,14 +99,14 @@ async def _invoke_hook(
     """Invoke a plugin hook.
 
     Args:
-        payload_model: the type of the payload accepted for the hook.
-        hook_function: the hook function to be invoked.
-        plugin_name: the name of the plugin to execute.
-        payload: the prompt name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        payload_model: The type of the payload accepted for the hook.
+        hook_function: The hook function to be invoked.
+        plugin_name: The name of the plugin to execute.
+        payload: The prompt name and arguments to be analyzed.
+        context: The contextual and state information required for the execution of the hook.
 
     Raises:
-        ValueError: if unable to retrieve a plugin.
+        ValueError: If unable to retrieve a plugin.
 
     Returns:
         The transformed or filtered response from the plugin hook.
@@ -132,12 +132,12 @@ async def prompt_pre_fetch(plugin_name: str, payload: Dict[str, Any], context: D
     """Invoke the prompt pre fetch hook for a particular plugin.
 
     Args:
-        plugin_name: the name of the plugin to execute.
-        payload: the prompt name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        plugin_name: The name of the plugin to execute.
+        payload: The prompt name and arguments to be analyzed.
+        context: The contextual and state information required for the execution of the hook.
 
     Raises:
-        ValueError: if unable to retrieve a plugin.
+        ValueError: If unable to retrieve a plugin.
 
     Returns:
         The transformed or filtered response from the plugin hook.
@@ -176,12 +176,12 @@ async def tool_pre_invoke(plugin_name: str, payload: Dict[str, Any], context: Di
     """Invoke the tool pre-invoke hook for a particular plugin.
 
     Args:
-        plugin_name: the name of the plugin to execute.
-        payload: the tool name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        plugin_name: The name of the plugin to execute.
+        payload: The tool name and arguments to be analyzed.
+        context: The contextual and state information required for the execution of the hook.
 
     Raises:
-        ValueError: if unable to retrieve a plugin.
+        ValueError: If unable to retrieve a plugin.
 
     Returns:
         The transformed or filtered response from the plugin hook.
@@ -198,12 +198,12 @@ async def tool_post_invoke(plugin_name: str, payload: Dict[str, Any], context: D
     """Invoke the tool post-invoke hook for a particular plugin.
 
     Args:
-        plugin_name: the name of the plugin to execute.
-        payload: the tool name and arguments to be analyzed.
+        plugin_name: The name of the plugin to execute.
+        payload: The tool name and arguments to be analyzed.
         context: the contextual and state information required for the execution of the hook.
 
     Raises:
-        ValueError: if unable to retrieve a plugin.
+        ValueError: If unable to retrieve a plugin.
 
     Returns:
         The transformed or filtered response from the plugin hook.
@@ -220,12 +220,12 @@ async def resource_pre_fetch(plugin_name: str, payload: Dict[str, Any], context:
     """Invoke the resource pre fetch hook for a particular plugin.
 
     Args:
-        plugin_name: the name of the plugin to execute.
-        payload: the resource name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        plugin_name: The name of the plugin to execute.
+        payload: The resource name and arguments to be analyzed.
+        context: The contextual and state information required for the execution of the hook.
 
     Raises:
-        ValueError: if unable to retrieve a plugin.
+        ValueError: If unable to retrieve a plugin.
 
     Returns:
         The transformed or filtered response from the plugin hook.
