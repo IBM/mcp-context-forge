@@ -30,6 +30,7 @@ include *.txt
 recursive-include async_testing *.py
 recursive-include async_testing *.yaml
 recursive-include examples *.yaml
+recursive-include plugin_templates *
 
 # 3️⃣  Tooling/lint configuration dot-files (explicit so they're not lost)
 include .env.make
