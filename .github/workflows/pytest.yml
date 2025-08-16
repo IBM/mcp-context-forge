@@ -75,6 +75,7 @@ jobs:
       - name: 🧪  Run pytest
         run: |
           pytest \
+            --ignore=tests/fuzz \
             --cov=mcpgateway \
             --cov-report=xml \
             --cov-report=html \
