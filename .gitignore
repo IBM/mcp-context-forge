@@ -44,6 +44,11 @@ FIXMEs
 *.old
 logs/
 *.log
+
+# Fuzzing artifacts and reports
+reports/
+corpus/
+tests/fuzz/fuzzers/results/
 .venv
 mcp.db
 public/
