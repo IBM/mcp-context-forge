@@ -6,7 +6,7 @@ Follow these instructions to set up your development environment, build the gate
 
 ## 🧩 Prerequisites
 
-- Python **≥ 3.10**
+- Python **≥ 3.11**
 - `make`
 - (Optional) Docker or Podman for container builds
 
@@ -15,13 +15,13 @@ Follow these instructions to set up your development environment, build the gate
 ## 🔧 One-Liner Setup (Recommended)
 
 ```bash
-make venv install serve
+make venv install-dev serve
 ```
 
 This will:
 
 1. Create a virtual environment in `.venv/`
-2. Install Python dependencies including dev extras
+2. Install Python dependencies (including dev extras)
 3. Run the gateway using Gunicorn
 
 ---
@@ -47,12 +47,13 @@ This installs:
 You can run the gateway with:
 
 ```bash
-make serve         # production-mode Gunicorn (http://localhost:4444)
-make run           # dev-mode Uvicorn (reloads on change)
-./run.sh --reload  # same as 'make run', with CLI flags
+make serve         # production-mode (Gunicorn) on http://localhost:4444
+make dev           # hot-reload (Uvicorn) on http://localhost:8000
+make run           # wrapper over uvicorn; pass --reload to enable auto-reload
+./run.sh --reload  # equivalent of 'make run' with explicit flags
 ```
 
-Use `make run` or `./run.sh` during development for auto-reload.
+Use `make dev` during development for auto-reload on port 8000.
 
 ---
 

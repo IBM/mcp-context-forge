@@ -55,13 +55,13 @@ If you point Inspector **directly** at a Gateway SSE stream, pass the header:
 
 ---
 
-## 🛰 Connecting through SuperGateway (stdio → SSE bridge)
+## 🛰 Connecting through Translate Bridge (stdio → SSE bridge)
 
 Want to test a **stdio-only** MCP server inside Inspector?
 
 ```bash
 # Example: expose mcp-server-git over SSE on :8000
-npx -y supergateway --stdio "uvx mcp-server-git"
+python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9002
 #   SSE stream:  http://localhost:8000/sse
 #   POST back-channel: http://localhost:8000/message
 ```
@@ -73,4 +73,4 @@ npx @modelcontextprotocol/inspector \
   --url http://localhost:8000/sse
 ```
 
-SuperGateway handles the bridging; Inspector thinks it is speaking native SSE.
+Translate Bridge handles the bridging; Inspector thinks it is speaking native SSE.

@@ -89,10 +89,13 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/gateways
 ```
 
-### **Via Supergateway Bridge**
+### **Via Translate Bridge**
 ```bash
-# Expose stdio servers over SSE
-npx -y supergateway --stdio "path/to/sample-server" --port 8002
+# Expose stdio servers over SSE using mcpgateway.translate
+python3 -m mcpgateway.translate \
+  --stdio "path/to/sample-server" \
+  --expose-sse \
+  --port 8002
 ```
 
 ### **Testing with Wrapper**
@@ -194,12 +197,12 @@ We're particularly interested in:
 
 ### **Gateway Documentation**
 - [MCP Context Forge Gateway](../README.md)
-- [mcpgateway.wrapper Usage](../wrapper.md)
-- [mcpgateway.translate Bridge](../translate.md)
+- [mcpgateway.wrapper Usage](../mcpgateway-wrapper.md)
+- [mcpgateway.translate Bridge](../mcpgateway-translate.md)
 
 ### **Development Tools**
 - [MCP Inspector](https://github.com/modelcontextprotocol/inspector) - Interactive protocol debugging
-- [Supergateway](https://github.com/modelcontextprotocol/supergateway) - stdio to SSE bridge
+- [mcpgateway.translate Bridge](../mcpgateway-translate.md) - stdio ↔ SSE/Streamable HTTP bridge
 - [UV](https://docs.astral.sh/uv/) - Fast Python package management
 
 ---

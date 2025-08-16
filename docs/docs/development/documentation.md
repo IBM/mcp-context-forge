@@ -6,7 +6,7 @@ Follow this guide when you need to add or update markdown pages under `docs/` an
 
 ## 🧩 Prerequisites
 
-* **Python ≥ 3.10** (only for the initial virtual env - *not* required if you already have one)
+* **Python ≥ 3.11** (only for the initial virtual env - *not* required if you already have one)
 * `make` (GNU Make 4+)
 * (First-time only) **[`mkdocs-material`](https://squidfunk.github.io/mkdocs-material/)** and plugins are installed automatically by the *docs* `Makefile`.
 * One-time GitHub setup, e.g. [gitconfig setup](./github.md#16-personal-git-configuration-recommended)

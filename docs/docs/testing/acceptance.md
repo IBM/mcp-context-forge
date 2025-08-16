@@ -91,9 +91,9 @@ graph TB
 
 | Feature | URL/Command | Actions | Expected Result | Status | Notes |
 |---------|-------------|---------|-----------------|--------|-------|
-| Start Time Server (No Auth) | `npx -y supergateway --stdio "uvx mcp_server_time -- --local-timezone=Europe/Dublin" --port 8101` | Launch MCP time server without auth | Server running on port 8101 | ☐ | SSE at http://localhost:8101/sse |
-| Start Time Server (Auth) | `npx -y supergateway --stdio "uvx mcp_server_time -- --local-timezone=Europe/Dublin" --port 8102 --auth-token secret123` | Launch MCP time server with auth | Server running on port 8102 | ☐ | Requires Bearer token |
-| Start Git Server | `npx -y supergateway --stdio "uvx mcp_server_git -- ." --port 8103` | Launch MCP git server | Server running on port 8103 | ☐ | Provides git operations |
+| Start Time Server (No Auth) | `python3 -m mcpgateway.translate --stdio "uvx mcp_server_time -- --local-timezone=Europe/Dublin" --expose-sse --port 8101` | Launch MCP time server without auth | Server running on port 8101 | ☐ | SSE at http://localhost:8101/sse |
+| Start Time Server (Auth) | `python3 -m mcpgateway.translate --stdio "uvx mcp_server_time -- --local-timezone=Europe/Dublin" --expose-sse --port 8102` | Launch MCP time server with auth | Server running on port 8102 | ☐ | Add Authorization header when registering |
+| Start Git Server | `python3 -m mcpgateway.translate --stdio "uvx mcp_server_git -- ." --expose-sse --port 8103` | Launch MCP git server | Server running on port 8103 | ☐ | Provides git operations |
 | Verify Time Server Health | `curl http://localhost:8101/health` | Check server status | `{"status":"healthy","uptime_seconds":XXX}` | ☐ | No auth endpoint |
 | Test Auth Server | `curl -H "Authorization: Bearer secret123" http://localhost:8102/sse` | Test SSE with auth | SSE stream starts (Ctrl+C to exit) | ☐ | Confirms auth working |
 

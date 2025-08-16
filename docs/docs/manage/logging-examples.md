@@ -108,7 +108,7 @@ LOG_FOLDER=logs
 # docker-compose.yml
 services:
   mcpgateway:
-    image: ghcr.io/ibm/mcp-context-forge:latest
+    image: ghcr.io/ibm/mcp-context-forge:0.5.0
     environment:
       - LOG_LEVEL=INFO
       # Default: logs to stdout/stderr only (recommended for containers)
