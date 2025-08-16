@@ -75,7 +75,11 @@ app = typer.Typer(
 
 
 def git_user_name() -> str:
-    """Return the current git user name from the environment."""
+    """Return the current git user name from the environment.
+
+    Returns:
+        The git user name configured in the user's environment.
+    """
     try:
         res = subprocess.run(["git", "config", "user.name"], stdout=subprocess.PIPE)
         return res.stdout.strip().decode() if not res.returncode else DEFAULT_AUTHOR_NAME
@@ -84,7 +88,11 @@ def git_user_name() -> str:
 
 
 def git_user_email() -> str:
-    """Return the current git user email from the environment."""
+    """Return the current git user email from the environment.
+
+    Returns:
+        The git user email configured in the user's environment.
+    """
     try:
         res = subprocess.run(["git", "config", "user.email"], stdout=subprocess.PIPE)
         return res.stdout.strip().decode() if not res.returncode else DEFAULT_AUTHOR_EMAIL
