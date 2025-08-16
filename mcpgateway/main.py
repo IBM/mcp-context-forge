@@ -2302,7 +2302,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
                 result = await gateway_service.forward_request(db, method, params)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
-        # TODO: Implement methods
+        # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             result = {}
         elif method.startswith("roots/"):
