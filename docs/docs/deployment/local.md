@@ -9,7 +9,7 @@ This guide walks you through running MCP Gateway on your local machine using a v
 The easiest way to start the server in development mode:
 
 ```bash
-make venv install serve
+make venv install-dev serve
 ```
 
 This does the following:
@@ -25,7 +25,8 @@ This does the following:
 If you want auto-reload on code changes:
 
 ```bash
-make run        # or:
+make dev        # hot-reload (Uvicorn) on :8000
+# or:
 ./run.sh --reload --log debug
 ```
 

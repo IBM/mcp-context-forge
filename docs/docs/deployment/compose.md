@@ -18,7 +18,7 @@ export COMPOSE_CMD="docker compose"
 ## 🐳/🦭 Build the images
 
 ```bash
-docker pull ghcr.io/ibm/mcp-context-forge:latest
+docker pull ghcr.io/ibm/mcp-context-forge:0.5.0
 ```
 
 ## 🐳/🦭 Build the images (when doing local development)
@@ -71,7 +71,7 @@ COMPOSE_ENGINE=podman make compose-up   # force Podman
 
 | Make target       | Docker CLI                                    | Podman built-in                              | podman-compose                               |
 | ----------------- | --------------------------------------------- | -------------------------------------------- | -------------------------------------------- |
-| `compose-up`      | `docker compose -f podman-compose.yml up -d`  | `podman compose -f podman-compose.yml up -d` | `podman-compose -f podman-compose.yml up -d` |
+| `compose-up`      | `docker compose -f docker-compose.yml up -d`  | `podman compose -f docker-compose.yml up -d` | `podman-compose -f docker-compose.yml up -d` |
 | `compose-restart` | `docker compose up -d --pull=missing --build` | idem                                         | idem                                         |
 | `compose-logs`    | `docker compose logs -f`                      | `podman compose logs -f`                     | `podman-compose logs -f`                     |
 | `compose-ps`      | `docker compose ps`                           | `podman compose ps`                          | `podman-compose ps`                          |
@@ -96,7 +96,7 @@ curl http://localhost:4444/health    # {"status":"ok"}
 
 ## 🗄 Selecting a database
 
-Uncomment one service block in `podman-compose.yml` and align `DATABASE_URL`:
+Uncomment one service block in `docker-compose.yml` and align `DATABASE_URL`:
 
 | Service block         | Connection string                             |
 | --------------------- | --------------------------------------------- |

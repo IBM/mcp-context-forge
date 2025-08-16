@@ -7,7 +7,7 @@
 ## 🛠 Environment Setup
 
 ???+ check "System prerequisites"
-    - [ ] Python ≥ 3.10
+    - [ ] Python ≥ 3.11
     - [ ] Node.js and npm, npx (used for testing with `supergateway` and the HTML/JS Admin UI)
     - [ ] Docker, Docker Compose, and Podman
     - [ ] Make, GitHub CLI (`gh`), `curl`, `jq`, `openssl`

@@ -224,14 +224,14 @@ Expected:
 
 ---
 
-### 10. Connect to GitHub MCP Tools via SuperGateway
+### 10. Connect to GitHub MCP Tools via Translate Bridge
 
-You can test the Gateway against GitHub's official `mcp-server-git` tool using [`supergateway`](https://github.com/modelcontextprotocol/supergateway).
+You can test the Gateway against GitHub's official `mcp-server-git` tool using the built-in [`mcpgateway.translate`](../using/mcpgateway-translate.md) bridge.
 
 Start a temporary SSE wrapper around the GitHub MCP server:
 
 ```bash
-npx -y supergateway --stdio "uvx mcp-server-git"
+python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9003
 ```
 
 This starts:
@@ -249,7 +249,7 @@ curl -s -k -X POST $BASE_URL/gateways \
   -d '{
         "name": "github-mcp",
         "url": "http://localhost:8000/sse",
-        "description": "GitHub MCP Tools via SuperGateway",
+        "description": "GitHub MCP Tools via Translate Bridge",
         "auth_type": "none"
       }'
 ```

@@ -16,7 +16,7 @@
     OCI image (Docker/Podman) - shares host network so localhost works:
 
     ```bash
-    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:latest
+    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:0.5.0
     ```
 
 ???+ example "🗂️ What URLs are available for the admin interface and API docs?"
@@ -108,7 +108,7 @@
     Include a persistent volume with your container or Kubernetes deployment. Ex:
 
     ```bash
-    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:latest
+    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:0.5.0
     ```
 
     For production use, we recommend PostgreSQL. A Docker Compose target with PostgreSQL and Redis is provided.
@@ -224,9 +224,9 @@
                    token=os.environ["MCPGATEWAY_BEARER_TOKEN"])
     ```
 
-???+ example "🦾 How do I connect GitHub's mcp-server-git via SuperGateway?"
+???+ example "🦾 How do I connect GitHub's mcp-server-git via Translate Bridge?"
     ```bash
-    npx -y supergateway --stdio "uvx mcp-server-git"
+    python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9001
     ```
 
 ---
