@@ -49,14 +49,14 @@ dependencies = [
     "alembic>=1.16.4",
     "cryptography>=45.0.6",
     "fastapi>=0.116.1",
-    "filelock>=3.18.0",
+    "filelock>=3.19.1",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
     "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.25.0",
-    "mcp>=1.12.4",
+    "mcp>=1.13.0",
     "parse>=1.20.2",
     "psutil>=7.0.0",
     "pydantic>=2.11.7",
@@ -83,6 +83,19 @@ redis = [
 
 postgres = [
     "psycopg2-binary>=2.9.10",
+]
+
+# Fuzzing and property-based testing
+fuzz = [
+    "hypothesis>=6.138.2",
+    "pytest-benchmark>=5.1.0",
+    "pytest-xdist>=3.8.0",
+    "schemathesis>=4.0.26",
+]
+
+# Coverage-guided fuzzing (requires clang/libfuzzer)
+fuzz-atheris = [
+    "atheris>=2.3.0",
 ]
 
 alembic = [
@@ -125,7 +138,7 @@ asyncpg = [
 # Optional dependency groups (development)
 dev = [
     "aiohttp>=3.12.15",
-    "argparse-manpage>=4.6",
+    "argparse-manpage>=4.7",
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
     "black>=25.1.0",
@@ -149,7 +162,7 @@ dev = [
     "pip-licenses>=5.0.0",
     "pip_audit>=2.9.0",
     "pre-commit>=4.3.0",
-    "prospector[with_everything]>=1.17.2",
+    "prospector[with_everything]>=1.17.3",
     "pydocstyle>=6.3.0",
     "pylint>=3.3.8",
     "pylint-pydantic>=0.3.5",
@@ -171,18 +184,18 @@ dev = [
     "pyupgrade>=3.20.0",
     "radon>=6.0.1",
     "redis>=6.4.0",
-    "ruff>=0.12.8",
-    "semgrep>=1.131.0",
+    "ruff>=0.12.9",
+    "semgrep>=1.132.1",
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "tomlcheck>=0.2.3",
     "tox>=4.28.4",
-    "tox-uv>=1.27.0",
+    "tox-uv>=1.28.0",
     "twine>=6.1.0",
-    "ty>=0.0.1a17",
+    "ty>=0.0.1a18",
     "types-tabulate>=0.9.0.20241207",
     "unimport>=1.2.1",
-    "uv>=0.8.9",
+    "uv>=0.8.11",
     "vulture>=2.14",
     "websockets>=15.0.1",
     "yamllint>=1.37.1",
@@ -392,13 +405,14 @@ env = [
 ]
 
 # ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====
-# Playwright test markers
+# Pytest test markers
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "ui: marks tests as UI tests",
     "api: marks tests as API tests",
     "smoke: marks tests as smoke tests for quick validation",
     "e2e: marks tests as end-to-end tests",
+    "fuzz: marks tests as fuzz tests (excluded from main test suite)",
 ]
 
 # Playwright-specific test discovery patterns
