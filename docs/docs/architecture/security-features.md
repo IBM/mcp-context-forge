@@ -124,7 +124,13 @@
 
 * **Configuration Validation** - Schema enforcement with startup security checks ([#285](https://github.com/IBM/mcp-context-forge/issues/285), [#534](https://github.com/IBM/mcp-context-forge/issues/534)) 🚧
 
-* **Security Headers** - Configurable headers and CORS policies ([#344](https://github.com/IBM/mcp-context-forge/issues/344), [#533](https://github.com/IBM/mcp-context-forge/issues/533)) 🚧
+* **Security Headers** - Essential security headers and environment-aware CORS policies (✅ [#344](https://github.com/IBM/mcp-context-forge/issues/344), [#533](https://github.com/IBM/mcp-context-forge/issues/533)) ✅
+  - **X-Content-Type-Options: nosniff** - Prevents MIME type sniffing attacks
+  - **X-Frame-Options: DENY** - Prevents clickjacking attacks
+  - **Content-Security-Policy** - Comprehensive XSS and injection protection
+  - **Strict-Transport-Security** - Forces HTTPS connections
+  - **Environment-aware CORS** - Automatic origin configuration for dev/production
+  - **Secure cookies** - HttpOnly, Secure, SameSite attributes for authentication
 
 * **Well-Known URI Handler** - security.txt and robots.txt support ([#540](https://github.com/IBM/mcp-context-forge/issues/540)) 🚧
 

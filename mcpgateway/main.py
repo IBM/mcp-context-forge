@@ -59,6 +59,7 @@ from mcpgateway.config import jsonpath_modifier, settings
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins import PluginManager, PluginViolationError
@@ -502,16 +503,26 @@ class MCPPathRewriteMiddleware:
         await self.application(scope, receive, send)
 
 
-# Configure CORS
+# Configure CORS with environment-aware origins
+cors_origins = list(settings.allowed_origins) if settings.allowed_origins else []
+
+# Ensure we never use wildcard in production
+if settings.environment == "production" and not cors_origins:
+    logger.warning("No CORS origins configured for production environment. CORS will be disabled.")
+    cors_origins = []
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if not settings.allowed_origins else list(settings.allowed_origins),
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["Content-Type", "Content-Length"],
+    expose_headers=["Content-Length", "X-Request-ID"],
 )
 
+
+# Add security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
