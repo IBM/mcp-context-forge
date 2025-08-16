@@ -15,7 +15,7 @@ from mcpgateway.plugins.framework.models import PluginContext, PromptPrehookPayl
 
 @pytest.mark.asyncio
 async def test_client_load_stdio():
-    os.environ["CFMCP_PLUGIN_CONFIG"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml"
+    os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml"
     os.environ["PYTHONPATH"] = "."
     config = ConfigLoader.load_config("tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin.yaml")
     print(config)
@@ -35,11 +35,11 @@ async def test_client_load_stdio():
     assert config.priority == 100
     assert config.kind == "external"
     await plugin.shutdown()
-    del os.environ["CFMCP_PLUGIN_CONFIG"]
+    del os.environ["PLUGINS_CONFIG_PATH"]
     del os.environ["PYTHONPATH"]
 
 async def test_client_load_stdio_overrides():
-    os.environ["CFMCP_PLUGIN_CONFIG"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml"
+    os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml"
     os.environ["PYTHONPATH"] = "."
     config = ConfigLoader.load_config("tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin_overrides.yaml")
     print(config)
@@ -61,12 +61,12 @@ async def test_client_load_stdio_overrides():
     assert config.hooks[1] == "prompt_post_fetch"
     assert config.kind == "external"
     await plugin.shutdown()
-    del os.environ["CFMCP_PLUGIN_CONFIG"]
+    del os.environ["PLUGINS_CONFIG_PATH"]
     del os.environ["PYTHONPATH"]
 
 @pytest.mark.asyncio
 async def test_client_load_stdio_post_prompt():
-    os.environ["CFMCP_PLUGIN_CONFIG"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+    os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
     os.environ["PYTHONPATH"] = "."
     config = ConfigLoader.load_config("tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin_regex.yaml")
     print(config)
@@ -75,7 +75,7 @@ async def test_client_load_stdio_post_prompt():
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     print(plugin)
     prompt = PromptPrehookPayload(name="test_prompt", args = {"user": "What a crapshow!"})
-    context = PluginContext(request_id="1", server_id="2") 
+    context = PluginContext(request_id="1", server_id="2")
     result = await plugin.prompt_pre_fetch(prompt, context)
     assert result.modified_payload.args["user"] == "What a yikesshow!"
     config = plugin.config
@@ -94,5 +94,5 @@ async def test_client_load_stdio_post_prompt():
     assert result.modified_payload.result.messages[0].content.text == "What the yikes?"
     await plugin.shutdown()
     await loader.shutdown()
-    del os.environ["CFMCP_PLUGIN_CONFIG"]
+    del os.environ["PLUGINS_CONFIG_PATH"]
     del os.environ["PYTHONPATH"]
