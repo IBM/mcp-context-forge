@@ -4356,9 +4356,22 @@ pre-commit-fix-headers:             ## 🪝 Fix headers for pre-commit hooks
 	@echo "🪝 Fixing headers for pre-commit..."
 	@python3 .github/tools/fix_file_headers.py --fix-all
 
-## --------------------------------------------------------------------------- ##
-##  Fuzz Testing
-## --------------------------------------------------------------------------- ##
+# ==============================================================================
+# 🎯 FUZZ TESTING - Automated property-based and security testing
+# ==============================================================================
+# help: 🎯 FUZZ TESTING - Automated property-based and security testing
+# help: fuzz-install       - Install fuzzing dependencies (hypothesis, schemathesis, etc.)
+# help: fuzz-all           - Run complete fuzzing suite (hypothesis + atheris + api + security)
+# help: fuzz-hypothesis    - Run Hypothesis property-based tests for core validation
+# help: fuzz-atheris       - Run Atheris coverage-guided fuzzing (requires clang/libfuzzer)
+# help: fuzz-api           - Run Schemathesis API fuzzing (requires running server)
+# help: fuzz-restler       - Run RESTler API fuzzing instructions (stateful sequences)
+# help: fuzz-restler-auto  - Run RESTler via Docker automatically (requires Docker + server)
+# help: fuzz-security      - Run security-focused vulnerability tests (SQL injection, XSS, etc.)
+# help: fuzz-quick         - Run quick fuzzing for CI/PR validation (50 examples)
+# help: fuzz-extended      - Run extended fuzzing for nightly testing (1000+ examples)
+# help: fuzz-report        - Generate comprehensive fuzzing reports (JSON + Markdown)
+# help: fuzz-clean         - Clean fuzzing artifacts and generated reports
 
 fuzz-install:                       ## 🔧 Install all fuzzing dependencies
 	@echo "🔧 Installing fuzzing dependencies..."
