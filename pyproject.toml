@@ -93,10 +93,10 @@ alembic = [
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.36.0",
-    "opentelemetry-exporter-otlp>=1.36.0",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
-    "opentelemetry-sdk>=1.36.0",
+    "opentelemetry-api>=1.25.0",
+    "opentelemetry-exporter-otlp>=1.25.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
+    "opentelemetry-sdk>=1.25.0",
 ]
 
 # Additional observability backends (optional)
@@ -124,6 +124,11 @@ asyncpg = [
     "asyncpg>=0.30.0",
 ]
 
+# Chuck runtime (optional)
+chuck = [
+    "chuk-mcp-runtime>=0.6.5",
+]
+
 # Optional dependency groups (development)
 dev = [
     "aiohttp>=3.12.15",
@@ -133,6 +138,7 @@ dev = [
     "black>=25.1.0",
     "bump2version>=1.0.1",
     "check-manifest>=0.50",
+    "chuk-mcp-runtime>=0.6.5",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
     "coverage>=7.10.3",
