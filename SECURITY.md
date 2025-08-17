@@ -263,6 +263,7 @@ When deploying MCP Gateway in production:
 - [ ] Set up structured logging without exposing sensitive data
 - [ ] Configure CORS policies appropriately for your clients (auto-configured by ENVIRONMENT setting)
 - [ ] Verify security headers are working (automatically added by SecurityHeadersMiddleware)
+- [ ] Configure iframe embedding policy (X-Frame-Options: DENY by default, set to SAMEORIGIN if embedding needed)
 - [ ] Disable debug mode and verbose error messages in production
 - [ ] Implement backup and disaster recovery procedures
 - [ ] Document incident response procedures

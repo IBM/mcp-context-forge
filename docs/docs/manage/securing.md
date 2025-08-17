@@ -57,6 +57,7 @@ CORS_ALLOW_CREDENTIALS=true
 - [ ] Configure appropriate CORS policies (auto-configured by ENVIRONMENT setting)
 - [ ] Set up rate limiting per endpoint/client
 - [ ] Verify security headers are present (automatically added by SecurityHeadersMiddleware)
+- [ ] Configure iframe embedding policy (X_FRAME_OPTIONS=DENY by default, change to SAMEORIGIN if needed)
 
 ### 4. Container Security
 

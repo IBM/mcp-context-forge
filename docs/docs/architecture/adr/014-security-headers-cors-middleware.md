@@ -204,6 +204,15 @@ app.add_middleware(DocsAuthMiddleware)       # 3. Auth protection
 - **Specific CDN domains**: Whitelisted known-good CDN sources instead of wildcard
 - **'frame-ancestors none'**: Prevents all framing to prevent clickjacking
 
+### iframe Embedding Configuration
+By default, iframe embedding is **disabled** for security via `X-Frame-Options: DENY` and `frame-ancestors 'none'`. To enable iframe embedding:
+
+1. **Same-domain embedding**: Set `X_FRAME_OPTIONS=SAMEORIGIN`
+2. **Specific domain embedding**: Set `X_FRAME_OPTIONS=ALLOW-FROM https://trusted-domain.com`
+3. **Disable frame protection**: Set `X_FRAME_OPTIONS=""` (not recommended)
+
+**Note**: When changing X-Frame-Options, also consider updating the CSP `frame-ancestors` directive for comprehensive browser support.
+
 ## Testing Strategy
 
 Implemented comprehensive test coverage (42 new tests):
