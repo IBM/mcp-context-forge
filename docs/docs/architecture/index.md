@@ -49,6 +49,10 @@ graph TD
 
 > Each service (ToolService, ResourceService, etc.) operates independently with unified auth/session/context layers.
 
+## Additional Architecture Documentation
+
+- [Export/Import System Architecture](export-import-architecture.md) - Technical design of configuration management system
+
 ## ADRs and Design Decisions
 
 We maintain a formal set of [Architecture Decision Records](adr/index.md) documenting all major design tradeoffs and rationale.

@@ -66,7 +66,11 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.import_service import ConflictStrategy
+from mcpgateway.services.import_service import ImportError as ImportServiceError
+from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
@@ -112,6 +116,8 @@ prompt_service: PromptService = PromptService()
 gateway_service: GatewayService = GatewayService()
 resource_service: ResourceService = ResourceService()
 root_service: RootService = RootService()
+export_service: ExportService = ExportService()
+import_service: ImportService = ImportService()
 
 # Set up basic authentication
 
@@ -4935,3 +4941,239 @@ async def admin_export_logs(
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
+
+
+# Configuration Export/Import Endpoints
+@admin_router.get("/export/configuration")
+async def admin_export_configuration(
+    types: Optional[str] = None,
+    exclude_types: Optional[str] = None,
+    tags: Optional[str] = None,
+    include_inactive: bool = False,
+    include_dependencies: bool = True,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+):
+    """
+    Export gateway configuration via Admin UI.
+
+    Args:
+        types: Comma-separated entity types to include
+        exclude_types: Comma-separated entity types to exclude
+        tags: Comma-separated tags to filter by
+        include_inactive: Include inactive entities
+        include_dependencies: Include dependent entities
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        JSON file download with configuration export
+
+    Raises:
+        HTTPException: If export fails
+    """
+    try:
+        LOGGER.info(f"Admin user {user} requested configuration export")
+
+        # Parse parameters
+        include_types = None
+        if types:
+            include_types = [t.strip() for t in types.split(",") if t.strip()]
+
+        exclude_types_list = None
+        if exclude_types:
+            exclude_types_list = [t.strip() for t in exclude_types.split(",") if t.strip()]
+
+        tags_list = None
+        if tags:
+            tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+        # Extract username from user (which could be string or dict with token)
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+
+        # Perform export
+        export_data = await export_service.export_configuration(
+            db=db, include_types=include_types, exclude_types=exclude_types_list, tags=tags_list, include_inactive=include_inactive, include_dependencies=include_dependencies, exported_by=username
+        )
+
+        # Generate filename
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"mcpgateway-config-export-{timestamp}.json"
+
+        # Return as downloadable file
+        content = json.dumps(export_data, indent=2, ensure_ascii=False)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    except ExportError as e:
+        LOGGER.error(f"Admin export failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected admin export error for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@admin_router.post("/export/selective")
+async def admin_export_selective(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+    """
+    Export selected entities via Admin UI with entity selection.
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        JSON file download with selective export data
+
+    Raises:
+        HTTPException: If export fails
+
+    Expects JSON body with entity selections:
+    {
+        "entity_selections": {
+            "tools": ["tool1", "tool2"],
+            "servers": ["server1"]
+        },
+        "include_dependencies": true
+    }
+    """
+    try:
+        LOGGER.info(f"Admin user {user} requested selective configuration export")
+
+        body = await request.json()
+        entity_selections = body.get("entity_selections", {})
+        include_dependencies = body.get("include_dependencies", True)
+
+        # Extract username from user (which could be string or dict with token)
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+
+        # Perform selective export
+        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username)
+
+        # Generate filename
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"mcpgateway-selective-export-{timestamp}.json"
+
+        # Return as downloadable file
+        content = json.dumps(export_data, indent=2, ensure_ascii=False)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    except ExportError as e:
+        LOGGER.error(f"Admin selective export failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected admin selective export error for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@admin_router.post("/import/configuration")
+async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+    """
+    Import configuration via Admin UI.
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        JSON response with import status
+
+    Raises:
+        HTTPException: If import fails
+
+    Expects JSON body with import data and options:
+    {
+        "import_data": { ... },
+        "conflict_strategy": "update",
+        "dry_run": false,
+        "rekey_secret": "optional-new-secret",
+        "selected_entities": { ... }
+    }
+    """
+    try:
+        LOGGER.info(f"Admin user {user} requested configuration import")
+
+        body = await request.json()
+        import_data = body.get("import_data")
+        if not import_data:
+            raise HTTPException(status_code=400, detail="Missing import_data in request body")
+
+        conflict_strategy_str = body.get("conflict_strategy", "update")
+        dry_run = body.get("dry_run", False)
+        rekey_secret = body.get("rekey_secret")
+        selected_entities = body.get("selected_entities")
+
+        # Validate conflict strategy
+        try:
+            conflict_strategy = ConflictStrategy(conflict_strategy_str.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {[s.value for s in ConflictStrategy]}")
+
+        # Extract username from user (which could be string or dict with token)
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+
+        # Perform import
+        status = await import_service.import_configuration(
+            db=db, import_data=import_data, conflict_strategy=conflict_strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username, selected_entities=selected_entities
+        )
+
+        return JSONResponse(content=status.to_dict())
+
+    except ImportServiceError as e:
+        LOGGER.error(f"Admin import failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected admin import error for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
+
+@admin_router.get("/import/status/{import_id}")
+async def admin_get_import_status(import_id: str, user: str = Depends(require_auth)):
+    """Get import status via Admin UI.
+
+    Args:
+        import_id: Import operation ID
+        user: Authenticated user
+
+    Returns:
+        JSON response with import status
+
+    Raises:
+        HTTPException: If import not found
+    """
+    LOGGER.debug(f"Admin user {user} requested import status for {import_id}")
+
+    status = import_service.get_import_status(import_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Import {import_id} not found")
+
+    return JSONResponse(content=status.to_dict())
+
+
+@admin_router.get("/import/status")
+async def admin_list_import_statuses(user: str = Depends(require_auth)):
+    """List all import statuses via Admin UI.
+
+    Args:
+        user: Authenticated user
+
+    Returns:
+        JSON response with list of import statuses
+    """
+    LOGGER.debug(f"Admin user {user} requested all import statuses")
+
+    statuses = import_service.list_import_statuses()
+    return JSONResponse(content=[status.to_dict() for status in statuses])

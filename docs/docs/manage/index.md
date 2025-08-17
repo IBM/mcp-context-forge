@@ -11,6 +11,9 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 | Page | Description |
 |------|-------------|
 | [Backups](backup.md) | How to persist and restore your database, configs, and resource state |
+| [Export & Import](export-import.md) | Complete configuration management with CLI, API, and Admin UI |
+| [Export/Import Tutorial](export-import-tutorial.md) | Step-by-step tutorial for getting started with export/import |
+| [Export/Import Reference](export-import-reference.md) | Quick reference guide for export/import commands and APIs |
 | [Bulk Import](bulk-import.md) | Import multiple tools at once for migrations and team onboarding |
 | [Logging](logging.md) | Configure structured logging, log destinations, and log rotation |
 
