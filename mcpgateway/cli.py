@@ -130,10 +130,21 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
     Processes command line arguments, handles version requests, and forwards
     all other arguments to Uvicorn with sensible defaults injected.
 
+    Also supports export/import subcommands for configuration management.
+
     Environment Variables:
         MCG_HOST: Default host (default: "127.0.0.1")
         MCG_PORT: Default port (default: "4444")
     """
+
+    # Check for export/import commands first
+    if len(sys.argv) > 1 and sys.argv[1] in ["export", "import"]:
+        # Avoid cyclic import by importing only when needed
+        # First-Party
+        from mcpgateway.cli_export_import import main_with_subcommands  # pylint: disable=import-outside-toplevel,cyclic-import
+
+        main_with_subcommands()
+        return
 
     # Check for version flag
     if "--version" in sys.argv or "-V" in sys.argv:
