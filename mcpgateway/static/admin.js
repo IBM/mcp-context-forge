@@ -5939,13 +5939,17 @@ document.addEventListener("DOMContentLoaded", () => {
         // 4. Handle initial tab/state
         initializeTabState();
 
-        // 5. Setup bulk import modal
-        // Temporarily commented out for debugging
-        // try {
-        //     setupBulkImportModal();
-        // } catch (error) {
-        //     console.error("Error setting up bulk import modal:", error);
-        // }
+        // 5. Set up form validation
+        setupFormValidation();
+
+        // 6. Setup bulk import modal (after everything else)
+        setTimeout(() => {
+            try {
+                setupBulkImportModal();
+            } catch (error) {
+                console.error("Error setting up bulk import modal:", error);
+            }
+        }, 100);
 
         // // ✅ 4.1 Set up tab button click handlers
         // document.querySelectorAll('.tab-button').forEach(button => {
@@ -5959,9 +5963,6 @@ document.addEventListener("DOMContentLoaded", () => {
         //         document.getElementById(tabId).classList.remove('hidden');
         //     });
         // });
-
-        // 5. Set up form validation
-        setupFormValidation();
 
         // Mark as initialized
         AppState.isInitialized = true;
