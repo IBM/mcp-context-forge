@@ -1093,49 +1093,6 @@
           >
             + Bulk Import Tools
           </button>
-          <!-- Right before </body> tag -->
-<script>
-// Super simple version - no dependencies
-window.addEventListener('load', function() {
-  console.log('Setting up bulk import...');
-
-  const button = document.getElementById('open-bulk-import');
-  const modal = document.getElementById('bulk-import-modal');
-
-  console.log('Button found:', !!button);
-  console.log('Modal found:', !!modal);
-
-  if (button && modal) {
-    button.onclick = function(e) {
-      e.preventDefault();
-      console.log('Button clicked!');
-      modal.style.display = 'block';
-      modal.classList.remove('hidden');
-      return false;
-    };
-
-    // Close button
-    const closeBtn = document.getElementById('close-bulk-import');
-    if (closeBtn) {
-      closeBtn.onclick = function() {
-        modal.style.display = 'none';
-        modal.classList.add('hidden');
-      };
-    }
-
-    // Click backdrop to close
-    const backdrop = document.getElementById('bulk-import-backdrop');
-    if (backdrop) {
-      backdrop.onclick = function() {
-        modal.style.display = 'none';
-        modal.classList.add('hidden');
-      };
-    }
-  } else {
-    console.error('Missing elements!', {button: !!button, modal: !!modal});
-  }
-});
-</script>
 
           </div>
 
