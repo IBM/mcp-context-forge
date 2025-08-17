@@ -15,5 +15,6 @@ This page tracks all significant design decisions made for the MCP Gateway proje
 | 0009  | Built-in Health Checks & Self-Monitoring           | Accepted  | Operations     | 2025-02-21  |
 | 0010  | Observability via Prometheus, Structured Logs      | Accepted  | Observability  | 2025-02-21  |
 | 0014  | Security Headers & Environment-Aware CORS Middleware | Accepted  | Security       | 2025-08-17  |
+| 0015  | Configurable Well-Known URI Handler               | Accepted  | Security       | 2025-08-17  |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

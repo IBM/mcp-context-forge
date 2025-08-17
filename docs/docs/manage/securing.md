@@ -121,7 +121,30 @@ MCP Gateway should be integrated with:
 - [ ] SIEM for security monitoring
 - [ ] Load balancer with TLS termination
 
-### 10. Downstream Application Security
+### 10. Well-Known URI Security
+
+Configure well-known URIs appropriately for your deployment:
+
+```bash
+# For private APIs (default) - blocks all crawlers
+WELL_KNOWN_ENABLED=true
+WELL_KNOWN_ROBOTS_TXT="User-agent: *\nDisallow: /"
+
+# For public APIs - allow health checks, block sensitive endpoints
+# WELL_KNOWN_ROBOTS_TXT="User-agent: *\nAllow: /health\nAllow: /docs\nDisallow: /admin\nDisallow: /tools"
+
+# Security contact information (RFC 9116)
+WELL_KNOWN_SECURITY_TXT="Contact: mailto:security@example.com\nExpires: 2025-12-31T23:59:59Z\nPreferred-Languages: en"
+```
+
+Security considerations:
+- [ ] Configure security.txt with current contact information
+- [ ] Review robots.txt to prevent unauthorized crawler access
+- [ ] Monitor well-known endpoint access in logs
+- [ ] Update security.txt Expires field before expiration
+- [ ] Consider custom well-known files only if necessary
+
+### 11. Downstream Application Security
 
 Applications consuming MCP Gateway data must:
 
