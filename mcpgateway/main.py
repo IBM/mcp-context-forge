@@ -63,6 +63,7 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins import PluginManager, PluginViolationError
+from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     GatewayCreate,
     GatewayRead,
@@ -3008,6 +3009,7 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+app.include_router(well_known_router)
 
 # Include reverse proxy router if enabled
 try:

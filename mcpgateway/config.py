@@ -398,6 +398,34 @@ class Settings(BaseSettings):
     otel_bsp_max_export_batch_size: int = Field(default=512, description="Max export batch size")
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
 
+    # ===================================
+    # Well-Known URI Configuration
+    # ===================================
+
+    # Enable well-known URI endpoints
+    well_known_enabled: bool = True
+
+    # robots.txt content (default: disallow all crawling for private API)
+    well_known_robots_txt: str = """User-agent: *
+Disallow: /
+
+# MCP Gateway is a private API gateway
+# Public crawling is disabled by default"""
+
+    # security.txt content (optional, user-defined)
+    # Example: "Contact: security@example.com\nExpires: 2025-12-31T23:59:59Z\nPreferred-Languages: en"
+    well_known_security_txt: str = ""
+
+    # Enable security.txt only if content is provided
+    well_known_security_txt_enabled: bool = False
+
+    # Additional custom well-known files (JSON format)
+    # Example: {"ai.txt": "This service uses AI for...", "dnt-policy.txt": "Do Not Track policy..."}
+    well_known_custom_files: str = "{}"
+
+    # Cache control for well-known files (seconds)
+    well_known_cache_max_age: int = 3600  # 1 hour default
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
@@ -432,6 +460,35 @@ class Settings(BaseSettings):
                 stacklevel=2,
             )
             return "-"
+        return v
+
+    @property
+    def custom_well_known_files(self) -> Dict[str, str]:
+        """Parse custom well-known files from JSON string.
+
+        Returns:
+            Dict[str, str]: Parsed custom well-known files mapping filename to content.
+        """
+        try:
+            return json.loads(self.well_known_custom_files) if self.well_known_custom_files else {}
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON in WELL_KNOWN_CUSTOM_FILES: {self.well_known_custom_files}")
+            return {}
+
+    @field_validator("well_known_security_txt_enabled", mode="after")
+    @classmethod
+    def _auto_enable_security_txt(cls, v, info):
+        """Auto-enable security.txt if content is provided.
+
+        Args:
+            v: The current value of well_known_security_txt_enabled.
+            info: ValidationInfo containing field data.
+
+        Returns:
+            bool: True if security.txt content is provided, otherwise the original value.
+        """
+        if info.data and "well_known_security_txt" in info.data:
+            return bool(info.data["well_known_security_txt"].strip())
         return v
 
     @property

@@ -337,13 +337,7 @@ class ImportService:
             status.status = "completed"
             status.completed_at = datetime.now(timezone.utc)
 
-            logger.info(
-                f"Import {import_id} completed: "
-                f"created={status.created_entities}, "
-                f"updated={status.updated_entities}, "
-                f"skipped={status.skipped_entities}, "
-                f"failed={status.failed_entities}"
-            )
+            logger.info(f"Import {import_id} completed: created={status.created_entities}, updated={status.updated_entities}, skipped={status.skipped_entities}, failed={status.failed_entities}")
 
             return status
 
