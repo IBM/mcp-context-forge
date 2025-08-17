@@ -1086,7 +1086,7 @@
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-bold dark:text-gray-200">Add New Tool</h3>
-          <button 
+          <button
             id="open-bulk-import"
             type="button"
             class="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700"
@@ -1098,13 +1098,13 @@
 // Super simple version - no dependencies
 window.addEventListener('load', function() {
   console.log('Setting up bulk import...');
-  
+
   const button = document.getElementById('open-bulk-import');
   const modal = document.getElementById('bulk-import-modal');
-  
+
   console.log('Button found:', !!button);
   console.log('Modal found:', !!modal);
-  
+
   if (button && modal) {
     button.onclick = function(e) {
       e.preventDefault();
@@ -1113,7 +1113,7 @@ window.addEventListener('load', function() {
       modal.classList.remove('hidden');
       return false;
     };
-    
+
     // Close button
     const closeBtn = document.getElementById('close-bulk-import');
     if (closeBtn) {
@@ -1122,7 +1122,7 @@ window.addEventListener('load', function() {
         modal.classList.add('hidden');
       };
     }
-    
+
     // Click backdrop to close
     const backdrop = document.getElementById('bulk-import-backdrop');
     if (backdrop) {
@@ -1390,7 +1390,7 @@ window.addEventListener('load', function() {
               <textarea id="tools_json" name="tools_json" rows="8"
                 class="mt-1 block w-full rounded-md border border-gray-300 font-mono text-sm shadow-sm
                       focus:border-indigo-500 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-                placeholder='[{"name":"tool_name","url":"https://...","integration_type":"REST","request_type":"GET"}]'></textarea>
+                placeholder="[{&quot;name&quot;:&quot;tool_name&quot;,&quot;url&quot;:&quot;https://...&quot;,&quot;integration_type&quot;:&quot;REST&quot;,&quot;request_type&quot;:&quot;GET&quot;}]"></textarea>
 
               <div>
                 <label class="block text-sm font-medium dark:text-gray-300" for="tools_file">Or upload JSON file</label>
@@ -1419,7 +1419,7 @@ window.addEventListener('load', function() {
           </div>
         </div>
 
-      
+
       <!-- Resources Panel -->
       <div id="resources-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4513,6 +4513,6 @@ window.addEventListener('load', function() {
         }
       });
     </script>
-
+    </div>
   </body>
 </html>
