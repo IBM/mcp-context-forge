@@ -1568,6 +1568,7 @@ async def admin_ui(
             "root_path": root_path,
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
         },
     )
 
@@ -4375,7 +4376,7 @@ async def admin_list_tags(
 
 @admin_router.post("/tools/import/")
 @admin_router.post("/tools/import")
-@rate_limit(requests_per_minute=10)
+@rate_limit(requests_per_minute=settings.mcpgateway_bulk_import_rate_limit)
 async def admin_import_tools(
     request: Request,
     db: Session = Depends(get_db),
@@ -4444,7 +4445,7 @@ async def admin_import_tools(
         if not isinstance(payload, list):
             return JSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
 
-        max_batch = 200
+        max_batch = settings.mcpgateway_bulk_import_max_tools
         if len(payload) > max_batch:
             return JSONResponse({"success": False, "message": f"Too many tools ({len(payload)}). Max {max_batch}."}, status_code=413)
 

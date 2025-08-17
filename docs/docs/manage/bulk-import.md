@@ -2,9 +2,12 @@
 
 The MCP Gateway provides a bulk import endpoint for efficiently loading multiple tools in a single request, perfect for migrations, environment setup, and team onboarding.
 
-!!! info "Feature Flag Required"
-    This feature is controlled by the `MCPGATEWAY_BULK_IMPORT_ENABLED` environment variable.
-    Default: `true` (enabled). Set to `false` to disable this endpoint.
+!!! info "Configuration Options"
+    This feature is controlled by several environment variables:
+    
+    - `MCPGATEWAY_BULK_IMPORT_ENABLED=true` - Enable/disable the endpoint (default: true)
+    - `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS=200` - Maximum tools per batch (default: 200)
+    - `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT=10` - Requests per minute limit (default: 10)
 
 ---
 
