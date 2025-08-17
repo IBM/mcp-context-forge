@@ -5942,14 +5942,12 @@ document.addEventListener("DOMContentLoaded", () => {
         // 5. Set up form validation
         setupFormValidation();
 
-        // 6. Setup bulk import modal (after everything else)
-        setTimeout(() => {
-            try {
-                setupBulkImportModal();
-            } catch (error) {
-                console.error("Error setting up bulk import modal:", error);
-            }
-        }, 100);
+        // 6. Setup bulk import modal
+        try {
+            setupBulkImportModal();
+        } catch (error) {
+            console.error("Error setting up bulk import modal:", error);
+        }
 
         // // ✅ 4.1 Set up tab button click handlers
         // document.querySelectorAll('.tab-button').forEach(button => {
