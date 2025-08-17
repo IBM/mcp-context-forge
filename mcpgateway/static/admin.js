@@ -5940,7 +5940,12 @@ document.addEventListener("DOMContentLoaded", () => {
         initializeTabState();
 
         // 5. Setup bulk import modal
-        setupBulkImportModal();
+        // Temporarily commented out for debugging
+        // try {
+        //     setupBulkImportModal();
+        // } catch (error) {
+        //     console.error("Error setting up bulk import modal:", error);
+        // }
 
         // // ✅ 4.1 Set up tab button click handlers
         // document.querySelectorAll('.tab-button').forEach(button => {
@@ -6936,9 +6941,9 @@ function setupBulkImportModal() {
     const resultEl = safeGetElement("import-result", true);
 
     const focusTarget =
-        modal.querySelector("#tools_json") ||
-        modal.querySelector("#tools_file") ||
-        modal.querySelector("[data-autofocus]");
+        modal?.querySelector("#tools_json") ||
+        modal?.querySelector("#tools_file") ||
+        modal?.querySelector("[data-autofocus]");
 
     // helpers
     const open = (e) => {
@@ -7006,8 +7011,8 @@ function setupBulkImportModal() {
                 const formData = new FormData();
 
                 // Get JSON from textarea or file
-                const jsonTextarea = form.querySelector('[name="tools_json"]');
-                const fileInput = form.querySelector('[name="tools_file"]');
+                const jsonTextarea = form?.querySelector('[name="tools_json"]');
+                const fileInput = form?.querySelector('[name="tools_file"]');
 
                 let hasData = false;
 
