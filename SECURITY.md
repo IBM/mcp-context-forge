@@ -236,7 +236,7 @@ Applications consuming data from MCP Gateway should:
 
 - **Never trust data implicitly** - validate all inputs
 - **Implement context-appropriate sanitization** for their UI framework
-- **Use Content Security Policy (CSP)** headers
+- **Use Content Security Policy (CSP)** headers (automatically provided by MCP Gateway)
 - **Escape data appropriately** for the output context (HTML, JavaScript, SQL, etc.)
 - **Implement their own authentication** and authorization
 - **Monitor for security anomalies** in rendered content
@@ -261,7 +261,9 @@ When deploying MCP Gateway in production:
 - [ ] Configure resource limits (CPU, memory) to prevent DoS attacks
 - [ ] Implement proper secrets management (never hardcode credentials)
 - [ ] Set up structured logging without exposing sensitive data
-- [ ] Configure CORS policies appropriately for your clients
+- [ ] Configure CORS policies appropriately for your clients (auto-configured by ENVIRONMENT setting)
+- [ ] Verify security headers are working (automatically added by SecurityHeadersMiddleware)
+- [ ] Configure iframe embedding policy (X-Frame-Options: DENY by default, set to SAMEORIGIN if embedding needed)
 - [ ] Disable debug mode and verbose error messages in production
 - [ ] Implement backup and disaster recovery procedures
 - [ ] Document incident response procedures

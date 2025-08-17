@@ -149,9 +149,28 @@ mcpContextForge:
     PROTOCOL_VERSION: 2025-03-26
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI
     MCPGATEWAY_ADMIN_API_ENABLED: "true" # toggle Admin API endpoints
+    # ─ Security & CORS ─
+    ENVIRONMENT: development         # deployment environment (development/production)
+    APP_DOMAIN: localhost            # domain for production CORS origins
     CORS_ENABLED: "true"             # enable CORS processing in gateway
+    CORS_ALLOW_CREDENTIALS: "true"   # allow credentials in CORS requests
     ALLOWED_ORIGINS: '["http://localhost","http://localhost:4444"]' # JSON list of allowed origins
     SKIP_SSL_VERIFY: "false"         # skip TLS certificate verification on upstream calls
+
+    # ─ Security Headers ─
+    SECURITY_HEADERS_ENABLED: "true" # enable security headers middleware
+    X_FRAME_OPTIONS: DENY            # X-Frame-Options header value
+    X_CONTENT_TYPE_OPTIONS_ENABLED: "true" # enable X-Content-Type-Options
+    X_XSS_PROTECTION_ENABLED: "true" # enable X-XSS-Protection
+    X_DOWNLOAD_OPTIONS_ENABLED: "true" # enable X-Download-Options
+    HSTS_ENABLED: "true"             # enable HSTS header
+    HSTS_MAX_AGE: "31536000"         # HSTS max age in seconds (1 year)
+    HSTS_INCLUDE_SUBDOMAINS: "true"  # include subdomains in HSTS
+    REMOVE_SERVER_HEADERS: "true"    # remove server identification headers
+
+    # ─ Cookie Security ─
+    SECURE_COOKIES: "true"           # force secure cookie flags
+    COOKIE_SAMESITE: lax             # cookie SameSite attribute
 
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL

@@ -300,7 +300,7 @@
     - [**#538**](https://github.com/IBM/mcp-context-forge/issues/538) - [SECURITY FEATURE] Content Size & Type Security Limits for Resources & Prompts
     - [**#537**](https://github.com/IBM/mcp-context-forge/issues/537) - Simple Endpoint Feature Flags (selectively enable or disable tools, resources, prompts, servers, gateways, roots)
     - [**#534**](https://github.com/IBM/mcp-context-forge/issues/534) - Add Security Configuration Validation and Startup Checks
-    - [**#533**](https://github.com/IBM/mcp-context-forge/issues/533) - Add Additional Configurable Security Headers to APIs for Admin UI
+    - ✅ [**#533**](https://github.com/IBM/mcp-context-forge/issues/533) - Add Additional Configurable Security Headers to APIs for Admin UI
     - [**#342**](https://github.com/IBM/mcp-context-forge/issues/342) - Implement database-level security constraints and SQL injection prevention
     - [**#284**](https://github.com/IBM/mcp-context-forge/issues/284) - LDAP / Active-Directory Integration
     - [**#282**](https://github.com/IBM/mcp-context-forge/issues/282) - Per-Virtual-Server API Keys with Scoped Access
@@ -369,7 +369,7 @@
     - [**#398**](https://github.com/IBM/mcp-context-forge/issues/398) - Enforce pre-commit targets for doctest coverage, pytest coverage, pylint score 10/10, flake8 pass and add badges
     - [**#391**](https://github.com/IBM/mcp-context-forge/issues/391) - Setup SonarQube quality gate (draft)
     - [**#377**](https://github.com/IBM/mcp-context-forge/issues/377) - Fix PostgreSQL Volume Name Conflicts in Helm Chart (draft)
-    - [**#344**](https://github.com/IBM/mcp-context-forge/issues/344) - Implement additional security headers and CORS configuration
+    - ✅ [**#344**](https://github.com/IBM/mcp-context-forge/issues/344) - Implement additional security headers and CORS configuration
     - [**#318**](https://github.com/IBM/mcp-context-forge/issues/318) - Publish Agents and Tools that leverage codebase and templates (draft)
     - [**#312**](https://github.com/IBM/mcp-context-forge/issues/312) - End-to-End MCP Gateway Stack Testing Harness (mcpgateway, translate, wrapper, mcp-servers)
     - [**#281**](https://github.com/IBM/mcp-context-forge/issues/281) - Set up contract testing with Pact (pact-python) including Makefile and GitHub Actions targets
