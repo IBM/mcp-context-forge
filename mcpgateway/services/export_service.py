@@ -21,10 +21,13 @@ import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
@@ -204,12 +207,21 @@ class ExportService:
                 "updated_at": tool.updated_at.isoformat() if tool.updated_at else None,
             }
 
-            # Handle authentication data securely
+            # Handle authentication data securely - get raw encrypted values
             if hasattr(tool, "auth") and tool.auth:
                 auth_data = tool.auth
                 if hasattr(auth_data, "auth_type") and hasattr(auth_data, "auth_value"):
-                    tool_data["auth_type"] = auth_data.auth_type
-                    tool_data["auth_value"] = auth_data.auth_value  # Already encrypted
+                    # Check if auth_value is masked, if so get raw value from DB
+                    if auth_data.auth_value == settings.masked_auth_value:
+                        # Get the raw encrypted auth_value from database
+                        db_tool = db.execute(select(DbTool).where(DbTool.id == tool.id)).scalar_one_or_none()
+                        if db_tool and db_tool.auth_value:
+                            tool_data["auth_type"] = auth_data.auth_type
+                            tool_data["auth_value"] = db_tool.auth_value  # Raw encrypted value
+                    else:
+                        # Auth value is not masked, use as-is
+                        tool_data["auth_type"] = auth_data.auth_type
+                        tool_data["auth_value"] = auth_data.auth_value  # Already encrypted
 
             exported_tools.append(tool_data)
 
@@ -247,10 +259,19 @@ class ExportService:
                 "passthrough_headers": gateway.passthrough_headers or [],
             }
 
-            # Handle authentication data securely
+            # Handle authentication data securely - get raw encrypted values
             if gateway.auth_type and gateway.auth_value:
-                gateway_data["auth_type"] = gateway.auth_type
-                gateway_data["auth_value"] = gateway.auth_value  # Already encrypted
+                # Check if auth_value is masked, if so get raw value from DB
+                if gateway.auth_value == settings.masked_auth_value:
+                    # Get the raw encrypted auth_value from database
+                    db_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway.id)).scalar_one_or_none()
+                    if db_gateway and db_gateway.auth_value:
+                        gateway_data["auth_type"] = gateway.auth_type
+                        gateway_data["auth_value"] = db_gateway.auth_value  # Raw encrypted value
+                else:
+                    # Auth value is not masked, use as-is
+                    gateway_data["auth_type"] = gateway.auth_type
+                    gateway_data["auth_value"] = gateway.auth_value  # Already encrypted
 
             exported_gateways.append(gateway_data)
 
