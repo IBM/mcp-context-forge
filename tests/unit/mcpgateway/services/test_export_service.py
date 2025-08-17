@@ -347,3 +347,183 @@ async def test_extract_dependencies(export_service, mock_db):
     assert "servers_to_tools" in dependencies
     assert dependencies["servers_to_tools"]["server1"] == ["tool1", "tool2"]
     assert dependencies["servers_to_tools"]["server2"] == ["tool3"]
+
+
+@pytest.mark.asyncio
+async def test_export_with_masked_auth_data(export_service, mock_db):
+    """Test export handling of masked authentication data."""
+    from mcpgateway.schemas import ToolRead, ToolMetrics, AuthenticationValues
+    from mcpgateway.config import settings
+
+    # Create tool with masked auth data
+    tool_with_masked_auth = ToolRead(
+        id="tool1",
+        original_name="test_tool",
+        name="test_tool",
+        url="https://api.example.com/tool",
+        description="Test tool",
+        integration_type="REST",
+        request_type="GET",
+        headers={},
+        input_schema={"type": "object", "properties": {}},
+        annotations={},
+        jsonpath_filter="",
+        auth=AuthenticationValues(
+            auth_type="bearer",
+            auth_value=settings.masked_auth_value  # Masked value
+        ),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        gateway_id=None,
+        execution_count=0,
+        metrics=ToolMetrics(
+            total_executions=0,
+            successful_executions=0,
+            failed_executions=0,
+            failure_rate=0.0,
+            min_response_time=None,
+            max_response_time=None,
+            avg_response_time=None,
+            last_execution_time=None
+        ),
+        gateway_slug="",
+        original_name_slug="test_tool",
+        tags=[]
+    )
+
+    # Mock service and database
+    export_service.tool_service.list_tools.return_value = [tool_with_masked_auth]
+
+    # Mock database query to return raw auth value
+    mock_db_tool = MagicMock()
+    mock_db_tool.auth_value = "encrypted_raw_auth_value"
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_tool
+
+    # Execute export
+    tools = await export_service._export_tools(mock_db, None, False)
+
+    # Should get raw auth value from database
+    assert len(tools) == 1
+    assert tools[0]["auth_type"] == "bearer"
+    assert tools[0]["auth_value"] == "encrypted_raw_auth_value"
+
+
+@pytest.mark.asyncio
+async def test_export_service_initialization(export_service):
+    """Test export service initialization and shutdown."""
+    # Test initialization
+    await export_service.initialize()
+
+    # Test shutdown
+    await export_service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_export_empty_entities(export_service, mock_db):
+    """Test export with empty entity lists."""
+    # Setup mocks to return empty lists
+    export_service.tool_service.list_tools.return_value = []
+    export_service.gateway_service.list_gateways.return_value = []
+    export_service.server_service.list_servers.return_value = []
+    export_service.prompt_service.list_prompts.return_value = []
+    export_service.resource_service.list_resources.return_value = []
+    export_service.root_service.list_roots.return_value = []
+
+    result = await export_service.export_configuration(
+        db=mock_db,
+        exported_by="test_user"
+    )
+
+    # All entity counts should be zero
+    entity_counts = result["metadata"]["entity_counts"]
+    for entity_type, count in entity_counts.items():
+        assert count == 0
+
+    # Should still have proper structure
+    assert "version" in result
+    assert "entities" in result
+    assert "metadata" in result
+
+
+@pytest.mark.asyncio
+async def test_export_with_exclude_types(export_service, mock_db):
+    """Test export with excluded entity types."""
+    # Setup mocks
+    export_service.tool_service.list_tools.return_value = []
+    export_service.gateway_service.list_gateways.return_value = []
+    export_service.server_service.list_servers.return_value = []
+    export_service.prompt_service.list_prompts.return_value = []
+    export_service.resource_service.list_resources.return_value = []
+    export_service.root_service.list_roots.return_value = []
+
+    result = await export_service.export_configuration(
+        db=mock_db,
+        exclude_types=["servers", "prompts"],
+        exported_by="test_user"
+    )
+
+    # Excluded types should not be in entities
+    entities = result["entities"]
+    assert "servers" not in entities
+    assert "prompts" not in entities
+
+    # Included types should be present
+    assert "tools" in entities
+    assert "gateways" in entities
+    assert "resources" in entities
+    assert "roots" in entities
+
+
+@pytest.mark.asyncio
+async def test_export_roots_functionality(export_service):
+    """Test root export functionality."""
+    from mcpgateway.models import Root
+
+    # Mock root service
+    mock_roots = [
+        Root(uri="file:///workspace", name="Workspace"),
+        Root(uri="file:///tmp", name="Temp"),
+        Root(uri="http://example.com/api", name="API")
+    ]
+    export_service.root_service.list_roots.return_value = mock_roots
+
+    # Execute export
+    roots = await export_service._export_roots()
+
+    # Verify structure
+    assert len(roots) == 3
+    assert roots[0]["uri"] == "file:///workspace"
+    assert roots[0]["name"] == "Workspace"
+    assert roots[1]["uri"] == "file:///tmp"
+    assert roots[1]["name"] == "Temp"
+    assert roots[2]["uri"] == "http://example.com/api"
+    assert roots[2]["name"] == "API"
+
+
+@pytest.mark.asyncio
+async def test_export_with_include_inactive(export_service, mock_db):
+    """Test export with include_inactive flag."""
+    # Setup mocks
+    export_service.tool_service.list_tools.return_value = []
+    export_service.gateway_service.list_gateways.return_value = []
+    export_service.server_service.list_servers.return_value = []
+    export_service.prompt_service.list_prompts.return_value = []
+    export_service.resource_service.list_resources.return_value = []
+    export_service.root_service.list_roots.return_value = []
+
+    result = await export_service.export_configuration(
+        db=mock_db,
+        include_inactive=True,
+        exported_by="test_user"
+    )
+
+    # Verify include_inactive flag is recorded
+    export_options = result["metadata"]["export_options"]
+    assert export_options["include_inactive"] == True
+
+    # Verify service calls included the flag
+    export_service.tool_service.list_tools.assert_called_with(
+        mock_db, tags=None, include_inactive=True
+    )
