@@ -58,6 +58,11 @@ recursive-include mcpgateway *.ico
 recursive-include alembic *.mako
 recursive-include alembic *.md
 recursive-include alembic *.py
+
+# 🔄 Export/Import functionality (explicitly include new files)
+include mcpgateway/cli_export_import.py
+include mcpgateway/services/export_service.py
+include mcpgateway/services/import_service.py
 # recursive-include deployment *
 # recursive-include mcp-servers *
 recursive-include plugins *.py

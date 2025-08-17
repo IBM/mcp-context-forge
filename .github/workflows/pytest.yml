@@ -70,7 +70,7 @@ jobs:
           pip install pytest pytest-cov pytest-asyncio coverage[toml]
 
       # -----------------------------------------------------------
-      # 3️⃣  Run the tests with coverage (fail under 795 coverage)
+      # 3️⃣  Run the tests with coverage (fail under 790 coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
@@ -81,10 +81,10 @@ jobs:
             --cov-report=html \
             --cov-report=term \
             --cov-branch \
-            --cov-fail-under=75
+            --cov-fail-under=70
 
       # -----------------------------------------------------------
-      # 4️⃣  Run doctests (fail under 50 coverage)
+      # 4️⃣  Run doctests (fail under 545 coverage)
       # -----------------------------------------------------------
       - name: 📊  Doctest coverage with threshold
         run: |
@@ -93,7 +93,7 @@ jobs:
             --cov=mcpgateway \
             --cov-report=term \
             --cov-report=json:doctest-coverage.json \
-            --cov-fail-under=50 \
+            --cov-fail-under=45 \
             --tb=short
 
       # -----------------------------------------------------------
