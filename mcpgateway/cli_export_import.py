@@ -81,7 +81,7 @@ async def make_authenticated_request(method: str, url: str, json_data: Optional[
     """
     token = await get_auth_token()
     if not token:
-        raise AuthenticationError("No authentication configured. Set MCPGATEWAY_BEARER_TOKEN environment variable " "or configure BASIC_AUTH_USER/BASIC_AUTH_PASSWORD.")
+        raise AuthenticationError("No authentication configured. Set MCPGATEWAY_BEARER_TOKEN environment variable or configure BASIC_AUTH_USER/BASIC_AUTH_PASSWORD.")
 
     headers = {"Content-Type": "application/json"}
     if token.startswith("Basic "):
