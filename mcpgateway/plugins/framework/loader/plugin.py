@@ -97,6 +97,14 @@ class PluginLoader(object):
         return None
 
     async def shutdown(self) -> None:
-        """Shutdown and cleanup plugin loader."""
+        """Shutdown and cleanup plugin loader.
+
+        Examples:
+           >>> import asyncio
+           >>> loader = PluginLoader()
+           >>> asyncio.run(loader.shutdown())
+           >>> loader._plugin_types
+           {}
+        """
         if self._plugin_types:
             self._plugin_types.clear()

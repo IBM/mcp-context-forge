@@ -679,7 +679,8 @@ class ToolService:
         context_table = None
         request_id = uuid.uuid4().hex
         # Use gateway_id if available, otherwise use a generic server identifier
-        server_id = getattr(tool, "gateway_id", None) or "unknown"
+        gateway_id = getattr(tool, "gateway_id", "unknown")
+        server_id = gateway_id if isinstance(gateway_id, str) else "unknown"
         global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None)
 
         if self._plugin_manager:
