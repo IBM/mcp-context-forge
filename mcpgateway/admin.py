@@ -1987,6 +1987,143 @@ async def admin_add_tool(
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
+@admin_router.post("/tools/import/")
+@admin_router.post("/tools/import")
+@rate_limit(requests_per_minute=10)
+async def admin_import_tools(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> JSONResponse:
+    """
+    Bulk import multiple tools from JSON.
+
+    Accepts either form data with:
+    - tools_file: Uploaded JSON file containing array of tool objects
+    - tools/tools_json: JSON string containing array of tool objects
+
+    Returns detailed success/failure information for each tool.
+
+    Args:
+        request: FastAPI request containing form data
+        db: Database session dependency
+        user: Authenticated user dependency
+
+    Returns:
+        JSONResponse with success status, counts, and details of created/failed tools
+
+    Raises:
+        HTTPException: For authentication or rate limiting failures
+    """
+    # Check if bulk import is enabled
+    if not settings.mcpgateway_bulk_import_enabled:
+        LOGGER.warning("Bulk import attempted but feature is disabled")
+        raise HTTPException(status_code=403, detail="Bulk import feature is disabled. Enable MCPGATEWAY_BULK_IMPORT_ENABLED to use this endpoint.")
+
+    LOGGER.debug("bulk tool import: user=%s", user)
+    try:
+        # ---------- robust payload parsing ----------
+        ctype = (request.headers.get("content-type") or "").lower()
+        if "application/json" in ctype:
+            try:
+                payload = await request.json()
+            except Exception as ex:
+                LOGGER.exception("Invalid JSON body")
+                return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+        else:
+            try:
+                form = await request.form()
+            except Exception as ex:
+                LOGGER.exception("Invalid form body")
+                return JSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
+
+            # Check for file upload first
+            if "tools_file" in form:
+                file = form["tools_file"]
+                if hasattr(file, "file"):
+                    content = await file.read()
+                    try:
+                        payload = json.loads(content.decode("utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError) as ex:
+                        LOGGER.exception("Invalid JSON file")
+                        return JSONResponse({"success": False, "message": f"Invalid JSON file: {ex}"}, status_code=422)
+                else:
+                    return JSONResponse({"success": False, "message": "Invalid file upload"}, status_code=422)
+            else:
+                # Check for JSON in form fields
+                raw = form.get("tools") or form.get("tools_json") or form.get("json") or form.get("payload")
+                if not raw:
+                    return JSONResponse({"success": False, "message": "Missing tools/tools_json/json/payload form field."}, status_code=422)
+                try:
+                    payload = json.loads(raw)
+                except Exception as ex:
+                    LOGGER.exception("Invalid JSON in form field")
+                    return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+
+        if not isinstance(payload, list):
+            return JSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
+
+        max_batch = 200
+        if len(payload) > max_batch:
+            return JSONResponse({"success": False, "message": f"Too many tools ({len(payload)}). Max {max_batch}."}, status_code=413)
+
+        created, errors = [], []
+        for i, tool_data in enumerate(payload):
+            name = tool_data.get("name", f"tool_{i}")
+            try:
+                tool = ToolCreate(**tool_data)
+                await tool_service.register_tool(db, tool)
+                created.append({"index": i, "name": name})
+            except ValidationError as ex:
+                try:
+                    formatted = ErrorFormatter.format_validation_error(ex)
+                except Exception:
+                    formatted = {"message": str(ex)}
+                errors.append({"index": i, "name": name, "error": formatted})
+            except ToolError as ex:
+                errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
+            except Exception as ex:
+                LOGGER.exception("Unexpected error importing tool %r at index %d", name, i)
+                errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
+
+        # Format response to match both frontend and test expectations
+        response_data = {
+            "success": len(errors) == 0,
+            # New format for frontend
+            "imported": len(created),
+            "failed": len(errors),
+            "total": len(payload),
+            # Original format for tests
+            "created_count": len(created),
+            "failed_count": len(errors),
+            "created": created,
+            "errors": errors,
+            # Detailed format for frontend
+            "details": {
+                "success": [item["name"] for item in created if item.get("name")],
+                "failed": [{"name": item["name"], "error": item["error"].get("message", str(item["error"]))} for item in errors],
+            },
+        }
+
+        if len(errors) == 0:
+            response_data["message"] = f"Successfully imported all {len(created)} tools"
+        else:
+            response_data["message"] = f"Imported {len(created)} of {len(payload)} tools. {len(errors)} failed."
+
+        return JSONResponse(
+            response_data,
+            status_code=200,  # Always return 200, success field indicates if all succeeded
+        )
+
+    except HTTPException:
+        # let FastAPI semantics (e.g., auth) pass through
+        raise
+    except Exception as ex:
+        # absolute catch-all: report instead of crashing
+        LOGGER.exception("Fatal error in admin_import_tools")
+        return JSONResponse({"success": False, "message": str(ex)}, status_code=500)
+
+
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
 @admin_router.post("/tools/{tool_id}/edit", response_model=None)
 async def admin_edit_tool(
