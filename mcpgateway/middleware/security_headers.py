@@ -58,8 +58,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # This CSP is designed to work with the Admin UI while providing security
         csp_directives = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com",
-            "style-src 'self' 'unsafe-inline'",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net",
+            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
             "img-src 'self' data: https:",
             "font-src 'self' data:",
             "connect-src 'self' ws: wss: https:",

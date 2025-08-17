@@ -369,7 +369,7 @@
     - [**#398**](https://github.com/IBM/mcp-context-forge/issues/398) - Enforce pre-commit targets for doctest coverage, pytest coverage, pylint score 10/10, flake8 pass and add badges
     - [**#391**](https://github.com/IBM/mcp-context-forge/issues/391) - Setup SonarQube quality gate (draft)
     - [**#377**](https://github.com/IBM/mcp-context-forge/issues/377) - Fix PostgreSQL Volume Name Conflicts in Helm Chart (draft)
-    - [**#344**](https://github.com/IBM/mcp-context-forge/issues/344) - Implement additional security headers and CORS configuration
+    - ✅ [**#344**](https://github.com/IBM/mcp-context-forge/issues/344) - Implement additional security headers and CORS configuration
     - [**#318**](https://github.com/IBM/mcp-context-forge/issues/318) - Publish Agents and Tools that leverage codebase and templates (draft)
     - [**#312**](https://github.com/IBM/mcp-context-forge/issues/312) - End-to-End MCP Gateway Stack Testing Harness (mcpgateway, translate, wrapper, mcp-servers)
     - [**#281**](https://github.com/IBM/mcp-context-forge/issues/281) - Set up contract testing with Pact (pact-python) including Makefile and GitHub Actions targets
