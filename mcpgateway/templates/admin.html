@@ -11,12 +11,18 @@
     <title>MCP Gateway Admin</title>
 
     <!-- Security meta tags for static analysis tools (complement HTTP headers) -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss: https:; frame-ancestors 'none';" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss: https:; frame-ancestors 'none';"
+    />
     <meta http-equiv="X-Frame-Options" content="DENY" />
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
     <meta http-equiv="X-Download-Options" content="noopen" />
-    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
+    <meta
+      http-equiv="Referrer-Policy"
+      content="strict-origin-when-cross-origin"
+    />
     <!-- Favicon -->
     <link
       rel="icon"
@@ -49,8 +55,12 @@
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
     <style>
       /* HTMX indicator visibility for bulk import only */
-      #bulk-import-indicator { display: none; }
-      .htmx-request #bulk-import-indicator { display: flex !important; }
+      #bulk-import-indicator {
+        display: none;
+      }
+      .htmx-request #bulk-import-indicator {
+        display: flex !important;
+      }
     </style>
   </head>
 
@@ -165,13 +175,23 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
             <div class="px-4 py-5 sm:p-6">
-              <h2 class="text-lg font-medium text-gray-900 dark:text-white mb-4">System Logs</h2>
+              <h2
+                class="text-lg font-medium text-gray-900 dark:text-white mb-4"
+              >
+                System Logs
+              </h2>
 
               <!-- Log Filters -->
               <div class="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Level</label>
-                  <select id="log-level-filter" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600">
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >Level</label
+                  >
+                  <select
+                    id="log-level-filter"
+                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                  >
                     <option value="">All Levels</option>
                     <option value="debug">Debug</option>
                     <option value="info">Info</option>
@@ -182,8 +202,14 @@
                 </div>
 
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Entity Type</label>
-                  <select id="log-entity-filter" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600">
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >Entity Type</label
+                  >
+                  <select
+                    id="log-entity-filter"
+                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                  >
                     <option value="">All Types</option>
                     <option value="tool">Tool</option>
                     <option value="resource">Resource</option>
@@ -193,56 +219,97 @@
                 </div>
 
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Search</label>
-                  <input type="text" id="log-search" placeholder="Search logs..."
-                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600">
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >Search</label
+                  >
+                  <input
+                    type="text"
+                    id="log-search"
+                    placeholder="Search logs..."
+                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                  />
                 </div>
               </div>
 
               <!-- Action Buttons -->
               <div class="mb-4 flex gap-2">
-                <button onclick="refreshLogs()" class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                <button
+                  onclick="refreshLogs()"
+                  class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
                   Refresh
                 </button>
-                <button onclick="toggleLogStream()" id="stream-toggle" class="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                <button
+                  onclick="toggleLogStream()"
+                  id="stream-toggle"
+                  class="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                >
                   Start Live Stream
                 </button>
-                <button onclick="exportLogs('json')" class="px-3 py-2 bg-gray-600 text-white rounded hover:bg-gray-700">
+                <button
+                  onclick="exportLogs('json')"
+                  class="px-3 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                >
                   Export JSON
                 </button>
-                <button onclick="exportLogs('csv')" class="px-3 py-2 bg-gray-600 text-white rounded hover:bg-gray-700">
+                <button
+                  onclick="exportLogs('csv')"
+                  class="px-3 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+                >
                   Export CSV
                 </button>
-                <button onclick="showLogFiles()" class="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">
+                <button
+                  onclick="showLogFiles()"
+                  class="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+                >
                   Download Files
                 </button>
               </div>
 
               <!-- Log Stats -->
-              <div id="log-stats" class="mb-4 p-3 bg-gray-100 dark:bg-gray-700 rounded">
-                <span class="text-sm text-gray-600 dark:text-gray-300">Loading stats...</span>
+              <div
+                id="log-stats"
+                class="mb-4 p-3 bg-gray-100 dark:bg-gray-700 rounded"
+              >
+                <span class="text-sm text-gray-600 dark:text-gray-300"
+                  >Loading stats...</span
+                >
               </div>
 
               <!-- Log Table -->
               <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <table
+                  class="min-w-full divide-y divide-gray-200 dark:divide-gray-700"
+                >
                   <thead class="bg-gray-50 dark:bg-gray-700">
                     <tr>
-                      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      <th
+                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                      >
                         Time
                       </th>
-                      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      <th
+                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                      >
                         Level
                       </th>
-                      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      <th
+                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                      >
                         Entity
                       </th>
-                      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                      <th
+                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                      >
                         Message
                       </th>
                     </tr>
                   </thead>
-                  <tbody id="logs-tbody" class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                  <tbody
+                    id="logs-tbody"
+                    class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"
+                  >
                     <!-- Logs will be inserted here -->
                   </tbody>
                 </table>
@@ -251,13 +318,26 @@
               <!-- Pagination -->
               <div class="mt-4 flex justify-between items-center">
                 <div>
-                  <span id="log-count" class="text-sm text-gray-600 dark:text-gray-300">0 logs</span>
+                  <span
+                    id="log-count"
+                    class="text-sm text-gray-600 dark:text-gray-300"
+                    >0 logs</span
+                  >
                 </div>
                 <div class="flex gap-2">
-                  <button onclick="previousLogPage()" id="prev-page" class="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded disabled:opacity-50" disabled>
+                  <button
+                    onclick="previousLogPage()"
+                    id="prev-page"
+                    class="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded disabled:opacity-50"
+                    disabled
+                  >
                     Previous
                   </button>
-                  <button onclick="nextLogPage()" id="next-page" class="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded disabled:opacity-50">
+                  <button
+                    onclick="nextLogPage()"
+                    id="next-page"
+                    class="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded disabled:opacity-50"
+                  >
                     Next
                   </button>
                 </div>
@@ -510,6 +590,14 @@
                       class="text-green-600 hover:text-green-900 mr-2"
                     >
                       Edit
+                    </button>
+                    <!-- Export Config Button -->
+                    <button
+                      onclick="showConfigSelectionModal('{{ server.id }}', '{{ server.name }}')"
+                      class="text-purple-600 hover:text-purple-900 mr-2"
+                      x-tooltip="'💡Generate client configuration files for this server'"
+                    >
+                      Export Config
                     </button>
                     <form
                       method="POST"
@@ -892,13 +980,12 @@
                   <td
                     class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
                   >
-                    {% set clean_desc = (tool.description or "") | replace('\n', ' ') | replace('\r', ' ') %}
-                    {% set refactor_desc = clean_desc | striptags | trim | escape %}
-                    {% if refactor_desc | length is greaterthan 120 %}
-                      {{ refactor_desc[:120] }}...
-                    {% else %}
-                      {{ refactor_desc }}
-                    {% endif %}
+                    {% set clean_desc = (tool.description or "") | replace('\n',
+                    ' ') | replace('\r', ' ') %} {% set refactor_desc =
+                    clean_desc | striptags | trim | escape %} {% if
+                    refactor_desc | length is greaterthan 120 %} {{
+                    refactor_desc[:120] }}... {% else %} {{ refactor_desc }} {%
+                    endif %}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if tool.annotations %} {% if tool.annotations.title %}
@@ -1086,16 +1173,14 @@
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-bold dark:text-gray-200">Add New Tool</h3>
-          <button
-            id="open-bulk-import"
-            type="button"
-            class="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700"
-          >
-            + Bulk Import Tools
-          </button>
-
+            <button
+              id="open-bulk-import"
+              type="button"
+              class="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700"
+            >
+              + Bulk Import Tools
+            </button>
           </div>
-
 
           <form id="add-tool-form">
             <div class="grid grid-cols-1 gap-6">
@@ -1145,7 +1230,6 @@
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   onchange="updateRequestTypeOptions()"
                 >
-
                   <option value="REST">REST</option>
                 </select>
               </div>
@@ -1276,7 +1360,9 @@
               <div id="auth-headers-fields" style="display: none">
                 <div class="space-y-3">
                   <div class="flex items-center justify-between">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
                       Custom Headers
                     </label>
                     <button
@@ -1284,8 +1370,18 @@
                       onclick="addAuthHeader('auth-headers-container')"
                       class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
-                      <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                      <svg
+                        class="w-4 h-4 mr-1"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                        ></path>
                       </svg>
                       Add Header
                     </button>
@@ -1293,7 +1389,11 @@
                   <div id="auth-headers-container" class="space-y-2">
                     <!-- Headers will be added dynamically here -->
                   </div>
-                  <input type="hidden" name="auth_headers" id="auth-headers-json" />
+                  <input
+                    type="hidden"
+                    name="auth_headers"
+                    id="auth-headers-json"
+                  />
                 </div>
               </div>
             </div>
@@ -1328,46 +1428,98 @@
 
       <!-- Bulk Import Modal -->
       <div id="bulk-import-modal" class="fixed inset-0 z-[60] hidden">
-        <div id="bulk-import-backdrop" class="absolute inset-0 bg-black/50"></div>
-        <div role="dialog" aria-modal="true"
-            class="relative mx-auto my-12 w-full max-w-2xl rounded-xl bg-white p-0 shadow-xl dark:bg-gray-900">
-          <div class="flex items-center justify-between border-b px-5 py-3 dark:border-gray-700">
-            <h3 class="text-base font-semibold dark:text-gray-100">Bulk Import Tools</h3>
-            <button id="close-bulk-import" data-close-bulk-import
-                    class="rounded p-1 text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
-                    aria-label="Close">✕</button>
+        <div
+          id="bulk-import-backdrop"
+          class="absolute inset-0 bg-black/50"
+        ></div>
+        <div
+          role="dialog"
+          aria-modal="true"
+          class="relative mx-auto my-12 w-full max-w-2xl rounded-xl bg-white p-0 shadow-xl dark:bg-gray-900"
+        >
+          <div
+            class="flex items-center justify-between border-b px-5 py-3 dark:border-gray-700"
+          >
+            <h3 class="text-base font-semibold dark:text-gray-100">
+              Bulk Import Tools
+            </h3>
+            <button
+              id="close-bulk-import"
+              data-close-bulk-import
+              class="rounded p-1 text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+              aria-label="Close"
+            >
+              ✕
+            </button>
           </div>
 
-          <form id="bulk-import-form"
-                enctype="multipart/form-data"
-                class="space-y-4 p-5">
+          <form
+            id="bulk-import-form"
+            enctype="multipart/form-data"
+            class="space-y-4 p-5"
+          >
             <p class="text-sm text-gray-600 dark:text-gray-400">
-              Paste a JSON array or upload a <code>.json</code> file. Max {{ bulk_import_max_tools }} tools.
+              Paste a JSON array or upload a <code>.json</code> file. Max {{
+              bulk_import_max_tools }} tools.
             </p>
 
-            <label class="block text-sm font-medium dark:text-gray-300" for="tools_json">JSON Data</label>
-            <textarea id="tools_json" name="tools_json" rows="8"
-              class="mt-1 block w-full rounded-md border border-gray-300 font-mono text-sm shadow-sm
-                    focus:border-indigo-500 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-              placeholder="[{&quot;name&quot;:&quot;tool_name&quot;,&quot;url&quot;:&quot;https://...&quot;,&quot;integration_type&quot;:&quot;REST&quot;,&quot;request_type&quot;:&quot;GET&quot;}]"></textarea>
+            <label
+              class="block text-sm font-medium dark:text-gray-300"
+              for="tools_json"
+              >JSON Data</label
+            >
+            <textarea
+              id="tools_json"
+              name="tools_json"
+              rows="8"
+              class="mt-1 block w-full rounded-md border border-gray-300 font-mono text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+              placeholder="[{&quot;name&quot;:&quot;tool_name&quot;,&quot;url&quot;:&quot;https://...&quot;,&quot;integration_type&quot;:&quot;REST&quot;,&quot;request_type&quot;:&quot;GET&quot;}]"
+            ></textarea>
 
             <div>
-              <label class="block text-sm font-medium dark:text-gray-300" for="tools_file">Or upload JSON file</label>
-              <input id="tools_file" name="tools_file" type="file" accept="application/json,.json"
-                    class="mt-1 block w-full text-sm dark:text-gray-300" />
+              <label
+                class="block text-sm font-medium dark:text-gray-300"
+                for="tools_file"
+                >Or upload JSON file</label
+              >
+              <input
+                id="tools_file"
+                name="tools_file"
+                type="file"
+                accept="application/json,.json"
+                class="mt-1 block w-full text-sm dark:text-gray-300"
+              />
             </div>
 
             <div class="flex items-center gap-3 pt-1">
-              <button type="submit"
-                class="inline-flex justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white
-                      hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <button
+                type="submit"
+                class="inline-flex justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
                 Import Tools
               </button>
-              <span id="bulk-import-indicator" class="htmx-indicator flex items-center text-sm text-gray-500 dark:text-gray-400">
-                <svg class="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                  <path class="opacity-75" fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              <span
+                id="bulk-import-indicator"
+                class="htmx-indicator flex items-center text-sm text-gray-500 dark:text-gray-400"
+              >
+                <svg
+                  class="mr-2 h-4 w-4 animate-spin"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle
+                    class="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="4"
+                  />
+                  <path
+                    class="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
                 </svg>
                 Processing...
               </span>
@@ -2390,7 +2542,9 @@
               <div id="auth-headers-fields-gw" style="display: none">
                 <div class="space-y-3">
                   <div class="flex items-center justify-between">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
                       Custom Headers
                     </label>
                     <button
@@ -2398,8 +2552,18 @@
                       onclick="addAuthHeader('auth-headers-container-gw')"
                       class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
-                      <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                      <svg
+                        class="w-4 h-4 mr-1"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                        ></path>
                       </svg>
                       Add Header
                     </button>
@@ -2407,7 +2571,11 @@
                   <div id="auth-headers-container-gw" class="space-y-2">
                     <!-- Headers will be added dynamically here -->
                   </div>
-                  <input type="hidden" name="auth_headers" id="auth-headers-json-gw" />
+                  <input
+                    type="hidden"
+                    name="auth_headers"
+                    id="auth-headers-json-gw"
+                  />
                 </div>
               </div>
               <div>
@@ -2886,9 +3054,7 @@
                         name="requestType"
                         id="edit-tool-request-type"
                         class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      >
-
-                      </select>
+                      ></select>
                     </div>
                     <div>
                       <label
@@ -2993,7 +3159,9 @@
                   <div id="edit-auth-headers-fields" style="display: none">
                     <div class="space-y-3">
                       <div class="flex items-center justify-between">
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        <label
+                          class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >
                           Custom Headers
                         </label>
                         <button
@@ -3001,8 +3169,18 @@
                           onclick="addAuthHeader('edit-auth-headers-container')"
                           class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                         >
-                          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                          <svg
+                            class="w-4 h-4 mr-1"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                            ></path>
                           </svg>
                           Add Header
                         </button>
@@ -3010,7 +3188,11 @@
                       <div id="edit-auth-headers-container" class="space-y-2">
                         <!-- Headers will be added dynamically here -->
                       </div>
-                      <input type="hidden" name="auth_headers" id="edit-auth-headers-json" />
+                      <input
+                        type="hidden"
+                        name="auth_headers"
+                        id="edit-auth-headers-json"
+                      />
                     </div>
                   </div>
                   <!-- Tags Section -->
@@ -3667,7 +3849,9 @@
                     <div id="auth-headers-fields-gw-edit" style="display: none">
                       <div class="space-y-3">
                         <div class="flex items-center justify-between">
-                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
                             Custom Headers
                           </label>
                           <button
@@ -3675,16 +3859,33 @@
                             onclick="addAuthHeader('auth-headers-container-gw-edit')"
                             class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                           >
-                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                            <svg
+                              class="w-4 h-4 mr-1"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                              ></path>
                             </svg>
                             Add Header
                           </button>
                         </div>
-                        <div id="auth-headers-container-gw-edit" class="space-y-2">
+                        <div
+                          id="auth-headers-container-gw-edit"
+                          class="space-y-2"
+                        >
                           <!-- Headers will be added dynamically here -->
                         </div>
-                        <input type="hidden" name="auth_headers" id="auth-headers-json-gw-edit" />
+                        <input
+                          type="hidden"
+                          name="auth_headers"
+                          id="auth-headers-json-gw-edit"
+                        />
                       </div>
                     </div>
                     <div>
@@ -3960,6 +4161,182 @@
           </div>
         </div>
       </div>
+
+      <!-- Config Selection Modal -->
+      <div
+        id="config-selection-modal"
+        class="fixed z-10 inset-0 overflow-y-auto hidden"
+      >
+        <div
+          class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
+        >
+          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+          </div>
+          <div
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+          >
+            <div
+              class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
+            >
+              <h3
+                class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4"
+              >
+                Export Configuration for <span id="server-name-display"></span>
+              </h3>
+              <p class="text-sm text-gray-600 dark:text-gray-400 mb-6">
+                Choose the configuration format for your MCP client:
+              </p>
+
+              <div class="space-y-3">
+                <button
+                  id="stdio-config-btn"
+                  onclick="generateAndShowConfig('stdio')"
+                  class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <span class="text-2xl mr-3">▶️</span>
+                  <div>
+                    <div class="font-medium text-gray-900 dark:text-gray-100">
+                      Stdio (Claude Desktop, CLI)
+                    </div>
+                    <div class="text-sm text-gray-500 dark:text-gray-400">
+                      For Claude Desktop, CLI tools, and stdio-based MCP clients
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  id="sse-config-btn"
+                  onclick="generateAndShowConfig('sse')"
+                  class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <span class="text-2xl mr-3">🌐</span>
+                  <div>
+                    <div class="font-medium text-gray-900 dark:text-gray-100">
+                      SSE (LangChain, LlamaIndex)
+                    </div>
+                    <div class="text-sm text-gray-500 dark:text-gray-400">
+                      For frameworks supporting Server-Sent Events transport
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  id="http-config-btn"
+                  onclick="generateAndShowConfig('http')"
+                  class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <span class="text-2xl mr-3">🔗</span>
+                  <div>
+                    <div class="font-medium text-gray-900 dark:text-gray-100">
+                      HTTP (REST clients)
+                    </div>
+                    <div class="text-sm text-gray-500 dark:text-gray-400">
+                      For REST clients and HTTP-based MCP integrations
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+            <div
+              class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse"
+            >
+              <button
+                type="button"
+                onclick="closeModal('config-selection-modal')"
+                class="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:w-auto sm:text-sm dark:text-gray-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Config Display Modal -->
+      <div
+        id="config-display-modal"
+        class="fixed z-10 inset-0 overflow-y-auto hidden"
+      >
+        <div
+          class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
+        >
+          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+          </div>
+          <div
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full"
+          >
+            <div
+              class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
+            >
+              <div class="flex items-center justify-between mb-4">
+                <h3
+                  class="text-lg font-medium text-gray-900 dark:text-gray-100"
+                >
+                  <span id="config-display-title">Client Configuration</span>
+                </h3>
+                <button
+                  onclick="copyConfigToClipboard()"
+                  class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  📋 Copy to Clipboard
+                </button>
+              </div>
+
+              <div class="mb-4">
+                <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                  <span id="config-description"></span>
+                </p>
+                <div
+                  class="bg-gray-100 dark:bg-gray-800 rounded p-2 text-xs text-gray-600 dark:text-gray-400"
+                >
+                  <strong>Usage:</strong> <span id="config-usage"></span>
+                </div>
+              </div>
+
+              <div class="relative">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  Configuration JSON:
+                </label>
+                <div class="relative">
+                  <textarea
+                    id="config-content"
+                    readonly
+                    class="w-full h-80 p-3 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-800 dark:text-gray-200 font-mono text-sm"
+                    style="tab-size: 2"
+                  ></textarea>
+                </div>
+              </div>
+            </div>
+            <div
+              class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse"
+            >
+              <button
+                onclick="downloadConfig()"
+                class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:ml-3 sm:w-auto sm:text-sm"
+              >
+                💾 Download JSON
+              </button>
+              <button
+                onclick="goBackToSelection()"
+                class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
+              >
+                ← Back
+              </button>
+              <button
+                type="button"
+                onclick="closeModal('config-display-modal')"
+                class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
     <!-- Scripts -->
     <script>
@@ -4039,31 +4416,34 @@
     </script>
     <script>
       function handleEditIntegrationTypeChange() {
-        const typeSel = document.getElementById('edit-tool-type');
-        const reqSel  = document.getElementById('edit-tool-request-type');
+        const typeSel = document.getElementById("edit-tool-type");
+        const reqSel = document.getElementById("edit-tool-request-type");
         if (!typeSel || !reqSel) return;
 
-        const isREST = typeSel.value === 'REST';
+        const isREST = typeSel.value === "REST";
         // For REST tools, enable HTTP verbs; for MCP, disable & clear to avoid bad values.
         reqSel.disabled = !isREST;
         if (!isREST) {
-          reqSel.value = '';
+          reqSel.value = "";
         }
       }
 
       // When the Edit modal is shown, re-evaluate enable/disable based on prefilled value.
       (function () {
-        const modal = document.getElementById('tool-edit-modal');
+        const modal = document.getElementById("tool-edit-modal");
         if (!modal) return;
 
         const observer = new MutationObserver(() => {
-          const isOpen = !modal.classList.contains('hidden');
+          const isOpen = !modal.classList.contains("hidden");
           if (isOpen) {
             // Defer one tick so existing JS can prefill values first.
             setTimeout(handleEditIntegrationTypeChange, 0);
           }
         });
-        observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+        observer.observe(modal, {
+          attributes: true,
+          attributeFilter: ["class"],
+        });
       })();
 
       // Logs functionality
@@ -4072,31 +4452,34 @@
       const logsPerPage = 100;
 
       async function refreshLogs() {
-        const level = document.getElementById('log-level-filter').value;
-        const entityType = document.getElementById('log-entity-filter').value;
-        const search = document.getElementById('log-search').value;
+        const level = document.getElementById("log-level-filter").value;
+        const entityType = document.getElementById("log-entity-filter").value;
+        const search = document.getElementById("log-search").value;
 
         const params = new URLSearchParams({
           limit: logsPerPage,
           offset: currentLogPage * logsPerPage,
-          order: 'desc'
+          order: "desc",
         });
 
-        if (level) params.append('level', level);
-        if (entityType) params.append('entity_type', entityType);
-        if (search) params.append('search', search);
+        if (level) params.append("level", level);
+        if (entityType) params.append("entity_type", entityType);
+        if (search) params.append("search", search);
 
         try {
           const headers = {};
-          const token = localStorage.getItem('token');
+          const token = localStorage.getItem("token");
           if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
+            headers["Authorization"] = `Bearer ${token}`;
           }
 
-          const response = await fetch(`${window.ROOT_PATH || ''}/admin/logs?${params}`, {
-            headers: headers,
-            credentials: 'same-origin'
-          });
+          const response = await fetch(
+            `${window.ROOT_PATH || ""}/admin/logs?${params}`,
+            {
+              headers: headers,
+              credentials: "same-origin",
+            },
+          );
 
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -4105,22 +4488,22 @@
           updateLogStats(data.stats);
           updateLogCount(data.total);
         } catch (error) {
-          console.error('Error fetching logs:', error);
-          showErrorMessage('Failed to fetch logs');
+          console.error("Error fetching logs:", error);
+          showErrorMessage("Failed to fetch logs");
         }
       }
 
       function displayLogs(logs) {
-        const tbody = document.getElementById('logs-tbody');
-        tbody.innerHTML = '';
+        const tbody = document.getElementById("logs-tbody");
+        tbody.innerHTML = "";
 
-        logs.forEach(log => {
-          const row = document.createElement('tr');
-          row.className = 'hover:bg-gray-50 dark:hover:bg-gray-700';
+        logs.forEach((log) => {
+          const row = document.createElement("tr");
+          row.className = "hover:bg-gray-50 dark:hover:bg-gray-700";
 
           const timestamp = new Date(log.timestamp).toLocaleString();
           const levelClass = getLevelClass(log.level);
-          const entity = log.entity_name || log.entity_id || '-';
+          const entity = log.entity_name || log.entity_id || "-";
 
           row.innerHTML = `
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
@@ -4144,20 +4527,26 @@
       }
 
       function getLevelClass(level) {
-        switch(level) {
-          case 'debug': return 'bg-gray-100 text-gray-800';
-          case 'info': return 'bg-blue-100 text-blue-800';
-          case 'warning': return 'bg-yellow-100 text-yellow-800';
-          case 'error': return 'bg-red-100 text-red-800';
-          case 'critical': return 'bg-red-600 text-white';
-          default: return 'bg-gray-100 text-gray-800';
+        switch (level) {
+          case "debug":
+            return "bg-gray-100 text-gray-800";
+          case "info":
+            return "bg-blue-100 text-blue-800";
+          case "warning":
+            return "bg-yellow-100 text-yellow-800";
+          case "error":
+            return "bg-red-100 text-red-800";
+          case "critical":
+            return "bg-red-600 text-white";
+          default:
+            return "bg-gray-100 text-gray-800";
         }
       }
 
       function updateLogStats(stats) {
         if (!stats) return;
 
-        const statsDiv = document.getElementById('log-stats');
+        const statsDiv = document.getElementById("log-stats");
         const levelDist = stats.level_distribution || {};
         const entityDist = stats.entity_distribution || {};
 
@@ -4168,73 +4557,76 @@
         `;
 
         if (Object.keys(levelDist).length > 0) {
-          html += '<span>Levels: ';
+          html += "<span>Levels: ";
           for (const [level, count] of Object.entries(levelDist)) {
             html += `${level}(${count}) `;
           }
-          html += '</span>';
+          html += "</span>";
         }
 
-        html += '</div>';
+        html += "</div>";
         statsDiv.innerHTML = html;
       }
 
       function updateLogCount(total) {
-        document.getElementById('log-count').textContent = `${total} logs`;
+        document.getElementById("log-count").textContent = `${total} logs`;
 
         // Update pagination buttons
-        document.getElementById('prev-page').disabled = currentLogPage === 0;
-        document.getElementById('next-page').disabled = (currentLogPage + 1) * logsPerPage >= total;
+        document.getElementById("prev-page").disabled = currentLogPage === 0;
+        document.getElementById("next-page").disabled =
+          (currentLogPage + 1) * logsPerPage >= total;
       }
 
       function toggleLogStream() {
-        const button = document.getElementById('stream-toggle');
+        const button = document.getElementById("stream-toggle");
 
         if (logStreamSource) {
           // Stop streaming
           logStreamSource.close();
           logStreamSource = null;
-          button.textContent = 'Start Live Stream';
-          button.className = 'px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700';
+          button.textContent = "Start Live Stream";
+          button.className =
+            "px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700";
         } else {
           // Start streaming
-          const level = document.getElementById('log-level-filter').value;
-          const entityType = document.getElementById('log-entity-filter').value;
+          const level = document.getElementById("log-level-filter").value;
+          const entityType = document.getElementById("log-entity-filter").value;
 
           const params = new URLSearchParams();
-          if (level) params.append('level', level);
-          if (entityType) params.append('entity_type', entityType);
+          if (level) params.append("level", level);
+          if (entityType) params.append("entity_type", entityType);
 
           // EventSource doesn't support custom headers, so we need to pass auth in query params
           // or rely on cookie-based auth
-          const url = `${window.ROOT_PATH || ''}/admin/logs/stream?${params}`;
+          const url = `${window.ROOT_PATH || ""}/admin/logs/stream?${params}`;
           logStreamSource = new EventSource(url, { withCredentials: true });
 
           logStreamSource.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            if (data.type === 'log_entry') {
+            if (data.type === "log_entry") {
               prependLog(data.data);
             }
           };
 
           logStreamSource.onerror = (error) => {
-            console.error('Stream error:', error);
+            console.error("Stream error:", error);
             toggleLogStream(); // Stop on error
           };
 
-          button.textContent = 'Stop Live Stream';
-          button.className = 'px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700';
+          button.textContent = "Stop Live Stream";
+          button.className =
+            "px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700";
         }
       }
 
       function prependLog(log) {
-        const tbody = document.getElementById('logs-tbody');
-        const row = document.createElement('tr');
-        row.className = 'hover:bg-gray-50 dark:hover:bg-gray-700 animate-pulse';
+        const tbody = document.getElementById("logs-tbody");
+        const row = document.createElement("tr");
+        row.className = "hover:bg-gray-50 dark:hover:bg-gray-700 animate-pulse";
 
         const timestamp = new Date(log.timestamp).toLocaleString();
         const levelClass = getLevelClass(log.level);
-        const entity = log.entity_name || log.entity_id || '-';
+        const entity = log.entity_name || log.entity_id || "-";
 
         row.innerHTML = `
           <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
@@ -4256,7 +4648,7 @@
         tbody.insertBefore(row, tbody.firstChild);
 
         // Remove animation after a moment
-        setTimeout(() => row.classList.remove('animate-pulse'), 1000);
+        setTimeout(() => row.classList.remove("animate-pulse"), 1000);
 
         // Limit displayed rows
         while (tbody.children.length > logsPerPage) {
@@ -4265,33 +4657,36 @@
       }
 
       async function exportLogs(format) {
-        const level = document.getElementById('log-level-filter').value;
-        const entityType = document.getElementById('log-entity-filter').value;
-        const search = document.getElementById('log-search').value;
+        const level = document.getElementById("log-level-filter").value;
+        const entityType = document.getElementById("log-entity-filter").value;
+        const search = document.getElementById("log-search").value;
 
         const params = new URLSearchParams({ format });
-        if (level) params.append('level', level);
-        if (entityType) params.append('entity_type', entityType);
-        if (search) params.append('search', search);
+        if (level) params.append("level", level);
+        if (entityType) params.append("entity_type", entityType);
+        if (search) params.append("search", search);
 
         try {
           // Use the same auth approach as other admin endpoints
           const headers = {};
-          const token = localStorage.getItem('token');
+          const token = localStorage.getItem("token");
           if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
+            headers["Authorization"] = `Bearer ${token}`;
           }
 
-          const response = await fetch(`${window.ROOT_PATH || ''}/admin/logs/export?${params}`, {
-            headers: headers,
-            credentials: 'same-origin'
-          });
+          const response = await fetch(
+            `${window.ROOT_PATH || ""}/admin/logs/export?${params}`,
+            {
+              headers: headers,
+              credentials: "same-origin",
+            },
+          );
 
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
           const blob = await response.blob();
           const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
+          const a = document.createElement("a");
           a.href = url;
           a.download = `logs_export.${format}`;
           document.body.appendChild(a);
@@ -4299,22 +4694,24 @@
           document.body.removeChild(a);
           window.URL.revokeObjectURL(url);
         } catch (error) {
-          console.error('Error exporting logs:', error);
-          showErrorMessage('Failed to export logs');
+          console.error("Error exporting logs:", error);
+          showErrorMessage("Failed to export logs");
         }
       }
 
       function showErrorMessage(message) {
-        const toast = document.createElement('div');
-        toast.className = 'fixed top-4 right-4 bg-red-600 text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-pulse';
+        const toast = document.createElement("div");
+        toast.className =
+          "fixed top-4 right-4 bg-red-600 text-white px-6 py-3 rounded-lg shadow-lg z-50 animate-pulse";
         toast.textContent = message;
         document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 5000);
       }
 
       function showSuccessMessage(message) {
-        const toast = document.createElement('div');
-        toast.className = 'fixed top-4 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+        const toast = document.createElement("div");
+        toast.className =
+          "fixed top-4 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg z-50";
         toast.textContent = message;
         document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 3000);
@@ -4323,15 +4720,18 @@
       async function showLogFiles() {
         try {
           const headers = {};
-          const token = localStorage.getItem('token');
+          const token = localStorage.getItem("token");
           if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
+            headers["Authorization"] = `Bearer ${token}`;
           }
 
-          const response = await fetch(`${window.ROOT_PATH || ''}/admin/logs/file`, {
-            headers: headers,
-            credentials: 'same-origin'
-          });
+          const response = await fetch(
+            `${window.ROOT_PATH || ""}/admin/logs/file`,
+            {
+              headers: headers,
+              credentials: "same-origin",
+            },
+          );
 
           if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
@@ -4342,14 +4742,17 @@
 
           if (data.files && data.files.length > 0) {
             // Create a modal to show available files
-            const modal = document.createElement('div');
-            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            const modal = document.createElement("div");
+            modal.className =
+              "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
             modal.innerHTML = `
               <div class="bg-white rounded-lg p-6 max-w-md w-full max-h-96 overflow-y-auto">
                 <h3 class="text-lg font-bold mb-4">Available Log Files</h3>
                 <p class="text-sm text-gray-600 mb-4">Directory: ${data.log_directory}</p>
                 <ul class="space-y-2">
-                  ${data.files.map(file => `
+                  ${data.files
+                    .map(
+                      (file) => `
                     <li class="flex justify-between items-center p-2 hover:bg-gray-100 rounded">
                       <div>
                         <div class="font-medium">${file.name}</div>
@@ -4362,7 +4765,9 @@
                         Download
                       </button>
                     </li>
-                  `).join('')}
+                  `,
+                    )
+                    .join("")}
                 </ul>
                 <button onclick="this.closest('.fixed').remove()"
                         class="mt-4 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 w-full">
@@ -4372,26 +4777,29 @@
             `;
             document.body.appendChild(modal);
           } else {
-            showErrorMessage('No log files available');
+            showErrorMessage("No log files available");
           }
         } catch (error) {
-          console.error('Error fetching log files:', error);
-          showErrorMessage(error.message || 'Failed to fetch log files');
+          console.error("Error fetching log files:", error);
+          showErrorMessage(error.message || "Failed to fetch log files");
         }
       }
 
       async function downloadLogFile(filename) {
         try {
           const headers = {};
-          const token = localStorage.getItem('token');
+          const token = localStorage.getItem("token");
           if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
+            headers["Authorization"] = `Bearer ${token}`;
           }
 
-          const response = await fetch(`${window.ROOT_PATH || ''}/admin/logs/file?filename=${encodeURIComponent(filename)}`, {
-            headers: headers,
-            credentials: 'same-origin'
-          });
+          const response = await fetch(
+            `${window.ROOT_PATH || ""}/admin/logs/file?filename=${encodeURIComponent(filename)}`,
+            {
+              headers: headers,
+              credentials: "same-origin",
+            },
+          );
 
           if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
@@ -4400,7 +4808,7 @@
 
           const blob = await response.blob();
           const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
+          const a = document.createElement("a");
           a.href = url;
           a.download = filename;
           document.body.appendChild(a);
@@ -4409,13 +4817,13 @@
           window.URL.revokeObjectURL(url);
 
           // Close the modal if it exists
-          const modal = document.querySelector('.fixed.inset-0');
+          const modal = document.querySelector(".fixed.inset-0");
           if (modal) modal.remove();
 
           showSuccessMessage(`Downloaded: ${filename}`);
         } catch (error) {
-          console.error('Error downloading log file:', error);
-          showErrorMessage(error.message || 'Failed to download log file');
+          console.error("Error downloading log file:", error);
+          showErrorMessage(error.message || "Failed to download log file");
         }
       }
 
@@ -4432,26 +4840,30 @@
       }
 
       function escapeHtml(text) {
-        const div = document.createElement('div');
+        const div = document.createElement("div");
         div.textContent = text;
         return div.innerHTML;
       }
 
       // Add event listeners for log filters
-      document.addEventListener('DOMContentLoaded', () => {
-        const logFilters = ['log-level-filter', 'log-entity-filter', 'log-search'];
-        logFilters.forEach(id => {
+      document.addEventListener("DOMContentLoaded", () => {
+        const logFilters = [
+          "log-level-filter",
+          "log-entity-filter",
+          "log-search",
+        ];
+        logFilters.forEach((id) => {
           const element = document.getElementById(id);
           if (element) {
-            element.addEventListener('change', () => {
+            element.addEventListener("change", () => {
               currentLogPage = 0;
               refreshLogs();
             });
 
             // For search input, debounce
-            if (id === 'log-search') {
+            if (id === "log-search") {
               let timeout;
-              element.addEventListener('input', () => {
+              element.addEventListener("input", () => {
                 clearTimeout(timeout);
                 timeout = setTimeout(() => {
                   currentLogPage = 0;
@@ -4463,9 +4875,9 @@
         });
 
         // Load logs when logs tab is clicked
-        const logsTab = document.getElementById('tab-logs');
+        const logsTab = document.getElementById("tab-logs");
         if (logsTab) {
-          logsTab.addEventListener('click', () => {
+          logsTab.addEventListener("click", () => {
             setTimeout(refreshLogs, 100);
           });
         }
