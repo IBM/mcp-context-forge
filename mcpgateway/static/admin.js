@@ -7006,9 +7006,7 @@ function setupBulkImportModal() {
                 const formData = new FormData();
 
                 // Get JSON from textarea or file
-                const jsonTextarea = form.querySelector(
-                    '[name="tools_json"]',
-                );
+                const jsonTextarea = form.querySelector('[name="tools_json"]');
                 const fileInput = form.querySelector('[name="tools_file"]');
 
                 let hasData = false;
@@ -7022,9 +7020,7 @@ function setupBulkImportModal() {
                     try {
                         const toolsData = JSON.parse(jsonTextarea.value);
                         if (!Array.isArray(toolsData)) {
-                            throw new Error(
-                                "JSON must be an array of tools",
-                            );
+                            throw new Error("JSON must be an array of tools");
                         }
                         formData.append("tools", jsonTextarea.value);
                         hasData = true;
@@ -7133,4 +7129,3 @@ function setupBulkImportModal() {
         });
     }
 }
-
