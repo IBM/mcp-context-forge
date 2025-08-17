@@ -12,15 +12,14 @@ and their responses, including SSNs, credit cards, emails, phone numbers, and mo
 # Standard
 import re
 from enum import Enum
-from typing import Any, Optional, Pattern, Dict, List, Tuple
-import logging
+from typing import Any, Pattern, Dict, List, Tuple
 
 # Third-Party
 from pydantic import BaseModel, Field
 
 # First-Party
-from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,

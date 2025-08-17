@@ -42,12 +42,12 @@ class Plugin:
     """Base plugin object for pre/post processing of inputs and outputs at various locations throughout the server.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.models import PluginConfig, HookType, PluginMode
+        >>> from mcpgateway.plugins.framework import PluginConfig, HookType, PluginMode
         >>> config = PluginConfig(
         ...     name="test_plugin",
         ...     description="Test plugin",
         ...     author="test",
-        ...     kind="mcpgateway.plugins.framework.base.Plugin",
+        ...     kind="mcpgateway.plugins.framework.Plugin",
         ...     version="1.0.0",
         ...     hooks=[HookType.PROMPT_PRE_FETCH],
         ...     tags=["test"],
@@ -72,7 +72,7 @@ class Plugin:
             config: The plugin configuration
 
         Examples:
-            >>> from mcpgateway.plugins.framework.models import PluginConfig, HookType
+            >>> from mcpgateway.plugins.framework import PluginConfig, HookType
             >>> config = PluginConfig(
             ...     name="simple_plugin",
             ...     description="Simple test",
@@ -258,7 +258,7 @@ class PluginRef:
     """Plugin reference which contains a uuid.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.models import PluginConfig, HookType, PluginMode
+        >>> from mcpgateway.plugins.framework import PluginConfig, HookType, PluginMode
         >>> config = PluginConfig(
         ...     name="ref_test",
         ...     description="Reference test",

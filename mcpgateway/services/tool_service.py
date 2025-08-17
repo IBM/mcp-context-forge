@@ -41,7 +41,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.models import TextContent, ToolResult
 from mcpgateway.observability import create_span
-from mcpgateway.plugins import GlobalContext, PluginManager, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify

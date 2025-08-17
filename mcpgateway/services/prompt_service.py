@@ -34,7 +34,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.observability import create_span
-from mcpgateway.plugins import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers

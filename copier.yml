@@ -9,7 +9,8 @@ template_type:
 
 plugin_name:
    type: str
-   help: What is the plugin name? (e.g., MyFilter)
+   help: What is the plugin name?
+   default: MyFilter
 
 version:
    type: str
@@ -29,3 +30,4 @@ email:
 description:
    type: str
    help: Write a plugin description
+   default: A filter plugin

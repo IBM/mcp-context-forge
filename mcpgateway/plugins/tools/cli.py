@@ -26,7 +26,6 @@ $ mcpplugins --help
 """
 
 # Standard
-import os
 from pathlib import Path
 import subprocess
 from typing import Optional
@@ -35,11 +34,9 @@ from typing import Optional
 from copier import Worker
 import typer
 from typing_extensions import Annotated
-import yaml
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.plugins.tools.models import InstallManifest
 
 # ---------------------------------------------------------------------------
 # Configuration defaults
@@ -79,6 +76,11 @@ def git_user_name() -> str:
 
     Returns:
         The git user name configured in the user's environment.
+
+    Examples:
+        >>> user_name = git_user_name()
+        >>> isinstance(user_name, str)
+        True
     """
     try:
         res = subprocess.run(["git", "config", "user.name"], stdout=subprocess.PIPE)
@@ -92,6 +94,11 @@ def git_user_email() -> str:
 
     Returns:
         The git user email configured in the user's environment.
+
+    Examples:
+        >>> user_name = git_user_email()
+        >>> isinstance(user_name, str)
+        True
     """
     try:
         res = subprocess.run(["git", "config", "user.email"], stdout=subprocess.PIPE)
@@ -111,6 +118,15 @@ def bootstrap(
     answers_file: Optional[Annotated[typer.FileText, typer.Option("--answers_file", "-a", help="The answers file to be used for bootstrapping.")]] = None,
     defaults: Annotated[bool, typer.Option("--defaults", help="Bootstrap with defaults.")] = False,
 ):
+    """Boostrap a new plugin project from a template.
+
+    Args:
+        destination: The directory in which to bootstrap the plugin project.
+        template_url: The URL to the plugins copier template.
+        vcs_ref: The version control system tag/branch/commit to use for the template.
+        answers-file: The copier answers file that can be used to skip interactive mode.
+        defaults: Bootstrap with defaults.
+    """
     with Worker(
         src_path=template_url,
         dst_path=destination,
@@ -122,39 +138,53 @@ def bootstrap(
         worker.run_copy()
 
 
-@app.command(help="Installs plugins into a Python environment.")
-def install(
-    install_manifest: Annotated[typer.FileText, typer.Option("--install_manifest", "-i", help="The install manifest describing which plugins to install.")] = DEFAULT_INSTALL_MANIFEST,
-    installer: Annotated[str, typer.Option("--installer", "-c", help="The install command to install plugins.")] = DEFAULT_INSTALLER,
-):
-    typer.echo(f"Installing plugin packages from {install_manifest.name}")
-    data = yaml.safe_load(install_manifest)
-    manifest = InstallManifest.model_validate(data)
-    for pkg in manifest.packages:
-        typer.echo(f"Installing plugin package {pkg.package} from {pkg.repository}")
-        repository = os.path.expandvars(pkg.repository)
-        cmd = installer.split(" ")
-        if pkg.extras:
-            cmd.append(f"{pkg.package}[{','.join(pkg.extras)}]@{repository}")
-        else:
-            cmd.append(f"{pkg.package}@{repository}")
-        subprocess.run(cmd)
+# @app.command(help="Installs plugins into a Python environment.")
+# def install(
+#     install_manifest: Annotated[typer.FileText, typer.Option("--install_manifest", "-i", help="The install manifest describing which plugins to install.")] = DEFAULT_INSTALL_MANIFEST,
+#     installer: Annotated[str, typer.Option("--installer", "-c", help="The install command to install plugins.")] = DEFAULT_INSTALLER,
+# ):
+#     typer.echo(f"Installing plugin packages from {install_manifest.name}")
+#     data = yaml.safe_load(install_manifest)
+#     manifest = InstallManifest.model_validate(data)
+#     for pkg in manifest.packages:
+#         typer.echo(f"Installing plugin package {pkg.package} from {pkg.repository}")
+#         repository = os.path.expandvars(pkg.repository)
+#         cmd = installer.split(" ")
+#         if pkg.extras:
+#             cmd.append(f"{pkg.package}[{','.join(pkg.extras)}]@{repository}")
+#         else:
+#             cmd.append(f"{pkg.package}@{repository}")
+#         subprocess.run(cmd)
 
 
-@app.command(help="Builds an MCP server to serve plugins as tools")
-def package(
-    image_tag: Annotated[str, typer.Option("--image_tag", "-t", help="The container image tag to generated container.")] = DEFAULT_IMAGE_TAG,
-    containerfile: Annotated[Path, typer.Option("--containerfile", "-c", help="The Dockerfile used to build the container.")] = DEFAULT_CONTAINERFILE_PATH,
-    builder: Annotated[str, typer.Option("--builder", "-b", help="The container builder, compatible with docker build.")] = DEFAULT_IMAGE_BUILDER,
-    build_context: Annotated[Path, typer.Option("--build_context", "-p", help="The container builder context, specified as a path.")] = DEFAULT_BUILD_CONTEXT,
-):
-    typer.echo("Building MCP server image")
-    cmd = builder.split(" ")
-    cmd.extend(["-f", containerfile, "-t", image_tag, build_context])
-    subprocess.run(cmd)
+# @app.command(help="Builds an MCP server to serve plugins as tools")
+# def package(
+#     image_tag: Annotated[str, typer.Option("--image_tag", "-t", help="The container image tag to generated container.")] = DEFAULT_IMAGE_TAG,
+#     containerfile: Annotated[Path, typer.Option("--containerfile", "-c", help="The Dockerfile used to build the container.")] = DEFAULT_CONTAINERFILE_PATH,
+#     builder: Annotated[str, typer.Option("--builder", "-b", help="The container builder, compatible with docker build.")] = DEFAULT_IMAGE_BUILDER,
+#     build_context: Annotated[Path, typer.Option("--build_context", "-p", help="The container builder context, specified as a path.")] = DEFAULT_BUILD_CONTEXT,
+# ):
+#     typer.echo("Building MCP server image")
+#     cmd = builder.split(" ")
+#     cmd.extend(["-f", containerfile, "-t", image_tag, build_context])
+#     subprocess.run(cmd)
 
 
 def main() -> None:  # noqa: D401 - imperative mood is fine here
+    """Entry point for the *mcpplugins* console script.
+
+    Processes command line arguments, handles version requests, and forwards
+    all other arguments to Uvicorn with sensible defaults injected.
+
+    Environment Variables:
+        PLUGINS_CLI_COMPLETION: Enable auto-completion for plugins CLI (default: false)
+        PLUGINS_CLI_MARKUP_MODE: Set markup mode for plugins CLI (default: rich)
+            Valid options:
+                rich: use rich markup
+                markdown: allow markdown in help strings
+                disabled: disable markup
+            If unset (commented out), uses "rich" if rich is detected, otherwise disables it.
+    """
     app()
 
 

@@ -14,11 +14,10 @@ to filter and modify resource content. It can:
 """
 
 import re
-from typing import Any, Optional
 from urllib.parse import urlparse
 
-from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
     PluginMode,

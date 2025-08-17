@@ -24,7 +24,7 @@ set -euo pipefail
 # Determine the absolute path of the API server script
 #────────────────────────────────────────────────────────────────────────────────
 if [[ -z "${API_SERVER_SCRIPT:-}" ]]; then
-    API_SERVER_SCRIPT="$(python -c 'import mcpgateway.plugins.framework.external.mcp.server as server; print(server.__file__)')"
+    API_SERVER_SCRIPT="$(python -c 'import mcpgateway.plugins.framework.external.mcp.server.runtime as server; print(server.__file__)')"
     echo "✓  API server script path auto-detected: ${API_SERVER_SCRIPT}"
 else
     echo "✓  Using provided API server script path: ${API_SERVER_SCRIPT}"

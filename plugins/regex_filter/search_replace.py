@@ -14,8 +14,8 @@ import re
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
     PromptPosthookPayload,

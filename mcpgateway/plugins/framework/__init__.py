@@ -1,19 +1,72 @@
 # -*- coding: utf-8 -*-
-"""Plugin framework package.
+"""Services Package.
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
-Exposes plugin framework components:
-- Plugin (base class)
-- PluginManager (loader)
+Exposes core MCP Gateway plugin components:
+- Context
+- Manager
+- Payloads
 - Models
+- ExternalPluginServer
 """
 
+# First-Party
 from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.external.mcp.server import run_plugin_mcp_server
+from mcpgateway.plugins.framework.errors import PluginError, PluginViolationError
+from mcpgateway.plugins.framework.external.mcp.server import ExternalPluginServer
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.manager import PluginManager
+from mcpgateway.plugins.framework.models import (
+    GlobalContext,
+    HookType,
+    PluginConfig,
+    PluginContext,
+    PluginErrorModel,
+    PluginMode,
+    PluginResult,
+    PluginViolation,
+    PromptPosthookPayload,
+    PromptPosthookResult,
+    PromptPrehookPayload,
+    PromptPrehookResult,
+    ResourcePostFetchPayload,
+    ResourcePostFetchResult,
+    ResourcePreFetchPayload,
+    ResourcePreFetchResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
+)
 
-__all__ = ["ConfigLoader", "Plugin", "PluginManager", "run_plugin_mcp_server"]
+__all__ = [
+    "ConfigLoader",
+    "ExternalPluginServer",
+    "GlobalContext",
+    "HookType",
+    "Plugin",
+    "PluginConfig",
+    "PluginContext",
+    "PluginError",
+    "PluginErrorModel",
+    "PluginManager",
+    "PluginMode",
+    "PluginResult",
+    "PluginViolation",
+    "PluginViolationError",
+    "PromptPosthookPayload",
+    "PromptPosthookResult",
+    "PromptPrehookPayload",
+    "PromptPrehookResult",
+    "ResourcePostFetchPayload",
+    "ResourcePostFetchResult",
+    "ResourcePreFetchPayload",
+    "ResourcePreFetchResult",
+    "ToolPostInvokePayload",
+    "ToolPostInvokeResult",
+    "ToolPreInvokePayload",
+    "ToolPreInvokeResult",
+]

@@ -7,15 +7,12 @@ Authors: Fred Araujo
 
 This module loads configurations for plugins.
 """
-# Standard
-import logging
-
 # Third-Party
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
