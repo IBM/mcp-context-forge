@@ -486,15 +486,15 @@ class PromptPrehookPayload(BaseModel):
         args (dic[str,str]): The prompt template arguments.
 
     Examples:
-        >>> payload = PromptPrehookPayload("test_prompt", {"user": "alice"})
+        >>> payload = PromptPrehookPayload(name="test_prompt", args={"user": "alice"})
         >>> payload.name
         'test_prompt'
         >>> payload.args
         {'user': 'alice'}
-        >>> payload2 = PromptPrehookPayload("empty", None)
+        >>> payload2 = PromptPrehookPayload(name="empty")
         >>> payload2.args
         {}
-        >>> p = PromptPrehookPayload("greeting", {"name": "Bob", "time": "morning"})
+        >>> p = PromptPrehookPayload(name="greeting", args={"name": "Bob", "time": "morning"})
         >>> p.name
         'greeting'
         >>> p.args["name"]
@@ -516,7 +516,7 @@ class PromptPosthookPayload(BaseModel):
         >>> from mcpgateway.models import PromptResult, Message, TextContent
         >>> msg = Message(role="user", content=TextContent(type="text", text="Hello World"))
         >>> result = PromptResult(messages=[msg])
-        >>> payload = PromptPosthookPayload("greeting", result)
+        >>> payload = PromptPosthookPayload(name="greeting", result=result)
         >>> payload.name
         'greeting'
         >>> payload.result.messages[0].content.text
@@ -524,7 +524,7 @@ class PromptPosthookPayload(BaseModel):
         >>> from mcpgateway.models import PromptResult, Message, TextContent
         >>> msg = Message(role="assistant", content=TextContent(type="text", text="Test output"))
         >>> r = PromptResult(messages=[msg])
-        >>> p = PromptPosthookPayload("test", r)
+        >>> p = PromptPosthookPayload(name="test", result=r)
         >>> p.name
         'test'
     """
@@ -583,15 +583,15 @@ class ToolPreInvokePayload(BaseModel):
         args: The tool arguments for invocation.
 
     Examples:
-        >>> payload = ToolPreInvokePayload("test_tool", {"input": "data"})
+        >>> payload = ToolPreInvokePayload(name="test_tool", args={"input": "data"})
         >>> payload.name
         'test_tool'
         >>> payload.args
         {'input': 'data'}
-        >>> payload2 = ToolPreInvokePayload("empty", None)
+        >>> payload2 = ToolPreInvokePayload(name="empty")
         >>> payload2.args
         {}
-        >>> p = ToolPreInvokePayload("calculator", {"operation": "add", "a": 5, "b": 3})
+        >>> p = ToolPreInvokePayload(name="calculator", args={"operation": "add", "a": 5, "b": 3})
         >>> p.name
         'calculator'
         >>> p.args["operation"]
@@ -611,12 +611,12 @@ class ToolPostInvokePayload(BaseModel):
         result: The tool invocation result.
 
     Examples:
-        >>> payload = ToolPostInvokePayload("calculator", {"result": 8, "status": "success"})
+        >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8, "status": "success"})
         >>> payload.name
         'calculator'
         >>> payload.result
         {'result': 8, 'status': 'success'}
-        >>> p = ToolPostInvokePayload("analyzer", {"confidence": 0.95, "sentiment": "positive"})
+        >>> p = ToolPostInvokePayload(name="analyzer", result={"confidence": 0.95, "sentiment": "positive"})
         >>> p.name
         'analyzer'
         >>> p.result["confidence"]
@@ -641,17 +641,17 @@ class GlobalContext(BaseModel):
             server_id (str): server ID.
 
     Examples:
-        >>> ctx = GlobalContext("req-123")
+        >>> ctx = GlobalContext(request_id="req-123")
         >>> ctx.request_id
         'req-123'
         >>> ctx.user is None
         True
-        >>> ctx2 = GlobalContext("req-456", user="alice", tenant_id="tenant1")
+        >>> ctx2 = GlobalContext(request_id="req-456", user="alice", tenant_id="tenant1")
         >>> ctx2.user
         'alice'
         >>> ctx2.tenant_id
         'tenant1'
-        >>> c = GlobalContext("123", server_id="srv1")
+        >>> c = GlobalContext(request_id="123", server_id="srv1")
         >>> c.request_id
         '123'
         >>> c.server_id
@@ -713,13 +713,13 @@ class ResourcePreFetchPayload(BaseModel):
             metadata: Optional metadata for the resource request.
 
     Examples:
-        >>> payload = ResourcePreFetchPayload("file:///data.txt")
+        >>> payload = ResourcePreFetchPayload(uri="file:///data.txt")
         >>> payload.uri
         'file:///data.txt'
-        >>> payload2 = ResourcePreFetchPayload("http://api/data", {"Accept": "application/json"})
+        >>> payload2 = ResourcePreFetchPayload(uri="http://api/data", metadata={"Accept": "application/json"})
         >>> payload2.metadata
         {'Accept': 'application/json'}
-        >>> p = ResourcePreFetchPayload("file:///docs/readme.md", {"version": "1.0"})
+        >>> p = ResourcePreFetchPayload(uri="file:///docs/readme.md", metadata={"version": "1.0"})
         >>> p.uri
         'file:///docs/readme.md'
         >>> p.metadata["version"]
@@ -741,14 +741,14 @@ class ResourcePostFetchPayload(BaseModel):
         >>> from mcpgateway.models import ResourceContent
         >>> content = ResourceContent(type="resource", uri="file:///data.txt",
         ...     text="Hello World")
-        >>> payload = ResourcePostFetchPayload("file:///data.txt", content)
+        >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
         >>> payload.uri
         'file:///data.txt'
         >>> payload.content.text
         'Hello World'
         >>> from mcpgateway.models import ResourceContent
         >>> resource_content = ResourceContent(type="resource", uri="test://resource", text="Test data")
-        >>> p = ResourcePostFetchPayload("test://resource", resource_content)
+        >>> p = ResourcePostFetchPayload(uri="test://resource", content=resource_content)
         >>> p.uri
         'test://resource'
     """

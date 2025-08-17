@@ -290,7 +290,7 @@ async def pre_prompt_fetch(plugin: PluginRef, payload: PromptPrehookPayload, con
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = PromptPrehookPayload(name="test", args={"key": "value"})
-        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> context = PluginContext(request_id="123")
         >>> # In async context:
         >>> # result = await pre_prompt_fetch(plugin_ref, payload, context)
     """
@@ -316,7 +316,7 @@ async def post_prompt_fetch(plugin: PluginRef, payload: PromptPosthookPayload, c
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> result = PromptResult(messages=[])
         >>> payload = PromptPosthookPayload(name="test", result=result)
-        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> context = PluginContext(request_id="123")
         >>> # In async context:
         >>> # result = await post_prompt_fetch(plugin_ref, payload, context)
     """
@@ -340,7 +340,7 @@ async def pre_tool_invoke(plugin: PluginRef, payload: ToolPreInvokePayload, cont
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = ToolPreInvokePayload(name="calculator", args={"operation": "add", "a": 5, "b": 3})
-        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> context = PluginContext(request_id="123")
         >>> # In async context:
         >>> # result = await pre_tool_invoke(plugin_ref, payload, context)
     """
@@ -364,7 +364,7 @@ async def post_tool_invoke(plugin: PluginRef, payload: ToolPostInvokePayload, co
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8, "status": "success"})
-        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> context = PluginContext(request_id="123")
         >>> # In async context:
         >>> # result = await post_tool_invoke(plugin_ref, payload, context)
     """
@@ -388,7 +388,7 @@ async def pre_resource_fetch(plugin: PluginRef, payload: ResourcePreFetchPayload
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = ResourcePreFetchPayload(uri="file:///data.txt", metadata={"cache": True})
-        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> context = PluginContext(request_id="123")
         >>> # In async context:
         >>> # result = await pre_resource_fetch(plugin_ref, payload, context)
     """
@@ -414,7 +414,7 @@ async def post_resource_fetch(plugin: PluginRef, payload: ResourcePostFetchPaylo
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Data")
         >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
-        >>> context = PluginContext(GlobalContext(request_id="123"))
+        >>> context = PluginContext(request_id="123")
         >>> # In async context:
         >>> # result = await post_resource_fetch(plugin_ref, payload, context)
     """
