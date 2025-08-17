@@ -5939,6 +5939,9 @@ document.addEventListener("DOMContentLoaded", () => {
         // 4. Handle initial tab/state
         initializeTabState();
 
+        // 5. Setup bulk import modal
+        setupBulkImportModal();
+
         // // ✅ 4.1 Set up tab button click handlers
         // document.querySelectorAll('.tab-button').forEach(button => {
         //     button.addEventListener('click', () => {
@@ -7131,8 +7134,3 @@ function setupBulkImportModal() {
     }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-    try {
-        setupBulkImportModal();
-    } catch (_) {}
-});
