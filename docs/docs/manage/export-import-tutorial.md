@@ -186,7 +186,7 @@ mcpgateway export --tags production-ready --out staging-to-prod.json
 ### Step 2: Import to Production
 
 ```bash
-# On production environment  
+# On production environment
 # First, validate with dry-run
 mcpgateway import staging-to-prod.json \
   --rekey-secret prod-secret-xyz \
@@ -227,7 +227,7 @@ Use the web interface for visual export/import management.
 ### Step 2: Visual Export
 
 1. **Select Entity Types**: Check boxes for Tools, Gateways, Servers
-2. **Apply Filters**: 
+2. **Apply Filters**:
    - Tags: `production, api`
    - Include Inactive: ✅
 3. **Export Options**:

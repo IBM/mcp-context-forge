@@ -3240,6 +3240,30 @@ function showTab(tabName) {
                             });
                     }
                 }
+
+                if (tabName === "export-import") {
+                    // Initialize export/import functionality when tab is shown
+                    if (!panel.classList.contains("hidden")) {
+                        console.log(
+                            "🔄 Initializing export/import tab content",
+                        );
+                        try {
+                            // Ensure the export/import functionality is initialized
+                            if (typeof initializeExportImport === "function") {
+                                initializeExportImport();
+                            }
+                            // Load recent imports
+                            if (typeof loadRecentImports === "function") {
+                                loadRecentImports();
+                            }
+                        } catch (error) {
+                            console.error(
+                                "Error loading export/import content:",
+                                error,
+                            );
+                        }
+                    }
+                }
             } catch (error) {
                 console.error(
                     `Error in tab ${tabName} content loading:`,
@@ -6112,6 +6136,7 @@ function setupTabNavigation() {
         "roots",
         "metrics",
         "logs",
+        "export-import",
         "version-info",
     ];
 
@@ -7444,6 +7469,12 @@ function setupBulkImportModal() {
  * Initialize export/import functionality
  */
 function initializeExportImport() {
+    // Prevent double initialization
+    if (window.exportImportInitialized) {
+        console.log("🔄 Export/import already initialized, skipping");
+        return;
+    }
+
     console.log("🔄 Initializing export/import functionality");
 
     // Export button handlers
@@ -7485,6 +7516,9 @@ function initializeExportImport() {
 
     // Load recent imports when tab is shown
     loadRecentImports();
+
+    // Mark as initialized
+    window.exportImportInitialized = true;
 }
 
 /**
@@ -7758,7 +7792,7 @@ function updateDropZoneStatus(fileName, importData) {
 /**
  * Reset import file selection
  */
-function resetImportFile() { // eslint-disable-line no-unused-vars
+function resetImportFile() {
     window.currentImportData = null;
 
     const dropZone = document.getElementById("import-drop-zone");
@@ -8051,3 +8085,6 @@ function getCookie(name) {
     }
     return "";
 }
+
+// Expose functions used in dynamically generated HTML
+window.resetImportFile = resetImportFile;

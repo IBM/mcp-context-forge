@@ -9,7 +9,7 @@ MCP Gateway provides comprehensive configuration export and import capabilities 
 The export/import system enables complete backup and restoration of your MCP Gateway configuration including:
 
 - **Tools** (locally created REST API tools)
-- **Gateways** (peer gateway connections) 
+- **Gateways** (peer gateway connections)
 - **Virtual Servers** (server compositions with tool associations)
 - **Prompts** (template definitions with schemas)
 - **Resources** (locally defined resources)
@@ -83,7 +83,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 ### Admin UI Export
 
 1. Navigate to `/admin` in your browser
-2. Go to the "Export/Import" section  
+2. Go to the "Export/Import" section
 3. Select entity types and filters
 4. Click "Export Configuration"
 5. Download the generated JSON file
@@ -169,7 +169,7 @@ mcpgateway import backup.json --conflict-strategy skip
 ```
 - **Behavior**: Skip entities that already exist
 - **Use Case**: Adding new configs without modifying existing ones
-- **Result**: Existing entities remain unchanged
+- **Result**: Existing entities remain unmodified
 
 ### Update Strategy (Default)
 ```bash
@@ -390,7 +390,7 @@ jobs:
       - name: Export Configuration
         run: |
           mcpgateway export --out backup-$(date +%F).json
-          
+
       - name: Upload to S3
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -519,7 +519,7 @@ mcpgateway import backup.json --types servers
 
 **Export (`GET /export`)**:
 - `types` - Comma-separated entity types
-- `exclude_types` - Entity types to exclude  
+- `exclude_types` - Entity types to exclude
 - `tags` - Tag-based filtering
 - `include_inactive` - Include inactive entities
 - `include_dependencies` - Include dependent entities
@@ -605,7 +605,7 @@ mcpgateway export --tags staging-ready --out dev-to-staging.json
 # Import to staging
 mcpgateway import dev-to-staging.json --rekey-secret $STAGING_SECRET
 
-# Export from staging (filtered for production)  
+# Export from staging (filtered for production)
 mcpgateway export --tags production-ready --out staging-to-prod.json
 
 # Import to production

@@ -184,7 +184,7 @@ mcpgateway import backup.json --include "tools:*"
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
 ```
 
-### "Gateway Connection Failed" 
+### "Gateway Connection Failed"
 ```bash
 # Check gateway is running
 curl http://localhost:4444/health

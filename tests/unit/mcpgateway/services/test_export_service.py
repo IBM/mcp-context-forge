@@ -117,13 +117,13 @@ async def test_export_configuration_basic(export_service, mock_db, sample_tool, 
     export_service.prompt_service.list_prompts.return_value = []
     export_service.resource_service.list_resources.return_value = []
     export_service.root_service.list_roots.return_value = []
-    
+
     # Execute export
     result = await export_service.export_configuration(
         db=mock_db,
         exported_by="test_user"
     )
-    
+
     # Validate result structure
     assert "version" in result
     assert "exported_at" in result
@@ -131,14 +131,14 @@ async def test_export_configuration_basic(export_service, mock_db, sample_tool, 
     assert result["exported_by"] == "test_user"
     assert "entities" in result
     assert "metadata" in result
-    
+
     # Check entities
     entities = result["entities"]
     assert "tools" in entities
     assert "gateways" in entities
     assert len(entities["tools"]) == 1
     assert len(entities["gateways"]) == 1
-    
+
     # Check metadata
     metadata = result["metadata"]
     assert "entity_counts" in metadata
@@ -156,7 +156,7 @@ async def test_export_configuration_with_filters(export_service, mock_db):
     export_service.prompt_service.list_prompts.return_value = []
     export_service.resource_service.list_resources.return_value = []
     export_service.root_service.list_roots.return_value = []
-    
+
     # Execute export with filters
     result = await export_service.export_configuration(
         db=mock_db,
@@ -165,7 +165,7 @@ async def test_export_configuration_with_filters(export_service, mock_db):
         include_inactive=True,
         exported_by="test_user"
     )
-    
+
     # Verify service calls with filters
     export_service.tool_service.list_tools.assert_called_once_with(
         mock_db, tags=["production"], include_inactive=True
@@ -173,12 +173,12 @@ async def test_export_configuration_with_filters(export_service, mock_db):
     export_service.gateway_service.list_gateways.assert_called_once_with(
         mock_db, include_inactive=True
     )
-    
+
     # Should not call other services
     export_service.server_service.list_servers.assert_not_called()
     export_service.prompt_service.list_prompts.assert_not_called()
     export_service.resource_service.list_resources.assert_not_called()
-    
+
     # Check only requested types are in result
     entities = result["entities"]
     assert "tools" in entities
@@ -194,23 +194,23 @@ async def test_export_selective(export_service, mock_db, sample_tool):
     # Setup mocks
     export_service.tool_service.get_tool.return_value = sample_tool
     export_service.tool_service.list_tools.return_value = [sample_tool]
-    
+
     entity_selections = {
         "tools": ["tool1"]
     }
-    
+
     # Execute selective export
     result = await export_service.export_selective(
         db=mock_db,
         entity_selections=entity_selections,
         exported_by="test_user"
     )
-    
+
     # Validate result
     assert "entities" in result
     assert "tools" in result["entities"]
     assert len(result["entities"]["tools"]) >= 0  # May be 0 if filtering doesn't match
-    
+
     # Check metadata indicates selective export
     metadata = result["metadata"]
     assert metadata["export_options"]["selective"] == True
@@ -222,7 +222,7 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
     """Test that export filters out MCP tools from gateways."""
     # Create a mix of tools
     from mcpgateway.schemas import ToolMetrics
-    
+
     local_tool = ToolRead(
         id="tool1", original_name="local_tool", name="local_tool",
         url="https://api.example.com", description="Local REST tool", integration_type="REST", request_type="GET",
@@ -235,7 +235,7 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
             avg_response_time=None, last_execution_time=None
         ), gateway_slug="", original_name_slug="local_tool", tags=[]
     )
-    
+
     mcp_tool = ToolRead(
         id="tool2", original_name="mcp_tool", name="gw1-mcp_tool",
         url="https://gateway.example.com", description="MCP tool from gateway", integration_type="MCP", request_type="SSE",
@@ -248,12 +248,12 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
             avg_response_time=None, last_execution_time=None
         ), gateway_slug="gw1", original_name_slug="mcp_tool", tags=[]
     )
-    
+
     export_service.tool_service.list_tools.return_value = [local_tool, mcp_tool]
-    
+
     # Execute export
     tools = await export_service._export_tools(mock_db, None, False)
-    
+
     # Should only include the local REST tool, not the MCP tool from gateway
     assert len(tools) == 1
     assert tools[0]["name"] == "local_tool"
@@ -270,14 +270,14 @@ async def test_export_validation_error(export_service, mock_db):
     export_service.prompt_service.list_prompts.return_value = []
     export_service.resource_service.list_resources.return_value = []
     export_service.root_service.list_roots.return_value = []
-    
+
     # Mock validation to fail
     with patch.object(export_service, '_validate_export_data') as mock_validate:
         mock_validate.side_effect = ExportValidationError("Test validation error")
-        
+
         with pytest.raises(ExportError) as excinfo:
             await export_service.export_configuration(mock_db, exported_by="test_user")
-        
+
         assert "Test validation error" in str(excinfo.value)
 
 
@@ -291,7 +291,7 @@ async def test_validate_export_data_success(export_service):
         "entities": {"tools": []},
         "metadata": {"entity_counts": {"tools": 0}}
     }
-    
+
     # Should not raise any exception
     export_service._validate_export_data(valid_data)
 
@@ -303,10 +303,10 @@ async def test_validate_export_data_missing_fields(export_service):
         "version": "2025-03-26",
         # Missing required fields
     }
-    
+
     with pytest.raises(ExportValidationError) as excinfo:
         export_service._validate_export_data(invalid_data)
-    
+
     assert "Missing required field" in str(excinfo.value)
 
 
@@ -320,10 +320,10 @@ async def test_validate_export_data_invalid_entities(export_service):
         "entities": "not_a_dict",  # Should be a dict
         "metadata": {"entity_counts": {}}
     }
-    
+
     with pytest.raises(ExportValidationError) as excinfo:
         export_service._validate_export_data(invalid_data)
-    
+
     assert "Entities must be a dictionary" in str(excinfo.value)
 
 
@@ -341,9 +341,9 @@ async def test_extract_dependencies(export_service, mock_db):
             {"name": "tool3"}
         ]
     }
-    
+
     dependencies = await export_service._extract_dependencies(mock_db, entities)
-    
+
     assert "servers_to_tools" in dependencies
     assert dependencies["servers_to_tools"]["server1"] == ["tool1", "tool2"]
     assert dependencies["servers_to_tools"]["server2"] == ["tool3"]
