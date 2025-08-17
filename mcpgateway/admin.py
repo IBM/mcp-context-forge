@@ -78,6 +78,7 @@ from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.security_cookies import set_auth_cookie
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
 # Import the shared logging service from main
@@ -1570,7 +1571,8 @@ async def admin_ui(
         },
     )
 
-    response.set_cookie(key="jwt_token", value=jwt_token, httponly=True, secure=False, samesite="Strict")  # JavaScript CAN'T read it  # only over HTTPS  # or "Lax" per your needs
+    # Use secure cookie utility for proper security attributes
+    set_auth_cookie(response, jwt_token, remember_me=False)
     return response
 
 

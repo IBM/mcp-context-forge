@@ -220,7 +220,7 @@ class ToolService:
                 case(
                     (
                         func.count(ToolMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ToolMetric.is_success == 1, 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,  # pylint: disable=not-callable
+                        func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,  # pylint: disable=not-callable
                     ),
                     else_=None,
                 ).label("success_rate"),
@@ -1133,8 +1133,8 @@ class ToolService:
         """
 
         total = db.execute(select(func.count(ToolMetric.id))).scalar() or 0  # pylint: disable=not-callable
-        successful = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success == 1)).scalar() or 0  # pylint: disable=not-callable
-        failed = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success == 0)).scalar() or 0  # pylint: disable=not-callable
+        successful = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success.is_(True))).scalar() or 0  # pylint: disable=not-callable
+        failed = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success.is_(False))).scalar() or 0  # pylint: disable=not-callable
         failure_rate = failed / total if total > 0 else 0.0
         min_rt = db.execute(select(func.min(ToolMetric.response_time))).scalar()
         max_rt = db.execute(select(func.max(ToolMetric.response_time))).scalar()

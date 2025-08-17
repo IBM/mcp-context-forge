@@ -1053,10 +1053,28 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | Setting                   | Description                    | Default                                        | Options    |
 | ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
 | `SKIP_SSL_VERIFY`         | Skip upstream TLS verification | `false`                                        | bool       |
-| `ALLOWED_ORIGINS`         | CORS allow-list                | `["http://localhost","http://localhost:4444"]` | JSON array |
+| `ENVIRONMENT`             | Deployment environment (affects security defaults) | `development`                              | `development`/`production` |
+| `APP_DOMAIN`              | Domain for production CORS origins | `localhost`                                 | string     |
+| `ALLOWED_ORIGINS`         | CORS allow-list                | Auto-configured by environment                 | JSON array |
 | `CORS_ENABLED`            | Enable CORS                    | `true`                                         | bool       |
+| `CORS_ALLOW_CREDENTIALS`  | Allow credentials in CORS      | `true`                                         | bool       |
+| `SECURE_COOKIES`          | Force secure cookie flags     | `true`                                         | bool       |
+| `COOKIE_SAMESITE`         | Cookie SameSite attribute      | `lax`                                          | `strict`/`lax`/`none` |
+| `SECURITY_HEADERS_ENABLED` | Enable security headers middleware | `true`                                     | bool       |
+| `X_FRAME_OPTIONS`         | X-Frame-Options header value   | `DENY`                                         | `DENY`/`SAMEORIGIN` |
+| `HSTS_ENABLED`            | Enable HSTS header             | `true`                                         | bool       |
+| `HSTS_MAX_AGE`            | HSTS max age in seconds        | `31536000`                                     | int        |
+| `REMOVE_SERVER_HEADERS`   | Remove server identification   | `true`                                         | bool       |
 | `DOCS_ALLOW_BASIC_AUTH`   | Allow Basic Auth for docs (in addition to JWT)         | `false`                                        | bool       |
 
+> **CORS Configuration**: When `ENVIRONMENT=development`, CORS origins are automatically configured for common development ports (3000, 8080, gateway port). In production, origins are constructed from `APP_DOMAIN` (e.g., `https://yourdomain.com`, `https://app.yourdomain.com`). You can override this by explicitly setting `ALLOWED_ORIGINS`.
+>
+> **Security Headers**: The gateway automatically adds configurable security headers to all responses including CSP, X-Frame-Options, X-Content-Type-Options, X-Download-Options, and HSTS (on HTTPS). All headers can be individually enabled/disabled. Sensitive server headers are removed.
+>
+> **iframe Embedding**: By default, `X-Frame-Options: DENY` prevents iframe embedding for security. To allow embedding, set `X_FRAME_OPTIONS=SAMEORIGIN` (same domain) or disable with `X_FRAME_OPTIONS=""`. Also update CSP `frame-ancestors` directive if needed.
+>
+> **Cookie Security**: Authentication cookies are automatically configured with HttpOnly, Secure (in production), and SameSite attributes for CSRF protection.
+>
 > Note: do not quote the ALLOWED_ORIGINS values, this needs to be valid JSON, such as:
 > ALLOWED_ORIGINS=["http://localhost", "http://localhost:4444"]
 >

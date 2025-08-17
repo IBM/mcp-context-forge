@@ -155,6 +155,30 @@ class Settings(BaseSettings):
     skip_ssl_verify: bool = False
     cors_enabled: bool = True
 
+    # Environment
+    environment: str = Field(default="development", env="ENVIRONMENT")
+
+    # Domain configuration
+    app_domain: str = Field(default="localhost", env="APP_DOMAIN")
+
+    # Security settings
+    secure_cookies: bool = Field(default=True, env="SECURE_COOKIES")
+    cookie_samesite: str = Field(default="lax", env="COOKIE_SAMESITE")
+
+    # CORS settings
+    cors_allow_credentials: bool = Field(default=True, env="CORS_ALLOW_CREDENTIALS")
+
+    # Security Headers Configuration
+    security_headers_enabled: bool = Field(default=True, env="SECURITY_HEADERS_ENABLED")
+    x_frame_options: str = Field(default="DENY", env="X_FRAME_OPTIONS")
+    x_content_type_options_enabled: bool = Field(default=True, env="X_CONTENT_TYPE_OPTIONS_ENABLED")
+    x_xss_protection_enabled: bool = Field(default=True, env="X_XSS_PROTECTION_ENABLED")
+    x_download_options_enabled: bool = Field(default=True, env="X_DOWNLOAD_OPTIONS_ENABLED")
+    hsts_enabled: bool = Field(default=True, env="HSTS_ENABLED")
+    hsts_max_age: int = Field(default=31536000, env="HSTS_MAX_AGE")  # 1 year
+    hsts_include_subdomains: bool = Field(default=True, env="HSTS_INCLUDE_SUBDOMAINS")
+    remove_server_headers: bool = Field(default=True, env="REMOVE_SERVER_HEADERS")
+
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
     # Tell pydantic *not* to touch this env var - our validator will.
     allowed_origins: Annotated[Set[str], NoDecode] = {
@@ -668,6 +692,23 @@ class Settings(BaseSettings):
         else:
             # Safer defaults without Authorization header
             self.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
+
+        # Configure environment-aware CORS origins if not explicitly set via env or kwargs
+        # Only apply defaults if using the default allowed_origins value
+        if not os.environ.get("ALLOWED_ORIGINS") and "allowed_origins" not in kwargs and self.allowed_origins == {"http://localhost", "http://localhost:4444"}:
+            if self.environment == "development":
+                self.allowed_origins = {
+                    "http://localhost",
+                    "http://localhost:3000",
+                    "http://localhost:8080",
+                    "http://127.0.0.1:3000",
+                    "http://127.0.0.1:8080",
+                    f"http://localhost:{self.port}",
+                    f"http://127.0.0.1:{self.port}",
+                }
+            else:
+                # Production origins - construct from app_domain
+                self.allowed_origins = {f"https://{self.app_domain}", f"https://app.{self.app_domain}", f"https://admin.{self.app_domain}"}
 
         # Validate proxy auth configuration
         if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:

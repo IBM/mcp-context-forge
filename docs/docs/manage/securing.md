@@ -27,13 +27,26 @@ MCPGATEWAY_ENABLE_PROMPTS=false  # If not using prompts
 MCPGATEWAY_ENABLE_RESOURCES=false # If not using resources
 ```
 
-### 2. Enable Authentication
+### 2. Enable Authentication & Security
 
 ```bash
 # Configure strong authentication
 MCPGATEWAY_AUTH_ENABLED=true
 MCPGATEWAY_AUTH_USERNAME=custom-username  # Change from default
 MCPGATEWAY_AUTH_PASSWORD=strong-password-here  # Use secrets manager
+
+# Set environment for security defaults
+ENVIRONMENT=production
+
+# Configure domain for CORS
+APP_DOMAIN=yourdomain.com
+
+# Ensure secure cookies (automatic in production)
+SECURE_COOKIES=true
+COOKIE_SAMESITE=strict
+
+# Configure CORS (auto-configured based on APP_DOMAIN in production)
+CORS_ALLOW_CREDENTIALS=true
 ```
 
 ### 3. Network Security
@@ -41,8 +54,10 @@ MCPGATEWAY_AUTH_PASSWORD=strong-password-here  # Use secrets manager
 - [ ] Configure TLS/HTTPS with valid certificates
 - [ ] Implement firewall rules and network policies
 - [ ] Use internal-only endpoints where possible
-- [ ] Configure appropriate CORS policies
+- [ ] Configure appropriate CORS policies (auto-configured by ENVIRONMENT setting)
 - [ ] Set up rate limiting per endpoint/client
+- [ ] Verify security headers are present (automatically added by SecurityHeadersMiddleware)
+- [ ] Configure iframe embedding policy (X_FRAME_OPTIONS=DENY by default, change to SAMEORIGIN if needed)
 
 ### 4. Container Security
 

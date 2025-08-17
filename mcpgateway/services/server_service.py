@@ -157,7 +157,7 @@ class ServerService:
                 case(
                     (
                         func.count(ServerMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ServerMetric.is_success == 1, 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,  # pylint: disable=not-callable
+                        func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,  # pylint: disable=not-callable
                     ),
                     else_=None,
                 ).label("success_rate"),
@@ -833,9 +833,9 @@ class ServerService:
         """
         total_executions = db.execute(select(func.count()).select_from(ServerMetric)).scalar() or 0  # pylint: disable=not-callable
 
-        successful_executions = db.execute(select(func.count()).select_from(ServerMetric).where(ServerMetric.is_success == 1)).scalar() or 0  # pylint: disable=not-callable
+        successful_executions = db.execute(select(func.count()).select_from(ServerMetric).where(ServerMetric.is_success.is_(True))).scalar() or 0  # pylint: disable=not-callable
 
-        failed_executions = db.execute(select(func.count()).select_from(ServerMetric).where(ServerMetric.is_success == 0)).scalar() or 0  # pylint: disable=not-callable
+        failed_executions = db.execute(select(func.count()).select_from(ServerMetric).where(ServerMetric.is_success.is_(False))).scalar() or 0  # pylint: disable=not-callable
 
         min_response_time = db.execute(select(func.min(ServerMetric.response_time))).scalar()
 

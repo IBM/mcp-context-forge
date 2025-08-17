@@ -1514,8 +1514,16 @@ class TestAdminUIRoute:
         jwt_token = "test.jwt.token"
         response = await admin_ui(mock_request, False, mock_db, "admin", jwt_token)
 
-        # Verify cookie was set with correct parameters
-        mock_response.set_cookie.assert_called_once_with(key="jwt_token", value=jwt_token, httponly=True, secure=False, samesite="Strict")
+        # Verify cookie was set with secure parameters using security_cookies utility
+        mock_response.set_cookie.assert_called_once_with(
+            key="jwt_token",
+            value=jwt_token,
+            max_age=3600,  # 1 hour
+            httponly=True,
+            secure=True,  # Default secure_cookies=True
+            samesite="lax",  # Default cookie_samesite
+            path="/"
+        )
 
 
 class TestEdgeCasesAndErrorHandling:
