@@ -14,6 +14,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+# First-Party
+from mcpgateway.config import settings
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
@@ -48,10 +51,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         """
         response = await call_next(request)
 
-        # Essential security headers
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "0"  # Modern browsers use CSP instead
+        # Only apply security headers if enabled
+        if not settings.security_headers_enabled:
+            return response
+
+        # Essential security headers (configurable)
+        if settings.x_content_type_options_enabled:
+            response.headers["X-Content-Type-Options"] = "nosniff"
+
+        if settings.x_frame_options:
+            response.headers["X-Frame-Options"] = settings.x_frame_options
+
+        if settings.x_xss_protection_enabled:
+            response.headers["X-XSS-Protection"] = "0"  # Modern browsers use CSP instead
+
+        if settings.x_download_options_enabled:
+            response.headers["X-Download-Options"] = "noopen"  # Prevent IE from executing downloads
+
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
         # Content Security Policy
@@ -67,15 +83,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         ]
         response.headers["Content-Security-Policy"] = "; ".join(csp_directives) + ";"
 
-        # HSTS for HTTPS connections
-        # Check both the request scheme and X-Forwarded-Proto header for proxy scenarios
-        if request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https":
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # HSTS for HTTPS connections (configurable)
+        if settings.hsts_enabled and (request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"):
+            hsts_value = f"max-age={settings.hsts_max_age}"
+            if settings.hsts_include_subdomains:
+                hsts_value += "; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = hsts_value
 
-        # Remove sensitive headers that might disclose server information
-        if "X-Powered-By" in response.headers:
-            del response.headers["X-Powered-By"]
-        if "Server" in response.headers:
-            del response.headers["Server"]
+        # Remove sensitive headers that might disclose server information (configurable)
+        if settings.remove_server_headers:
+            if "X-Powered-By" in response.headers:
+                del response.headers["X-Powered-By"]
+            if "Server" in response.headers:
+                del response.headers["Server"]
 
         return response

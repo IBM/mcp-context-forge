@@ -168,6 +168,17 @@ class Settings(BaseSettings):
     # CORS settings
     cors_allow_credentials: bool = Field(default=True, env="CORS_ALLOW_CREDENTIALS")
 
+    # Security Headers Configuration
+    security_headers_enabled: bool = Field(default=True, env="SECURITY_HEADERS_ENABLED")
+    x_frame_options: str = Field(default="DENY", env="X_FRAME_OPTIONS")
+    x_content_type_options_enabled: bool = Field(default=True, env="X_CONTENT_TYPE_OPTIONS_ENABLED")
+    x_xss_protection_enabled: bool = Field(default=True, env="X_XSS_PROTECTION_ENABLED")
+    x_download_options_enabled: bool = Field(default=True, env="X_DOWNLOAD_OPTIONS_ENABLED")
+    hsts_enabled: bool = Field(default=True, env="HSTS_ENABLED")
+    hsts_max_age: int = Field(default=31536000, env="HSTS_MAX_AGE")  # 1 year
+    hsts_include_subdomains: bool = Field(default=True, env="HSTS_INCLUDE_SUBDOMAINS")
+    remove_server_headers: bool = Field(default=True, env="REMOVE_SERVER_HEADERS")
+
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
     # Tell pydantic *not* to touch this env var - our validator will.
     allowed_origins: Annotated[Set[str], NoDecode] = {

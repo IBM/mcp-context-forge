@@ -300,7 +300,7 @@
     - [**#538**](https://github.com/IBM/mcp-context-forge/issues/538) - [SECURITY FEATURE] Content Size & Type Security Limits for Resources & Prompts
     - [**#537**](https://github.com/IBM/mcp-context-forge/issues/537) - Simple Endpoint Feature Flags (selectively enable or disable tools, resources, prompts, servers, gateways, roots)
     - [**#534**](https://github.com/IBM/mcp-context-forge/issues/534) - Add Security Configuration Validation and Startup Checks
-    - [**#533**](https://github.com/IBM/mcp-context-forge/issues/533) - Add Additional Configurable Security Headers to APIs for Admin UI
+    - ✅ [**#533**](https://github.com/IBM/mcp-context-forge/issues/533) - Add Additional Configurable Security Headers to APIs for Admin UI
     - [**#342**](https://github.com/IBM/mcp-context-forge/issues/342) - Implement database-level security constraints and SQL injection prevention
     - [**#284**](https://github.com/IBM/mcp-context-forge/issues/284) - LDAP / Active-Directory Integration
     - [**#282**](https://github.com/IBM/mcp-context-forge/issues/282) - Per-Virtual-Server API Keys with Scoped Access

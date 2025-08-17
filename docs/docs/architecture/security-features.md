@@ -124,13 +124,16 @@
 
 * **Configuration Validation** - Schema enforcement with startup security checks ([#285](https://github.com/IBM/mcp-context-forge/issues/285), [#534](https://github.com/IBM/mcp-context-forge/issues/534)) 🚧
 
-* **Security Headers** - Essential security headers and environment-aware CORS policies (✅ [#344](https://github.com/IBM/mcp-context-forge/issues/344), [#533](https://github.com/IBM/mcp-context-forge/issues/533)) ✅
-  - **X-Content-Type-Options: nosniff** - Prevents MIME type sniffing attacks
-  - **X-Frame-Options: DENY** - Prevents clickjacking attacks
-  - **Content-Security-Policy** - Comprehensive XSS and injection protection
-  - **Strict-Transport-Security** - Forces HTTPS connections
+* **Security Headers & Configurable Admin UI Security** - Comprehensive security headers with full configurability (✅ [#344](https://github.com/IBM/mcp-context-forge/issues/344), ✅ [#533](https://github.com/IBM/mcp-context-forge/issues/533))
+  - **X-Content-Type-Options: nosniff** - Prevents MIME type sniffing attacks (configurable)
+  - **X-Frame-Options: DENY** - Prevents clickjacking attacks (configurable: DENY/SAMEORIGIN)
+  - **X-Download-Options: noopen** - Prevents IE download execution (configurable)
+  - **Content-Security-Policy** - Comprehensive XSS and injection protection (Admin UI compatible)
+  - **Strict-Transport-Security** - Forces HTTPS connections (configurable max-age & subdomains)
   - **Environment-aware CORS** - Automatic origin configuration for dev/production
   - **Secure cookies** - HttpOnly, Secure, SameSite attributes for authentication
+  - **Static analysis compatibility** - Meta tags complement HTTP headers for nodejsscan
+  - **15 configuration options** - Individual control over all security features
 
 * **Well-Known URI Handler** - security.txt and robots.txt support ([#540](https://github.com/IBM/mcp-context-forge/issues/540)) 🚧
 

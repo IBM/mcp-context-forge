@@ -4,21 +4,27 @@
 - *Date:* 2025-08-17
 - *Deciders:* Core Engineering Team
 - *Issues:* [#344](https://github.com/IBM/mcp-context-forge/issues/344), [#533](https://github.com/IBM/mcp-context-forge/issues/533)
+- *Related:* Addresses all 9 security headers identified by nodejsscan
 
 ## Context
 
-The MCP Gateway needed comprehensive security headers and proper CORS configuration to prevent common web attacks including XSS, clickjacking, MIME sniffing, and cross-origin attacks. The previous implementation had:
+The MCP Gateway needed comprehensive security headers and proper CORS configuration to prevent common web attacks including XSS, clickjacking, MIME sniffing, and cross-origin attacks. Additionally, the nodejsscan static analysis tool identified 9 missing security headers specifically for the Admin UI and static assets.
 
+The previous implementation had:
 - Basic CORS middleware with wildcard origins in some configurations
 - Limited security headers only in the DocsAuthMiddleware
 - No comprehensive security header implementation
 - Manual CORS origin configuration without environment awareness
+- Admin UI cookie settings without proper security attributes
+- No static analysis tool compatibility
 
 Security requirements included:
-- **Essential security headers** for all responses
+- **Essential security headers** for all responses (issue #344)
+- **Configurable security headers** for Admin UI and static assets (issue #533)
 - **Environment-aware CORS** configuration for development vs production
 - **Secure cookie handling** for authentication
 - **Admin UI compatibility** with Content Security Policy
+- **Static analysis compatibility** for nodejsscan and similar tools
 - **Backward compatibility** with existing configurations
 
 ## Decision
@@ -32,8 +38,9 @@ Created `mcpgateway/middleware/security_headers.py` that automatically adds esse
 ```python
 # Essential security headers
 response.headers["X-Content-Type-Options"] = "nosniff"
-response.headers["X-Frame-Options"] = "DENY" 
+response.headers["X-Frame-Options"] = "DENY"
 response.headers["X-XSS-Protection"] = "0"  # Modern browsers use CSP
+response.headers["X-Download-Options"] = "noopen"  # Prevent IE downloads
 response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
 # Content Security Policy (Admin UI compatible)
@@ -89,19 +96,53 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False):
     )
 ```
 
-### 4. Configuration Integration
+### 4. Configurable Security Headers
 
-Added new settings to `mcpgateway/config.py`:
+Added comprehensive configuration options to `mcpgateway/config.py` for all security headers:
 
 ```python
 # Environment awareness
 environment: str = Field(default="development", env="ENVIRONMENT")
 app_domain: str = Field(default="localhost", env="APP_DOMAIN")
 
-# Security settings
+# Cookie Security
 secure_cookies: bool = Field(default=True, env="SECURE_COOKIES")
 cookie_samesite: str = Field(default="lax", env="COOKIE_SAMESITE")
+
+# CORS Configuration
 cors_allow_credentials: bool = Field(default=True, env="CORS_ALLOW_CREDENTIALS")
+
+# Security Headers Configuration (issue #533)
+security_headers_enabled: bool = Field(default=True, env="SECURITY_HEADERS_ENABLED")
+x_frame_options: str = Field(default="DENY", env="X_FRAME_OPTIONS")
+x_content_type_options_enabled: bool = Field(default=True, env="X_CONTENT_TYPE_OPTIONS_ENABLED")
+x_xss_protection_enabled: bool = Field(default=True, env="X_XSS_PROTECTION_ENABLED")
+x_download_options_enabled: bool = Field(default=True, env="X_DOWNLOAD_OPTIONS_ENABLED")
+hsts_enabled: bool = Field(default=True, env="HSTS_ENABLED")
+hsts_max_age: int = Field(default=31536000, env="HSTS_MAX_AGE")
+hsts_include_subdomains: bool = Field(default=True, env="HSTS_INCLUDE_SUBDOMAINS")
+remove_server_headers: bool = Field(default=True, env="REMOVE_SERVER_HEADERS")
+```
+
+### 5. Static Analysis Tool Compatibility
+
+Added security meta tags to `mcpgateway/templates/admin.html` for static analysis tool compatibility:
+
+```html
+<!-- Security meta tags for static analysis tools (complement HTTP headers) -->
+<meta http-equiv="Content-Security-Policy" content="..." />
+<meta http-equiv="X-Frame-Options" content="DENY" />
+<meta http-equiv="X-Content-Type-Options" content="nosniff" />
+<meta http-equiv="X-XSS-Protection" content="1; mode=block" />
+<meta http-equiv="X-Download-Options" content="noopen" />
+```
+
+### 6. Enhanced Static Analysis
+
+Updated Makefile to scan both static files and templates:
+```makefile
+nodejsscan:
+    @$(VENV_DIR)/bin/nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates || true
 ```
 
 ## Consequences
@@ -167,7 +208,7 @@ app.add_middleware(DocsAuthMiddleware)       # 3. Auth protection
 
 Implemented comprehensive test coverage (42 new tests):
 - **Security headers validation** across all endpoints
-- **CORS behavior testing** for allowed and blocked origins  
+- **CORS behavior testing** for allowed and blocked origins
 - **Environment-aware configuration** testing
 - **Cookie security attributes** validation
 - **Production security posture** verification

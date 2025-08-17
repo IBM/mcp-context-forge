@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
+from mcpgateway.config import settings
 
 
 def test_security_headers_middleware_basic():
@@ -39,6 +40,7 @@ def test_security_headers_middleware_basic():
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["X-XSS-Protection"] == "0"
+    assert response.headers["X-Download-Options"] == "noopen"
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
     assert "Content-Security-Policy" in response.headers
 

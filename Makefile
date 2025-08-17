@@ -1389,7 +1389,7 @@ install-web-linters:
 nodejsscan:
 	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
 	$(call ensure_pip_package,nodejsscan)
-	@$(VENV_DIR)/bin/nodejsscan --directory ./mcpgateway/static || true
+	@$(VENV_DIR)/bin/nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates || true
 
 lint-web: install-web-linters nodejsscan
 	@echo "🔍 Linting HTML files..."
