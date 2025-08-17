@@ -51,6 +51,10 @@ services:
       - BASIC_AUTH_PASSWORD=changeme
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true
+      # Security configuration (using defaults)
+      - ENVIRONMENT=development
+      - SECURITY_HEADERS_ENABLED=true
+      - CORS_ALLOW_CREDENTIALS=true
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
@@ -72,12 +76,12 @@ services:
       #   condition: service_completed_successfully
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4444/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; import json; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); data = json.loads(resp.read()); exit(0 if data.get('status') == 'healthy' else 1)"]
       #test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 20s
+      start_period: 30s
 
     # volumes:
     #   - ./certs:/app/certs:ro   # mount certs folder read-only
