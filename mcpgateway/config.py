@@ -150,6 +150,8 @@ class Settings(BaseSettings):
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
     mcpgateway_bulk_import_enabled: bool = True
+    mcpgateway_bulk_import_max_tools: int = 200
+    mcpgateway_bulk_import_rate_limit: int = 10
 
     # Security
     skip_ssl_verify: bool = False

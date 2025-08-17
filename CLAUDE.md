@@ -137,6 +137,11 @@ AUTH_REQUIRED=true
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
 
+# Bulk Import (Admin UI feature)
+MCPGATEWAY_BULK_IMPORT_ENABLED=true      # Enable/disable bulk import endpoint
+MCPGATEWAY_BULK_IMPORT_MAX_TOOLS=200     # Maximum tools per import batch
+MCPGATEWAY_BULK_IMPORT_RATE_LIMIT=10     # Requests per minute limit
+
 # Federation
 MCPGATEWAY_ENABLE_MDNS_DISCOVERY=true
 MCPGATEWAY_ENABLE_FEDERATION=true
