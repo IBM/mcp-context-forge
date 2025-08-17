@@ -42,7 +42,20 @@ logger = logging.getLogger(__name__)
 
 
 class ConflictStrategy(str, Enum):
-    """Strategies for handling conflicts during import."""
+    """Strategies for handling conflicts during import.
+
+    Examples:
+        >>> ConflictStrategy.SKIP.value
+        'skip'
+        >>> ConflictStrategy.UPDATE.value
+        'update'
+        >>> ConflictStrategy.RENAME.value
+        'rename'
+        >>> ConflictStrategy.FAIL.value
+        'fail'
+        >>> ConflictStrategy("update")
+        <ConflictStrategy.UPDATE: 'update'>
+    """
 
     SKIP = "skip"
     UPDATE = "update"
@@ -51,21 +64,59 @@ class ConflictStrategy(str, Enum):
 
 
 class ImportError(Exception):  # pylint: disable=redefined-builtin
-    """Base class for import-related errors."""
+    """Base class for import-related errors.
+
+    Examples:
+        >>> error = ImportError("Something went wrong")
+        >>> str(error)
+        'Something went wrong'
+        >>> isinstance(error, Exception)
+        True
+    """
 
 
 class ImportValidationError(ImportError):
-    """Raised when import data validation fails."""
+    """Raised when import data validation fails.
+
+    Examples:
+        >>> error = ImportValidationError("Invalid schema")
+        >>> str(error)
+        'Invalid schema'
+        >>> isinstance(error, ImportError)
+        True
+    """
 
 
 class ImportConflictError(ImportError):
-    """Raised when import conflicts cannot be resolved."""
+    """Raised when import conflicts cannot be resolved.
+
+    Examples:
+        >>> error = ImportConflictError("Name conflict: tool_name")
+        >>> str(error)
+        'Name conflict: tool_name'
+        >>> isinstance(error, ImportError)
+        True
+    """
 
 
 class ImportStatus:
     """Tracks the status of an import operation."""
 
     def __init__(self, import_id: str):
+        """Initialize import status tracking.
+
+        Args:
+            import_id: Unique identifier for the import operation
+
+        Examples:
+            >>> status = ImportStatus("import_123")
+            >>> status.import_id
+            'import_123'
+            >>> status.status
+            'pending'
+            >>> status.total_entities
+            0
+        """
         self.import_id = import_id
         self.status = "pending"
         self.total_entities = 0
@@ -117,7 +168,19 @@ class ImportService:
     """
 
     def __init__(self):
-        """Initialize the import service with required dependencies."""
+        """Initialize the import service with required dependencies.
+
+        Creates instances of all entity services and initializes the active imports tracker.
+
+        Examples:
+            >>> service = ImportService()
+            >>> service.active_imports
+            {}
+            >>> hasattr(service, 'tool_service')
+            True
+            >>> hasattr(service, 'gateway_service')
+            True
+        """
         self.gateway_service = GatewayService()
         self.tool_service = ToolService()
         self.resource_service = ResourceService()
@@ -142,6 +205,22 @@ class ImportService:
 
         Raises:
             ImportValidationError: If validation fails
+
+        Examples:
+            >>> service = ImportService()
+            >>> valid_data = {
+            ...     "version": "2025-03-26",
+            ...     "exported_at": "2025-01-01T00:00:00Z",
+            ...     "entities": {"tools": []}
+            ... }
+            >>> service.validate_import_data(valid_data)  # Should not raise
+
+            >>> invalid_data = {"missing": "version"}
+            >>> try:
+            ...     service.validate_import_data(invalid_data)
+            ... except ImportValidationError as e:
+            ...     "Missing required field" in str(e)
+            True
         """
         logger.debug("Validating import data structure")
 
@@ -284,6 +363,24 @@ class ImportService:
 
         Returns:
             Unique identifier string for the entity
+
+        Examples:
+            >>> service = ImportService()
+            >>> tool_entity = {"name": "my_tool", "url": "https://example.com"}
+            >>> service._get_entity_identifier("tools", tool_entity)
+            'my_tool'
+
+            >>> resource_entity = {"name": "my_resource", "uri": "/api/data"}
+            >>> service._get_entity_identifier("resources", resource_entity)
+            '/api/data'
+
+            >>> root_entity = {"name": "workspace", "uri": "file:///workspace"}
+            >>> service._get_entity_identifier("roots", root_entity)
+            'file:///workspace'
+
+            >>> unknown_entity = {"data": "test"}
+            >>> service._get_entity_identifier("unknown", unknown_entity)
+            ''
         """
         if entity_type in ["tools", "gateways", "servers", "prompts"]:
             return entity.get("name", "")
@@ -376,6 +473,24 @@ class ImportService:
 
         Returns:
             True if entity has auth data, False otherwise
+
+        Examples:
+            >>> service = ImportService()
+            >>> entity_with_auth = {"name": "test", "auth_value": "encrypted_data"}
+            >>> bool(service._has_auth_data(entity_with_auth))
+            True
+
+            >>> entity_without_auth = {"name": "test"}
+            >>> service._has_auth_data(entity_without_auth)
+            False
+
+            >>> entity_empty_auth = {"name": "test", "auth_value": ""}
+            >>> bool(service._has_auth_data(entity_empty_auth))
+            False
+
+            >>> entity_none_auth = {"name": "test", "auth_value": None}
+            >>> bool(service._has_auth_data(entity_none_auth))
+            False
         """
         return "auth_value" in entity_data and entity_data.get("auth_value")
 
