@@ -428,6 +428,666 @@ curl -H "Authorization: Bearer $TOKEN" \
   http://localhost:8080/api/v1/time
 ```
 
+## Developer Guide: Raw JSON-RPC Protocol Usage
+
+This section demonstrates how to interact with the fast-time-server using raw MCP JSON-RPC commands via curl or stdio. This is useful for developers who want to understand the underlying protocol or integrate with the server at a low level.
+
+### JSON-RPC Over HTTP
+
+When running in HTTP mode (`-transport=http`), the server accepts MCP JSON-RPC 2.0 messages over HTTP.
+
+#### Running the Server
+
+```bash
+# Start in HTTP mode
+./fast-time-server -transport=http -port=8080
+
+# Or in dual mode (both MCP and REST)
+./fast-time-server -transport=dual -port=8080
+```
+
+#### Complete Session Example
+
+Here's a complete session showing the full MCP protocol flow:
+
+```bash
+#!/bin/bash
+# Complete MCP JSON-RPC session example
+
+SERVER="http://localhost:8080/http"  # Use /http endpoint in dual mode
+# SERVER="http://localhost:8080/"    # Root endpoint in http-only mode
+
+echo "=== MCP JSON-RPC Session with fast-time-server ==="
+
+# Function to make JSON-RPC calls with pretty output
+call_mcp() {
+    echo "Request: $1"
+    echo "Response:"
+    curl -s -X POST "$SERVER" \
+         -H "Content-Type: application/json" \
+         -d "$1" | jq '.'
+    echo "---"
+}
+
+# 1. Initialize the MCP connection
+echo "=== Step 1: Initialize ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {
+      "tools": {},
+      "resources": {},
+      "prompts": {}
+    },
+    "clientInfo": {
+      "name": "curl-client",
+      "version": "1.0"
+    }
+  }
+}'
+
+# 2. Send initialized notification
+echo "=== Step 2: Send Initialized Notification ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "method": "notifications/initialized",
+  "params": {}
+}'
+
+# 3. List available tools
+echo "=== Step 3: List Tools ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/list",
+  "params": {}
+}'
+
+# 4. List available resources
+echo "=== Step 4: List Resources ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "resources/list",
+  "params": {}
+}'
+
+# 5. List available prompts
+echo "=== Step 5: List Prompts ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "prompts/list",
+  "params": {}
+}'
+
+# 6. Call get_system_time tool (UTC)
+echo "=== Step 6: Get System Time (UTC) ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "tools/call",
+  "params": {
+    "name": "get_system_time",
+    "arguments": {}
+  }
+}'
+
+# 7. Call get_system_time tool (specific timezone)
+echo "=== Step 7: Get System Time (New York) ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "tools/call",
+  "params": {
+    "name": "get_system_time",
+    "arguments": {
+      "timezone": "America/New_York"
+    }
+  }
+}'
+
+# 8. Call convert_time tool
+echo "=== Step 8: Convert Time ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "tools/call",
+  "params": {
+    "name": "convert_time",
+    "arguments": {
+      "time": "2025-01-15T14:00:00Z",
+      "source_timezone": "UTC",
+      "target_timezone": "Asia/Tokyo"
+    }
+  }
+}'
+
+# 9. Read a resource
+echo "=== Step 9: Read Resource (timezone info) ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "resources/read",
+  "params": {
+    "uri": "timezone://info"
+  }
+}'
+
+# 10. Get a prompt
+echo "=== Step 10: Get Prompt ==="
+call_mcp '{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "prompts/get",
+  "params": {
+    "name": "compare_timezones",
+    "arguments": {
+      "timezones": "UTC,America/New_York,Europe/London"
+    }
+  }
+}'
+
+echo "=== Session Complete ==="
+```
+
+#### Individual Command Examples
+
+**Initialize Connection:**
+```bash
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 1,
+       "method": "initialize",
+       "params": {
+         "protocolVersion": "2025-03-26",
+         "capabilities": {
+           "tools": {},
+           "resources": {},
+           "prompts": {}
+         },
+         "clientInfo": {
+           "name": "curl-client",
+           "version": "1.0"
+         }
+       }
+     }'
+```
+
+**List Available Tools:**
+```bash
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 2,
+       "method": "tools/list",
+       "params": {}
+     }'
+```
+
+**Call Tool - Get Current Time:**
+```bash
+# UTC time (default)
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 3,
+       "method": "tools/call",
+       "params": {
+         "name": "get_system_time",
+         "arguments": {}
+       }
+     }'
+
+# Specific timezone
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 4,
+       "method": "tools/call",
+       "params": {
+         "name": "get_system_time",
+         "arguments": {
+           "timezone": "Europe/Dublin"
+         }
+       }
+     }'
+```
+
+**Call Tool - Convert Time:**
+```bash
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 5,
+       "method": "tools/call",
+       "params": {
+         "name": "convert_time",
+         "arguments": {
+           "time": "2025-01-15T10:00:00",
+           "source_timezone": "Europe/Dublin",
+           "target_timezone": "America/New_York"
+         }
+       }
+     }'
+```
+
+**Read Resources:**
+```bash
+# List all resources
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 6,
+       "method": "resources/list",
+       "params": {}
+     }'
+
+# Read specific resource
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 7,
+       "method": "resources/read",
+       "params": {
+         "uri": "time://current/world"
+       }
+     }'
+```
+
+**Work with Prompts:**
+```bash
+# List all prompts
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 8,
+       "method": "prompts/list",
+       "params": {}
+     }'
+
+# Get a prompt with arguments
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 9,
+       "method": "prompts/get",
+       "params": {
+         "name": "schedule_meeting",
+         "arguments": {
+           "participants": "New York,London,Tokyo",
+           "duration": "60",
+           "preferred_hours": "9 AM - 5 PM"
+         }
+       }
+     }'
+```
+
+### JSON-RPC Over STDIO
+
+When running in stdio mode (`-transport=stdio`), the server communicates via standard input/output using newline-delimited JSON.
+
+#### Testing STDIO Mode
+
+```bash
+# Start the server in stdio mode
+./fast-time-server -transport=stdio -log-level=error
+
+# The server is now waiting for JSON-RPC messages on stdin
+# Each message should be on a single line
+```
+
+#### STDIO Session Example
+
+```bash
+#!/bin/bash
+# Test stdio mode with a script
+
+echo "=== Testing STDIO Mode ==="
+
+# Start the server in background and capture its PID
+./fast-time-server -transport=stdio -log-level=error &
+SERVER_PID=$!
+
+# Function to send JSON-RPC message and read response
+send_message() {
+    echo "$1" | ./fast-time-server -transport=stdio -log-level=error 2>/dev/null
+}
+
+# Initialize
+echo "Initializing..."
+INIT_RESPONSE=$(send_message '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"script-client","version":"1.0"}}}')
+echo "Response: $INIT_RESPONSE"
+
+# Send initialized notification
+echo "Sending initialized..."
+send_message '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+
+# List tools
+echo "Listing tools..."
+TOOLS_RESPONSE=$(send_message '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+echo "Response: $TOOLS_RESPONSE"
+
+# Get current time
+echo "Getting current time..."
+TIME_RESPONSE=$(send_message '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_system_time","arguments":{"timezone":"UTC"}}}')
+echo "Response: $TIME_RESPONSE"
+
+# Clean up
+kill $SERVER_PID 2>/dev/null
+echo "=== STDIO Test Complete ==="
+```
+
+#### Interactive STDIO Testing
+
+For interactive testing, you can use a simple script or tools like `nc` (netcat):
+
+```bash
+# Method 1: Direct pipe interaction
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | ./fast-time-server -transport=stdio -log-level=error
+
+# Method 2: Using a here document
+./fast-time-server -transport=stdio -log-level=error << 'EOF'
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_system_time","arguments":{}}}
+EOF
+```
+
+### Authentication with JSON-RPC
+
+When the server is running with authentication (`-auth-token=secret`):
+
+```bash
+# Start server with authentication
+./fast-time-server -transport=http -port=8080 -auth-token=mysecret
+
+# Include Bearer token in HTTP headers
+curl -X POST http://localhost:8080/http \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer mysecret" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 1,
+       "method": "initialize",
+       "params": {
+         "protocolVersion": "2025-03-26",
+         "capabilities": {},
+         "clientInfo": {"name": "auth-client", "version": "1.0"}
+       }
+     }'
+```
+
+### Expected Response Formats
+
+**Successful Initialize Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {
+      "tools": {
+        "listChanged": false
+      },
+      "resources": {
+        "subscribe": false,
+        "listChanged": false
+      },
+      "prompts": {
+        "listChanged": false
+      }
+    },
+    "serverInfo": {
+      "name": "fast-time-server",
+      "version": "1.5.0"
+    }
+  }
+}
+```
+
+**Tools List Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      {
+        "name": "get_system_time",
+        "description": "Get current system time in specified timezone",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "timezone": {
+              "type": "string",
+              "description": "IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Defaults to UTC if not specified."
+            }
+          }
+        }
+      },
+      {
+        "name": "convert_time",
+        "description": "Convert time between different timezones",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "time": {
+              "type": "string",
+              "description": "Time to convert in RFC3339 format or common formats like '2006-01-02 15:04:05'"
+            },
+            "source_timezone": {
+              "type": "string",
+              "description": "Source IANA timezone name"
+            },
+            "target_timezone": {
+              "type": "string",
+              "description": "Target IANA timezone name"
+            }
+          },
+          "required": ["time", "source_timezone", "target_timezone"]
+        }
+      }
+    ]
+  }
+}
+```
+
+**Tool Call Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "2025-01-15T16:30:45Z"
+      }
+    ],
+    "isError": false
+  }
+}
+```
+
+**Error Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "invalid timezone \"Invalid/Zone\": unknown time zone Invalid/Zone"
+      }
+    ],
+    "isError": true
+  }
+}
+```
+
+### JSON-RPC Troubleshooting
+
+**Common Issues:**
+
+1. **Connection Refused**
+   ```bash
+   # Check if server is running
+   curl -f http://localhost:8080/health || echo "Server not running"
+
+   # Check what's listening on the port
+   lsof -i :8080
+   ```
+
+2. **Invalid JSON-RPC Format**
+   ```bash
+   # Ensure proper JSON-RPC 2.0 format
+   # Must include: jsonrpc, method, id (for requests)
+   curl -X POST http://localhost:8080/http \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+   ```
+
+3. **Missing Content-Type Header**
+   ```bash
+   # Always include Content-Type for POST requests
+   curl -X POST http://localhost:8080/http \
+        -H "Content-Type: application/json" \
+        -d '...'
+   ```
+
+4. **Authentication Errors**
+   ```bash
+   # Include Bearer token when server uses authentication
+   curl -X POST http://localhost:8080/http \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer your-token" \
+        -d '...'
+   ```
+
+5. **STDIO Mode Issues**
+   - Ensure each JSON message is on a single line
+   - Use `-log-level=error` or `-log-level=none` to avoid log interference
+   - Check that the binary has proper permissions
+
+### Integration Examples
+
+**Python Integration:**
+```python
+import json
+import requests
+import subprocess
+
+class MCPClient:
+    def __init__(self, base_url):
+        self.base_url = base_url
+        self.session = requests.Session()
+        self.request_id = 0
+
+    def call(self, method, params=None):
+        self.request_id += 1
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self.request_id,
+            "method": method,
+            "params": params or {}
+        }
+
+        response = self.session.post(
+            f"{self.base_url}/http",
+            json=payload,
+            headers={"Content-Type": "application/json"}
+        )
+
+        return response.json()
+
+    def initialize(self):
+        return self.call("initialize", {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "python-client", "version": "1.0"}
+        })
+
+    def get_time(self, timezone="UTC"):
+        return self.call("tools/call", {
+            "name": "get_system_time",
+            "arguments": {"timezone": timezone}
+        })
+
+# Usage
+client = MCPClient("http://localhost:8080")
+client.initialize()
+time_result = client.get_time("America/New_York")
+print(time_result["result"]["content"][0]["text"])
+```
+
+**Node.js Integration:**
+```javascript
+const axios = require('axios');
+
+class MCPClient {
+    constructor(baseUrl) {
+        this.baseUrl = baseUrl;
+        this.requestId = 0;
+    }
+
+    async call(method, params = {}) {
+        this.requestId++;
+        const payload = {
+            jsonrpc: "2.0",
+            id: this.requestId,
+            method,
+            params
+        };
+
+        const response = await axios.post(`${this.baseUrl}/http`, payload, {
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        return response.data;
+    }
+
+    async initialize() {
+        return this.call("initialize", {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "node-client", version: "1.0" }
+        });
+    }
+
+    async getTime(timezone = "UTC") {
+        return this.call("tools/call", {
+            name: "get_system_time",
+            arguments: { timezone }
+        });
+    }
+}
+
+// Usage
+(async () => {
+    const client = new MCPClient("http://localhost:8080");
+    await client.initialize();
+    const result = await client.getTime("Asia/Tokyo");
+    console.log(result.result.content[0].text);
+})();
+```
+
 ## Claude Desktop Configuration
 
 Add to `claude_desktop_config.json`:

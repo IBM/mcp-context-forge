@@ -60,20 +60,20 @@ class TestSecurityTxtValidation:
     def test_validate_security_txt_empty(self):
         """Test validation with empty content."""
         from mcpgateway.routers.well_known import validate_security_txt
-        
+
         result = validate_security_txt("")
         assert result is None
-        
+
         result = validate_security_txt(None)
         assert result is None
 
     def test_validate_security_txt_adds_expires(self):
         """Test that validation adds Expires field."""
         from mcpgateway.routers.well_known import validate_security_txt
-        
+
         content = "Contact: security@example.com"
         result = validate_security_txt(content)
-        
+
         assert result is not None
         assert "Contact: security@example.com" in result
         assert "Expires:" in result
@@ -82,10 +82,10 @@ class TestSecurityTxtValidation:
     def test_validate_security_txt_preserves_expires(self):
         """Test that validation preserves existing Expires field."""
         from mcpgateway.routers.well_known import validate_security_txt
-        
+
         content = "Contact: security@example.com\nExpires: 2025-12-31T23:59:59Z"
         result = validate_security_txt(content)
-        
+
         assert result is not None
         assert "Expires: 2025-12-31T23:59:59Z" in result
         # Should not add a second Expires field
@@ -94,10 +94,10 @@ class TestSecurityTxtValidation:
     def test_validate_security_txt_preserves_comments(self):
         """Test that validation preserves existing comments."""
         from mcpgateway.routers.well_known import validate_security_txt
-        
+
         content = "# Custom security information\nContact: security@example.com"
         result = validate_security_txt(content)
-        
+
         assert result is not None
         assert "# Custom security information" in result
         assert "Contact: security@example.com" in result
@@ -110,9 +110,9 @@ class TestWellKnownRegistry:
     def test_registry_contains_standard_files(self):
         """Test that registry contains expected standard files."""
         from mcpgateway.routers.well_known import WELL_KNOWN_REGISTRY
-        
+
         expected_files = ["robots.txt", "security.txt", "ai.txt", "dnt-policy.txt", "change-password"]
-        
+
         for file in expected_files:
             assert file in WELL_KNOWN_REGISTRY
             assert "content_type" in WELL_KNOWN_REGISTRY[file]
@@ -122,9 +122,9 @@ class TestWellKnownRegistry:
     def test_registry_content_types(self):
         """Test that registry has correct content types."""
         from mcpgateway.routers.well_known import WELL_KNOWN_REGISTRY
-        
+
         # Most should be text/plain
         text_files = ["robots.txt", "security.txt", "ai.txt", "dnt-policy.txt", "change-password"]
-        
+
         for file in text_files:
             assert WELL_KNOWN_REGISTRY[file]["content_type"] == "text/plain"
