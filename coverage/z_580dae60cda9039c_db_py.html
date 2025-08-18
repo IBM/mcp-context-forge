@@ -66,8 +66,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_c811983f79d7eebb___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.3">coverage.py v7.10.3</a>,
-            created at 2025-08-13 06:56 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.4">coverage.py v7.10.4</a>,
+            created at 2025-08-17 07:22 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -107,7 +107,7 @@
     <p class="pln"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t"><span class="com"># Standard</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="key">from</span> <span class="nam">datetime</span> <span class="key">import</span> <span class="nam">datetime</span><span class="op">,</span> <span class="nam">timezone</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="key">from</span> <span class="nam">typing</span> <span class="key">import</span> <span class="nam">Any</span><span class="op">,</span> <span class="nam">Dict</span><span class="op">,</span> <span class="nam">List</span><span class="op">,</span> <span class="nam">Optional</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="key">from</span> <span class="nam">typing</span> <span class="key">import</span> <span class="nam">Any</span><span class="op">,</span> <span class="nam">Dict</span><span class="op">,</span> <span class="nam">Generator</span><span class="op">,</span> <span class="nam">List</span><span class="op">,</span> <span class="nam">Optional</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="key">import</span> <span class="nam">uuid</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t"><span class="com"># Third-Party</span>&nbsp;</span><span class="r"></span></p>
@@ -116,7 +116,7 @@
     <p class="run"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t"><span class="key">from</span> <span class="nam">sqlalchemy</span><span class="op">.</span><span class="nam">event</span> <span class="key">import</span> <span class="nam">listen</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t"><span class="key">from</span> <span class="nam">sqlalchemy</span><span class="op">.</span><span class="nam">exc</span> <span class="key">import</span> <span class="nam">SQLAlchemyError</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t"><span class="key">from</span> <span class="nam">sqlalchemy</span><span class="op">.</span><span class="nam">ext</span><span class="op">.</span><span class="nam">hybrid</span> <span class="key">import</span> <span class="nam">hybrid_property</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t"><span class="key">from</span> <span class="nam">sqlalchemy</span><span class="op">.</span><span class="nam">orm</span> <span class="key">import</span> <span class="nam">DeclarativeBase</span><span class="op">,</span> <span class="nam">Mapped</span><span class="op">,</span> <span class="nam">mapped_column</span><span class="op">,</span> <span class="nam">relationship</span><span class="op">,</span> <span class="nam">sessionmaker</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t"><span class="key">from</span> <span class="nam">sqlalchemy</span><span class="op">.</span><span class="nam">orm</span> <span class="key">import</span> <span class="nam">DeclarativeBase</span><span class="op">,</span> <span class="nam">Mapped</span><span class="op">,</span> <span class="nam">mapped_column</span><span class="op">,</span> <span class="nam">relationship</span><span class="op">,</span> <span class="nam">Session</span><span class="op">,</span> <span class="nam">sessionmaker</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t"><span class="key">from</span> <span class="nam">sqlalchemy</span><span class="op">.</span><span class="nam">orm</span><span class="op">.</span><span class="nam">attributes</span> <span class="key">import</span> <span class="nam">get_history</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t"><span class="com"># First-Party</span>&nbsp;</span><span class="r"></span></p>
@@ -1360,7 +1360,7 @@
     <p class="run"><span class="n"><a id="t1276" href="#t1276">1276</a></span><span class="t"><span class="nam">listen</span><span class="op">(</span><span class="nam">Prompt</span><span class="op">,</span> <span class="str">"before_update"</span><span class="op">,</span> <span class="nam">validate_prompt_schema</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1277" href="#t1277">1277</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1278" href="#t1278">1278</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1279" href="#t1279">1279</a></span><span class="t"><span class="key">def</span> <span class="nam">get_db</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1279" href="#t1279">1279</a></span><span class="t"><span class="key">def</span> <span class="nam">get_db</span><span class="op">(</span><span class="op">)</span> <span class="op">-></span> <span class="nam">Generator</span><span class="op">[</span><span class="nam">Session</span><span class="op">,</span> <span class="nam">Any</span><span class="op">,</span> <span class="key">None</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1280" href="#t1280">1280</a></span><span class="t">    <span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1281" href="#t1281">1281</a></span><span class="t"><span class="str">    Dependency to get database session.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1282" href="#t1282">1282</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -1443,8 +1443,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_c811983f79d7eebb___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.3">coverage.py v7.10.3</a>,
-            created at 2025-08-13 06:56 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.4">coverage.py v7.10.4</a>,
+            created at 2025-08-17 07:22 +0100
         </p>
     </div>
 </footer>
