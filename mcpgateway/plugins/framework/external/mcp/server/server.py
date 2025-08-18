@@ -150,15 +150,15 @@ class ExternalPluginServer:
             return convert_exception_to_error(ex, plugin_name=plugin_name).model_dump()
 
     async def initialize(self) -> bool:
+        """Initialize the plugin server.
+
+        Returns:
+            A boolean indicating the intialization status of the server.
+        """
         await self._plugin_manager.initialize()
         return self._plugin_manager.initialized
 
     async def shutdown(self) -> None:
+        """Shutdow the plugin server."""
         if self._plugin_manager.initialized:
             await self._plugin_manager.shutdown()
-
-
-if __name__ == "__main__":  # pragma: no cover - executed only when run directly
-    # launch
-    server = ExternalPluginServer()
-    asyncio.run(server.run())
