@@ -31,7 +31,7 @@ import subprocess
 from typing import Optional
 
 # Third-Party
-from copier import Worker
+from copier import run_copy
 import typer
 from typing_extensions import Annotated
 
@@ -128,7 +128,7 @@ def bootstrap(
         answers-file: The copier answers file that can be used to skip interactive mode.
         defaults: Bootstrap with defaults.
     """
-    with Worker(
+    run_copy(
         src_path=template_url,
         dst_path=destination,
         answers_file=answers_file,
@@ -136,8 +136,7 @@ def bootstrap(
         vcs_ref=vcs_ref,
         data={"default_author_name": git_user_name(), "default_author_email": git_user_email()},
         pretend=dry_run,
-    ) as worker:
-        worker.run_copy()
+    )
 
 
 @app.callback()
