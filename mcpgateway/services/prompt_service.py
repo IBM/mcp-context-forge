@@ -171,7 +171,7 @@ class PromptService:
                 case(
                     (
                         func.count(PromptMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((PromptMetric.is_success == 1, 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,  # pylint: disable=not-callable
+                        func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,  # pylint: disable=not-callable
                     ),
                     else_=None,
                 ).label("success_rate"),
@@ -240,12 +240,28 @@ class PromptService:
             "tags": db_prompt.tags or [],
         }
 
-    async def register_prompt(self, db: Session, prompt: PromptCreate) -> PromptRead:
+    async def register_prompt(
+        self,
+        db: Session,
+        prompt: PromptCreate,
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_via: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+        import_batch_id: Optional[str] = None,
+        federation_source: Optional[str] = None,
+    ) -> PromptRead:
         """Register a new prompt template.
 
         Args:
             db: Database session
             prompt: Prompt creation schema
+            created_by: Username who created this prompt
+            created_from_ip: IP address of creator
+            created_via: Creation method (ui, api, import, federation)
+            created_user_agent: User agent of creation request
+            import_batch_id: UUID for bulk import operations
+            federation_source: Source gateway for federated prompts
 
         Returns:
             Created prompt information
@@ -298,6 +314,14 @@ class PromptService:
                 template=prompt.template,
                 argument_schema=argument_schema,
                 tags=prompt.tags,
+                # Metadata fields
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+                import_batch_id=import_batch_id,
+                federation_source=federation_source,
+                version=1,
             )
 
             # Add to DB
@@ -1077,8 +1101,8 @@ class PromptService:
         """
 
         total = db.execute(select(func.count(PromptMetric.id))).scalar() or 0  # pylint: disable=not-callable
-        successful = db.execute(select(func.count(PromptMetric.id)).where(PromptMetric.is_success == 1)).scalar() or 0  # pylint: disable=not-callable
-        failed = db.execute(select(func.count(PromptMetric.id)).where(PromptMetric.is_success == 0)).scalar() or 0  # pylint: disable=not-callable
+        successful = db.execute(select(func.count(PromptMetric.id)).where(PromptMetric.is_success.is_(True))).scalar() or 0  # pylint: disable=not-callable
+        failed = db.execute(select(func.count(PromptMetric.id)).where(PromptMetric.is_success.is_(False))).scalar() or 0  # pylint: disable=not-callable
         failure_rate = failed / total if total > 0 else 0.0
         min_rt = db.execute(select(func.min(PromptMetric.response_time))).scalar()
         max_rt = db.execute(select(func.max(PromptMetric.response_time))).scalar()

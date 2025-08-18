@@ -150,10 +150,36 @@ class Settings(BaseSettings):
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
     mcpgateway_bulk_import_enabled: bool = True
+    mcpgateway_bulk_import_max_tools: int = 200
+    mcpgateway_bulk_import_rate_limit: int = 10
 
     # Security
     skip_ssl_verify: bool = False
     cors_enabled: bool = True
+
+    # Environment
+    environment: str = Field(default="development", env="ENVIRONMENT")
+
+    # Domain configuration
+    app_domain: str = Field(default="localhost", env="APP_DOMAIN")
+
+    # Security settings
+    secure_cookies: bool = Field(default=True, env="SECURE_COOKIES")
+    cookie_samesite: str = Field(default="lax", env="COOKIE_SAMESITE")
+
+    # CORS settings
+    cors_allow_credentials: bool = Field(default=True, env="CORS_ALLOW_CREDENTIALS")
+
+    # Security Headers Configuration
+    security_headers_enabled: bool = Field(default=True, env="SECURITY_HEADERS_ENABLED")
+    x_frame_options: str = Field(default="DENY", env="X_FRAME_OPTIONS")
+    x_content_type_options_enabled: bool = Field(default=True, env="X_CONTENT_TYPE_OPTIONS_ENABLED")
+    x_xss_protection_enabled: bool = Field(default=True, env="X_XSS_PROTECTION_ENABLED")
+    x_download_options_enabled: bool = Field(default=True, env="X_DOWNLOAD_OPTIONS_ENABLED")
+    hsts_enabled: bool = Field(default=True, env="HSTS_ENABLED")
+    hsts_max_age: int = Field(default=31536000, env="HSTS_MAX_AGE")  # 1 year
+    hsts_include_subdomains: bool = Field(default=True, env="HSTS_INCLUDE_SUBDOMAINS")
+    remove_server_headers: bool = Field(default=True, env="REMOVE_SERVER_HEADERS")
 
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
     # Tell pydantic *not* to touch this env var - our validator will.
@@ -372,6 +398,34 @@ class Settings(BaseSettings):
     otel_bsp_max_export_batch_size: int = Field(default=512, description="Max export batch size")
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
 
+    # ===================================
+    # Well-Known URI Configuration
+    # ===================================
+
+    # Enable well-known URI endpoints
+    well_known_enabled: bool = True
+
+    # robots.txt content (default: disallow all crawling for private API)
+    well_known_robots_txt: str = """User-agent: *
+Disallow: /
+
+# MCP Gateway is a private API gateway
+# Public crawling is disabled by default"""
+
+    # security.txt content (optional, user-defined)
+    # Example: "Contact: security@example.com\nExpires: 2025-12-31T23:59:59Z\nPreferred-Languages: en"
+    well_known_security_txt: str = ""
+
+    # Enable security.txt only if content is provided
+    well_known_security_txt_enabled: bool = False
+
+    # Additional custom well-known files (JSON format)
+    # Example: {"ai.txt": "This service uses AI for...", "dnt-policy.txt": "Do Not Track policy..."}
+    well_known_custom_files: str = "{}"
+
+    # Cache control for well-known files (seconds)
+    well_known_cache_max_age: int = 3600  # 1 hour default
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
@@ -406,6 +460,35 @@ class Settings(BaseSettings):
                 stacklevel=2,
             )
             return "-"
+        return v
+
+    @property
+    def custom_well_known_files(self) -> Dict[str, str]:
+        """Parse custom well-known files from JSON string.
+
+        Returns:
+            Dict[str, str]: Parsed custom well-known files mapping filename to content.
+        """
+        try:
+            return json.loads(self.well_known_custom_files) if self.well_known_custom_files else {}
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON in WELL_KNOWN_CUSTOM_FILES: {self.well_known_custom_files}")
+            return {}
+
+    @field_validator("well_known_security_txt_enabled", mode="after")
+    @classmethod
+    def _auto_enable_security_txt(cls, v, info):
+        """Auto-enable security.txt if content is provided.
+
+        Args:
+            v: The current value of well_known_security_txt_enabled.
+            info: ValidationInfo containing field data.
+
+        Returns:
+            bool: True if security.txt content is provided, otherwise the original value.
+        """
+        if info.data and "well_known_security_txt" in info.data:
+            return bool(info.data["well_known_security_txt"].strip())
         return v
 
     @property
@@ -668,6 +751,23 @@ class Settings(BaseSettings):
         else:
             # Safer defaults without Authorization header
             self.default_passthrough_headers = ["X-Tenant-Id", "X-Trace-Id"]
+
+        # Configure environment-aware CORS origins if not explicitly set via env or kwargs
+        # Only apply defaults if using the default allowed_origins value
+        if not os.environ.get("ALLOWED_ORIGINS") and "allowed_origins" not in kwargs and self.allowed_origins == {"http://localhost", "http://localhost:4444"}:
+            if self.environment == "development":
+                self.allowed_origins = {
+                    "http://localhost",
+                    "http://localhost:3000",
+                    "http://localhost:8080",
+                    "http://127.0.0.1:3000",
+                    "http://127.0.0.1:8080",
+                    f"http://localhost:{self.port}",
+                    f"http://127.0.0.1:{self.port}",
+                }
+            else:
+                # Production origins - construct from app_domain
+                self.allowed_origins = {f"https://{self.app_domain}", f"https://app.{self.app_domain}", f"https://admin.{self.app_domain}"}
 
         # Validate proxy auth configuration
         if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:

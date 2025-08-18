@@ -116,11 +116,8 @@ python3 -m mcpgateway.translate \
 ## Installation
 
 ```bash
-# Basic installation
-pip install mcpgateway
-
-# With MCP support for streamable HTTP
-pip install mcpgateway mcp
+# Install from PyPI
+pip install mcp-contextforge-gateway
 ```
 
 ## Command-Line Reference

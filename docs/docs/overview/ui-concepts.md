@@ -9,11 +9,11 @@
 ???+ example "🔌 How do I expose an MCP server over SSE?"
     To federate a new MCP Server to your gateway, it must run over **Server-Sent Events (SSE)** so the gateway can communicate with it.
 
-    You can use [`supergateway`](https://www.npmjs.com/package/supergateway) to wrap any `stdio`-only MCP server and expose it over SSE. Here are example commands:
+    Use the built-in translate bridge to wrap any `stdio`-only MCP server and expose it over SSE:
 
     ```bash
-    npx -y supergateway --stdio "uvx mcp-server-git" --port 8001
-    npx -y supergateway --stdio "uvx mcp_server_time -- --local-timezone=Europe/Dublin"
+    python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 8001
+    python3 -m mcpgateway.translate --stdio "uvx mcp_server_time -- --local-timezone=Europe/Dublin" --expose-sse --port 8002
     ```
 
     ✅ **Important:** The gateway must be able to reach the MCP server's network address.

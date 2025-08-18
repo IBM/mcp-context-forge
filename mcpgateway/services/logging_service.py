@@ -155,7 +155,7 @@ class StorageHandler(logging.Handler):
             )
         except Exception:
             # Silently fail to avoid logging recursion
-            pass
+            pass  # nosec B110 - Intentional to prevent logging recursion
 
 
 class LoggingService:
@@ -293,7 +293,7 @@ class LoggingService:
 
         await self.notify(f"Log level set to {level}", LogLevel.INFO, "logging")
 
-    async def notify(
+    async def notify(  # pylint: disable=too-many-positional-arguments
         self,
         data: Any,
         level: LogLevel,

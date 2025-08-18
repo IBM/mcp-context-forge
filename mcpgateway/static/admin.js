@@ -2292,6 +2292,73 @@ async function viewResource(resourceUri) {
                 container.appendChild(metricsDiv);
             }
 
+            // Add metadata section
+            const metadataDiv = document.createElement("div");
+            metadataDiv.className = "mt-6 border-t pt-4";
+
+            const metadataTitle = document.createElement("strong");
+            metadataTitle.textContent = "Metadata:";
+            metadataDiv.appendChild(metadataTitle);
+
+            const metadataGrid = document.createElement("div");
+            metadataGrid.className = "grid grid-cols-2 gap-4 mt-2 text-sm";
+
+            const metadataFields = [
+                {
+                    label: "Created By",
+                    value: resource.createdBy || "Legacy Entity",
+                },
+                {
+                    label: "Created At",
+                    value: resource.createdAt
+                        ? new Date(resource.createdAt).toLocaleString()
+                        : "Pre-metadata",
+                },
+                {
+                    label: "Created From",
+                    value: resource.createdFromIp || "Unknown",
+                },
+                {
+                    label: "Created Via",
+                    value: resource.createdVia || "Unknown",
+                },
+                {
+                    label: "Last Modified By",
+                    value: resource.modifiedBy || "N/A",
+                },
+                {
+                    label: "Last Modified At",
+                    value: resource.modifiedAt
+                        ? new Date(resource.modifiedAt).toLocaleString()
+                        : "N/A",
+                },
+                { label: "Version", value: resource.version || "1" },
+                {
+                    label: "Import Batch",
+                    value: resource.importBatchId || "N/A",
+                },
+            ];
+
+            metadataFields.forEach((field) => {
+                const fieldDiv = document.createElement("div");
+
+                const labelSpan = document.createElement("span");
+                labelSpan.className =
+                    "font-medium text-gray-600 dark:text-gray-400";
+                labelSpan.textContent = field.label + ":";
+
+                const valueSpan = document.createElement("span");
+                valueSpan.className = "ml-2";
+                valueSpan.textContent = field.value;
+
+                fieldDiv.appendChild(labelSpan);
+                fieldDiv.appendChild(valueSpan);
+                metadataGrid.appendChild(fieldDiv);
+            });
+
+            metadataDiv.appendChild(metadataGrid);
+            container.appendChild(metadataDiv);
+
             // Replace content safely
             resourceDetailsDiv.innerHTML = "";
             resourceDetailsDiv.appendChild(container);
@@ -2580,6 +2647,67 @@ async function viewPrompt(promptName) {
                 container.appendChild(metricsDiv);
             }
 
+            // Add metadata section
+            const metadataDiv = document.createElement("div");
+            metadataDiv.className = "mt-6 border-t pt-4";
+
+            const metadataTitle = document.createElement("strong");
+            metadataTitle.textContent = "Metadata:";
+            metadataDiv.appendChild(metadataTitle);
+
+            const metadataGrid = document.createElement("div");
+            metadataGrid.className = "grid grid-cols-2 gap-4 mt-2 text-sm";
+
+            const metadataFields = [
+                {
+                    label: "Created By",
+                    value: prompt.createdBy || "Legacy Entity",
+                },
+                {
+                    label: "Created At",
+                    value: prompt.createdAt
+                        ? new Date(prompt.createdAt).toLocaleString()
+                        : "Pre-metadata",
+                },
+                {
+                    label: "Created From",
+                    value: prompt.createdFromIp || "Unknown",
+                },
+                { label: "Created Via", value: prompt.createdVia || "Unknown" },
+                {
+                    label: "Last Modified By",
+                    value: prompt.modifiedBy || "N/A",
+                },
+                {
+                    label: "Last Modified At",
+                    value: prompt.modifiedAt
+                        ? new Date(prompt.modifiedAt).toLocaleString()
+                        : "N/A",
+                },
+                { label: "Version", value: prompt.version || "1" },
+                { label: "Import Batch", value: prompt.importBatchId || "N/A" },
+            ];
+
+            metadataFields.forEach((field) => {
+                const fieldDiv = document.createElement("div");
+
+                const labelSpan = document.createElement("span");
+                labelSpan.className =
+                    "font-medium text-gray-600 dark:text-gray-400";
+                labelSpan.textContent = field.label + ":";
+
+                const valueSpan = document.createElement("span");
+                valueSpan.className = "ml-2";
+                valueSpan.textContent = field.value;
+
+                fieldDiv.appendChild(labelSpan);
+                fieldDiv.appendChild(valueSpan);
+                metadataGrid.appendChild(fieldDiv);
+            });
+
+            metadataDiv.appendChild(metadataGrid);
+            container.appendChild(metadataDiv);
+
             // Replace content safely
             promptDetailsDiv.innerHTML = "";
             promptDetailsDiv.appendChild(container);
@@ -2791,6 +2919,73 @@ async function viewGateway(gatewayId) {
 
             statusP.appendChild(statusSpan);
             container.appendChild(statusP);
+
+            // Add metadata section
+            const metadataDiv = document.createElement("div");
+            metadataDiv.className = "mt-6 border-t pt-4";
+
+            const metadataTitle = document.createElement("strong");
+            metadataTitle.textContent = "Metadata:";
+            metadataDiv.appendChild(metadataTitle);
+
+            const metadataGrid = document.createElement("div");
+            metadataGrid.className = "grid grid-cols-2 gap-4 mt-2 text-sm";
+
+            const metadataFields = [
+                {
+                    label: "Created By",
+                    value: gateway.createdBy || "Legacy Entity",
+                },
+                {
+                    label: "Created At",
+                    value: gateway.createdAt
+                        ? new Date(gateway.createdAt).toLocaleString()
+                        : "Pre-metadata",
+                },
+                {
+                    label: "Created From",
+                    value: gateway.createdFromIp || "Unknown",
+                },
+                {
+                    label: "Created Via",
+                    value: gateway.createdVia || "Unknown",
+                },
+                {
+                    label: "Last Modified By",
+                    value: gateway.modifiedBy || "N/A",
+                },
+                {
+                    label: "Last Modified At",
+                    value: gateway.modifiedAt
+                        ? new Date(gateway.modifiedAt).toLocaleString()
+                        : "N/A",
+                },
+                { label: "Version", value: gateway.version || "1" },
+                {
+                    label: "Import Batch",
+                    value: gateway.importBatchId || "N/A",
+                },
+            ];
+
+            metadataFields.forEach((field) => {
+                const fieldDiv = document.createElement("div");
+
+                const labelSpan = document.createElement("span");
+                labelSpan.className =
+                    "font-medium text-gray-600 dark:text-gray-400";
+                labelSpan.textContent = field.label + ":";
+
+                const valueSpan = document.createElement("span");
+                valueSpan.className = "ml-2";
+                valueSpan.textContent = field.value;
+
+                fieldDiv.appendChild(labelSpan);
+                fieldDiv.appendChild(valueSpan);
+                metadataGrid.appendChild(fieldDiv);
+            });
+
+            metadataDiv.appendChild(metadataGrid);
+            container.appendChild(metadataDiv);
 
             gatewayDetailsDiv.innerHTML = "";
             gatewayDetailsDiv.appendChild(container);
@@ -3051,6 +3246,67 @@ async function viewServer(serverId) {
             statusSpan.textContent = server.isActive ? "Active" : "Inactive";
             statusP.appendChild(statusSpan);
             container.appendChild(statusP);
+
+            // Add metadata section
+            const metadataDiv = document.createElement("div");
+            metadataDiv.className = "mt-6 border-t pt-4";
+
+            const metadataTitle = document.createElement("strong");
+            metadataTitle.textContent = "Metadata:";
+            metadataDiv.appendChild(metadataTitle);
+
+            const metadataGrid = document.createElement("div");
+            metadataGrid.className = "grid grid-cols-2 gap-4 mt-2 text-sm";
+
+            const metadataFields = [
+                {
+                    label: "Created By",
+                    value: server.createdBy || "Legacy Entity",
+                },
+                {
+                    label: "Created At",
+                    value: server.createdAt
+                        ? new Date(server.createdAt).toLocaleString()
+                        : "Pre-metadata",
+                },
+                {
+                    label: "Created From",
+                    value: server.createdFromIp || "Unknown",
+                },
+                { label: "Created Via", value: server.createdVia || "Unknown" },
+                {
+                    label: "Last Modified By",
+                    value: server.modifiedBy || "N/A",
+                },
+                {
+                    label: "Last Modified At",
+                    value: server.modifiedAt
+                        ? new Date(server.modifiedAt).toLocaleString()
+                        : "N/A",
+                },
+                { label: "Version", value: server.version || "1" },
+                { label: "Import Batch", value: server.importBatchId || "N/A" },
+            ];
+
+            metadataFields.forEach((field) => {
+                const fieldDiv = document.createElement("div");
+
+                const labelSpan = document.createElement("span");
+                labelSpan.className =
+                    "font-medium text-gray-600 dark:text-gray-400";
+                labelSpan.textContent = field.label + ":";
+
+                const valueSpan = document.createElement("span");
+                valueSpan.className = "ml-2";
+                valueSpan.textContent = field.value;
+
+                fieldDiv.appendChild(labelSpan);
+                fieldDiv.appendChild(valueSpan);
+                metadataGrid.appendChild(fieldDiv);
+            });
+
+            metadataDiv.appendChild(metadataGrid);
+            container.appendChild(metadataDiv);
 
             serverDetailsDiv.innerHTML = "";
             serverDetailsDiv.appendChild(container);
@@ -4914,6 +5170,43 @@ async function viewTool(toolId) {
               <li>Last Execution Time: <span class="metric-last-time"></span></li>
             </ul>
           </div>
+          <div class="mt-6 border-t pt-4">
+            <strong>Metadata:</strong>
+            <div class="grid grid-cols-2 gap-4 mt-2 text-sm">
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created By:</span>
+                <span class="ml-2 metadata-created-by"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created At:</span>
+                <span class="ml-2 metadata-created-at"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created From:</span>
+                <span class="ml-2 metadata-created-from"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created Via:</span>
+                <span class="ml-2 metadata-created-via"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified By:</span>
+                <span class="ml-2 metadata-modified-by"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified At:</span>
+                <span class="ml-2 metadata-modified-at"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Version:</span>
+                <span class="ml-2 metadata-version"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Import Batch:</span>
+                <span class="ml-2 metadata-import-batch"></span>
+              </div>
+            </div>
+          </div>
         </div>
       `;
 
@@ -5009,6 +5302,38 @@ async function viewTool(toolId) {
             setTextSafely(
                 ".metric-last-time",
                 tool.metrics?.lastExecutionTime ?? "N/A",
+            );
+
+            // Set metadata fields safely with appropriate fallbacks for legacy entities
+            setTextSafely(
+                ".metadata-created-by",
+                tool.createdBy || "Legacy Entity",
+            );
+            setTextSafely(
+                ".metadata-created-at",
+                tool.createdAt
+                    ? new Date(tool.createdAt).toLocaleString()
+                    : "Pre-metadata",
+            );
+            setTextSafely(
+                ".metadata-created-from",
+                tool.createdFromIp || "Unknown",
+            );
+            setTextSafely(
+                ".metadata-created-via",
+                tool.createdVia || "Unknown",
+            );
+            setTextSafely(".metadata-modified-by", tool.modifiedBy || "N/A");
+            setTextSafely(
+                ".metadata-modified-at",
+                tool.modifiedAt
+                    ? new Date(tool.modifiedAt).toLocaleString()
+                    : "N/A",
+            );
+            setTextSafely(".metadata-version", tool.version || "1");
+            setTextSafely(
+                ".metadata-import-batch",
+                tool.importBatchId || "N/A",
             );
         }
 

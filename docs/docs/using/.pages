@@ -3,6 +3,7 @@ nav:
   - mcpgateway-wrapper.md
   - mcpgateway-translate.md
   - reverse-proxy.md
+  - multi-auth-headers.md
   - Clients: clients
   - Agents: agents
   - Servers: servers

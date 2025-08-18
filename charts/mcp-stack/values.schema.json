@@ -373,16 +373,99 @@
               "description": "Enable admin API endpoints",
               "default": "true"
             },
+            "ENVIRONMENT": {
+              "type": "string",
+              "enum": ["development", "production"],
+              "description": "Deployment environment (affects security defaults)",
+              "default": "development"
+            },
+            "APP_DOMAIN": {
+              "type": "string",
+              "description": "Domain for production CORS origins",
+              "default": "localhost"
+            },
             "CORS_ENABLED": {
               "type": "string",
               "enum": ["true", "false"],
               "description": "Enable CORS processing",
               "default": "true"
             },
+            "CORS_ALLOW_CREDENTIALS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Allow credentials in CORS requests",
+              "default": "true"
+            },
             "ALLOWED_ORIGINS": {
               "type": "string",
               "description": "JSON array of allowed origins",
               "default": "[\"http://localhost\",\"http://localhost:4444\"]"
+            },
+            "SECURITY_HEADERS_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable security headers middleware",
+              "default": "true"
+            },
+            "X_FRAME_OPTIONS": {
+              "type": "string",
+              "enum": ["DENY", "SAMEORIGIN"],
+              "description": "X-Frame-Options header value",
+              "default": "DENY"
+            },
+            "X_CONTENT_TYPE_OPTIONS_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable X-Content-Type-Options header",
+              "default": "true"
+            },
+            "X_XSS_PROTECTION_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable X-XSS-Protection header",
+              "default": "true"
+            },
+            "X_DOWNLOAD_OPTIONS_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable X-Download-Options header",
+              "default": "true"
+            },
+            "HSTS_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable HSTS header",
+              "default": "true"
+            },
+            "HSTS_MAX_AGE": {
+              "type": "string",
+              "pattern": "^[0-9]+$",
+              "description": "HSTS max age in seconds",
+              "default": "31536000"
+            },
+            "HSTS_INCLUDE_SUBDOMAINS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Include subdomains in HSTS",
+              "default": "true"
+            },
+            "REMOVE_SERVER_HEADERS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Remove server identification headers",
+              "default": "true"
+            },
+            "SECURE_COOKIES": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Force secure cookie flags",
+              "default": "true"
+            },
+            "COOKIE_SAMESITE": {
+              "type": "string",
+              "enum": ["strict", "lax", "none"],
+              "description": "Cookie SameSite attribute",
+              "default": "lax"
             },
             "SKIP_SSL_VERIFY": {
               "type": "string",

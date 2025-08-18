@@ -27,13 +27,26 @@ MCPGATEWAY_ENABLE_PROMPTS=false  # If not using prompts
 MCPGATEWAY_ENABLE_RESOURCES=false # If not using resources
 ```
 
-### 2. Enable Authentication
+### 2. Enable Authentication & Security
 
 ```bash
 # Configure strong authentication
 MCPGATEWAY_AUTH_ENABLED=true
 MCPGATEWAY_AUTH_USERNAME=custom-username  # Change from default
 MCPGATEWAY_AUTH_PASSWORD=strong-password-here  # Use secrets manager
+
+# Set environment for security defaults
+ENVIRONMENT=production
+
+# Configure domain for CORS
+APP_DOMAIN=yourdomain.com
+
+# Ensure secure cookies (automatic in production)
+SECURE_COOKIES=true
+COOKIE_SAMESITE=strict
+
+# Configure CORS (auto-configured based on APP_DOMAIN in production)
+CORS_ALLOW_CREDENTIALS=true
 ```
 
 ### 3. Network Security
@@ -41,8 +54,10 @@ MCPGATEWAY_AUTH_PASSWORD=strong-password-here  # Use secrets manager
 - [ ] Configure TLS/HTTPS with valid certificates
 - [ ] Implement firewall rules and network policies
 - [ ] Use internal-only endpoints where possible
-- [ ] Configure appropriate CORS policies
+- [ ] Configure appropriate CORS policies (auto-configured by ENVIRONMENT setting)
 - [ ] Set up rate limiting per endpoint/client
+- [ ] Verify security headers are present (automatically added by SecurityHeadersMiddleware)
+- [ ] Configure iframe embedding policy (X_FRAME_OPTIONS=DENY by default, change to SAMEORIGIN if needed)
 
 ### 4. Container Security
 
@@ -106,7 +121,30 @@ MCP Gateway should be integrated with:
 - [ ] SIEM for security monitoring
 - [ ] Load balancer with TLS termination
 
-### 10. Downstream Application Security
+### 10. Well-Known URI Security
+
+Configure well-known URIs appropriately for your deployment:
+
+```bash
+# For private APIs (default) - blocks all crawlers
+WELL_KNOWN_ENABLED=true
+WELL_KNOWN_ROBOTS_TXT="User-agent: *\nDisallow: /"
+
+# For public APIs - allow health checks, block sensitive endpoints
+# WELL_KNOWN_ROBOTS_TXT="User-agent: *\nAllow: /health\nAllow: /docs\nDisallow: /admin\nDisallow: /tools"
+
+# Security contact information (RFC 9116)
+WELL_KNOWN_SECURITY_TXT="Contact: mailto:security@example.com\nExpires: 2025-12-31T23:59:59Z\nPreferred-Languages: en"
+```
+
+Security considerations:
+- [ ] Configure security.txt with current contact information
+- [ ] Review robots.txt to prevent unauthorized crawler access
+- [ ] Monitor well-known endpoint access in logs
+- [ ] Update security.txt Expires field before expiration
+- [ ] Consider custom well-known files only if necessary
+
+### 11. Downstream Application Security
 
 Applications consuming MCP Gateway data must:
 

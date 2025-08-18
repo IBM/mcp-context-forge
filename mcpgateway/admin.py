@@ -19,14 +19,19 @@ underlying data.
 
 # Standard
 from collections import defaultdict
+import csv
+from datetime import datetime
 from functools import wraps
+import io
 import json
+from pathlib import Path
 import time
 from typing import Any, cast, Dict, List, Optional, Union
+import uuid
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
 from pydantic import ValidationError
 from pydantic_core import ValidationError as CoreValidationError
@@ -36,6 +41,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig
+from mcpgateway.db import Tool as DbTool
+from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     GatewayCreate,
     GatewayRead,
@@ -61,7 +68,11 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.import_service import ConflictStrategy
+from mcpgateway.services.import_service import ImportError as ImportServiceError
+from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
@@ -71,14 +82,16 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.security_cookies import set_auth_cookie
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
 # Import the shared logging service from main
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
-logger = None
+LOGGER = None
 
 
 def set_logging_service(service: LoggingService):
@@ -89,15 +102,15 @@ def set_logging_service(service: LoggingService):
     Args:
         service: The LoggingService instance to use
     """
-    global logging_service, logger
+    global logging_service, LOGGER  # pylint: disable=global-statement
     logging_service = service
-    logger = logging_service.get_logger("mcpgateway.admin")
+    LOGGER = logging_service.get_logger("mcpgateway.admin")
 
 
 # Fallback for testing - create a temporary instance if not set
 if logging_service is None:
     logging_service = LoggingService()
-    logger = logging_service.get_logger("mcpgateway.admin")
+    LOGGER = logging_service.get_logger("mcpgateway.admin")
 
 # Initialize services
 server_service: ServerService = ServerService()
@@ -106,6 +119,8 @@ prompt_service: PromptService = PromptService()
 gateway_service: GatewayService = GatewayService()
 resource_service: ResourceService = ResourceService()
 root_service: RootService = RootService()
+export_service: ExportService = ExportService()
+import_service: ImportService = ImportService()
 
 # Set up basic authentication
 
@@ -161,7 +176,7 @@ def rate_limit(requests_per_minute: int = None):
 
             # enforce
             if len(rate_limit_storage[client_ip]) >= limit:
-                logger.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func.__name__}")
+                LOGGER.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func.__name__}")
                 raise HTTPException(
                     status_code=429,
                     detail=f"Rate limit exceeded. Maximum {limit} requests per minute.",
@@ -367,7 +382,7 @@ async def admin_list_servers(
         >>> asyncio.run(test_admin_list_servers_exception())
         True
     """
-    logger.debug(f"User {user} requested server list")
+    LOGGER.debug(f"User {user} requested server list")
     servers = await server_service.list_servers(db, include_inactive=include_inactive)
     return [server.model_dump(by_alias=True) for server in servers]
 
@@ -466,13 +481,13 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: 
         >>> server_service.get_server = original_get_server
     """
     try:
-        logger.debug(f"User {user} requested details for server ID {server_id}")
+        LOGGER.debug(f"User {user} requested details for server ID {server_id}")
         server = await server_service.get_server(db, server_id)
         return server.model_dump(by_alias=True)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Error getting gateway {server_id}: {e}")
+        LOGGER.error(f"Error getting gateway {server_id}: {e}")
         raise e
 
 
@@ -600,7 +615,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
-        logger.debug(f"User {user} is adding a new server with name: {form['name']}")
+        LOGGER.debug(f"User {user} is adding a new server with name: {form['name']}")
         server = ServerCreate(
             name=form.get("name"),
             description=form.get("description"),
@@ -756,7 +771,7 @@ async def admin_edit_server(
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
-        logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
+        LOGGER.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
             name=form.get("name"),
             description=form.get("description"),
@@ -880,13 +895,13 @@ async def admin_toggle_server(
         >>> server_service.toggle_server_status = original_toggle_server_status
     """
     form = await request.form()
-    logger.debug(f"User {user} is toggling server ID {server_id} with activate: {form.get('activate')}")
+    LOGGER.debug(f"User {user} is toggling server ID {server_id} with activate: {form.get('activate')}")
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await server_service.toggle_server_status(db, server_id, activate)
     except Exception as e:
-        logger.error(f"Error toggling server status: {e}")
+        LOGGER.error(f"Error toggling server status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -966,10 +981,10 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         >>> server_service.delete_server = original_delete_server
     """
     try:
-        logger.debug(f"User {user} is deleting server ID {server_id}")
+        LOGGER.debug(f"User {user} is deleting server ID {server_id}")
         await server_service.delete_server(db, server_id)
     except Exception as e:
-        logger.error(f"Error deleting server: {e}")
+        LOGGER.error(f"Error deleting server: {e}")
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -1084,7 +1099,7 @@ async def admin_list_resources(
         >>> # Restore original method
         >>> resource_service.list_resources = original_list_resources
     """
-    logger.debug(f"User {user} requested resource list")
+    LOGGER.debug(f"User {user} requested resource list")
     resources = await resource_service.list_resources(db, include_inactive=include_inactive)
     return [resource.model_dump(by_alias=True) for resource in resources]
 
@@ -1192,7 +1207,7 @@ async def admin_list_prompts(
         >>> # Restore original method
         >>> prompt_service.list_prompts = original_list_prompts
     """
-    logger.debug(f"User {user} requested prompt list")
+    LOGGER.debug(f"User {user} requested prompt list")
     prompts = await prompt_service.list_prompts(db, include_inactive=include_inactive)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
@@ -1298,7 +1313,7 @@ async def admin_list_gateways(
         >>> # Restore original method
         >>> gateway_service.list_gateways = original_list_gateways
     """
-    logger.debug(f"User {user} requested gateway list")
+    LOGGER.debug(f"User {user} requested gateway list")
     gateways = await gateway_service.list_gateways(db, include_inactive=include_inactive)
     return [gateway.model_dump(by_alias=True) for gateway in gateways]
 
@@ -1392,7 +1407,7 @@ async def admin_toggle_gateway(
         >>> # Restore original method
         >>> gateway_service.toggle_gateway_status = original_toggle_gateway_status
     """
-    logger.debug(f"User {user} is toggling gateway ID {gateway_id}")
+    LOGGER.debug(f"User {user} is toggling gateway ID {gateway_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -1400,7 +1415,7 @@ async def admin_toggle_gateway(
     try:
         await gateway_service.toggle_gateway_status(db, gateway_id, activate)
     except Exception as e:
-        logger.error(f"Error toggling gateway status: {e}")
+        LOGGER.error(f"Error toggling gateway status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -1536,7 +1551,7 @@ async def admin_ui(
         >>> gateway_service.list_gateways = original_list_gateways
         >>> root_service.list_roots = original_list_roots
     """
-    logger.debug(f"User {user} accessed the admin UI")
+    LOGGER.debug(f"User {user} accessed the admin UI")
     tools = [
         tool.model_dump(by_alias=True) for tool in sorted(await tool_service.list_tools(db, include_inactive=include_inactive), key=lambda t: ((t.url or "").lower(), (t.original_name or "").lower()))
     ]
@@ -1562,10 +1577,12 @@ async def admin_ui(
             "root_path": root_path,
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
         },
     )
 
-    response.set_cookie(key="jwt_token", value=jwt_token, httponly=True, secure=False, samesite="Strict")  # JavaScript CAN'T read it  # only over HTTPS  # or "Lax" per your needs
+    # Use secure cookie utility for proper security attributes
+    set_auth_cookie(response, jwt_token, remember_me=False)
     return response
 
 
@@ -1688,7 +1705,7 @@ async def admin_list_tools(
         >>> # Restore original method
         >>> tool_service.list_tools = original_list_tools
     """
-    logger.debug(f"User {user} requested tool list")
+    LOGGER.debug(f"User {user} requested tool list")
     tools = await tool_service.list_tools(db, include_inactive=include_inactive)
 
     return [tool.model_dump(by_alias=True) for tool in tools]
@@ -1782,7 +1799,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str 
         >>> # Restore original method
         >>> tool_service.get_tool = original_get_tool
     """
-    logger.debug(f"User {user} requested details for tool ID {tool_id}")
+    LOGGER.debug(f"User {user} requested details for tool ID {tool_id}")
     try:
         tool = await tool_service.get_tool(db, tool_id)
         return tool.model_dump(by_alias=True)
@@ -1790,7 +1807,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str 
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         # Catch any other unexpected errors and re-raise or log as needed
-        logger.error(f"Error getting tool {tool_id}: {e}")
+        LOGGER.error(f"Error getting tool {tool_id}: {e}")
         raise e  # Re-raise for now, or return a 500 JSONResponse if preferred for API consistency
 
 
@@ -1921,9 +1938,9 @@ async def admin_add_tool(
         >>> tool_service.register_tool = original_register_tool
 
     """
-    logger.debug(f"User {user} is adding a new tool")
+    LOGGER.debug(f"User {user} is adding a new tool")
     form = await request.form()
-    logger.debug(f"Received form data: {dict(form)}")
+    LOGGER.debug(f"Received form data: {dict(form)}")
 
     integration_type = form.get("integrationType", "REST")
     request_type = form.get("requestType")
@@ -1957,26 +1974,39 @@ async def admin_add_tool(
         "auth_header_value": form.get("auth_header_value", ""),
         "tags": tags,
     }
-    logger.debug(f"Tool data built: {tool_data}")
+    LOGGER.debug(f"Tool data built: {tool_data}")
     try:
         tool = ToolCreate(**tool_data)
-        logger.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
-        await tool_service.register_tool(db, tool)
+        LOGGER.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
+
+        # Extract creation metadata
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        await tool_service.register_tool(
+            db,
+            tool,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
         return JSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
             status_code=200,
         )
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
-        logger.error(f"IntegrityError in admin_add_resource: {error_message}")
+        LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
         return JSONResponse(status_code=409, content=error_message)
     except ToolError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # This block should catch ValidationError
-        logger.error(f"ValidationError in admin_add_tool: {str(ex)}")
+        LOGGER.error(f"ValidationError in admin_add_tool: {str(ex)}")
         return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:
-        logger.error(f"Unexpected error in admin_add_tool: {str(ex)}")
+        LOGGER.error(f"Unexpected error in admin_add_tool: {str(ex)}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -2153,7 +2183,7 @@ async def admin_edit_tool(
         >>> tool_service.update_tool = original_update_tool
 
     """
-    logger.debug(f"User {user} is editing tool ID {tool_id}")
+    LOGGER.debug(f"User {user} is editing tool ID {tool_id}")
     form = await request.form()
 
     # Parse tags from comma-separated string
@@ -2181,23 +2211,39 @@ async def admin_edit_tool(
     # Only include request_type if it's provided (not disabled in form)
     if "requestType" in form:
         tool_data["request_type"] = form.get("requestType")
-    logger.debug(f"Tool update data built: {tool_data}")
+    LOGGER.debug(f"Tool update data built: {tool_data}")
     try:
         tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
-        await tool_service.update_tool(db, tool_id, tool)
+
+        # Get current tool to extract current version
+        current_tool = db.get(DbTool, tool_id)
+        current_version = getattr(current_tool, "version", 0) if current_tool else 0
+
+        # Extract modification metadata
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
+
+        await tool_service.update_tool(
+            db,
+            tool_id,
+            tool,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
         return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
-        logger.error(f"IntegrityError in admin_tool_resource: {error_message}")
+        LOGGER.error(f"IntegrityError in admin_tool_resource: {error_message}")
         return JSONResponse(status_code=409, content=error_message)
     except ToolError as ex:
-        logger.error(f"ToolError in admin_edit_tool: {str(ex)}")
+        LOGGER.error(f"ToolError in admin_edit_tool: {str(ex)}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # Catch Pydantic validation errors
-        logger.error(f"ValidationError in admin_edit_tool: {str(ex)}")
+        LOGGER.error(f"ValidationError in admin_edit_tool: {str(ex)}")
         return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:  # Generic catch-all for unexpected errors
-        logger.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
+        LOGGER.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -2273,11 +2319,11 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         >>> # Restore original method
         >>> tool_service.delete_tool = original_delete_tool
     """
-    logger.debug(f"User {user} is deleting tool ID {tool_id}")
+    LOGGER.debug(f"User {user} is deleting tool ID {tool_id}")
     try:
         await tool_service.delete_tool(db, tool_id)
     except Exception as e:
-        logger.error(f"Error deleting tool: {e}")
+        LOGGER.error(f"Error deleting tool: {e}")
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -2378,14 +2424,14 @@ async def admin_toggle_tool(
         >>> # Restore original method
         >>> tool_service.toggle_tool_status = original_toggle_tool_status
     """
-    logger.debug(f"User {user} is toggling tool ID {tool_id}")
+    LOGGER.debug(f"User {user} is toggling tool ID {tool_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
     except Exception as e:
-        logger.error(f"Error toggling tool status: {e}")
+        LOGGER.error(f"Error toggling tool status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -2470,14 +2516,14 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         >>> # Restore original method
         >>> gateway_service.get_gateway = original_get_gateway
     """
-    logger.debug(f"User {user} requested details for gateway ID {gateway_id}")
+    LOGGER.debug(f"User {user} requested details for gateway ID {gateway_id}")
     try:
         gateway = await gateway_service.get_gateway(db, gateway_id)
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Error getting gateway {gateway_id}: {e}")
+        LOGGER.error(f"Error getting gateway {gateway_id}: {e}")
         raise e
 
 
@@ -2592,7 +2638,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>> # Restore original method
         >>> gateway_service.register_gateway = original_register_gateway
     """
-    logger.debug(f"User {user} is adding a new gateway")
+    LOGGER.debug(f"User {user} is adding a new gateway")
     form = await request.form()
     try:
         # Parse tags from comma-separated string
@@ -2644,7 +2690,17 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     try:
-        await gateway_service.register_gateway(db, gateway)
+        # Extract creation metadata
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        await gateway_service.register_gateway(
+            db,
+            gateway,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+        )
         return JSONResponse(
             content={"message": "Gateway registered successfully!", "success": True},
             status_code=200,
@@ -2770,7 +2826,7 @@ async def admin_edit_gateway(
         >>> # Restore original method
         >>> gateway_service.update_gateway = original_update_gateway
     """
-    logger.debug(f"User {user} is editing gateway ID {gateway_id}")
+    LOGGER.debug(f"User {user} is editing gateway ID {gateway_id}")
     form = await request.form()
     try:
         # Parse tags from comma-separated string
@@ -2904,11 +2960,11 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>> # Restore original method
         >>> gateway_service.delete_gateway = original_delete_gateway
     """
-    logger.debug(f"User {user} is deleting gateway ID {gateway_id}")
+    LOGGER.debug(f"User {user} is deleting gateway ID {gateway_id}")
     try:
         await gateway_service.delete_gateway(db, gateway_id)
     except Exception as e:
-        logger.error(f"Error deleting gateway: {e}")
+        LOGGER.error(f"Error deleting gateway: {e}")
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -3003,7 +3059,7 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user: str 
         >>> resource_service.get_resource_by_uri = original_get_resource_by_uri
         >>> resource_service.read_resource = original_read_resource
     """
-    logger.debug(f"User {user} requested details for resource URI {uri}")
+    LOGGER.debug(f"User {user} requested details for resource URI {uri}")
     try:
         resource = await resource_service.get_resource_by_uri(db, uri)
         content = await resource_service.read_resource(db, uri)
@@ -3011,7 +3067,7 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user: str 
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Error getting resource {uri}: {e}")
+        LOGGER.error(f"Error getting resource {uri}: {e}")
         raise e
 
 
@@ -3066,7 +3122,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         True
         >>> resource_service.register_resource = original_register_resource
     """
-    logger.debug(f"User {user} is adding a new resource")
+    LOGGER.debug(f"User {user} is adding a new resource")
     form = await request.form()
 
     # Parse tags from comma-separated string
@@ -3083,21 +3139,33 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             content=str(form["content"]),
             tags=tags,
         )
-        await resource_service.register_resource(db, resource)
+
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        await resource_service.register_resource(
+            db,
+            resource,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
         return JSONResponse(
             content={"message": "Add resource registered successfully!", "success": True},
             status_code=200,
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            logger.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
+            LOGGER.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
-            logger.error(f"IntegrityError in admin_add_resource: {error_message}")
+            LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
 
-        logger.error(f"Error in admin_add_resource: {ex}")
+        LOGGER.error(f"Error in admin_add_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -3192,7 +3260,7 @@ async def admin_edit_resource(
         >>> # Reset mock
         >>> resource_service.update_resource = original_update_resource
     """
-    logger.debug(f"User {user} is editing resource URI {uri}")
+    LOGGER.debug(f"User {user} is editing resource URI {uri}")
     form = await request.form()
 
     # Parse tags from comma-separated string
@@ -3215,13 +3283,13 @@ async def admin_edit_resource(
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            logger.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
+            LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
-            logger.error(f"IntegrityError in admin_edit_resource: {error_message}")
+            LOGGER.error(f"IntegrityError in admin_edit_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
-        logger.error(f"Error in admin_edit_resource: {ex}")
+        LOGGER.error(f"Error in admin_edit_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -3280,7 +3348,7 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
         True
         >>> resource_service.delete_resource = original_delete_resource
     """
-    logger.debug(f"User {user} is deleting resource URI {uri}")
+    LOGGER.debug(f"User {user} is deleting resource URI {uri}")
     await resource_service.delete_resource(db, uri)
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
@@ -3386,14 +3454,14 @@ async def admin_toggle_resource(
         True
         >>> resource_service.toggle_resource_status = original_toggle_resource_status
     """
-    logger.debug(f"User {user} is toggling resource ID {resource_id}")
+    LOGGER.debug(f"User {user} is toggling resource ID {resource_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await resource_service.toggle_resource_status(db, resource_id, activate)
     except Exception as e:
-        logger.error(f"Error toggling resource status: {e}")
+        LOGGER.error(f"Error toggling resource status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -3489,7 +3557,7 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user: str =
         >>>
         >>> prompt_service.get_prompt_details = original_get_prompt_details
     """
-    logger.debug(f"User {user} requested details for prompt name {name}")
+    LOGGER.debug(f"User {user} requested details for prompt name {name}")
     try:
         prompt_details = await prompt_service.get_prompt_details(db, name)
         prompt = PromptRead.model_validate(prompt_details)
@@ -3497,7 +3565,7 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user: str =
     except PromptNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Error getting prompt {name}: {e}")
+        LOGGER.error(f"Error getting prompt {name}: {e}")
         raise e
 
 
@@ -3550,7 +3618,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
 
         >>> prompt_service.register_prompt = original_register_prompt
     """
-    logger.debug(f"User {user} is adding a new prompt")
+    LOGGER.debug(f"User {user} is adding a new prompt")
     form = await request.form()
 
     # Parse tags from comma-separated string
@@ -3560,7 +3628,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     try:
         args_json = "[]"
         args_value = form.get("arguments")
-        if isinstance(args_value, str):
+        if isinstance(args_value, str) and args_value.strip():
             args_json = args_value
         arguments = json.loads(args_json)
         prompt = PromptCreate(
@@ -3570,20 +3638,32 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             arguments=arguments,
             tags=tags,
         )
-        await prompt_service.register_prompt(db, prompt)
+        # Extract creation metadata
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        await prompt_service.register_prompt(
+            db,
+            prompt,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
         return JSONResponse(
             content={"message": "Prompt registered successfully!", "success": True},
             status_code=200,
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            logger.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
+            LOGGER.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
-            logger.error(f"IntegrityError in admin_add_prompt: {error_message}")
+            LOGGER.error(f"IntegrityError in admin_add_prompt: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
-        logger.error(f"Error in admin_add_prompt: {ex}")
+        LOGGER.error(f"Error in admin_add_prompt: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -3659,7 +3739,7 @@ async def admin_edit_prompt(
         True
         >>> prompt_service.update_prompt = original_update_prompt
     """
-    logger.debug(f"User {user} is editing prompt name {name}")
+    LOGGER.debug(f"User {user} is editing prompt name {name}")
     form = await request.form()
 
     args_json: str = str(form.get("arguments")) or "[]"
@@ -3688,13 +3768,13 @@ async def admin_edit_prompt(
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            logger.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
+            LOGGER.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
-            logger.error(f"IntegrityError in admin_edit_prompt: {error_message}")
+            LOGGER.error(f"IntegrityError in admin_edit_prompt: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
-        logger.error(f"Error in admin_edit_prompt: {ex}")
+        LOGGER.error(f"Error in admin_edit_prompt: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -3753,7 +3833,7 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
         True
         >>> prompt_service.delete_prompt = original_delete_prompt
     """
-    logger.debug(f"User {user} is deleting prompt name {name}")
+    LOGGER.debug(f"User {user} is deleting prompt name {name}")
     await prompt_service.delete_prompt(db, name)
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
@@ -3859,14 +3939,14 @@ async def admin_toggle_prompt(
         True
         >>> prompt_service.toggle_prompt_status = original_toggle_prompt_status
     """
-    logger.debug(f"User {user} is toggling prompt ID {prompt_id}")
+    LOGGER.debug(f"User {user} is toggling prompt ID {prompt_id}")
     form = await request.form()
     activate: bool = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     try:
         await prompt_service.toggle_prompt_status(db, prompt_id, activate)
     except Exception as e:
-        logger.error(f"Error toggling prompt status: {e}")
+        LOGGER.error(f"Error toggling prompt status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -3916,7 +3996,7 @@ async def admin_add_root(request: Request, user: str = Depends(require_auth)) ->
         True
         >>> root_service.add_root = original_add_root
     """
-    logger.debug(f"User {user} is adding a new root")
+    LOGGER.debug(f"User {user} is adding a new root")
     form = await request.form()
     uri = str(form["uri"])
     name_value = form.get("name")
@@ -3981,7 +4061,7 @@ async def admin_delete_root(uri: str, request: Request, user: str = Depends(requ
         True
         >>> root_service.remove_root = original_remove_root
     """
-    logger.debug(f"User {user} is deleting root URI {uri}")
+    LOGGER.debug(f"User {user} is deleting root URI {uri}")
     await root_service.remove_root(uri)
     form = await request.form()
     root_path = request.scope.get("root_path", "")
@@ -4018,7 +4098,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 #         resources, servers, and prompts. Each value is a Pydantic model instance
 #         specific to the entity type.
 #     """
-#     logger.debug(f"User {user} requested aggregate metrics")
+#     LOGGER.debug(f"User {user} requested aggregate metrics")
 #     tool_metrics = await tool_service.aggregate_metrics(db)
 #     resource_metrics = await resource_service.aggregate_metrics(db)
 #     server_metrics = await server_service.aggregate_metrics(db)
@@ -4114,7 +4194,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user: str = Depends
         >>> server_service.reset_metrics = original_reset_metrics_server
         >>> prompt_service.reset_metrics = original_reset_metrics_prompt
     """
-    logger.debug(f"User {user} requested to reset all metrics")
+    LOGGER.debug(f"User {user} requested to reset all metrics")
     await tool_service.reset_metrics(db)
     await resource_service.reset_metrics(db)
     await server_service.reset_metrics(db)
@@ -4263,7 +4343,7 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
     """
     full_url = str(request.base_url).rstrip("/") + "/" + request.path.lstrip("/")
     full_url = full_url.rstrip("/")
-    logger.debug(f"User {user} testing server at {request.base_url}.")
+    LOGGER.debug(f"User {user} testing server at {request.base_url}.")
     try:
         start_time: float = time.monotonic()
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
@@ -4277,7 +4357,7 @@ async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(re
         return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
 
     except httpx.RequestError as e:
-        logger.warning(f"Gateway test failed: {e}")
+        LOGGER.warning(f"Gateway test failed: {e}")
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
@@ -4328,7 +4408,7 @@ async def admin_list_tags(
     if entity_types:
         entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
 
-    logger.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
+    LOGGER.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
         tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
@@ -4362,13 +4442,13 @@ async def admin_list_tags(
 
         return result
     except Exception as e:
-        logger.error(f"Failed to retrieve tags for admin: {str(e)}")
+        LOGGER.error(f"Failed to retrieve tags for admin: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
 
 
 @admin_router.post("/tools/import/")
 @admin_router.post("/tools/import")
-@rate_limit(requests_per_minute=10)
+@rate_limit(requests_per_minute=settings.mcpgateway_bulk_import_rate_limit)
 async def admin_import_tools(
     request: Request,
     db: Session = Depends(get_db),
@@ -4392,10 +4472,10 @@ async def admin_import_tools(
     """
     # Check if bulk import is enabled
     if not settings.mcpgateway_bulk_import_enabled:
-        logger.warning("Bulk import attempted but feature is disabled")
+        LOGGER.warning("Bulk import attempted but feature is disabled")
         raise HTTPException(status_code=403, detail="Bulk import feature is disabled. Enable MCPGATEWAY_BULK_IMPORT_ENABLED to use this endpoint.")
 
-    logger.debug("bulk tool import: user=%s", user)
+    LOGGER.debug("bulk tool import: user=%s", user)
     try:
         # ---------- robust payload parsing ----------
         ctype = (request.headers.get("content-type") or "").lower()
@@ -4403,38 +4483,67 @@ async def admin_import_tools(
             try:
                 payload = await request.json()
             except Exception as ex:
-                logger.exception("Invalid JSON body")
+                LOGGER.exception("Invalid JSON body")
                 return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
         else:
             try:
                 form = await request.form()
             except Exception as ex:
-                logger.exception("Invalid form body")
+                LOGGER.exception("Invalid form body")
                 return JSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
-            raw = form.get("tools_json") or form.get("json") or form.get("payload")
-            if not raw:
-                return JSONResponse({"success": False, "message": "Missing tools_json/json/payload form field."}, status_code=422)
-            try:
-                payload = json.loads(raw)
-            except Exception as ex:
-                logger.exception("Invalid JSON in form field")
-                return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
+            # Check for file upload first
+            if "tools_file" in form:
+                file = form["tools_file"]
+                if hasattr(file, "file"):
+                    content = await file.read()
+                    try:
+                        payload = json.loads(content.decode("utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError) as ex:
+                        LOGGER.exception("Invalid JSON file")
+                        return JSONResponse({"success": False, "message": f"Invalid JSON file: {ex}"}, status_code=422)
+                else:
+                    return JSONResponse({"success": False, "message": "Invalid file upload"}, status_code=422)
+            else:
+                # Check for JSON in form fields
+                raw = form.get("tools") or form.get("tools_json") or form.get("json") or form.get("payload")
+                if not raw:
+                    return JSONResponse({"success": False, "message": "Missing tools/tools_json/json/payload form field."}, status_code=422)
+                try:
+                    payload = json.loads(raw)
+                except Exception as ex:
+                    LOGGER.exception("Invalid JSON in form field")
+                    return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
 
         if not isinstance(payload, list):
             return JSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
 
-        max_batch = 200
+        max_batch = settings.mcpgateway_bulk_import_max_tools
         if len(payload) > max_batch:
             return JSONResponse({"success": False, "message": f"Too many tools ({len(payload)}). Max {max_batch}."}, status_code=413)
 
         created, errors = [], []
 
         # ---------- import loop ----------
+        # Generate import batch ID for this bulk operation
+        import_batch_id = str(uuid.uuid4())
+
+        # Extract base metadata for bulk import
+        base_metadata = MetadataCapture.extract_creation_metadata(request, user, import_batch_id=import_batch_id)
+
         for i, item in enumerate(payload):
             name = (item or {}).get("name")
             try:
                 tool = ToolCreate(**item)  # pydantic validation
-                await tool_service.register_tool(db, tool)
+                await tool_service.register_tool(
+                    db,
+                    tool,
+                    created_by=base_metadata["created_by"],
+                    created_from_ip=base_metadata["created_from_ip"],
+                    created_via="import",  # Override to show this is bulk import
+                    created_user_agent=base_metadata["created_user_agent"],
+                    import_batch_id=import_batch_id,
+                    federation_source=base_metadata["federation_source"],
+                )
                 created.append({"index": i, "name": name})
             except IntegrityError as ex:
                 # The formatter can itself throw; guard it.
@@ -4453,18 +4562,36 @@ async def admin_import_tools(
             except ToolError as ex:
                 errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
             except Exception as ex:
-                logger.exception("Unexpected error importing tool %r at index %d", name, i)
+                LOGGER.exception("Unexpected error importing tool %r at index %d", name, i)
                 errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
 
-        return JSONResponse(
-            {
-                "success": len(errors) == 0,
-                "created_count": len(created),
-                "failed_count": len(errors),
-                "created": created,
-                "errors": errors,
+        # Format response to match both frontend and test expectations
+        response_data = {
+            "success": len(errors) == 0,
+            # New format for frontend
+            "imported": len(created),
+            "failed": len(errors),
+            "total": len(payload),
+            # Original format for tests
+            "created_count": len(created),
+            "failed_count": len(errors),
+            "created": created,
+            "errors": errors,
+            # Detailed format for frontend
+            "details": {
+                "success": [item["name"] for item in created if item.get("name")],
+                "failed": [{"name": item["name"], "error": item["error"].get("message", str(item["error"]))} for item in errors],
             },
-            status_code=200,
+        }
+
+        if len(errors) == 0:
+            response_data["message"] = f"Successfully imported all {len(created)} tools"
+        else:
+            response_data["message"] = f"Imported {len(created)} of {len(payload)} tools. {len(errors)} failed."
+
+        return JSONResponse(
+            response_data,
+            status_code=200,  # Always return 200, success field indicates if all succeeded
         )
 
     except HTTPException:
@@ -4472,7 +4599,7 @@ async def admin_import_tools(
         raise
     except Exception as ex:
         # absolute catch-all: report instead of crashing
-        logger.exception("Fatal error in admin_import_tools")
+        LOGGER.exception("Fatal error in admin_import_tools")
         return JSONResponse({"success": False, "message": str(ex)}, status_code=500)
 
 
@@ -4493,7 +4620,7 @@ async def admin_get_logs(
     limit: int = 100,
     offset: int = 0,
     order: str = "desc",
-    user: str = Depends(require_auth),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ) -> Dict[str, Any]:
     """Get filtered log entries from the in-memory buffer.
 
@@ -4516,12 +4643,6 @@ async def admin_get_logs(
     Raises:
         HTTPException: If validation fails or service unavailable
     """
-    # Standard
-    from datetime import datetime
-
-    # First-Party
-    from mcpgateway.models import LogLevel
-
     # Get log storage from logging service
     storage = logging_service.get_storage()
     if not storage:
@@ -4583,7 +4704,7 @@ async def admin_stream_logs(
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
-    user: str = Depends(require_auth),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ):
     """Stream real-time log updates via Server-Sent Events.
 
@@ -4600,15 +4721,6 @@ async def admin_stream_logs(
     Raises:
         HTTPException: If log level is invalid or service unavailable
     """
-    # Standard
-    import json
-
-    # Third-Party
-    from fastapi.responses import StreamingResponse
-
-    # First-Party
-    from mcpgateway.models import LogLevel
-
     # Get log storage from logging service
     storage = logging_service.get_storage()
     if not storage:
@@ -4650,7 +4762,7 @@ async def admin_stream_logs(
                     log_level = log_data.get("level")
                     if log_level:
                         try:
-                            if not storage._meets_level_threshold(LogLevel(log_level), min_level):
+                            if not storage._meets_level_threshold(LogLevel(log_level), min_level):  # pylint: disable=protected-access
                                 continue
                         except ValueError:
                             continue
@@ -4659,7 +4771,7 @@ async def admin_stream_logs(
                 yield f"data: {json.dumps(event)}\n\n"
 
         except Exception as e:
-            logger.error(f"Error in log streaming: {e}")
+            LOGGER.error(f"Error in log streaming: {e}")
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
@@ -4675,7 +4787,7 @@ async def admin_stream_logs(
 @admin_router.get("/logs/file")
 async def admin_get_log_file(
     filename: Optional[str] = None,
-    user: str = Depends(require_auth),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ):
     """Download log file.
 
@@ -4689,13 +4801,6 @@ async def admin_get_log_file(
     Raises:
         HTTPException: If file doesn't exist or access denied
     """
-    # Standard
-    from datetime import datetime
-    from pathlib import Path
-
-    # Third-Party
-    from fastapi.responses import FileResponse
-
     # Check if file logging is enabled
     if not settings.log_to_file or not settings.log_file:
         raise HTTPException(404, "File logging is not enabled")
@@ -4731,23 +4836,22 @@ async def admin_get_log_file(
             media_type="application/octet-stream",
         )
 
-    else:
-        # List available log files
-        log_files = []
+    # List available log files
+    log_files = []
 
-        try:
-            # Main log file
-            main_log = log_dir / settings.log_file
-            if main_log.exists():
-                stat = main_log.stat()
-                log_files.append(
-                    {
-                        "name": main_log.name,
-                        "size": stat.st_size,
-                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                        "type": "main",
-                    }
-                )
+    try:
+        # Main log file
+        main_log = log_dir / settings.log_file
+        if main_log.exists():
+            stat = main_log.stat()
+            log_files.append(
+                {
+                    "name": main_log.name,
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "type": "main",
+                }
+            )
 
             # Rotated log files
             if settings.log_rotation_enabled:
@@ -4777,23 +4881,23 @@ async def admin_get_log_file(
                     }
                 )
 
-            # Sort by modified time (newest first)
-            log_files.sort(key=lambda x: x["modified"], reverse=True)
+        # Sort by modified time (newest first)
+        log_files.sort(key=lambda x: x["modified"], reverse=True)
 
-        except Exception as e:
-            logger.error(f"Error listing log files: {e}")
-            raise HTTPException(500, f"Error listing log files: {e}")
+    except Exception as e:
+        LOGGER.error(f"Error listing log files: {e}")
+        raise HTTPException(500, f"Error listing log files: {e}")
 
-        return {
-            "log_directory": str(log_dir),
-            "files": log_files,
-            "total": len(log_files),
-        }
+    return {
+        "log_directory": str(log_dir),
+        "files": log_files,
+        "total": len(log_files),
+    }
 
 
 @admin_router.get("/logs/export")
 async def admin_export_logs(
-    format: str = "json",
+    export_format: str = "json",
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
@@ -4801,12 +4905,12 @@ async def admin_export_logs(
     end_time: Optional[str] = None,
     request_id: Optional[str] = None,
     search: Optional[str] = None,
-    user: str = Depends(require_auth),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ):
     """Export filtered logs in JSON or CSV format.
 
     Args:
-        format: Export format (json or csv)
+        export_format: Export format (json or csv)
         entity_type: Filter by entity type
         entity_id: Filter by entity ID
         level: Minimum log level
@@ -4823,16 +4927,9 @@ async def admin_export_logs(
         HTTPException: If validation fails or export format invalid
     """
     # Standard
-    import csv
-    from datetime import datetime
-    import io
-
-    # First-Party
-    from mcpgateway.models import LogLevel
-
     # Validate format
-    if format not in ["json", "csv"]:
-        raise HTTPException(400, f"Invalid format: {format}. Use 'json' or 'csv'")
+    if export_format not in ["json", "csv"]:
+        raise HTTPException(400, f"Invalid format: {export_format}. Use 'json' or 'csv'")
 
     # Get log storage from logging service
     storage = logging_service.get_storage()
@@ -4878,9 +4975,9 @@ async def admin_export_logs(
 
     # Generate filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"logs_export_{timestamp}.{format}"
+    filename = f"logs_export_{timestamp}.{export_format}"
 
-    if format == "json":
+    if export_format == "json":
         # Export as JSON
         content = json.dumps(logs, indent=2, default=str)
         return Response(
@@ -4891,37 +4988,273 @@ async def admin_export_logs(
             },
         )
 
-    else:  # CSV format
-        # Create CSV content
-        output = io.StringIO()
+    # CSV format
+    # Create CSV content
+    output = io.StringIO()
 
-        if logs:
-            # Use first log to determine columns
-            fieldnames = [
-                "timestamp",
-                "level",
-                "entity_type",
-                "entity_id",
-                "entity_name",
-                "message",
-                "logger",
-                "request_id",
-            ]
+    if logs:
+        # Use first log to determine columns
+        fieldnames = [
+            "timestamp",
+            "level",
+            "entity_type",
+            "entity_id",
+            "entity_name",
+            "message",
+            "logger",
+            "request_id",
+        ]
 
-            writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
-            writer.writeheader()
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
 
-            for log in logs:
-                # Flatten the log entry for CSV
-                row = {k: log.get(k, "") for k in fieldnames}
-                writer.writerow(row)
+        for log in logs:
+            # Flatten the log entry for CSV
+            row = {k: log.get(k, "") for k in fieldnames}
+            writer.writerow(row)
 
-        content = output.getvalue()
+    content = output.getvalue()
 
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+# Configuration Export/Import Endpoints
+@admin_router.get("/export/configuration")
+async def admin_export_configuration(
+    types: Optional[str] = None,
+    exclude_types: Optional[str] = None,
+    tags: Optional[str] = None,
+    include_inactive: bool = False,
+    include_dependencies: bool = True,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+):
+    """
+    Export gateway configuration via Admin UI.
+
+    Args:
+        types: Comma-separated entity types to include
+        exclude_types: Comma-separated entity types to exclude
+        tags: Comma-separated tags to filter by
+        include_inactive: Include inactive entities
+        include_dependencies: Include dependent entities
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        JSON file download with configuration export
+
+    Raises:
+        HTTPException: If export fails
+    """
+    try:
+        LOGGER.info(f"Admin user {user} requested configuration export")
+
+        # Parse parameters
+        include_types = None
+        if types:
+            include_types = [t.strip() for t in types.split(",") if t.strip()]
+
+        exclude_types_list = None
+        if exclude_types:
+            exclude_types_list = [t.strip() for t in exclude_types.split(",") if t.strip()]
+
+        tags_list = None
+        if tags:
+            tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+        # Extract username from user (which could be string or dict with token)
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+
+        # Perform export
+        export_data = await export_service.export_configuration(
+            db=db, include_types=include_types, exclude_types=exclude_types_list, tags=tags_list, include_inactive=include_inactive, include_dependencies=include_dependencies, exported_by=username
+        )
+
+        # Generate filename
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"mcpgateway-config-export-{timestamp}.json"
+
+        # Return as downloadable file
+        content = json.dumps(export_data, indent=2, ensure_ascii=False)
         return Response(
             content=content,
-            media_type="text/csv",
+            media_type="application/json",
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
             },
         )
+
+    except ExportError as e:
+        LOGGER.error(f"Admin export failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected admin export error for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@admin_router.post("/export/selective")
+async def admin_export_selective(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+    """
+    Export selected entities via Admin UI with entity selection.
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        JSON file download with selective export data
+
+    Raises:
+        HTTPException: If export fails
+
+    Expects JSON body with entity selections:
+    {
+        "entity_selections": {
+            "tools": ["tool1", "tool2"],
+            "servers": ["server1"]
+        },
+        "include_dependencies": true
+    }
+    """
+    try:
+        LOGGER.info(f"Admin user {user} requested selective configuration export")
+
+        body = await request.json()
+        entity_selections = body.get("entity_selections", {})
+        include_dependencies = body.get("include_dependencies", True)
+
+        # Extract username from user (which could be string or dict with token)
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+
+        # Perform selective export
+        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username)
+
+        # Generate filename
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"mcpgateway-selective-export-{timestamp}.json"
+
+        # Return as downloadable file
+        content = json.dumps(export_data, indent=2, ensure_ascii=False)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    except ExportError as e:
+        LOGGER.error(f"Admin selective export failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected admin selective export error for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@admin_router.post("/import/configuration")
+async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+    """
+    Import configuration via Admin UI.
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        JSON response with import status
+
+    Raises:
+        HTTPException: If import fails
+
+    Expects JSON body with import data and options:
+    {
+        "import_data": { ... },
+        "conflict_strategy": "update",
+        "dry_run": false,
+        "rekey_secret": "optional-new-secret",
+        "selected_entities": { ... }
+    }
+    """
+    try:
+        LOGGER.info(f"Admin user {user} requested configuration import")
+
+        body = await request.json()
+        import_data = body.get("import_data")
+        if not import_data:
+            raise HTTPException(status_code=400, detail="Missing import_data in request body")
+
+        conflict_strategy_str = body.get("conflict_strategy", "update")
+        dry_run = body.get("dry_run", False)
+        rekey_secret = body.get("rekey_secret")
+        selected_entities = body.get("selected_entities")
+
+        # Validate conflict strategy
+        try:
+            conflict_strategy = ConflictStrategy(conflict_strategy_str.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {[s.value for s in ConflictStrategy]}")
+
+        # Extract username from user (which could be string or dict with token)
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+
+        # Perform import
+        status = await import_service.import_configuration(
+            db=db, import_data=import_data, conflict_strategy=conflict_strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username, selected_entities=selected_entities
+        )
+
+        return JSONResponse(content=status.to_dict())
+
+    except ImportServiceError as e:
+        LOGGER.error(f"Admin import failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected admin import error for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
+
+@admin_router.get("/import/status/{import_id}")
+async def admin_get_import_status(import_id: str, user: str = Depends(require_auth)):
+    """Get import status via Admin UI.
+
+    Args:
+        import_id: Import operation ID
+        user: Authenticated user
+
+    Returns:
+        JSON response with import status
+
+    Raises:
+        HTTPException: If import not found
+    """
+    LOGGER.debug(f"Admin user {user} requested import status for {import_id}")
+
+    status = import_service.get_import_status(import_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Import {import_id} not found")
+
+    return JSONResponse(content=status.to_dict())
+
+
+@admin_router.get("/import/status")
+async def admin_list_import_statuses(user: str = Depends(require_auth)):
+    """List all import statuses via Admin UI.
+
+    Args:
+        user: Authenticated user
+
+    Returns:
+        JSON response with list of import statuses
+    """
+    LOGGER.debug(f"Admin user {user} requested all import statuses")
+
+    statuses = import_service.list_import_statuses()
+    return JSONResponse(content=[status.to_dict() for status in statuses])

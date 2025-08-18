@@ -167,7 +167,7 @@ class ResourceService:
                 case(
                     (
                         func.count(ResourceMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ResourceMetric.is_success == 1, 1), else_=0)).cast(Float) / func.count(ResourceMetric.id) * 100,  # pylint: disable=not-callable
+                        func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ResourceMetric.id) * 100,  # pylint: disable=not-callable
                     ),
                     else_=None,
                 ).label("success_rate"),
@@ -220,12 +220,28 @@ class ResourceService:
         resource_dict["tags"] = resource.tags or []
         return ResourceRead.model_validate(resource_dict)
 
-    async def register_resource(self, db: Session, resource: ResourceCreate) -> ResourceRead:
+    async def register_resource(
+        self,
+        db: Session,
+        resource: ResourceCreate,
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_via: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+        import_batch_id: Optional[str] = None,
+        federation_source: Optional[str] = None,
+    ) -> ResourceRead:
         """Register a new resource.
 
         Args:
             db: Database session
             resource: Resource creation schema
+            created_by: User who created the resource
+            created_from_ip: IP address of the creator
+            created_via: Method used to create the resource (e.g., API, UI)
+            created_user_agent: User agent of the creator
+            import_batch_id: Optional batch ID for bulk imports
+            federation_source: Optional source of the resource if federated
 
         Returns:
             Created resource information
@@ -272,6 +288,13 @@ class ResourceService:
                 binary_content=(resource.content.encode() if is_text and isinstance(resource.content, str) else resource.content if isinstance(resource.content, bytes) else None),
                 size=len(resource.content) if resource.content else 0,
                 tags=resource.tags or [],
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+                import_batch_id=import_batch_id,
+                federation_source=federation_source,
+                version=1,
             )
 
             # Add to DB
@@ -1167,9 +1190,9 @@ class ResourceService:
         """
         total_executions = db.execute(select(func.count()).select_from(ResourceMetric)).scalar() or 0  # pylint: disable=not-callable
 
-        successful_executions = db.execute(select(func.count()).select_from(ResourceMetric).where(ResourceMetric.is_success == 1)).scalar() or 0  # pylint: disable=not-callable
+        successful_executions = db.execute(select(func.count()).select_from(ResourceMetric).where(ResourceMetric.is_success.is_(True))).scalar() or 0  # pylint: disable=not-callable
 
-        failed_executions = db.execute(select(func.count()).select_from(ResourceMetric).where(ResourceMetric.is_success == 0)).scalar() or 0  # pylint: disable=not-callable
+        failed_executions = db.execute(select(func.count()).select_from(ResourceMetric).where(ResourceMetric.is_success.is_(False))).scalar() or 0  # pylint: disable=not-callable
 
         min_response_time = db.execute(select(func.min(ResourceMetric.response_time))).scalar()
 

@@ -20,10 +20,10 @@ while connecting securely to the gateway using `SSE` + `JWT`.
 
 ## 🚀 Launch Options
 
-Ensure you have a valid JWT tokens:
+Ensure you have a valid JWT token:
 
 ```bash
-export MCP_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
       --username admin --exp 10080 --secret my-test-key)
 ```
 
@@ -53,7 +53,7 @@ Launching it in your terminal (ex: `python3 -m mcpgateway.wrapper`) is useful fo
     docker run -i --rm --network=host \
       -e MCP_SERVER_CATALOG_URLS=$MCP_SERVER_CATALOG_URLS \
       -e MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN \
-      ghcr.io/ibm/mcp-context-forge:latest \
+      ghcr.io/ibm/mcp-context-forge:0.5.0 \
       python3 -m mcpgateway.wrapper
     ```
 

@@ -288,7 +288,7 @@ ignored-parents=
 
 # Maximum number of arguments for function / method.
 max-args=12
-max-positional-arguments = 8
+max-positional-arguments = 16
 
 # Maximum number of attributes for a class (see R0902).
 max-attributes=16
@@ -527,7 +527,7 @@ ignore-imports=yes
 ignore-signatures=yes
 
 # Minimum lines number of a similarity.
-min-similarity-lines=10
+min-similarity-lines=16
 
 
 [SPELLING]

@@ -478,7 +478,7 @@ async def test_generate_response_initialize(registry: SessionRegistry):
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
-    
+
     with patch(
         "mcpgateway.cache.session_registry.ResilientHttpClient",
         MockAsyncClient
@@ -523,7 +523,7 @@ async def test_generate_response_ping(registry: SessionRegistry):
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
-    
+
     with patch(
         "mcpgateway.cache.session_registry.ResilientHttpClient",
         MockAsyncClient
@@ -562,7 +562,7 @@ async def test_generate_response_tools_list(registry: SessionRegistry, stub_db, 
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
-    
+
     with patch(
         "mcpgateway.cache.session_registry.ResilientHttpClient",
         MockAsyncClient
@@ -604,7 +604,7 @@ async def test_generate_response_resources_list(registry: SessionRegistry, stub_
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
-    
+
     with patch(
         "mcpgateway.cache.session_registry.ResilientHttpClient",
         MockAsyncClient
@@ -645,7 +645,7 @@ async def test_generate_response_prompts_list(registry: SessionRegistry, stub_db
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
-    
+
     with patch(
         "mcpgateway.cache.session_registry.ResilientHttpClient",
         MockAsyncClient
@@ -725,7 +725,7 @@ async def test_generate_response_server_specific_tools_list(registry: SessionReg
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
-    
+
     with patch(
         "mcpgateway.cache.session_registry.ResilientHttpClient",
         MockAsyncClient
@@ -766,7 +766,7 @@ async def test_generate_response_server_specific_resources_list(registry: Sessio
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
-    
+
     with patch(
         "mcpgateway.cache.session_registry.ResilientHttpClient",
         MockAsyncClient
@@ -807,7 +807,7 @@ async def test_generate_response_server_specific_prompts_list(registry: SessionR
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
-    
+
     with patch(
         "mcpgateway.cache.session_registry.ResilientHttpClient",
         MockAsyncClient

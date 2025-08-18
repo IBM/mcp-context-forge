@@ -2,32 +2,87 @@
 
 The MCP Gateway provides a bulk import endpoint for efficiently loading multiple tools in a single request, perfect for migrations, environment setup, and team onboarding.
 
-!!! info "Feature Flag Required"
-    This feature is controlled by the `MCPGATEWAY_BULK_IMPORT_ENABLED` environment variable.
-    Default: `true` (enabled). Set to `false` to disable this endpoint.
+!!! info "Configuration Options"
+    This feature is controlled by several environment variables:
+
+    - `MCPGATEWAY_BULK_IMPORT_ENABLED=true` - Enable/disable the endpoint (default: true)
+    - `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS=200` - Maximum tools per batch (default: 200)
+    - `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT=10` - Requests per minute limit (default: 10)
 
 ---
 
 ## 🚀 Overview
 
-The `/admin/tools/import` endpoint allows you to register multiple tools at once, providing:
+The bulk import feature allows you to register multiple tools at once through both the Admin UI and API, providing:
 
 - **Per-item validation** - One invalid tool won't fail the entire batch
 - **Detailed reporting** - Know exactly which tools succeeded or failed
 - **Rate limiting** - Protected against abuse (10 requests/minute)
 - **Batch size limits** - Maximum 200 tools per request
-- **Multiple input formats** - JSON payload or form data
+- **Multiple input formats** - JSON payload, form data, or file upload
+- **User-friendly UI** - Modal dialog with drag-and-drop file support
+
+---
+
+## 🎨 Admin UI Usage
+
+### Accessing the Bulk Import Modal
+
+1. **Navigate to Admin UI** - Open your gateway's admin interface at `http://localhost:4444/admin`
+2. **Go to Tools Tab** - Click on the "Tools" tab in the main navigation
+3. **Open Bulk Import** - Click the "+ Bulk Import Tools" button next to "Add New Tool"
+
+### Using the Modal
+
+The bulk import modal provides two ways to input tool data:
+
+#### Option 1: JSON Textarea
+1. **Paste JSON directly** into the text area
+2. **Validate format** - The modal will check JSON syntax before submission
+3. **Click Import Tools** to process
+
+#### Option 2: File Upload
+1. **Prepare a JSON file** with your tools array
+2. **Click "Choose File"** and select your `.json` file
+3. **Click Import Tools** to process
+
+### UI Features
+
+- **Real-time validation** - JSON syntax checking before submission
+- **Loading indicators** - Progress spinner during import
+- **Detailed results** - Success/failure counts with error details
+- **Auto-refresh** - Page reloads automatically after successful import
+- **Modal controls** - Close with button, backdrop click, or ESC key
 
 ---
 
 ## 📡 API Endpoint
 
-### Request
+### Request Methods
 
+#### Method 1: JSON Body
 ```http
 POST /admin/tools/import
 Authorization: Bearer <jwt_token>
 Content-Type: application/json
+```
+
+#### Method 2: Form Data (JSON String)
+```http
+POST /admin/tools/import
+Authorization: Bearer <jwt_token>
+Content-Type: multipart/form-data
+
+Form field: tools_json=<json_string>
+```
+
+#### Method 3: File Upload
+```http
+POST /admin/tools/import
+Authorization: Bearer <jwt_token>
+Content-Type: multipart/form-data
+
+Form field: tools_file=<uploaded_json_file>
 ```
 
 ### Payload Structure

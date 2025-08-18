@@ -58,10 +58,13 @@ from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins import PluginManager, PluginViolationError
+from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     GatewayCreate,
     GatewayRead,
@@ -85,7 +88,11 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
+from mcpgateway.services.import_service import ImportError as ImportServiceError
+from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
@@ -97,6 +104,7 @@ from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -140,6 +148,8 @@ completion_service = CompletionService()
 sampling_handler = SamplingHandler()
 server_service = ServerService()
 tag_service = TagService()
+export_service = ExportService()
+import_service = ImportService()
 
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
@@ -210,6 +220,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await root_service.initialize()
         await completion_service.initialize()
         await sampling_handler.initialize()
+        await export_service.initialize()
+        await import_service.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
         refresh_slugs_on_startup()
@@ -233,7 +245,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 logger.error(f"Error shutting down plugin manager: {str(e)}")
         logger.info("Shutting down MCP Gateway services")
         # await stop_streamablehttp()
-        for service in [resource_cache, sampling_handler, logging_service, completion_service, root_service, gateway_service, prompt_service, resource_service, tool_service, streamable_http_session]:
+        for service in [
+            resource_cache,
+            sampling_handler,
+            import_service,
+            export_service,
+            logging_service,
+            completion_service,
+            root_service,
+            gateway_service,
+            prompt_service,
+            resource_service,
+            tool_service,
+            streamable_http_session,
+        ]:
             try:
                 await service.shutdown()
             except Exception as e:
@@ -502,16 +527,26 @@ class MCPPathRewriteMiddleware:
         await self.application(scope, receive, send)
 
 
-# Configure CORS
+# Configure CORS with environment-aware origins
+cors_origins = list(settings.allowed_origins) if settings.allowed_origins else []
+
+# Ensure we never use wildcard in production
+if settings.environment == "production" and not cors_origins:
+    logger.warning("No CORS origins configured for production environment. CORS will be disabled.")
+    cors_origins = []
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if not settings.allowed_origins else list(settings.allowed_origins),
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["Content-Type", "Content-Length"],
+    expose_headers=["Content-Length", "X-Request-ID"],
 )
 
+
+# Add security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
@@ -538,6 +573,7 @@ utility_router = APIRouter(tags=["Utilities"])
 server_router = APIRouter(prefix="/servers", tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
 tag_router = APIRouter(prefix="/tags", tags=["Tags"])
+export_import_router = APIRouter(tags=["Export/Import"])
 
 # Basic Auth setup
 
@@ -1211,12 +1247,13 @@ async def list_tools(
 
 @tool_router.post("", response_model=ToolRead)
 @tool_router.post("/", response_model=ToolRead)
-async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
+async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
     """
     Creates a new tool in the system.
 
     Args:
         tool (ToolCreate): The data needed to create the tool.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -1227,8 +1264,21 @@ async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str
         HTTPException: If the tool name already exists or other validation errors occur.
     """
     try:
+
+        # Extract metadata from request
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
         logger.debug(f"User {user} is creating a new tool")
-        return await tool_service.register_tool(db, tool)
+        return await tool_service.register_tool(
+            db,
+            tool,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
         if isinstance(ex, ToolNameConflictError):
@@ -1290,6 +1340,7 @@ async def get_tool(
 async def update_tool(
     tool_id: str,
     tool: ToolUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> ToolRead:
@@ -1299,6 +1350,7 @@ async def update_tool(
     Args:
         tool_id (str): The ID of the tool to update.
         tool (ToolUpdate): The updated tool information.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -1309,8 +1361,24 @@ async def update_tool(
         HTTPException: If an error occurs during the update.
     """
     try:
+
+        # Get current tool to extract current version
+        current_tool = db.get(DbTool, tool_id)
+        current_version = getattr(current_tool, "version", 0) if current_tool else 0
+
+        # Extract modification metadata
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
+
         logger.debug(f"User {user} is updating tool with ID {tool_id}")
-        return await tool_service.update_tool(db, tool_id, tool)
+        return await tool_service.update_tool(
+            db,
+            tool_id,
+            tool,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
     except Exception as ex:
         if isinstance(ex, ToolNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ex))
@@ -1483,6 +1551,7 @@ async def list_resources(
 @resource_router.post("/", response_model=ResourceRead)
 async def create_resource(
     resource: ResourceCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> ResourceRead:
@@ -1491,6 +1560,7 @@ async def create_resource(
 
     Args:
         resource (ResourceCreate): Data for the new resource.
+        request (Request): FastAPI request object for metadata extraction.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -1502,8 +1572,18 @@ async def create_resource(
     """
     logger.debug(f"User {user} is creating a new resource")
     try:
-        result = await resource_service.register_resource(db, resource)
-        return result
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        return await resource_service.register_resource(
+            db,
+            resource,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
@@ -1707,6 +1787,7 @@ async def list_prompts(
 @prompt_router.post("/", response_model=PromptRead)
 async def create_prompt(
     prompt: PromptCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> PromptRead:
@@ -1715,6 +1796,7 @@ async def create_prompt(
 
     Args:
         prompt (PromptCreate): Payload describing the prompt to create.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
@@ -1728,7 +1810,19 @@ async def create_prompt(
     """
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
     try:
-        return await prompt_service.register_prompt(db, prompt)
+        # Extract metadata from request
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        return await prompt_service.register_prompt(
+            db,
+            prompt,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
     except Exception as e:
         if isinstance(e, PromptNameConflictError):
             # If the prompt name already exists, return a 409 Conflict error
@@ -2019,6 +2113,7 @@ async def list_gateways(
 @gateway_router.post("/", response_model=GatewayRead)
 async def register_gateway(
     gateway: GatewayCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> GatewayRead:
@@ -2027,6 +2122,7 @@ async def register_gateway(
 
     Args:
         gateway: Gateway creation data.
+        request: The FastAPI request object for metadata extraction.
         db: Database session.
         user: Authenticated user.
 
@@ -2035,7 +2131,17 @@ async def register_gateway(
     """
     logger.debug(f"User '{user}' requested to register gateway: {gateway}")
     try:
-        return await gateway_service.register_gateway(db, gateway)
+        # Extract metadata from request
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        return await gateway_service.register_gateway(
+            db,
+            gateway,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+        )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -2302,7 +2408,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
                 result = await gateway_service.forward_request(db, method, params)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
-        # TODO: Implement methods
+        # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             result = {}
         elif method.startswith("roots/"):
@@ -2318,7 +2424,22 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
         elif method.startswith("logging/"):
             result = {}
         else:
-            raise JSONRPCError(-32000, "Invalid method", params)
+            # Backward compatibility: Try to invoke as a tool directly
+            # This allows both old format (method=tool_name) and new format (method=tools/call)
+            headers = {k.lower(): v for k, v in request.headers.items()}
+            try:
+                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers)
+                if hasattr(result, "model_dump"):
+                    result = result.model_dump(by_alias=True, exclude_none=True)
+            except (ValueError, Exception):
+                # If not a tool, try forwarding to gateway
+                try:
+                    result = await gateway_service.forward_request(db, method, params)
+                    if hasattr(result, "model_dump"):
+                        result = result.model_dump(by_alias=True, exclude_none=True)
+                except Exception:
+                    # If all else fails, return invalid method error
+                    raise JSONRPCError(-32000, "Invalid method", params)
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
@@ -2711,6 +2832,239 @@ async def get_entities_by_tag(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve entities: {str(e)}")
 
 
+####################
+# Export/Import    #
+####################
+
+
+@export_import_router.get("/export", response_model=Dict[str, Any])
+async def export_configuration(
+    export_format: str = "json",  # pylint: disable=unused-argument
+    types: Optional[str] = None,
+    exclude_types: Optional[str] = None,
+    tags: Optional[str] = None,
+    include_inactive: bool = False,
+    include_dependencies: bool = True,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> Dict[str, Any]:
+    """
+    Export gateway configuration to JSON format.
+
+    Args:
+        export_format: Export format (currently only 'json' supported)
+        types: Comma-separated list of entity types to include (tools,gateways,servers,prompts,resources,roots)
+        exclude_types: Comma-separated list of entity types to exclude
+        tags: Comma-separated list of tags to filter by
+        include_inactive: Whether to include inactive entities
+        include_dependencies: Whether to include dependent entities
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Export data in the specified format
+
+    Raises:
+        HTTPException: If export fails
+    """
+    try:
+        logger.info(f"User {user} requested configuration export")
+
+        # Parse parameters
+        include_types = None
+        if types:
+            include_types = [t.strip() for t in types.split(",") if t.strip()]
+
+        exclude_types_list = None
+        if exclude_types:
+            exclude_types_list = [t.strip() for t in exclude_types.split(",") if t.strip()]
+
+        tags_list = None
+        if tags:
+            tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+        # Extract username from user (which could be string or dict with token)
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+
+        # Perform export
+        export_data = await export_service.export_configuration(
+            db=db, include_types=include_types, exclude_types=exclude_types_list, tags=tags_list, include_inactive=include_inactive, include_dependencies=include_dependencies, exported_by=username
+        )
+
+        return export_data
+
+    except ExportError as e:
+        logger.error(f"Export failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected export error for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@export_import_router.post("/export/selective", response_model=Dict[str, Any])
+async def export_selective_configuration(
+    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user: str = Depends(require_auth)
+) -> Dict[str, Any]:
+    """
+    Export specific entities by their IDs/names.
+
+    Args:
+        entity_selections: Dict mapping entity types to lists of IDs/names to export
+        include_dependencies: Whether to include dependent entities
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Selective export data
+
+    Raises:
+        HTTPException: If export fails
+
+    Example request body:
+        {
+            "tools": ["tool1", "tool2"],
+            "servers": ["server1"],
+            "prompts": ["prompt1"]
+        }
+    """
+    try:
+        logger.info(f"User {user} requested selective configuration export")
+
+        # Extract username from user (which could be string or dict with token)
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+
+        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username)
+
+        return export_data
+
+    except ExportError as e:
+        logger.error(f"Selective export failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected selective export error for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@export_import_router.post("/import", response_model=Dict[str, Any])
+async def import_configuration(
+    import_data: Dict[str, Any] = Body(...),
+    conflict_strategy: str = "update",
+    dry_run: bool = False,
+    rekey_secret: Optional[str] = None,
+    selected_entities: Optional[Dict[str, List[str]]] = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> Dict[str, Any]:
+    """
+    Import configuration data with conflict resolution.
+
+    Args:
+        import_data: The configuration data to import
+        conflict_strategy: How to handle conflicts: skip, update, rename, fail
+        dry_run: If true, validate but don't make changes
+        rekey_secret: New encryption secret for cross-environment imports
+        selected_entities: Dict of entity types to specific entity names/ids to import
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Import status and results
+
+    Raises:
+        HTTPException: If import fails or validation errors occur
+    """
+    try:
+        logger.info(f"User {user} requested configuration import (dry_run={dry_run})")
+
+        # Validate conflict strategy
+        try:
+            strategy = ConflictStrategy(conflict_strategy.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {[s.value for s in ConflictStrategy]}")
+
+        # Extract username from user (which could be string or dict with token)
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+
+        # Perform import
+        import_status = await import_service.import_configuration(
+            db=db, import_data=import_data, conflict_strategy=strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username, selected_entities=selected_entities
+        )
+
+        return import_status.to_dict()
+
+    except ImportValidationError as e:
+        logger.error(f"Import validation failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
+    except ImportConflictError as e:
+        logger.error(f"Import conflict for user {user}: {str(e)}")
+        raise HTTPException(status_code=409, detail=f"Conflict error: {str(e)}")
+    except ImportServiceError as e:
+        logger.error(f"Import failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected import error for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
+
+@export_import_router.get("/import/status/{import_id}", response_model=Dict[str, Any])
+async def get_import_status(import_id: str, user: str = Depends(require_auth)) -> Dict[str, Any]:
+    """
+    Get the status of an import operation.
+
+    Args:
+        import_id: The import operation ID
+        user: Authenticated user
+
+    Returns:
+        Import status information
+
+    Raises:
+        HTTPException: If import not found
+    """
+    logger.debug(f"User {user} requested import status for {import_id}")
+
+    import_status = import_service.get_import_status(import_id)
+    if not import_status:
+        raise HTTPException(status_code=404, detail=f"Import {import_id} not found")
+
+    return import_status.to_dict()
+
+
+@export_import_router.get("/import/status", response_model=List[Dict[str, Any]])
+async def list_import_statuses(user: str = Depends(require_auth)) -> List[Dict[str, Any]]:
+    """
+    List all import operation statuses.
+
+    Args:
+        user: Authenticated user
+
+    Returns:
+        List of import status information
+    """
+    logger.debug(f"User {user} requested all import statuses")
+
+    statuses = import_service.list_import_statuses()
+    return [status.to_dict() for status in statuses]
+
+
+@export_import_router.post("/import/cleanup", response_model=Dict[str, Any])
+async def cleanup_import_statuses(max_age_hours: int = 24, user: str = Depends(require_auth)) -> Dict[str, Any]:
+    """
+    Clean up completed import statuses older than specified age.
+
+    Args:
+        max_age_hours: Maximum age in hours for keeping completed imports
+        user: Authenticated user
+
+    Returns:
+        Cleanup results
+    """
+    logger.info(f"User {user} requested import status cleanup (max_age_hours={max_age_hours})")
+
+    removed_count = import_service.cleanup_completed_imports(max_age_hours)
+    return {"status": "success", "message": f"Cleaned up {removed_count} completed import statuses", "removed_count": removed_count}
+
+
 # Mount static files
 # app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 
@@ -2726,6 +3080,8 @@ app.include_router(utility_router)
 app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
+app.include_router(export_import_router)
+app.include_router(well_known_router)
 
 # Include reverse proxy router if enabled
 try:

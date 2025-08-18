@@ -348,6 +348,21 @@ class Tool(Base):
     jsonpath_filter: Mapped[str] = mapped_column(default="")
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
+    # Comprehensive metadata for audit tracking
+    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
     # Request type and authentication fields
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", or None
     auth_value: Mapped[Optional[str]] = mapped_column(default=None)
@@ -593,6 +608,22 @@ class Resource(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Comprehensive metadata for audit tracking
+    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
     metrics: Mapped[List["ResourceMetric"]] = relationship("ResourceMetric", back_populates="resource", cascade="all, delete-orphan")
 
     # Content storage - can be text or binary
@@ -804,6 +835,22 @@ class Prompt(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Comprehensive metadata for audit tracking
+    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
 
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
@@ -972,6 +1019,22 @@ class Server(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Comprehensive metadata for audit tracking
+    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
     metrics: Mapped[List["ServerMetric"]] = relationship("ServerMetric", back_populates="server", cascade="all, delete-orphan")
 
     # Many-to-many relationships for associated items
@@ -1107,6 +1170,21 @@ class Gateway(Base):
     reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]]
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Comprehensive metadata for audit tracking
+    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # Header passthrough configuration
     passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array

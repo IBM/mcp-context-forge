@@ -27,6 +27,7 @@ It provides tabbed access to:
 - **Gateways**: View and manage federated peers, toggle activity status
 - **Roots**: Register root URIs for agent or resource scoping
 - **Metrics**: Real-time usage and performance metrics for all entities
+- **📊 Metadata Tracking**: View comprehensive audit information in entity detail modals
 
 ---
 
@@ -37,6 +38,7 @@ It provides tabbed access to:
 | Register a tool | Use the Tools tab → Add Tool form |
 | Bulk import tools | Use API endpoint `/admin/tools/import` (see [Bulk Import](../manage/bulk-import.md)) |
 | View prompt output | Go to Prompts → click View |
+| **View entity metadata** | Click "View" on any entity → scroll to "Metadata" section |
 | Toggle server activity | Use the "Activate/Deactivate" buttons in Servers tab |
 | Delete a resource | Navigate to Resources → click Delete (after confirming) |
 
