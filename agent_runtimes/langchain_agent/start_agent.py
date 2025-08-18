@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Startup script for the MCP Langchain Agent
 """
@@ -29,48 +30,48 @@ def setup_environment():
         logger.info(f"Loaded environment from {env_file}")
     else:
         logger.info("No .env file found, using system environment")
-    
+
     # Validate environment
     validation = validate_environment()
-    
+
     if validation["warnings"]:
         logger.warning("Configuration warnings:")
         for warning in validation["warnings"]:
             logger.warning(f"  - {warning}")
-    
+
     if not validation["valid"]:
         logger.error("Configuration errors:")
         for issue in validation["issues"]:
             logger.error(f"  - {issue}")
-        
+
         logger.info("Example .env file:")
         print(get_example_env())
         sys.exit(1)
-    
+
     return get_settings()
 
 async def test_agent_initialization():
     """Test that the agent can be initialized"""
     try:
         from .agent_langchain import LangchainMCPAgent
-        
+
         settings = get_settings()
         agent = LangchainMCPAgent.from_config(settings)
-        
+
         logger.info("Testing agent initialization...")
         await agent.initialize()
-        
+
         tools = agent.get_available_tools()
         logger.info(f"Agent initialized successfully with {len(tools)} tools")
-        
+
         # Test gateway connection
         if await agent.test_gateway_connection():
             logger.info("Gateway connection test: SUCCESS")
         else:
             logger.warning("Gateway connection test: FAILED")
-        
+
         return True
-        
+
     except Exception as e:
         logger.error(f"Agent initialization failed: {e}")
         return False
@@ -78,7 +79,7 @@ async def test_agent_initialization():
 def main():
     """Main startup function"""
     logger.info("Starting MCP Langchain Agent")
-    
+
     # Setup environment
     try:
         settings = setup_environment()
@@ -88,17 +89,17 @@ def main():
     except Exception as e:
         logger.error(f"Environment setup failed: {e}")
         sys.exit(1)
-    
+
     # Test agent initialization
     if not asyncio.run(test_agent_initialization()):
         logger.error("Agent initialization test failed")
         response = input("Continue anyway? (y/N): ")
         if response.lower() != 'y':
             sys.exit(1)
-    
+
     # Start the FastAPI server
     logger.info("Starting FastAPI server...")
-    
+
     try:
         uvicorn.run(
             "agent_runtimes.langchain_agent.app:app",

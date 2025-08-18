@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
@@ -60,7 +61,7 @@ class ToolDefinition(BaseModel):
     url: Optional[str] = Field(None, description="Tool URL (for REST tools)")
     method: Optional[str] = Field(None, description="HTTP method")
     integration_type: Optional[str] = Field(None, description="Integration type")
-    
+
     class Config:
         populate_by_name = True  # Allow both 'schema' and 'input_schema'
 

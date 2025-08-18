@@ -244,7 +244,7 @@ The system captures IP addresses and user agents for audit purposes:
 
 3. **No Downtime Required**
    - All metadata columns are nullable
-   - Existing functionality unchanged
+   - Existing functionality unmodified
    - Gradual adoption of metadata features
 
 ### **Metadata Backfill (Optional)**
@@ -336,7 +336,7 @@ GET /tools?created_after=2024-01-01&created_before=2024-01-31
 ## ❓ **FAQ**
 
 ### **Q: Will this affect existing deployments?**
-A: No breaking changes. Existing entities show graceful fallbacks, all APIs work unchanged.
+A: No breaking changes. Existing entities show graceful fallbacks, all APIs work unmodified.
 
 ### **Q: What happens if authentication is disabled?**
 A: Metadata still works - `created_by` will be `"anonymous"` instead of a username.

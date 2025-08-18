@@ -21,9 +21,9 @@ etc. are provided.
 - **Health Monitoring**: `/health`, `/ready`, `/list_tools` endpoints
 
 ## User Stories Implemented
-[x] **Dynamic Tool Discovery** - Auto-discovers from gateway or uses allowlist  
-[x] **Dual Endpoint Exposure** - OpenAI + A2A JSON-RPC endpoints  
-[x] **Parameterised Tool Allow-List** - `TOOLS=` environment variable  
+[x] **Dynamic Tool Discovery** - Auto-discovers from gateway or uses allowlist
+[x] **Dual Endpoint Exposure** - OpenAI + A2A JSON-RPC endpoints
+[x] **Parameterised Tool Allow-List** - `TOOLS=` environment variable
 [x] **Tool Schema Introspection** - JSON schema parsing and validation
 
 Structure:
@@ -77,7 +77,7 @@ Basic Health Checks
 # Health check
 curl http://localhost:8000/health
 
-# Readiness check  
+# Readiness check
 curl http://localhost:8000/ready
 
 # List available tools
@@ -134,7 +134,7 @@ curl -X POST http://localhost:8000/a2a \
 curl -X POST http://localhost:8000/a2a \
   -H "Content-Type: application/json" \
   -d '{
-    "jsonrpc": "2.0", 
+    "jsonrpc": "2.0",
     "id": "1",
     "method": "invoke",
     "params": {
