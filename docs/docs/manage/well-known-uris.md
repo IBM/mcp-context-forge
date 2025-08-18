@@ -118,7 +118,7 @@ curl -H "Authorization: Bearer $TOKEN" \
       "cache_max_age": 3600
     },
     {
-      "path": "/.well-known/security.txt", 
+      "path": "/.well-known/security.txt",
       "enabled": true,
       "description": "Security contact information",
       "cache_max_age": 3600
@@ -135,7 +135,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 For private API gateways, the default configuration:
 - **Blocks all crawlers** via robots.txt
-- **Minimizes information disclosure** 
+- **Minimizes information disclosure**
 - **No security.txt** (unless explicitly configured)
 - **Cache headers** for performance but not long-term public caching
 
@@ -168,7 +168,7 @@ services:
       WELL_KNOWN_ROBOTS_TXT: |
         User-agent: monitoring-bot
         Allow: /health
-        
+
         User-agent: *
         Disallow: /
       WELL_KNOWN_SECURITY_TXT: |
@@ -191,7 +191,7 @@ data:
   WELL_KNOWN_ROBOTS_TXT: |
     User-agent: *
     Disallow: /
-    
+
     # Private API - No public crawling
   WELL_KNOWN_SECURITY_TXT: |
     Contact: mailto:security@example.com
@@ -216,7 +216,7 @@ config:
       User-agent: internal-monitor
       Allow: /health
       Allow: /metrics
-      
+
       User-agent: *
       Disallow: /
     securityTxt: |

@@ -2,10 +2,16 @@ nav:
   - index.md
   - backup.md
   - bulk-import.md
+  - export-import.md
+  - export-import-tutorial.md
+  - export-import-reference.md
   - logging.md
   - logging-examples.md
-  - upgrade.md
-  - tuning.md
-  - securing.md
-  - ui-customization.md
+  - observability.md
   - observability
+  - proxy.md
+  - securing.md
+  - tuning.md
+  - ui-customization.md
+  - upgrade.md
+  - well-known-uris.md
