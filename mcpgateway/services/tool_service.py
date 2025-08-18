@@ -22,6 +22,7 @@ import json
 import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
+from urllib.parse import parse_qs, urlparse
 import uuid
 
 # Third-Party
@@ -31,7 +32,6 @@ from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import case, delete, desc, Float, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from urllib.parse import urlparse, parse_qs
 
 # First-Party
 from mcpgateway.config import settings
@@ -756,7 +756,7 @@ class ToolService:
                                 final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
                             else:
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
-                        
+
                     # --- Extract query params from URL ---
                     parsed = urlparse(final_url)
                     final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
