@@ -63,7 +63,7 @@ from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
 from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins import PluginManager, PluginViolationError
+from mcpgateway.plugins.framework import PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     GatewayCreate,

@@ -1,0 +1,77 @@
+# ----------------------------------------------------------------
+# 💡 Build system (PEP 517)
+#     - setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     - wheel is needed by most build front-ends
+# ----------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ----------------------------------------------------------------
+# 📦 Core project metadata (PEP 621)
+# ----------------------------------------------------------------
+[project]
+name = "{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}"
+version = "{{version}}"
+description = "{{description}}"
+keywords = ["MCP","API","gateway","tools",
+  "agents","agentic ai","model context protocol","multi-agent","fastapi",
+  "json-rpc","sse","websocket","federation","security","authentication"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Framework :: AsyncIO",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+    "Topic :: Software Development :: Libraries :: Application Frameworks"
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+maintainers = [
+    {name = "{{author}}", email = "{{email}}"}
+]
+
+authors = [
+    {name = "{{author}}", email = "{{email}}"}
+]
+
+dependencies = [
+    "chuk-mcp-runtime>=0.6.5",
+    "mcp-contextforge-gateway",
+]
+
+# URLs
+[project.urls]
+Homepage = "https://ibm.github.io/mcp-context-forge/"
+Documentation = "https://ibm.github.io/mcp-context-forge/"
+Repository = "https://github.com/IBM/mcp-context-forge"
+"Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
+Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
+
+[tool.uv.sources]
+mcp-contextforge-gateway = { git = "https://github.com/araujof/mcp-context-forge.git", rev = "feat/720-plugins-cli" }
+
+# --------------------------------------------------------------------
+#  🔧 setuptools-specific configuration
+# --------------------------------------------------------------------
+[tool.setuptools]
+include-package-data = true          # ensure wheels include the data files
+
+# Automatic discovery: keep every package that starts with "{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}"
+[tool.setuptools.packages.find]
+include = ["{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}*"]
+exclude = ["tests*"]
+
+##  Runtime data files  ------------------------------------------------
+[tool.setuptools.package-data]
+{{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }} = [
+  "resources/plugins/config.yaml",
+]

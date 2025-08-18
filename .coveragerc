@@ -1,5 +1,8 @@
 [run]
 branch = True
+omit =
+    mcpgateway/alembic/*
+    */__init__.py
 
 [report]
 exclude_lines =

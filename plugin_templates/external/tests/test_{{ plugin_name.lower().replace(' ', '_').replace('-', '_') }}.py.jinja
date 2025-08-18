@@ -1,0 +1,31 @@
+"""Tests for plugin."""
+
+# Third-Party
+import pytest
+
+# First-Party
+from {{plugin_name.lower().replace(' ', '_').replace('-', '_')}}.plugin import {{plugin_name}}
+from mcpgateway.plugins.framework import (
+    PluginConfig,
+    PluginContext,
+    PromptPrehookPayload,
+)
+
+
+@pytest.mark.asyncio
+async def test_{{plugin_name.lower().replace(' ', '_').replace('-', '_')}}():
+    """Test plugin prompt prefetch hook."""
+    config = PluginConfig(
+        name="test",
+        kind="{{plugin_name.lower().replace(' ', '_').replace('-', '_')}}.{{plugin_name}}",
+        hooks=["prompt_pre_fetch"],
+        config={"setting_one": "test_value"},
+    )
+
+    plugin = {{plugin_name}}(config)
+
+    # Test your plugin logic
+    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is an argument"})
+    context = PluginContext(request_id="1", server_id="2")
+    result = await plugin.prompt_pre_fetch(payload, context)
+    assert result.continue_processing
