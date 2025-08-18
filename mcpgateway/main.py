@@ -1775,6 +1775,7 @@ async def list_prompts(
 @prompt_router.post("/", response_model=PromptRead)
 async def create_prompt(
     prompt: PromptCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> PromptRead:
@@ -1783,6 +1784,7 @@ async def create_prompt(
 
     Args:
         prompt (PromptCreate): Payload describing the prompt to create.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
@@ -1796,7 +1798,19 @@ async def create_prompt(
     """
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
     try:
-        return await prompt_service.register_prompt(db, prompt)
+        # Extract metadata from request
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        return await prompt_service.register_prompt(
+            db,
+            prompt,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
     except Exception as e:
         if isinstance(e, PromptNameConflictError):
             # If the prompt name already exists, return a 409 Conflict error
@@ -2087,6 +2101,7 @@ async def list_gateways(
 @gateway_router.post("/", response_model=GatewayRead)
 async def register_gateway(
     gateway: GatewayCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> GatewayRead:
@@ -2095,6 +2110,7 @@ async def register_gateway(
 
     Args:
         gateway: Gateway creation data.
+        request: The FastAPI request object for metadata extraction.
         db: Database session.
         user: Authenticated user.
 
@@ -2103,7 +2119,17 @@ async def register_gateway(
     """
     logger.debug(f"User '{user}' requested to register gateway: {gateway}")
     try:
-        return await gateway_service.register_gateway(db, gateway)
+        # Extract metadata from request
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        return await gateway_service.register_gateway(
+            db,
+            gateway,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+        )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return JSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)

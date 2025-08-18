@@ -2690,7 +2690,17 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     try:
-        await gateway_service.register_gateway(db, gateway)
+        # Extract creation metadata
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        await gateway_service.register_gateway(
+            db,
+            gateway,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+        )
         return JSONResponse(
             content={"message": "Gateway registered successfully!", "success": True},
             status_code=200,
@@ -3606,7 +3616,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     try:
         args_json = "[]"
         args_value = form.get("arguments")
-        if isinstance(args_value, str):
+        if isinstance(args_value, str) and args_value.strip():
             args_json = args_value
         arguments = json.loads(args_json)
         prompt = PromptCreate(
@@ -3616,7 +3626,19 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             arguments=arguments,
             tags=tags,
         )
-        await prompt_service.register_prompt(db, prompt)
+        # Extract creation metadata
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        await prompt_service.register_prompt(
+            db,
+            prompt,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
         return JSONResponse(
             content={"message": "Prompt registered successfully!", "success": True},
             status_code=200,

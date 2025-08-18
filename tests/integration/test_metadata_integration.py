@@ -38,21 +38,21 @@ def test_app():
     # Create in-memory SQLite database for testing
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    
+
     Base.metadata.create_all(bind=engine)
-    
+
     def override_get_db():
         try:
             db = TestingSessionLocal()
             yield db
         finally:
             db.close()
-    
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[require_auth] = lambda: "test_user"
-    
+
     yield app
-    
+
     # Cleanup
     app.dependency_overrides.clear()
 
@@ -76,18 +76,18 @@ class TestMetadataIntegration:
             "integration_type": "REST",
             "request_type": "GET"
         }
-        
+
         response = client.post("/tools", json=tool_data)
         assert response.status_code == 200
-        
+
         tool = response.json()
-        
+
         # Verify metadata was captured
         assert tool["createdBy"] == "test_user"
         assert tool["createdVia"] == "api"  # Should detect API call
         assert tool["version"] == 1
         assert tool["createdFromIp"] is not None  # Should capture some IP
-        
+
         # Verify metadata is properly serialized
         assert "createdAt" in tool
         # modifiedAt is only set after modifications, not during creation
@@ -101,13 +101,13 @@ class TestMetadataIntegration:
             "integrationType": "REST",
             "requestType": "GET"
         }
-        
+
         # Simulate admin UI request
         response = client.post("/admin/tools", data=tool_data)
-        
+
         # Admin endpoint might return different status codes, just verify it doesn't crash
         assert response.status_code in [200, 400, 422, 500]  # Allow various responses
-        
+
         # The important thing is that the metadata capture code doesn't break the endpoint
 
     def test_tool_update_metadata(self, client):
@@ -120,21 +120,21 @@ class TestMetadataIntegration:
             "integration_type": "REST",
             "request_type": "GET"
         }
-        
+
         create_response = client.post("/tools", json=tool_data)
         assert create_response.status_code == 200
         tool_id = create_response.json()["id"]
-        
+
         # Now update the tool
         update_data = {
             "description": "Updated description"
         }
-        
+
         update_response = client.put(f"/tools/{tool_id}", json=update_data)
         assert update_response.status_code == 200
-        
+
         updated_tool = update_response.json()
-        
+
         # Verify modification metadata
         assert updated_tool["modifiedBy"] == "test_user"
         assert updated_tool["modifiedVia"] == "api"
@@ -151,11 +151,11 @@ class TestMetadataIntegration:
             "integration_type": "REST",
             "request_type": "GET"
         }
-        
+
         response = client.post("/tools", json=tool_data)
         assert response.status_code == 200
         tool = response.json()
-        
+
         # Even "legacy" simulation should have metadata since we're testing new code
         # But verify that optional fields handle None gracefully
         assert tool["createdBy"] is not None  # Should have metadata
@@ -166,7 +166,7 @@ class TestMetadataIntegration:
         """Test metadata capture when authentication is disabled."""
         # Override auth to return anonymous
         test_app.dependency_overrides[require_auth] = lambda: "anonymous"
-        
+
         tool_data = {
             "name": f"anonymous_test_tool_{uuid.uuid4().hex[:8]}",
             "url": "http://example.com/anon",
@@ -174,12 +174,12 @@ class TestMetadataIntegration:
             "integration_type": "REST",
             "request_type": "GET"
         }
-        
+
         response = client.post("/tools", json=tool_data)
         assert response.status_code == 200
-        
+
         tool = response.json()
-        
+
         # Verify anonymous metadata
         assert tool["createdBy"] == "anonymous"
         assert tool["version"] == 1
@@ -194,19 +194,19 @@ class TestMetadataIntegration:
             "integration_type": "REST",
             "request_type": "GET"
         }
-        
+
         response = client.post("/tools", json=tool_data)
         assert response.status_code == 200
-        
+
         tool = response.json()
-        
+
         # Verify all metadata fields are present
         expected_fields = [
             "createdBy", "createdFromIp", "createdVia", "createdUserAgent",
-            "modifiedBy", "modifiedFromIp", "modifiedVia", "modifiedUserAgent", 
+            "modifiedBy", "modifiedFromIp", "modifiedVia", "modifiedUserAgent",
             "importBatchId", "federationSource", "version"
         ]
-        
+
         for field in expected_fields:
             assert field in tool, f"Missing metadata field: {field}"
 
@@ -220,16 +220,16 @@ class TestMetadataIntegration:
             "integration_type": "REST",
             "request_type": "GET"
         }
-        
+
         client.post("/tools", json=tool_data)
-        
+
         # List tools
         response = client.get("/tools")
         assert response.status_code == 200
-        
+
         tools = response.json()
         assert len(tools) > 0
-        
+
         # Verify metadata is included in list response
         tool = tools[0]
         assert "createdBy" in tool
@@ -241,7 +241,7 @@ class TestMetadataIntegration:
         from mcpgateway.db import SessionLocal
         from mcpgateway.utils.metadata_capture import MetadataCapture
         from types import SimpleNamespace
-        
+
         # Create mock request
         mock_request = SimpleNamespace()
         mock_request.client = SimpleNamespace()
@@ -249,10 +249,10 @@ class TestMetadataIntegration:
         mock_request.headers = {"user-agent": "test-agent"}
         mock_request.url = SimpleNamespace()
         mock_request.url.path = "/admin/tools"
-        
+
         # Extract metadata
         metadata = MetadataCapture.extract_creation_metadata(mock_request, "service_test_user")
-        
+
         # Create tool data
         tool_data = ToolCreate(
             name=f"service_layer_test_{uuid.uuid4().hex[:8]}",
@@ -261,11 +261,11 @@ class TestMetadataIntegration:
             integration_type="REST",
             request_type="GET"
         )
-        
+
         # Test service creation with metadata
         service = ToolService()
         db = SessionLocal()
-        
+
         try:
             tool_read = await service.register_tool(
                 db,
@@ -275,13 +275,13 @@ class TestMetadataIntegration:
                 created_via=metadata["created_via"],
                 created_user_agent=metadata["created_user_agent"],
             )
-            
+
             # Verify metadata was stored
             assert tool_read.created_by == "service_test_user"
             assert tool_read.created_from_ip == "test-ip"
             assert tool_read.created_via == "ui"
             assert tool_read.created_user_agent == "test-agent"
             assert tool_read.version == 1
-            
+
         finally:
             db.close()

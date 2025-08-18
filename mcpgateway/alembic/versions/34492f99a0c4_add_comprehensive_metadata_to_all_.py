@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """add_comprehensive_metadata_to_all_entities
 
 Revision ID: 34492f99a0c4

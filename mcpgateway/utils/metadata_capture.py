@@ -91,9 +91,35 @@ class MetadataCapture:
         }
 
     @staticmethod
+    def extract_username(user) -> str:
+        """Extract username from auth response.
+
+        Args:
+            user: Response from require_auth - can be string or dict
+
+        Returns:
+            Username string
+
+        Examples:
+            >>> MetadataCapture.extract_username("admin")
+            'admin'
+            >>> MetadataCapture.extract_username({"username": "alice", "exp": 123})
+            'alice'
+            >>> MetadataCapture.extract_username({"sub": "bob", "exp": 123})
+            'bob'
+        """
+        if isinstance(user, str):
+            return user
+        elif isinstance(user, dict):
+            # Try to extract username from JWT payload
+            return user.get("username") or user.get("sub") or "unknown"
+        else:
+            return "unknown"
+
+    @staticmethod
     def extract_creation_metadata(
         request: Request,
-        user: str,
+        user,  # Can be str or dict from require_auth
         import_batch_id: Optional[str] = None,
         federation_source: Optional[str] = None,
     ) -> Dict[str, Optional[str]]:
@@ -101,7 +127,7 @@ class MetadataCapture:
 
         Args:
             request: FastAPI request object
-            user: Authenticated username (or "anonymous" if auth disabled)
+            user: Authenticated user (string username or dict JWT payload)
             import_batch_id: Optional UUID for bulk import operations
             federation_source: Optional source gateway for federated entities
 
@@ -127,7 +153,7 @@ class MetadataCapture:
         context = MetadataCapture.extract_request_context(request)
 
         return {
-            "created_by": user,
+            "created_by": MetadataCapture.extract_username(user),
             "created_from_ip": context["from_ip"],
             "created_via": context["via"],
             "created_user_agent": context["user_agent"],
@@ -139,14 +165,14 @@ class MetadataCapture:
     @staticmethod
     def extract_modification_metadata(
         request: Request,
-        user: str,
+        user,  # Can be str or dict from require_auth
         current_version: int = 1,
     ) -> Dict[str, Optional[str]]:
         """Extract metadata for entity modification.
 
         Args:
             request: FastAPI request object
-            user: Authenticated username (or "anonymous" if auth disabled)
+            user: Authenticated user (string username or dict JWT payload)
             current_version: Current entity version (will be incremented)
 
         Returns:
@@ -171,7 +197,7 @@ class MetadataCapture:
         context = MetadataCapture.extract_request_context(request)
 
         return {
-            "modified_by": user,
+            "modified_by": MetadataCapture.extract_username(user),
             "modified_from_ip": context["from_ip"],
             "modified_via": context["via"],
             "modified_user_agent": context["user_agent"],

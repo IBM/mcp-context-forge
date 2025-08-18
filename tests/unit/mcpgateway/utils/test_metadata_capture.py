@@ -32,9 +32,9 @@ class TestMetadataCapture:
         request.headers = {"user-agent": "Mozilla/5.0 (Linux)"}
         request.url = SimpleNamespace()
         request.url.path = "/tools"
-        
+
         context = MetadataCapture.extract_request_context(request)
-        
+
         assert context["from_ip"] == "192.168.1.100"
         assert context["user_agent"] == "Mozilla/5.0 (Linux)"
         assert context["via"] == "api"
@@ -47,9 +47,9 @@ class TestMetadataCapture:
         request.headers = {"user-agent": "Chrome/90.0"}
         request.url = SimpleNamespace()
         request.url.path = "/admin/tools"
-        
+
         context = MetadataCapture.extract_request_context(request)
-        
+
         assert context["from_ip"] == "10.0.0.1"
         assert context["via"] == "ui"
 
@@ -64,9 +64,9 @@ class TestMetadataCapture:
         }
         request.url = SimpleNamespace()
         request.url.path = "/api/tools"
-        
+
         context = MetadataCapture.extract_request_context(request)
-        
+
         # Should use first IP from X-Forwarded-For
         assert context["from_ip"] == "203.0.113.1"
         assert context["user_agent"] == "curl/7.68.0"
@@ -78,9 +78,9 @@ class TestMetadataCapture:
         request.headers = {"user-agent": "test/1.0"}
         request.url = SimpleNamespace()
         request.url.path = "/tools"
-        
+
         context = MetadataCapture.extract_request_context(request)
-        
+
         assert context["from_ip"] is None
         assert context["user_agent"] == "test/1.0"
         assert context["via"] == "api"
@@ -93,14 +93,14 @@ class TestMetadataCapture:
         request.headers = {"user-agent": "HTTPie/2.4.0"}
         request.url = SimpleNamespace()
         request.url.path = "/admin/servers"
-        
+
         metadata = MetadataCapture.extract_creation_metadata(
-            request, 
+            request,
             "admin",
             import_batch_id="batch-123",
             federation_source="gateway-prod"
         )
-        
+
         assert metadata["created_by"] == "admin"
         assert metadata["created_from_ip"] == "172.16.0.5"
         assert metadata["created_via"] == "ui"
@@ -117,9 +117,9 @@ class TestMetadataCapture:
         request.headers = {"user-agent": "test-client"}
         request.url = SimpleNamespace()
         request.url.path = "/tools"
-        
+
         metadata = MetadataCapture.extract_creation_metadata(request, "anonymous")
-        
+
         assert metadata["created_by"] == "anonymous"
         assert metadata["created_via"] == "api"
         assert metadata["version"] == 1
@@ -132,9 +132,9 @@ class TestMetadataCapture:
         request.headers = {"user-agent": "PostmanRuntime/7.28.0"}
         request.url = SimpleNamespace()
         request.url.path = "/tools/123"
-        
+
         metadata = MetadataCapture.extract_modification_metadata(request, "alice", 3)
-        
+
         assert metadata["modified_by"] == "alice"
         assert metadata["modified_from_ip"] == "10.1.1.1"
         assert metadata["modified_via"] == "api"
@@ -232,14 +232,14 @@ class TestMetadataCapture:
         request.headers = {"user-agent": "test"}
         request.url = SimpleNamespace()
         request.url.path = "/tools"
-        
+
         metadata = MetadataCapture.extract_creation_metadata(
-            request, 
+            request,
             "user",
             import_batch_id=None,
             federation_source=None
         )
-        
+
         assert metadata["created_by"] == "user"
         assert metadata["import_batch_id"] is None
         assert metadata["federation_source"] is None
@@ -252,9 +252,9 @@ class TestMetadataCapture:
         request.headers = {"user-agent": "test"}
         request.url = SimpleNamespace()
         request.url.path = "/tools/123"
-        
+
         metadata = MetadataCapture.extract_modification_metadata(request, "bob")
-        
+
         assert metadata["modified_by"] == "bob"
         assert metadata["version"] == 2  # 1 + 1
 
@@ -265,9 +265,9 @@ class TestMetadataCapture:
         request.client.host = "192.168.1.1"
         request.headers = {"user-agent": "test"}
         # No url attribute
-        
+
         context = MetadataCapture.extract_request_context(request)
-        
+
         assert context["from_ip"] == "192.168.1.1"
         assert context["via"] == "api"  # default when no path available
 
@@ -279,9 +279,9 @@ class TestMetadataCapture:
         request.headers = {}
         request.url = SimpleNamespace()
         request.url.path = "/tools"
-        
+
         context = MetadataCapture.extract_request_context(request)
-        
+
         assert context["user_agent"] is None
         assert context["from_ip"] == "192.168.1.1"
 
@@ -296,8 +296,38 @@ class TestMetadataCapture:
         }
         request.url = SimpleNamespace()
         request.url.path = "/tools"
-        
+
         context = MetadataCapture.extract_request_context(request)
-        
+
         # Should still extract the forwarded IP even if malformed
         assert context["from_ip"] == "malformed"
+
+    def test_extract_username_string(self):
+        """Test username extraction from string."""
+        result = MetadataCapture.extract_username("admin")
+        assert result == "admin"
+
+    def test_extract_username_dict_username(self):
+        """Test username extraction from dict with username field."""
+        result = MetadataCapture.extract_username({"username": "alice", "exp": 123})
+        assert result == "alice"
+
+    def test_extract_username_dict_sub(self):
+        """Test username extraction from dict with sub field."""
+        result = MetadataCapture.extract_username({"sub": "bob", "exp": 123})
+        assert result == "bob"
+
+    def test_extract_username_dict_empty(self):
+        """Test username extraction from empty dict."""
+        result = MetadataCapture.extract_username({})
+        assert result == "unknown"
+
+    def test_extract_username_none(self):
+        """Test username extraction from None."""
+        result = MetadataCapture.extract_username(None)
+        assert result == "unknown"
+
+    def test_extract_username_invalid_type(self):
+        """Test username extraction from invalid type."""
+        result = MetadataCapture.extract_username(123)
+        assert result == "unknown"
