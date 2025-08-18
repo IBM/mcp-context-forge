@@ -26,7 +26,9 @@ $ mcpplugins --help
 """
 
 # Standard
+import logging
 from pathlib import Path
+import shutil
 import subprocess
 from typing import Optional
 
@@ -37,6 +39,8 @@ from typing_extensions import Annotated
 
 # First-Party
 from mcpgateway.config import settings
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration defaults
@@ -69,6 +73,18 @@ app = typer.Typer(
 # ---------------------------------------------------------------------------
 # Utility functions
 # ---------------------------------------------------------------------------
+
+
+def command_exists(command_name):
+    """Check if a given command-line utility exists and is executable.
+
+    Args:
+      command_name: The name of the command to check (e.g., "ls", "git").
+
+    Returns:
+      True if the command exists and is executable, False otherwise.
+    """
+    return shutil.which(command_name) is not None
 
 
 def git_user_name() -> str:
@@ -129,15 +145,21 @@ def bootstrap(
         defaults: Bootstrap with defaults.
         dry_run: Run but do not make any changes.
     """
-    run_copy(
-        src_path=template_url,
-        dst_path=destination,
-        answers_file=answers_file,
-        defaults=defaults,
-        vcs_ref=vcs_ref,
-        data={"default_author_name": git_user_name(), "default_author_email": git_user_email()},
-        pretend=dry_run,
-    )
+    try:
+        if command_exists("git"):
+            run_copy(
+                src_path=template_url,
+                dst_path=destination,
+                answers_file=answers_file,
+                defaults=defaults,
+                vcs_ref=vcs_ref,
+                data={"default_author_name": git_user_name(), "default_author_email": git_user_email()},
+                pretend=dry_run,
+            )
+        else:
+            logger.warning("A git client was not found in the environment to copy remote template.")
+    except Exception:
+        logger.exception("An error was caught while copying template.")
 
 
 @app.callback()
