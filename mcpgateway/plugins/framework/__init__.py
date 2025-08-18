@@ -22,6 +22,7 @@ from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
     HookType,
+    PluginCondition,
     PluginConfig,
     PluginContext,
     PluginErrorModel,
@@ -48,6 +49,7 @@ __all__ = [
     "GlobalContext",
     "HookType",
     "Plugin",
+    "PluginCondition",
     "PluginConfig",
     "PluginContext",
     "PluginError",

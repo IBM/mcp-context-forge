@@ -291,7 +291,7 @@ class PluginRef:
             plugin: The plugin to reference.
 
         Examples:
-            >>> from mcpgateway.plugins.framework.models import PluginConfig, HookType
+            >>> from mcpgateway.plugins.framework import PluginConfig, HookType
             >>> config = PluginConfig(
             ...     name="plugin_ref",
             ...     description="Test",

@@ -548,7 +548,7 @@ class PluginResult(BaseModel, Generic[T]):
         True
         >>> result.metadata
         {}
-        >>> from mcpgateway.plugins.framework.models import PluginViolation
+        >>> from mcpgateway.plugins.framework import PluginViolation
         >>> violation = PluginViolation(
         ...     reason="Test", description="Test desc", code="TEST", details={}
         ... )

@@ -99,7 +99,7 @@ class PluginExecutor(Generic[T]):
     - Metadata aggregation from multiple plugins
 
     Examples:
-        >>> from mcpgateway.plugins.framework.models import PromptPrehookPayload
+        >>> from mcpgateway.plugins.framework import PromptPrehookPayload
         >>> executor = PluginExecutor[PromptPrehookPayload]()
         >>> # In async context:
         >>> # result, contexts = await executor.execute(
@@ -148,7 +148,7 @@ class PluginExecutor(Generic[T]):
 
         Examples:
             >>> # Execute plugins with timeout protection
-            >>> from mcpgateway.plugins.framework.models import HookType
+            >>> from mcpgateway.plugins.framework import HookType
             >>> executor = PluginExecutor(timeout=30)
             >>> # Assuming you have a registry instance:
             >>> # plugins = registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
@@ -285,8 +285,8 @@ async def pre_prompt_fetch(plugin: PluginRef, payload: PromptPrehookPayload, con
         The result of the plugin execution.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
-        >>> from mcpgateway.plugins.framework.models import PromptPrehookPayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework.base import PluginRef
+        >>> from mcpgateway.plugins.framework import Plugin, PromptPrehookPayload, PluginContext, GlobalContext
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = PromptPrehookPayload(name="test", args={"key": "value"})
@@ -309,8 +309,8 @@ async def post_prompt_fetch(plugin: PluginRef, payload: PromptPosthookPayload, c
         The result of the plugin execution.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
-        >>> from mcpgateway.plugins.framework.models import PromptPosthookPayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework.base import PluginRef
+        >>> from mcpgateway.plugins.framework import Plugin, PromptPosthookPayload, PluginContext, GlobalContext
         >>> from mcpgateway.models import PromptResult
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
@@ -335,8 +335,8 @@ async def pre_tool_invoke(plugin: PluginRef, payload: ToolPreInvokePayload, cont
         The result of the plugin execution.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
-        >>> from mcpgateway.plugins.framework.models import ToolPreInvokePayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework.base import PluginRef
+        >>> from mcpgateway.plugins.framework import Plugin, ToolPreInvokePayload, PluginContext, GlobalContext
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = ToolPreInvokePayload(name="calculator", args={"operation": "add", "a": 5, "b": 3})
@@ -359,8 +359,8 @@ async def post_tool_invoke(plugin: PluginRef, payload: ToolPostInvokePayload, co
         The result of the plugin execution.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
-        >>> from mcpgateway.plugins.framework.models import ToolPostInvokePayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework.base import PluginRef
+        >>> from mcpgateway.plugins.framework import Plugin, ToolPostInvokePayload, PluginContext, GlobalContext
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8, "status": "success"})
@@ -383,8 +383,8 @@ async def pre_resource_fetch(plugin: PluginRef, payload: ResourcePreFetchPayload
         ResourcePreFetchResult with processing status.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
-        >>> from mcpgateway.plugins.framework.models import ResourcePreFetchPayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework.base import PluginRef
+        >>> from mcpgateway.plugins.framework import Plugin, ResourcePreFetchPayload, PluginContext, GlobalContext
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = ResourcePreFetchPayload(uri="file:///data.txt", metadata={"cache": True})
@@ -407,8 +407,8 @@ async def post_resource_fetch(plugin: PluginRef, payload: ResourcePostFetchPaylo
         ResourcePostFetchResult with processing status.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.base import Plugin, PluginRef
-        >>> from mcpgateway.plugins.framework.models import ResourcePostFetchPayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework.base import PluginRef
+        >>> from mcpgateway.plugins.framework import Plugin, ResourcePostFetchPayload, PluginContext, GlobalContext
         >>> from mcpgateway.models import ResourceContent
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
@@ -444,7 +444,7 @@ class PluginManager:
         >>> # print(f"Loaded {manager.plugin_count} plugins")
         >>>
         >>> # Execute prompt hooks
-        >>> from mcpgateway.plugins.framework.models import PromptPrehookPayload, GlobalContext
+        >>> from mcpgateway.plugins.framework import PromptPrehookPayload, GlobalContext
         >>> payload = PromptPrehookPayload(name="test", args={})
         >>> context = GlobalContext(request_id="req-123")
         >>> # In async context:
@@ -662,7 +662,7 @@ class PluginManager:
             >>> # In async context:
             >>> # await manager.initialize()
             >>>
-            >>> from mcpgateway.plugins.framework.models import PromptPrehookPayload, GlobalContext
+            >>> from mcpgateway.plugins.framework import PromptPrehookPayload, GlobalContext
             >>> payload = PromptPrehookPayload(
             ...     name="greeting",
             ...     args={"user": "Alice"}
@@ -714,7 +714,7 @@ class PluginManager:
         Examples:
             >>> # Continuing from prompt_pre_fetch example
             >>> from mcpgateway.models import PromptResult, Message, TextContent, Role
-            >>> from mcpgateway.plugins.framework.models import PromptPosthookPayload, GlobalContext
+            >>> from mcpgateway.plugins.framework import PromptPosthookPayload, GlobalContext
             >>>
             >>> # Create a proper Message with TextContent
             >>> message = Message(
@@ -779,7 +779,7 @@ class PluginManager:
             >>> # In async context:
             >>> # await manager.initialize()
             >>>
-            >>> from mcpgateway.plugins.framework.models import ToolPreInvokePayload, GlobalContext
+            >>> from mcpgateway.plugins.framework import ToolPreInvokePayload, GlobalContext
             >>> payload = ToolPreInvokePayload(
             ...     name="calculator",
             ...     args={"operation": "add", "a": 5, "b": 3}
@@ -830,7 +830,7 @@ class PluginManager:
 
         Examples:
             >>> # Continuing from tool_pre_invoke example
-            >>> from mcpgateway.plugins.framework.models import ToolPostInvokePayload, GlobalContext
+            >>> from mcpgateway.plugins.framework import ToolPostInvokePayload, GlobalContext
             >>>
             >>> post_payload = ToolPostInvokePayload(
             ...     name="calculator",
