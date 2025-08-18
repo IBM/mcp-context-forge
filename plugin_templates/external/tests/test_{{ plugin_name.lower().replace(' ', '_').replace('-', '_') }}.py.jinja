@@ -4,22 +4,28 @@
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework.manager import PluginManager
+from {{plugin_name.lower().replace(' ', '_').replace('-', '_')}}.plugin import {{plugin_name}}
+from mcpgateway.plugins.framework import (
+    PluginConfig,
+    PluginContext,
+    PromptPrehookPayload,
+    )
 
 
-@pytest.fixture(scope="module", autouse=True)
-def plugin():
-    """Loads plugin loader and skill."""
-    plugin = PluginManager("./resources/config/config.yaml")
-    await plugin.initialize()
-    yield plugin
-    await plugin.shutdown()
+@pytest.mark.asyncio
+async def test_{{plugin_name.lower().replace(' ', '_').replace('-', '_')}}():
+    """Test plugin prompt prefetch hook."""
+    config = PluginConfig(
+        name="test",
+        kind="{{plugin_name.lower().replace(' ', '_').replace('-', '_')}}.{{plugin_name}}",
+        hooks=["prompt_pre_fetch"],
+        config={"setting_one": "test_value"}
+    )
 
+    plugin = {{plugin_name}}(config)
 
-def test_prompt_pre_hook(plugin):
-    """Implement me."""
-    # payload = PromptPrehookPayload(...)
-    # global_context = GlobalContext(request_id="...")
-    # result, contexts = await plugin.prompt_pre_fetch(payload, global_context)
-    # assert result.modified_payload ...
-    assert True
+    # Test your plugin logic
+    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is an argument"})
+    context = PluginContext(request_id="1", server_id="2")
+    result = await plugin.prompt_pre_fetch(payload, context)
+    assert result.continue_processing
