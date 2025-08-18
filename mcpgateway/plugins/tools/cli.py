@@ -138,6 +138,12 @@ def bootstrap(
         worker.run_copy()
 
 
+@app.callback()
+def callback():
+    """This function exists to force 'bootstrap' to be a subcommand."""
+    pass
+
+
 # @app.command(help="Installs plugins into a Python environment.")
 # def install(
 #     install_manifest: Annotated[typer.FileText, typer.Option("--install_manifest", "-i", help="The install manifest describing which plugins to install.")] = DEFAULT_INSTALL_MANIFEST,
@@ -157,7 +163,7 @@ def bootstrap(
 #         subprocess.run(cmd)
 
 
-# @app.command(help="Builds an MCP server to serve plugins as tools")
+# @app.command(help="Builds an MCP server to serve plugins as tools.")
 # def package(
 #     image_tag: Annotated[str, typer.Option("--image_tag", "-t", help="The container image tag to generated container.")] = DEFAULT_IMAGE_TAG,
 #     containerfile: Annotated[Path, typer.Option("--containerfile", "-c", help="The Dockerfile used to build the container.")] = DEFAULT_CONTAINERFILE_PATH,
