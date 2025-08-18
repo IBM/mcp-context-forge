@@ -186,7 +186,7 @@ async def resource_post_fetch(plugin_name: str, payload: Dict[str, Any], context
     return await server.invoke_hook(ResourcePostFetchPayload, resource_post_fetch_func, plugin_name, payload, context)
 
 
-async def run():
+async def run():  # pragma: no cover - executed only when run directly
     """Run the external plugin server.
 
     Raises:

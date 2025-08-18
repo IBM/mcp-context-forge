@@ -33,9 +33,6 @@ P = TypeVar("P", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
 
-# config_file = os.environ.get("PLUGINS_CONFIG_PATH", os.path.join(".", "resources", "plugins", "config.yaml"))
-# global_plugin_manager = None
-
 
 class ExternalPluginServer:
 
