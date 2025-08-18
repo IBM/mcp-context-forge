@@ -381,7 +381,7 @@ class TestReverseProxyClient:
     async def test_register(self):
         """Test registration with gateway."""
         self.client.connection = AsyncMock()
-        
+
         with patch.object(self.client.stdio_process, "send", AsyncMock()) as mock_send:
             with patch("asyncio.sleep", AsyncMock()):
                 await self.client._register()
@@ -506,7 +506,7 @@ class TestReverseProxyClient:
     async def test_receive_websocket_connection_closed(self):
         """Test handling WebSocket connection closed."""
         mock_connection = AsyncMock()
-        
+
         # Import the actual exception class
         try:
             from websockets.exceptions import ConnectionClosed
@@ -514,7 +514,7 @@ class TestReverseProxyClient:
         except ImportError:
             # If websockets not available, use generic exception
             mock_connection.__aiter__.side_effect = Exception("Connection closed")
-        
+
         self.client.connection = mock_connection
         self.client.state = ConnectionState.CONNECTED
 
@@ -745,7 +745,7 @@ gateway: https://config.example.com
 token: config-token
 reconnect_delay: 3.0
 """
-        
+
         with patch("builtins.open", mock_open(read_data=config_content)):
             with patch("mcpgateway.reverse_proxy.yaml") as mock_yaml:
                 mock_yaml.safe_load.return_value = {
@@ -753,14 +753,14 @@ reconnect_delay: 3.0
                     "token": "config-token",
                     "reconnect_delay": 3.0
                 }
-                
+
                 # Need to provide gateway in environment since config loading happens after validation
                 with patch.dict("os.environ", {"REVERSE_PROXY_GATEWAY": "https://config.example.com"}):
                     args = parse_args([
                         "--local-stdio", "echo test",
                         "--config", "config.yaml"
                     ])
-                
+
                 assert args.gateway == "https://config.example.com"
                 assert args.token == "config-token"
                 # reconnect_delay has a default value so config won't override it
@@ -769,21 +769,21 @@ reconnect_delay: 3.0
     def test_parse_config_file_json(self):
         """Test parsing with JSON config file."""
         config_content = '{"gateway": "https://config.example.com", "token": "config-token"}'
-        
+
         with patch("builtins.open", mock_open(read_data=config_content)):
             with patch("json.load") as mock_json:
                 mock_json.return_value = {
                     "gateway": "https://config.example.com",
                     "token": "config-token"
                 }
-                
+
                 # Need to provide gateway in environment since config loading happens after validation
                 with patch.dict("os.environ", {"REVERSE_PROXY_GATEWAY": "https://config.example.com"}):
                     args = parse_args([
                         "--local-stdio", "echo test",
                         "--config", "config.json"
                     ])
-                
+
                 assert args.gateway == "https://config.example.com"
                 assert args.token == "config-token"
 
@@ -804,13 +804,13 @@ reconnect_delay: 3.0
                     "gateway": "https://config.example.com",
                     "token": "config-token"
                 }
-                
+
                 args = parse_args([
                     "--local-stdio", "echo test",
                     "--gateway", "https://cli.example.com",
                     "--config", "config.yaml"
                 ])
-                
+
                 # CLI should override config
                 assert args.gateway == "https://cli.example.com"
                 assert args.token == "config-token"  # From config
@@ -853,7 +853,7 @@ class TestMainAndRun:
     async def test_main_success(self):
         """Test successful main execution."""
         mock_client = AsyncMock()
-        
+
         with patch("mcpgateway.reverse_proxy.parse_args") as mock_parse:
             with patch("mcpgateway.reverse_proxy.ReverseProxyClient") as mock_client_class:
                 with patch("logging.basicConfig"):
@@ -867,17 +867,17 @@ class TestMainAndRun:
                         mock_args.max_retries = 0
                         mock_args.keepalive = 30
                         mock_parse.return_value = mock_args
-                        
+
                         mock_client_class.return_value = mock_client
-                        
+
                         mock_event = AsyncMock()
                         mock_event_class.return_value = mock_event
-                        
+
                         # Simulate immediate shutdown
                         mock_event.wait = AsyncMock()
-                        
+
                         await main(["--local-stdio", "echo test"])
-                        
+
                         mock_client.disconnect.assert_called_once()
 
     @pytest.mark.asyncio
@@ -897,18 +897,18 @@ class TestMainAndRun:
                             mock_args.max_retries = 0
                             mock_args.keepalive = 30
                             mock_parse.return_value = mock_args
-                            
+
                             mock_client = AsyncMock()
                             mock_client_class.return_value = mock_client
-                            
+
                             mock_loop = Mock()
                             mock_get_loop.return_value = mock_loop
-                            
+
                             mock_event = AsyncMock()
                             mock_event_class.return_value = mock_event
-                            
+
                             await main()
-                            
+
                             # Should register signal handlers
                             assert mock_loop.add_signal_handler.call_count == 2
                             calls = mock_loop.add_signal_handler.call_args_list
