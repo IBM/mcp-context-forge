@@ -3139,7 +3139,19 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             content=str(form["content"]),
             tags=tags,
         )
-        await resource_service.register_resource(db, resource)
+
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        await resource_service.register_resource(
+            db,
+            resource,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
         return JSONResponse(
             content={"message": "Add resource registered successfully!", "success": True},
             status_code=200,

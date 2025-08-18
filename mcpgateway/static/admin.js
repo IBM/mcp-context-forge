@@ -2292,6 +2292,67 @@ async function viewResource(resourceUri) {
                 container.appendChild(metricsDiv);
             }
 
+            // Add metadata section
+            const metadataDiv = document.createElement("div");
+            metadataDiv.className = "mt-6 border-t pt-4";
+
+            const metadataTitle = document.createElement("strong");
+            metadataTitle.textContent = "Metadata:";
+            metadataDiv.appendChild(metadataTitle);
+
+            const metadataGrid = document.createElement("div");
+            metadataGrid.className = "grid grid-cols-2 gap-4 mt-2 text-sm";
+
+            const metadataFields = [
+                {
+                    label: "Created By",
+                    value: resource.createdBy || "Legacy Entity",
+                },
+                {
+                    label: "Created At",
+                    value: resource.createdAt
+                        ? new Date(resource.createdAt).toLocaleString()
+                        : "Pre-metadata",
+                },
+                {
+                    label: "Created From",
+                    value: resource.createdFromIp || "Unknown",
+                },
+                { label: "Created Via", value: resource.createdVia || "Unknown" },
+                {
+                    label: "Last Modified By",
+                    value: resource.modifiedBy || "N/A",
+                },
+                {
+                    label: "Last Modified At",
+                    value: resource.modifiedAt
+                        ? new Date(resource.modifiedAt).toLocaleString()
+                        : "N/A",
+                },
+                { label: "Version", value: resource.version || "1" },
+                { label: "Import Batch", value: resource.importBatchId || "N/A" },
+            ];
+
+            metadataFields.forEach((field) => {
+                const fieldDiv = document.createElement("div");
+
+                const labelSpan = document.createElement("span");
+                labelSpan.className =
+                    "font-medium text-gray-600 dark:text-gray-400";
+                labelSpan.textContent = field.label + ":";
+
+                const valueSpan = document.createElement("span");
+                valueSpan.className = "ml-2";
+                valueSpan.textContent = field.value;
+
+                fieldDiv.appendChild(labelSpan);
+                fieldDiv.appendChild(valueSpan);
+                metadataGrid.appendChild(fieldDiv);
+            });
+
+            metadataDiv.appendChild(metadataGrid);
+            container.appendChild(metadataDiv);
+
             // Replace content safely
             resourceDetailsDiv.innerHTML = "";
             resourceDetailsDiv.appendChild(container);

@@ -1551,6 +1551,7 @@ async def list_resources(
 @resource_router.post("/", response_model=ResourceRead)
 async def create_resource(
     resource: ResourceCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> ResourceRead:
@@ -1559,6 +1560,7 @@ async def create_resource(
 
     Args:
         resource (ResourceCreate): Data for the new resource.
+        request (Request): FastAPI request object for metadata extraction.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -1570,8 +1572,18 @@ async def create_resource(
     """
     logger.debug(f"User {user} is creating a new resource")
     try:
-        result = await resource_service.register_resource(db, resource)
-        return result
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        return await resource_service.register_resource(
+            db,
+            resource,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
