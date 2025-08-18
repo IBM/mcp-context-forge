@@ -1,3 +1,11 @@
+# -*- coding: utf-8 -*-
+"""Runtime MCP server for external plugins.
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Fred Araujo
+"""
+
 # Standard
 import asyncio
 import logging
@@ -71,6 +79,15 @@ async def prompt_pre_fetch(plugin_name: str, payload: Dict[str, Any], context: D
     """
 
     def prompt_pre_fetch_func(plugin: Plugin, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+        """Wrapper function for hook.
+
+        plugin: The plugin instance.
+        payload: The tool name and arguments to be analyzed.
+        context: the contextual and state information required for the execution of the hook.
+
+        Returns:
+            The transformed or filtered response from the plugin hook.
+        """
         return plugin.prompt_pre_fetch(payload, context)
 
     return await server.invoke_hook(PromptPrehookPayload, prompt_pre_fetch_func, plugin_name, payload, context)
@@ -93,6 +110,15 @@ async def prompt_post_fetch(plugin_name: str, payload: Dict[str, Any], context: 
     """
 
     def prompt_post_fetch_func(plugin: Plugin, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
+        """Wrapper function for hook.
+
+        plugin: The plugin instance.
+        payload: The tool name and arguments to be analyzed.
+        context: the contextual and state information required for the execution of the hook.
+
+        Returns:
+            The transformed or filtered response from the plugin hook.
+        """
         return plugin.prompt_post_fetch(payload, context)
 
     return await server.invoke_hook(PromptPosthookPayload, prompt_post_fetch_func, plugin_name, payload, context)
@@ -115,6 +141,15 @@ async def tool_pre_invoke(plugin_name: str, payload: Dict[str, Any], context: Di
     """
 
     def tool_pre_invoke_func(plugin: Plugin, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Wrapper function for hook.
+
+        plugin: The plugin instance.
+        payload: The tool name and arguments to be analyzed.
+        context: the contextual and state information required for the execution of the hook.
+
+        Returns:
+            The transformed or filtered response from the plugin hook.
+        """
         return plugin.tool_pre_invoke(payload, context)
 
     return await server.invoke_hook(ToolPreInvokePayload, tool_pre_invoke_func, plugin_name, payload, context)
@@ -137,6 +172,15 @@ async def tool_post_invoke(plugin_name: str, payload: Dict[str, Any], context: D
     """
 
     def tool_post_invoke_func(plugin: Plugin, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Wrapper function for hook.
+
+        plugin: The plugin instance.
+        payload: The tool name and arguments to be analyzed.
+        context: the contextual and state information required for the execution of the hook.
+
+        Returns:
+            The transformed or filtered response from the plugin hook.
+        """
         return plugin.tool_post_invoke(payload, context)
 
     return await server.invoke_hook(ToolPostInvokePayload, tool_post_invoke_func, plugin_name, payload, context)
@@ -158,7 +202,16 @@ async def resource_pre_fetch(plugin_name: str, payload: Dict[str, Any], context:
         The transformed or filtered response from the plugin hook.
     """
 
-    def resource_pre_fetch_func(plugin: Plugin, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
+    def resource_pre_fetch_func(plugin: Plugin, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:  # pragma: no cover
+        """Wrapper function for hook.
+
+        plugin: The plugin instance.
+        payload: The tool name and arguments to be analyzed.
+        context: the contextual and state information required for the execution of the hook.
+
+        Returns:
+            The transformed or filtered response from the plugin hook.
+        """
         return plugin.resource_pre_fetch(payload, context)
 
     return await server.invoke_hook(ResourcePreFetchPayload, resource_pre_fetch_func, plugin_name, payload, context)
@@ -180,13 +233,22 @@ async def resource_post_fetch(plugin_name: str, payload: Dict[str, Any], context
         The result of the plugin execution.
     """
 
-    def resource_post_fetch_func(plugin: Plugin, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+    def resource_post_fetch_func(plugin: Plugin, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:  # pragma: no cover
+        """Wrapper function for hook.
+
+        plugin: The plugin instance.
+        payload: The tool name and arguments to be analyzed.
+        context: the contextual and state information required for the execution of the hook.
+
+        Returns:
+            The transformed or filtered response from the plugin hook.
+        """
         return plugin.resource_post_fetch(payload, context)
 
     return await server.invoke_hook(ResourcePostFetchPayload, resource_post_fetch_func, plugin_name, payload, context)
 
 
-async def run():  # pragma: no cover - executed only when run directly
+async def run():  # pragma: no cover
     """Run the external plugin server.
 
     Raises:
@@ -204,6 +266,6 @@ async def run():  # pragma: no cover - executed only when run directly
             await server.shutdown()
 
 
-if __name__ == "__main__":  # pragma: no cover - executed only when run directly
+if __name__ == "__main__":  # pragma: no cover
     # launch
     asyncio.run(run())

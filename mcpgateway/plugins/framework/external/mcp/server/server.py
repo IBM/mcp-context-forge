@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExternalPluginServer:
+    """External plugin server, providing methods for invoking plugin hooks."""
 
     def __init__(self, config_path: str | None = None) -> None:
         """Create an external plugin server.
