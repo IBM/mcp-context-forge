@@ -51,7 +51,7 @@ class {{ class_name }}(Plugin):
         Returns:
             The result of the plugin's analysis, including whether the prompt can proceed.
         """
-        pass
+        return PromptPrehookResult(continue_processing=True)
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
         """Plugin hook run after a prompt is rendered.
@@ -63,7 +63,7 @@ class {{ class_name }}(Plugin):
         Returns:
             The result of the plugin's analysis, including whether the prompt can proceed.
         """
-        pass
+        return PromptPosthookResult(continue_processing=True)
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         """Plugin hook run before a tool is invoked.
@@ -75,7 +75,7 @@ class {{ class_name }}(Plugin):
         Returns:
             The result of the plugin's analysis, including whether the tool can proceed.
         """
-        pass
+        return ToolPreInvokeResult(continue_processing=True)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Plugin hook run after a tool is invoked.
@@ -87,4 +87,4 @@ class {{ class_name }}(Plugin):
         Returns:
             The result of the plugin's analysis, including whether the tool result should proceed.
         """
-        pass
+        return ToolPostInvokeResult(continue_processing=True)
