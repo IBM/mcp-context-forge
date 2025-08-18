@@ -46,9 +46,6 @@ class ExternalPluginServer:
             config_path: The configuration file path for loading plugins.
                         If set, this attribute overrides the value in PLUGINS_CONFIG_PATH.
 
-        Returns:
-            An external plugin server instance.
-
         Examples:
             >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
             >>> server is not None

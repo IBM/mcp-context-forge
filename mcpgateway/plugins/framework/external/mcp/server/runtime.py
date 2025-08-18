@@ -187,7 +187,11 @@ async def resource_post_fetch(plugin_name: str, payload: Dict[str, Any], context
 
 
 async def run():
-    """Run the external plugin server."""
+    """Run the external plugin server.
+
+    Raises:
+        Exception: if unnable to run the plugin server.
+    """
     global server
     server = ExternalPluginServer()
     if await server.initialize():
