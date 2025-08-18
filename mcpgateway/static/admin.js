@@ -2318,7 +2318,10 @@ async function viewResource(resourceUri) {
                     label: "Created From",
                     value: resource.createdFromIp || "Unknown",
                 },
-                { label: "Created Via", value: resource.createdVia || "Unknown" },
+                {
+                    label: "Created Via",
+                    value: resource.createdVia || "Unknown",
+                },
                 {
                     label: "Last Modified By",
                     value: resource.modifiedBy || "N/A",
@@ -2330,7 +2333,10 @@ async function viewResource(resourceUri) {
                         : "N/A",
                 },
                 { label: "Version", value: resource.version || "1" },
-                { label: "Import Batch", value: resource.importBatchId || "N/A" },
+                {
+                    label: "Import Batch",
+                    value: resource.importBatchId || "N/A",
+                },
             ];
 
             metadataFields.forEach((field) => {
