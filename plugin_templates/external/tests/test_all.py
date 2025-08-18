@@ -1,6 +1,7 @@
-"""Tests for plugin."""
+"""Tests for registered plugins."""
 
 # Third-Party
+import asyncio
 import pytest
 
 # First-Party
@@ -17,13 +18,12 @@ from mcpgateway.plugins.framework import (
 
 
 @pytest.fixture(scope="module", autouse=True)
-@pytest.mark.asyncio
-async def plugin_manager():
+def plugin_manager():
     """Initialize plugin manager."""
-    plugin_manager = PluginManager("./resources/config/config.yaml")
-    await plugin_manager.initialize()
+    plugin_manager = PluginManager("./resources/plugins/config.yaml")
+    asyncio.run(plugin_manager.initialize())
     yield plugin_manager
-    await plugin_manager.shutdown()
+    asyncio.run(plugin_manager.shutdown())
 
 
 @pytest.mark.asyncio
@@ -41,7 +41,7 @@ async def test_prompt_pre_hook(plugin_manager: PluginManager):
 async def test_prompt_post_hook(plugin_manager: PluginManager):
     """Test prompt post hook across all registered plugins."""
     # Customize payload for testing
-    message = Message(content=TextContent(type="text", text=result.modified_payload.args["user"]), role=Role.USER)
+    message = Message(content=TextContent(type="text", text="prompt"), role=Role.USER)
     prompt_result = PromptResult(messages=[message])
     payload = PromptPosthookPayload(name="test_prompt", result=prompt_result)
     global_context = GlobalContext(request_id="1")
