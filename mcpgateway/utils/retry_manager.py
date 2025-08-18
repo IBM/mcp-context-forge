@@ -534,13 +534,31 @@ class ResilientHttpClient:
         """
         return await self.request("DELETE", url, **kwargs)
 
-    @asynccontextmanager
+    @asynccontextmanager  # noqa: DAR401
     async def stream(self, method: str, url: str, **kwargs) -> AsyncContextManager[httpx.Response]:
-        """
-        Async context manager that yields a streaming response. Retries opening the stream.
-        Usage:
-            async with resilient.stream("POST", url, data=..., headers=...) as resp:
-                async for chunk in resp.aiter_bytes(): ...
+        """Open a resilient streaming HTTP request.
+
+        Args:
+            method: HTTP method to use (e.g. "GET", "POST")
+            url: URL to send the request to
+            **kwargs: Additional parameters to pass to the request
+
+        Yields:
+            HTTP response object with streaming capability
+
+        Raises:
+            Exception: If a non-retryable error occurs while opening the stream
+            RuntimeError: If the maximum number of retries is exceeded
+
+        Examples:
+            >>> client = ResilientHttpClient()
+            >>> import inspect
+            >>> inspect.isasyncgenfunction(client.stream)
+            True
+            >>> async def fetch():
+            ...     async with client.stream("GET", "https://example.com") as response:
+            ...         async for chunk in response.aiter_bytes():
+            ...             print(chunk)
         """
         attempt = 0
         last_exc: Optional[Exception] = None
@@ -583,7 +601,7 @@ class ResilientHttpClient:
             logging.debug("Retrying stream open (attempt %d) after backoff %.2f", attempt + 1, backoff)
 
         if last_exc:
-            raise last_exc
+            raise RuntimeError(last_exc)
         raise RuntimeError("Max retries reached opening stream")
 
     async def aclose(self):

@@ -38,6 +38,7 @@ Method 1: Using environment variables
 Method 2: Using command-line arguments
     $ python3 -m mcpgateway.wrapper --url 'http://localhost:4444/servers/UUID/mcp' --auth 'Bearer <token>' --timeout 120 --log-level DEBUG
 """
+
 # Future
 from __future__ import annotations
 
@@ -289,7 +290,7 @@ async def ndjson_lines(resp: httpx.Response) -> AsyncIterator[str]:
             if nl_idx == -1:
                 break
             line = buffer[:nl_idx]
-            buffer = buffer[nl_idx + 1 :]
+            buffer = buffer[nl_idx + 1 :]  # noqa: E203
             if line.strip():
                 yield line.strip()
     tail = decoder.decode(b"", final=True)
@@ -322,7 +323,8 @@ async def sse_events(resp: httpx.Response) -> AsyncIterator[str]:
             if nl_idx == -1:
                 break
             raw_line = buffer[:nl_idx]
-            buffer = buffer[nl_idx + 1 :]
+            buffer = buffer[nl_idx + 1 :]  # noqa: E203
+
             line = raw_line.rstrip("\r")
             if line == "":
                 if event_lines:
