@@ -1,0 +1,33 @@
+_subdirectory: plugin_templates/{{template_type}}
+
+template_type:
+   type: str
+   help: What plugin template would you like to use?
+   choices:
+      - native
+      - external
+
+plugin_name:
+   type: str
+   help: What is the plugin name?
+   default: MyFilter
+
+version:
+   type: str
+   help: What is the initial version of the plugin?
+   default: 0.1.0
+
+author:
+   type: str
+   help: Who is the author?
+   default: "{{ _copier_conf.data.default_author_name }}"
+
+email:
+   type: str
+   help: What's the author's e-mail?
+   default: "{{ _copier_conf.data.default_author_email }}"
+
+description:
+   type: str
+   help: Write a plugin description
+   default: A filter plugin

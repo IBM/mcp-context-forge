@@ -54,8 +54,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework.manager import PluginManager
-    from mcpgateway.plugins.framework.plugin_types import GlobalContext, ResourcePostFetchPayload, ResourcePreFetchPayload
+    from mcpgateway.plugins.framework import GlobalContext, PluginManager, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:

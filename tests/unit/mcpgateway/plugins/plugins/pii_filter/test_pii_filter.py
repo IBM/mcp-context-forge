@@ -11,10 +11,12 @@ import pytest
 
 # First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework.models import HookType, PluginConfig, PluginMode
-from mcpgateway.plugins.framework.plugin_types import (
+from mcpgateway.plugins.framework.models import (
     GlobalContext,
+    HookType,
+    PluginConfig,
     PluginContext,
+    PluginMode,
     PromptPosthookPayload,
     PromptPrehookPayload,
 )
@@ -245,7 +247,7 @@ class TestPIIFilterPlugin:
     async def test_prompt_pre_fetch_with_pii(self, plugin_config):
         """Test pre-fetch hook with PII detection."""
         plugin = PIIFilterPlugin(plugin_config)
-        context = PluginContext(GlobalContext(request_id="test-1"))
+        context = PluginContext(request_id="test-1")
 
         # Create payload with PII
         payload = PromptPrehookPayload(name="test_prompt", args={"user_input": "My email is john@example.com and SSN is 123-45-6789", "safe_input": "This has no PII"})
@@ -269,7 +271,7 @@ class TestPIIFilterPlugin:
         # Enable blocking
         plugin_config.config["block_on_detection"] = True
         plugin = PIIFilterPlugin(plugin_config)
-        context = PluginContext(GlobalContext(request_id="test-2"))
+        context = PluginContext(request_id="test-2")
 
         payload = PromptPrehookPayload(name="test_prompt", args={"input": "My SSN is 123-45-6789"})
 
@@ -285,7 +287,7 @@ class TestPIIFilterPlugin:
     async def test_prompt_post_fetch(self, plugin_config):
         """Test post-fetch hook with PII in messages."""
         plugin = PIIFilterPlugin(plugin_config)
-        context = PluginContext(GlobalContext(request_id="test-3"))
+        context = PluginContext(request_id="test-3")
 
         # Create messages with PII
         messages = [
@@ -314,7 +316,7 @@ class TestPIIFilterPlugin:
     async def test_no_pii_detection(self, plugin_config):
         """Test that clean text passes through unmodified."""
         plugin = PIIFilterPlugin(plugin_config)
-        context = PluginContext(GlobalContext(request_id="test-4"))
+        context = PluginContext(request_id="test-4")
 
         payload = PromptPrehookPayload(name="test_prompt", args={"input": "This text has no sensitive information"})
 
@@ -331,7 +333,7 @@ class TestPIIFilterPlugin:
         plugin_config.config["custom_patterns"] = [{"type": "custom", "pattern": r"\bEMP\d{6}\b", "description": "Employee ID", "mask_strategy": "redact", "enabled": True}]
 
         plugin = PIIFilterPlugin(plugin_config)
-        context = PluginContext(GlobalContext(request_id="test-5"))
+        context = PluginContext(request_id="test-5")
 
         payload = PromptPrehookPayload(name="test_prompt", args={"input": "Employee ID: EMP123456"})
 
@@ -349,7 +351,7 @@ class TestPIIFilterPlugin:
         plugin_config.config["block_on_detection"] = True  # Should be ignored in permissive mode
 
         plugin = PIIFilterPlugin(plugin_config)
-        context = PluginContext(GlobalContext(request_id="test-6"))
+        context = PluginContext(request_id="test-6")
 
         payload = PromptPrehookPayload(name="test_prompt", args={"input": "SSN: 123-45-6789"})
 

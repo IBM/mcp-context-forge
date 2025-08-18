@@ -1,0 +1,9 @@
+server:
+  type: "streamable-http"
+
+streamable-http:
+  host: "127.0.0.1"
+  port: 3001
+  mcp_path: "/mcp"
+  json_response: true
+  stateless: true

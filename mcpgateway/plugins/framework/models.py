@@ -11,10 +11,19 @@ the base plugin layer including configurations, and contexts.
 
 # Standard
 from enum import Enum
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Generic, Optional, Self, TypeVar
 
 # Third-Party
-from pydantic import BaseModel, PrivateAttr
+from pydantic import BaseModel, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
+
+# First-Party
+from mcpgateway.models import PromptResult
+from mcpgateway.plugins.framework.constants import AFTER, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, URL
+from mcpgateway.schemas import TransportType
+from mcpgateway.validators import SecurityValidator
+
+T = TypeVar("T")
 
 
 class HookType(str, Enum):
@@ -177,6 +186,23 @@ class PluginCondition(BaseModel):
     user_patterns: Optional[list[str]] = None
     content_types: Optional[list[str]] = None
 
+    @field_serializer("server_ids", "tenant_ids", "tools", "prompts")
+    def serialize_set(self, value: set[str] | None) -> list[str] | None:
+        """Serialize set objects in PluginCondition for MCP.
+
+        Args:
+            value: a set of server ids, tenant ids, tools or prompts.
+
+        Returns:
+            The set as a serializable list.
+        """
+        if value:
+            values = []
+            for key in value:
+                values.append(key)
+            return values
+        return None
+
 
 class AppliedTo(BaseModel):
     """What tools/prompts/resources and fields the plugin will be applied to.
@@ -190,6 +216,61 @@ class AppliedTo(BaseModel):
     tools: Optional[list[ToolTemplate]] = None
     prompts: Optional[list[PromptTemplate]] = None
     resources: Optional[list[ResourceTemplate]] = None
+
+
+class MCPConfig(BaseModel):
+    """An MCP configuration for external MCP plugin objects.
+
+    Attributes:
+        type (TransportType): The MCP transport type. Can be SSE, STDIO, or STREAMABLEHTTP
+        url (Optional[str]): An MCP URL. Only valid when MCP transport type is SSE or STREAMABLEHTTP.
+        script (Optional[str]): The path and name to the STDIO script that runs the plugin server. Only valid for STDIO type.
+    """
+
+    proto: TransportType
+    url: Optional[str] = None
+    script: Optional[str] = None
+
+    @field_validator(URL, mode=AFTER)
+    @classmethod
+    def validate_url(cls, url: str | None) -> str | None:
+        """Validate a MCP url for streamable HTTP connections.
+
+        Args:
+            url: the url to be validated.
+
+        Raises:
+            ValueError: if the URL fails validation.
+
+        Returns:
+            The validated URL or None if none is set.
+        """
+        if url:
+            result = SecurityValidator.validate_url(url)
+            return result
+        return url
+
+    @field_validator(SCRIPT, mode=AFTER)
+    @classmethod
+    def validate_script(cls, script: str | None) -> str | None:
+        """Validate an MCP stdio script.
+
+        Args:
+            script: the script to be validated.
+
+        Raises:
+            ValueError: if the script doesn't exist or doesn't have a .py suffix.
+
+        Returns:
+            The validated string or None if none is set.
+        """
+        if script:
+            file_path = Path(script)
+            if not file_path.is_file():
+                raise ValueError(f"MCP server script {script} does not exist.")
+            if file_path.suffix != PYTHON_SUFFIX:
+                raise ValueError(f"MCP server script {script} does not have a .py suffix.")
+        return script
 
 
 class PluginConfig(BaseModel):
@@ -209,21 +290,68 @@ class PluginConfig(BaseModel):
         conditions (Optional[list[PluginCondition]]): the conditions on which the plugin is run.
         applied_to (Optional[list[AppliedTo]]): the tools, fields, that the plugin is applied to.
         config (dict[str, Any]): the plugin specific configurations.
+        mcp (Optional[MCPConfig]): MCP configuration for external plugin when kind is "external".
     """
 
     name: str
-    description: str
-    author: str
+    description: Optional[str] = None
+    author: Optional[str] = None
     kind: str
     namespace: Optional[str] = None
-    version: str
-    hooks: list[HookType]
-    tags: list[str]
+    version: Optional[str] = None
+    hooks: Optional[list[HookType]] = None
+    tags: Optional[list[str]] = None
     mode: PluginMode = PluginMode.ENFORCE
-    priority: int = 100  # Lower = higher priority
+    priority: Optional[int] = None  # Lower = higher priority
     conditions: Optional[list[PluginCondition]] = None  # When to apply
     applied_to: Optional[list[AppliedTo]] = None  # Fields to apply to.
-    config: dict[str, Any] = {}
+    config: Optional[dict[str, Any]] = None
+    mcp: Optional[MCPConfig] = None
+
+    @model_validator(mode=AFTER)
+    def check_url_or_script_filled(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Checks to see that at least one of url or script are set depending on MCP server configuration.
+
+        Raises:
+            ValueError: if the script attribute is not defined with STDIO set, or the URL not defined with HTTP transports.
+
+        Returns:
+            The model after validation.
+        """
+        if not self.mcp:
+            return self
+        if self.mcp.proto == TransportType.STDIO and not self.mcp.script:
+            raise ValueError(f"Plugin {self.name} has transport type set to SSE but no script value")
+        if self.mcp.proto in (TransportType.STREAMABLEHTTP, TransportType.SSE) and not self.mcp.url:
+            raise ValueError(f"Plugin {self.name} has transport type set to StreamableHTTP but no url value")
+        if self.mcp.proto not in (TransportType.SSE, TransportType.STREAMABLEHTTP, TransportType.STDIO):
+            raise ValueError(f"Plugin {self.name} must set transport type to either SSE or STREAMABLEHTTP or STDIO")
+        return self
+
+    @model_validator(mode=AFTER)
+    def check_config_and_external(self, info: ValidationInfo) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Checks to see that a plugin's 'config' section is not defined if the kind is 'external'. This is because developers cannot override items in the plugin config section for external plugins.
+
+        Args:
+            info: the contextual information passed into the pydantic model during model validation. Used to determine validation sequence.
+
+        Raises:
+            ValueError: if the script attribute is not defined with STDIO set, or the URL not defined with HTTP transports.
+
+        Returns:
+            The model after validation.
+        """
+        ignore_config_external = False
+        if info and info.context and IGNORE_CONFIG_EXTERNAL in info.context:
+            ignore_config_external = info.context[IGNORE_CONFIG_EXTERNAL]
+
+        if not ignore_config_external and self.config and self.kind == EXTERNAL_PLUGIN_TYPE:
+            raise ValueError(f"""Cannot have {self.name} plugin defined as 'external' with 'config' set.""" """ 'config' section settings can only be set on the plugin server.""")
+
+        if self.kind == EXTERNAL_PLUGIN_TYPE and not self.mcp:
+            raise ValueError(f"Must set 'mcp' section for external plugin {self.name}")
+
+        return self
 
 
 class PluginManifest(BaseModel):
@@ -244,6 +372,22 @@ class PluginManifest(BaseModel):
     tags: list[str]
     available_hooks: list[str]
     default_config: dict[str, Any]
+
+
+class PluginErrorModel(BaseModel):
+    """A plugin error, used to denote exceptions/errors inside external plugins.
+
+    Attributes:
+        message (str): the reason for the error.
+        code (str): an error code.
+        details: (dict[str, Any]): additional error details.
+        plugin_name (str): the plugin name.
+    """
+
+    message: str
+    code: Optional[str] = ""
+    details: Optional[dict[str, Any]] = {}
+    plugin_name: str
 
 
 class PluginViolation(BaseModel):
@@ -332,3 +476,286 @@ class Config(BaseModel):
     plugins: Optional[list[PluginConfig]] = []
     plugin_dirs: list[str] = []
     plugin_settings: PluginSettings
+
+
+class PromptPrehookPayload(BaseModel):
+    """A prompt payload for a prompt prehook.
+
+    Attributes:
+        name (str): The name of the prompt template.
+        args (dic[str,str]): The prompt template arguments.
+
+    Examples:
+        >>> payload = PromptPrehookPayload(name="test_prompt", args={"user": "alice"})
+        >>> payload.name
+        'test_prompt'
+        >>> payload.args
+        {'user': 'alice'}
+        >>> payload2 = PromptPrehookPayload(name="empty")
+        >>> payload2.args
+        {}
+        >>> p = PromptPrehookPayload(name="greeting", args={"name": "Bob", "time": "morning"})
+        >>> p.name
+        'greeting'
+        >>> p.args["name"]
+        'Bob'
+    """
+
+    name: str
+    args: Optional[dict[str, str]] = {}
+
+
+class PromptPosthookPayload(BaseModel):
+    """A prompt payload for a prompt posthook.
+
+    Attributes:
+        name (str): The prompt name.
+        result (PromptResult): The prompt after its template is rendered.
+
+     Examples:
+        >>> from mcpgateway.models import PromptResult, Message, TextContent
+        >>> msg = Message(role="user", content=TextContent(type="text", text="Hello World"))
+        >>> result = PromptResult(messages=[msg])
+        >>> payload = PromptPosthookPayload(name="greeting", result=result)
+        >>> payload.name
+        'greeting'
+        >>> payload.result.messages[0].content.text
+        'Hello World'
+        >>> from mcpgateway.models import PromptResult, Message, TextContent
+        >>> msg = Message(role="assistant", content=TextContent(type="text", text="Test output"))
+        >>> r = PromptResult(messages=[msg])
+        >>> p = PromptPosthookPayload(name="test", result=r)
+        >>> p.name
+        'test'
+    """
+
+    name: str
+    result: PromptResult
+
+
+class PluginResult(BaseModel, Generic[T]):
+    """A result of the plugin hook processing. The actual type is dependent on the hook.
+
+    Attributes:
+            continue_processing (bool): Whether to stop processing.
+            modified_payload (Optional[Any]): The modified payload if the plugin is a transformer.
+            violation (Optional[PluginViolation]): violation object.
+            metadata (Optional[dict[str, Any]]): additional metadata.
+
+     Examples:
+        >>> result = PluginResult()
+        >>> result.continue_processing
+        True
+        >>> result.metadata
+        {}
+        >>> from mcpgateway.plugins.framework import PluginViolation
+        >>> violation = PluginViolation(
+        ...     reason="Test", description="Test desc", code="TEST", details={}
+        ... )
+        >>> result2 = PluginResult(continue_processing=False, violation=violation)
+        >>> result2.continue_processing
+        False
+        >>> result2.violation.code
+        'TEST'
+        >>> r = PluginResult(metadata={"key": "value"})
+        >>> r.metadata["key"]
+        'value'
+        >>> r2 = PluginResult(continue_processing=False)
+        >>> r2.continue_processing
+        False
+    """
+
+    continue_processing: bool = True
+    modified_payload: Optional[T] = None
+    violation: Optional[PluginViolation] = None
+    metadata: Optional[dict[str, Any]] = {}
+
+
+PromptPrehookResult = PluginResult[PromptPrehookPayload]
+PromptPosthookResult = PluginResult[PromptPosthookPayload]
+
+
+class ToolPreInvokePayload(BaseModel):
+    """A tool payload for a tool pre-invoke hook.
+
+    Args:
+        name: The tool name.
+        args: The tool arguments for invocation.
+
+    Examples:
+        >>> payload = ToolPreInvokePayload(name="test_tool", args={"input": "data"})
+        >>> payload.name
+        'test_tool'
+        >>> payload.args
+        {'input': 'data'}
+        >>> payload2 = ToolPreInvokePayload(name="empty")
+        >>> payload2.args
+        {}
+        >>> p = ToolPreInvokePayload(name="calculator", args={"operation": "add", "a": 5, "b": 3})
+        >>> p.name
+        'calculator'
+        >>> p.args["operation"]
+        'add'
+
+    """
+
+    name: str
+    args: Optional[dict[str, Any]] = {}
+
+
+class ToolPostInvokePayload(BaseModel):
+    """A tool payload for a tool post-invoke hook.
+
+    Args:
+        name: The tool name.
+        result: The tool invocation result.
+
+    Examples:
+        >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8, "status": "success"})
+        >>> payload.name
+        'calculator'
+        >>> payload.result
+        {'result': 8, 'status': 'success'}
+        >>> p = ToolPostInvokePayload(name="analyzer", result={"confidence": 0.95, "sentiment": "positive"})
+        >>> p.name
+        'analyzer'
+        >>> p.result["confidence"]
+        0.95
+    """
+
+    name: str
+    result: Any
+
+
+ToolPreInvokeResult = PluginResult[ToolPreInvokePayload]
+ToolPostInvokeResult = PluginResult[ToolPostInvokePayload]
+
+
+class GlobalContext(BaseModel):
+    """The global context, which shared across all plugins.
+
+    Attributes:
+            request_id (str): ID of the HTTP request.
+            user (str): user ID associated with the request.
+            tenant_id (str): tenant ID.
+            server_id (str): server ID.
+
+    Examples:
+        >>> ctx = GlobalContext(request_id="req-123")
+        >>> ctx.request_id
+        'req-123'
+        >>> ctx.user is None
+        True
+        >>> ctx2 = GlobalContext(request_id="req-456", user="alice", tenant_id="tenant1")
+        >>> ctx2.user
+        'alice'
+        >>> ctx2.tenant_id
+        'tenant1'
+        >>> c = GlobalContext(request_id="123", server_id="srv1")
+        >>> c.request_id
+        '123'
+        >>> c.server_id
+        'srv1'
+    """
+
+    request_id: str
+    user: Optional[str] = None
+    tenant_id: Optional[str] = None
+    server_id: Optional[str] = None
+
+
+class PluginContext(GlobalContext):
+    """The plugin's context, which lasts a request lifecycle.
+
+    Attributes:
+       metadata: context metadata.
+       state:  the inmemory state of the request.
+    """
+
+    state: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
+
+    def get_state(self, key: str, default: Any = None) -> Any:
+        """Get value from shared state.
+
+        Args:
+            key: The key to access the shared state.
+            default: A default value if one doesn't exist.
+
+        Returns:
+            The state value.
+        """
+        return self.state.get(key, default)
+
+    def set_state(self, key: str, value: Any) -> None:
+        """Set value in shared state.
+
+        Args:
+            key: the key to add to the state.
+            value: the value to add to the state.
+        """
+        self.state[key] = value
+
+    async def cleanup(self) -> None:
+        """Cleanup context resources."""
+        self.state.clear()
+        self.metadata.clear()
+
+
+PluginContextTable = dict[str, PluginContext]
+
+
+class ResourcePreFetchPayload(BaseModel):
+    """A resource payload for a resource pre-fetch hook.
+
+    Attributes:
+            uri: The resource URI.
+            metadata: Optional metadata for the resource request.
+
+    Examples:
+        >>> payload = ResourcePreFetchPayload(uri="file:///data.txt")
+        >>> payload.uri
+        'file:///data.txt'
+        >>> payload2 = ResourcePreFetchPayload(uri="http://api/data", metadata={"Accept": "application/json"})
+        >>> payload2.metadata
+        {'Accept': 'application/json'}
+        >>> p = ResourcePreFetchPayload(uri="file:///docs/readme.md", metadata={"version": "1.0"})
+        >>> p.uri
+        'file:///docs/readme.md'
+        >>> p.metadata["version"]
+        '1.0'
+    """
+
+    uri: str
+    metadata: Optional[dict[str, Any]] = {}
+
+
+class ResourcePostFetchPayload(BaseModel):
+    """A resource payload for a resource post-fetch hook.
+
+    Attributes:
+        uri: The resource URI.
+        content: The fetched resource content.
+
+    Examples:
+        >>> from mcpgateway.models import ResourceContent
+        >>> content = ResourceContent(type="resource", uri="file:///data.txt",
+        ...     text="Hello World")
+        >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
+        >>> payload.uri
+        'file:///data.txt'
+        >>> payload.content.text
+        'Hello World'
+        >>> from mcpgateway.models import ResourceContent
+        >>> resource_content = ResourceContent(type="resource", uri="test://resource", text="Test data")
+        >>> p = ResourcePostFetchPayload(uri="test://resource", content=resource_content)
+        >>> p.uri
+        'test://resource'
+    """
+
+    uri: str
+    content: Any
+
+
+ResourcePreFetchResult = PluginResult[ResourcePreFetchPayload]
+ResourcePostFetchResult = PluginResult[ResourcePostFetchPayload]

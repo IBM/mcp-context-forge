@@ -55,8 +55,8 @@ CONTAINER_MEMORY = 2048m
 CONTAINER_CPUS   = 2
 
 # Virtual-environment variables
-VENVS_DIR := $(HOME)/.venv
-VENV_DIR  := $(VENVS_DIR)/$(PROJECT_NAME)
+VENVS_DIR ?= $(HOME)/.venv
+VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
 
 # -----------------------------------------------------------------------------
 # OS Specific

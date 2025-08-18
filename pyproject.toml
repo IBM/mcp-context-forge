@@ -47,6 +47,7 @@ maintainers = [
 # ----------------------------------------------------------------
 dependencies = [
     "alembic>=1.16.4",
+    "copier>=9.9.0",
     "cryptography>=45.0.6",
     "fastapi>=0.116.1",
     "filelock>=3.19.1",
@@ -67,6 +68,7 @@ dependencies = [
     "sqlalchemy>=2.0.43",
     "sse-starlette>=3.0.2",
     "starlette>=0.47.2",
+    "typer>=0.16.0",
     "uvicorn>=0.35.0",
     "zeroconf>=0.147.0",
 ]
@@ -104,10 +106,10 @@ alembic = [
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.36.0",
-    "opentelemetry-exporter-otlp>=1.36.0",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
-    "opentelemetry-sdk>=1.36.0",
+    "opentelemetry-api>=1.25.0",
+    "opentelemetry-exporter-otlp>=1.25.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
+    "opentelemetry-sdk>=1.25.0",
 ]
 
 # Additional observability backends (optional)
@@ -135,6 +137,11 @@ asyncpg = [
     "asyncpg>=0.30.0",
 ]
 
+# Chuck runtime (optional)
+chuck = [
+    "chuk-mcp-runtime>=0.6.5",
+]
+
 # Optional dependency groups (development)
 dev = [
     "aiohttp>=3.12.15",
@@ -144,6 +151,7 @@ dev = [
     "black>=25.1.0",
     "bump2version>=1.0.1",
     "check-manifest>=0.50",
+    "chuk-mcp-runtime>=0.6.5",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
     "coverage>=7.10.3",
@@ -236,6 +244,7 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 # --------------------------------------------------------------------
 [project.scripts]
 mcpgateway = "mcpgateway.cli:main"
+mcpplugins = "mcpgateway.plugins.tools.cli:main"
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration

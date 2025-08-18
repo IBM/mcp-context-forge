@@ -1,0 +1,15 @@
+# MCP-arxiv-Search Configuration
+host:
+  name: "mcp-plugin-server"
+  log_level: "INFO"
+
+server:
+  type: "stdio"
+
+mcp_servers:
+  echo_server:
+    enabled: true
+    location: "."
+    tools:
+      enabled: true
+      module: "plugins.framework.mcp.server"

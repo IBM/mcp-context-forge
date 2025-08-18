@@ -25,8 +25,7 @@ class PluginInstanceRegistry:
     """Registry for managing loaded plugins.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.base import Plugin
-        >>> from mcpgateway.plugins.framework.models import PluginConfig, HookType
+        >>> from mcpgateway.plugins.framework import Plugin, PluginConfig, HookType
         >>> registry = PluginInstanceRegistry()
         >>> config = PluginConfig(
         ...     name="test",

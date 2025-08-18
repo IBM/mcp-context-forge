@@ -34,7 +34,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.observability import create_span
-from mcpgateway.plugins import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -500,7 +500,7 @@ class PromptService:
                     request_id = uuid.uuid4().hex
                 global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
                 try:
-                    pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(payload=PromptPrehookPayload(name, arguments), global_context=global_context, local_contexts=None)
+                    pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(payload=PromptPrehookPayload(name=name, args=arguments), global_context=global_context, local_contexts=None)
 
                     if not pre_result.continue_processing:
                         # Plugin blocked the request
