@@ -94,7 +94,9 @@ class ExternalPlugin(Plugin):
         if not (is_python):
             raise ValueError("Server script must be a .py file")
 
-        server_params = StdioServerParameters(command=PYTHON, args=[server_script_path], env=os.environ)
+        current_env = os.environ.copy()
+
+        server_params = StdioServerParameters(command=PYTHON, args=[server_script_path], env=current_env)
 
         stdio_transport = await self._exit_stack.enter_async_context(stdio_client(server_params))
         self._stdio, self._write = stdio_transport

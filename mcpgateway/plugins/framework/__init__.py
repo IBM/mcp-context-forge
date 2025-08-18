@@ -18,6 +18,7 @@ from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.errors import PluginError, PluginViolationError
 from mcpgateway.plugins.framework.external.mcp.server import ExternalPluginServer
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
+from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
@@ -55,6 +56,7 @@ __all__ = [
     "PluginContext",
     "PluginError",
     "PluginErrorModel",
+    "PluginLoader",
     "PluginManager",
     "PluginMode",
     "PluginResult",
