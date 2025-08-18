@@ -123,6 +123,16 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
     * **FastAPI** + Jinja2 + HTMX + Alpine.js
     * Tailwind CSS for styling
 
+??? info "📊 Audit & Metadata Tracking"
+
+    * **Comprehensive metadata** for all entities (Tools, Resources, Prompts, Servers, Gateways)
+    * **Creation tracking** - who, when, from where, how
+    * **Modification history** - change attribution and versioning
+    * **Federation source** tracking for MCP server entities
+    * **Bulk import** batch identification
+    * **Auth-agnostic** - works with/without authentication
+    * **Backwards compatible** - legacy entities show graceful fallbacks
+
 ---
 
 ## 🗄 Persistence, Caching & Observability

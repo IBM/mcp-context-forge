@@ -359,13 +359,17 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
             <div class="px-4 py-5 sm:p-6">
-              <h2 class="text-lg font-medium text-gray-900 dark:text-white mb-6">
+              <h2
+                class="text-lg font-medium text-gray-900 dark:text-white mb-6"
+              >
                 Configuration Export & Import
               </h2>
 
               <!-- Export Section -->
               <div class="mb-8">
-                <h3 class="text-md font-medium text-gray-900 dark:text-white mb-4">
+                <h3
+                  class="text-md font-medium text-gray-900 dark:text-white mb-4"
+                >
                   📤 Export Configuration
                 </h3>
 
@@ -373,82 +377,167 @@
                 <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg mb-4">
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                      >
                         Entity Types
                       </label>
                       <div class="space-y-2">
                         <label class="flex items-center">
-                          <input type="checkbox" id="export-tools" checked class="mr-2">
-                          <span class="text-sm text-gray-600 dark:text-gray-300">Tools</span>
+                          <input
+                            type="checkbox"
+                            id="export-tools"
+                            checked
+                            class="mr-2"
+                          />
+                          <span class="text-sm text-gray-600 dark:text-gray-300"
+                            >Tools</span
+                          >
                         </label>
                         <label class="flex items-center">
-                          <input type="checkbox" id="export-gateways" checked class="mr-2">
-                          <span class="text-sm text-gray-600 dark:text-gray-300">Gateways</span>
+                          <input
+                            type="checkbox"
+                            id="export-gateways"
+                            checked
+                            class="mr-2"
+                          />
+                          <span class="text-sm text-gray-600 dark:text-gray-300"
+                            >Gateways</span
+                          >
                         </label>
                         <label class="flex items-center">
-                          <input type="checkbox" id="export-servers" checked class="mr-2">
-                          <span class="text-sm text-gray-600 dark:text-gray-300">Servers</span>
+                          <input
+                            type="checkbox"
+                            id="export-servers"
+                            checked
+                            class="mr-2"
+                          />
+                          <span class="text-sm text-gray-600 dark:text-gray-300"
+                            >Servers</span
+                          >
                         </label>
                         <label class="flex items-center">
-                          <input type="checkbox" id="export-prompts" checked class="mr-2">
-                          <span class="text-sm text-gray-600 dark:text-gray-300">Prompts</span>
+                          <input
+                            type="checkbox"
+                            id="export-prompts"
+                            checked
+                            class="mr-2"
+                          />
+                          <span class="text-sm text-gray-600 dark:text-gray-300"
+                            >Prompts</span
+                          >
                         </label>
                         <label class="flex items-center">
-                          <input type="checkbox" id="export-resources" checked class="mr-2">
-                          <span class="text-sm text-gray-600 dark:text-gray-300">Resources</span>
+                          <input
+                            type="checkbox"
+                            id="export-resources"
+                            checked
+                            class="mr-2"
+                          />
+                          <span class="text-sm text-gray-600 dark:text-gray-300"
+                            >Resources</span
+                          >
                         </label>
                         <label class="flex items-center">
-                          <input type="checkbox" id="export-roots" checked class="mr-2">
-                          <span class="text-sm text-gray-600 dark:text-gray-300">Roots</span>
+                          <input
+                            type="checkbox"
+                            id="export-roots"
+                            checked
+                            class="mr-2"
+                          />
+                          <span class="text-sm text-gray-600 dark:text-gray-300"
+                            >Roots</span
+                          >
                         </label>
                       </div>
                     </div>
 
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                      >
                         Filter Options
                       </label>
                       <div class="space-y-2">
                         <label class="flex items-center">
-                          <input type="checkbox" id="export-include-inactive" class="mr-2">
-                          <span class="text-sm text-gray-600 dark:text-gray-300">Include Inactive</span>
+                          <input
+                            type="checkbox"
+                            id="export-include-inactive"
+                            class="mr-2"
+                          />
+                          <span class="text-sm text-gray-600 dark:text-gray-300"
+                            >Include Inactive</span
+                          >
                         </label>
                         <label class="flex items-center">
-                          <input type="checkbox" id="export-include-dependencies" checked class="mr-2">
-                          <span class="text-sm text-gray-600 dark:text-gray-300">Include Dependencies</span>
+                          <input
+                            type="checkbox"
+                            id="export-include-dependencies"
+                            checked
+                            class="mr-2"
+                          />
+                          <span class="text-sm text-gray-600 dark:text-gray-300"
+                            >Include Dependencies</span
+                          >
                         </label>
                       </div>
 
                       <div class="mt-3">
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        <label
+                          class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                        >
                           Filter by Tags
                         </label>
-                        <input type="text" id="export-tags" placeholder="production,api,staging"
-                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white">
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Comma-separated tags</p>
+                        <input
+                          type="text"
+                          id="export-tags"
+                          placeholder="production,api,staging"
+                          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                        />
+                        <p
+                          class="text-xs text-gray-500 dark:text-gray-400 mt-1"
+                        >
+                          Comma-separated tags
+                        </p>
                       </div>
                     </div>
 
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                      >
                         Export Actions
                       </label>
                       <div class="space-y-2">
-                        <button id="export-all-btn"
-                                class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        <button
+                          id="export-all-btn"
+                          class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium"
+                        >
                           📥 Export All Configuration
                         </button>
-                        <button id="export-selected-btn"
-                                class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        <button
+                          id="export-selected-btn"
+                          class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium"
+                        >
                           📋 Export Selected Types
                         </button>
                       </div>
 
                       <div class="mt-4">
                         <div id="export-progress" class="hidden">
-                          <div class="text-sm text-gray-600 dark:text-gray-300 mb-1">Exporting...</div>
-                          <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                            <div id="export-progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                          <div
+                            class="text-sm text-gray-600 dark:text-gray-300 mb-1"
+                          >
+                            Exporting...
+                          </div>
+                          <div
+                            class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2"
+                          >
+                            <div
+                              id="export-progress-bar"
+                              class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                              style="width: 0%"
+                            ></div>
                           </div>
                         </div>
                       </div>
@@ -459,40 +548,70 @@
 
               <!-- Import Section -->
               <div class="mb-8">
-                <h3 class="text-md font-medium text-gray-900 dark:text-white mb-4">
+                <h3
+                  class="text-md font-medium text-gray-900 dark:text-white mb-4"
+                >
                   📥 Import Configuration
                 </h3>
 
                 <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
                   <!-- File Upload Area -->
                   <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                    >
                       Import File
                     </label>
-                    <div id="import-drop-zone"
-                         class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-gray-400 dark:hover:border-gray-500 cursor-pointer">
+                    <div
+                      id="import-drop-zone"
+                      class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-gray-400 dark:hover:border-gray-500 cursor-pointer"
+                    >
                       <div class="space-y-2">
-                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
-                          <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3-3m-3 3l3 3m-3-3V8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <svg
+                          class="mx-auto h-12 w-12 text-gray-400"
+                          stroke="currentColor"
+                          fill="none"
+                          viewBox="0 0 48 48"
+                        >
+                          <path
+                            d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3-3m-3 3l3 3m-3-3V8"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
                         </svg>
                         <div class="text-sm text-gray-600 dark:text-gray-300">
-                          <span class="font-medium text-blue-600 dark:text-blue-400">Click to upload</span>
+                          <span
+                            class="font-medium text-blue-600 dark:text-blue-400"
+                            >Click to upload</span
+                          >
                           or drag and drop
                         </div>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">JSON export files only</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">
+                          JSON export files only
+                        </p>
                       </div>
-                      <input type="file" id="import-file-input" class="hidden" accept=".json,application/json">
+                      <input
+                        type="file"
+                        id="import-file-input"
+                        class="hidden"
+                        accept=".json,application/json"
+                      />
                     </div>
                   </div>
 
                   <!-- Import Options -->
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                      >
                         Conflict Strategy
                       </label>
-                      <select id="import-conflict-strategy"
-                              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white">
+                      <select
+                        id="import-conflict-strategy"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                      >
                         <option value="update">Update existing items</option>
                         <option value="skip">Skip conflicting items</option>
                         <option value="rename">Rename conflicting items</option>
@@ -501,34 +620,54 @@
                     </div>
 
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                      >
                         Options
                       </label>
                       <div class="space-y-2">
                         <label class="flex items-center">
-                          <input type="checkbox" id="import-dry-run" class="mr-2">
-                          <span class="text-sm text-gray-600 dark:text-gray-300">Dry Run (validate only)</span>
+                          <input
+                            type="checkbox"
+                            id="import-dry-run"
+                            class="mr-2"
+                          />
+                          <span class="text-sm text-gray-600 dark:text-gray-300"
+                            >Dry Run (validate only)</span
+                          >
                         </label>
                       </div>
 
                       <div class="mt-2">
-                        <input type="text" id="import-rekey-secret" placeholder="New encryption secret (optional)"
-                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white">
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">For cross-environment imports</p>
+                        <input
+                          type="text"
+                          id="import-rekey-secret"
+                          placeholder="New encryption secret (optional)"
+                          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                        />
+                        <p
+                          class="text-xs text-gray-500 dark:text-gray-400 mt-1"
+                        >
+                          For cross-environment imports
+                        </p>
                       </div>
                     </div>
                   </div>
 
                   <!-- Import Actions -->
                   <div class="flex space-x-4">
-                    <button id="import-validate-btn"
-                            class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
-                            disabled>
+                    <button
+                      id="import-validate-btn"
+                      class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
+                      disabled
+                    >
                       🔍 Validate Import
                     </button>
-                    <button id="import-execute-btn"
-                            class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
-                            disabled>
+                    <button
+                      id="import-execute-btn"
+                      class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
+                      disabled
+                    >
                       ⚡ Execute Import
                     </button>
                   </div>
@@ -537,36 +676,72 @@
 
               <!-- Import Status -->
               <div id="import-status-section" class="hidden">
-                <h3 class="text-md font-medium text-gray-900 dark:text-white mb-4">
+                <h3
+                  class="text-md font-medium text-gray-900 dark:text-white mb-4"
+                >
                   📊 Import Status
                 </h3>
 
                 <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
                   <div id="import-progress" class="mb-4">
-                    <div class="flex justify-between text-sm text-gray-600 dark:text-gray-300 mb-1">
+                    <div
+                      class="flex justify-between text-sm text-gray-600 dark:text-gray-300 mb-1"
+                    >
                       <span>Progress</span>
                       <span id="import-progress-text">0%</span>
                     </div>
-                    <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2">
-                      <div id="import-progress-bar" class="bg-green-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    <div
+                      class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2"
+                    >
+                      <div
+                        id="import-progress-bar"
+                        class="bg-green-600 h-2 rounded-full transition-all duration-300"
+                        style="width: 0%"
+                      ></div>
                     </div>
                   </div>
 
-                  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
+                  <div
+                    class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm"
+                  >
                     <div class="text-center">
-                      <div id="import-total" class="text-lg font-bold text-gray-900 dark:text-white">0</div>
+                      <div
+                        id="import-total"
+                        class="text-lg font-bold text-gray-900 dark:text-white"
+                      >
+                        0
+                      </div>
                       <div class="text-gray-600 dark:text-gray-300">Total</div>
                     </div>
                     <div class="text-center">
-                      <div id="import-created" class="text-lg font-bold text-green-600">0</div>
-                      <div class="text-gray-600 dark:text-gray-300">Created</div>
+                      <div
+                        id="import-created"
+                        class="text-lg font-bold text-green-600"
+                      >
+                        0
+                      </div>
+                      <div class="text-gray-600 dark:text-gray-300">
+                        Created
+                      </div>
                     </div>
                     <div class="text-center">
-                      <div id="import-updated" class="text-lg font-bold text-blue-600">0</div>
-                      <div class="text-gray-600 dark:text-gray-300">Updated</div>
+                      <div
+                        id="import-updated"
+                        class="text-lg font-bold text-blue-600"
+                      >
+                        0
+                      </div>
+                      <div class="text-gray-600 dark:text-gray-300">
+                        Updated
+                      </div>
                     </div>
                     <div class="text-center">
-                      <div id="import-failed" class="text-lg font-bold text-red-600">0</div>
+                      <div
+                        id="import-failed"
+                        class="text-lg font-bold text-red-600"
+                      >
+                        0
+                      </div>
                       <div class="text-gray-600 dark:text-gray-300">Failed</div>
                     </div>
                   </div>
@@ -580,12 +755,19 @@
 
               <!-- Recent Imports -->
               <div class="mt-8">
-                <h3 class="text-md font-medium text-gray-900 dark:text-white mb-4">
+                <h3
+                  class="text-md font-medium text-gray-900 dark:text-white mb-4"
+                >
                   📋 Recent Import Operations
                 </h3>
 
-                <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg">
-                  <div id="recent-imports-list" class="divide-y divide-gray-200 dark:divide-gray-600">
+                <div
+                  class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg"
+                >
+                  <div
+                    id="recent-imports-list"
+                    class="divide-y divide-gray-200 dark:divide-gray-600"
+                  >
                     <!-- Recent imports will be loaded here -->
                   </div>
                 </div>
