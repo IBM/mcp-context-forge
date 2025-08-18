@@ -15,6 +15,7 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 | [Export/Import Tutorial](export-import-tutorial.md) | Step-by-step tutorial for getting started with export/import |
 | [Export/Import Reference](export-import-reference.md) | Quick reference guide for export/import commands and APIs |
 | [Bulk Import](bulk-import.md) | Import multiple tools at once for migrations and team onboarding |
+| [Metadata Tracking](metadata-tracking.md) | 📊 **NEW** - Comprehensive audit trails and entity metadata tracking |
 | [Well-Known URIs](well-known-uris.md) | Configure robots.txt, security.txt, and custom well-known files |
 | [Logging](logging.md) | Configure structured logging, log destinations, and log rotation |
 
