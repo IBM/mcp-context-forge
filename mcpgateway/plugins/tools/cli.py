@@ -117,6 +117,7 @@ def bootstrap(
     vcs_ref: Annotated[str, typer.Option("--vcs_ref", "-r", help="The version control system tag/branch/commit to use for the template.")] = DEFAULT_VCS_REF,
     answers_file: Optional[Annotated[typer.FileText, typer.Option("--answers_file", "-a", help="The answers file to be used for bootstrapping.")]] = None,
     defaults: Annotated[bool, typer.Option("--defaults", help="Bootstrap with defaults.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry_run", help="Run but do not make any changes.")] = False,
 ):
     """Boostrap a new plugin project from a template.
 
@@ -134,6 +135,7 @@ def bootstrap(
         defaults=defaults,
         vcs_ref=vcs_ref,
         data={"default_author_name": git_user_name(), "default_author_email": git_user_email()},
+        pretend=dry_run,
     ) as worker:
         worker.run_copy()
 
