@@ -390,12 +390,24 @@ class GatewayService:
         self._active_gateways.clear()
         logger.info("Gateway service shutdown complete")
 
-    async def register_gateway(self, db: Session, gateway: GatewayCreate) -> GatewayRead:
+    async def register_gateway(
+        self,
+        db: Session,
+        gateway: GatewayCreate,
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_via: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+    ) -> GatewayRead:
         """Register a new gateway.
 
         Args:
             db: Database session
             gateway: Gateway creation schema
+            created_by: Username who created this gateway
+            created_from_ip: IP address of creator
+            created_via: Creation method (ui, api, federation)
+            created_user_agent: User agent of creation request
 
         Returns:
             Created gateway information
@@ -463,6 +475,13 @@ class GatewayService:
                     jsonpath_filter=tool.jsonpath_filter,
                     auth_type=auth_type,
                     auth_value=auth_value,
+                    # Federation metadata
+                    created_by=created_by or "system",
+                    created_from_ip=created_from_ip,
+                    created_via="federation",  # These are federated tools
+                    created_user_agent=created_user_agent,
+                    federation_source=gateway.name,
+                    version=1,
                 )
                 for tool in tools
             ]
@@ -475,6 +494,13 @@ class GatewayService:
                     description=resource.description,
                     mime_type=resource.mime_type,
                     template=resource.template,
+                    # Federation metadata
+                    created_by=created_by or "system",
+                    created_from_ip=created_from_ip,
+                    created_via="federation",  # These are federated resources
+                    created_user_agent=created_user_agent,
+                    federation_source=gateway.name,
+                    version=1,
                 )
                 for resource in resources
             ]
@@ -486,6 +512,13 @@ class GatewayService:
                     description=prompt.description,
                     template=prompt.template if hasattr(prompt, "template") else "",
                     argument_schema={},  # Use argument_schema instead of arguments
+                    # Federation metadata
+                    created_by=created_by or "system",
+                    created_from_ip=created_from_ip,
+                    created_via="federation",  # These are federated prompts
+                    created_user_agent=created_user_agent,
+                    federation_source=gateway.name,
+                    version=1,
                 )
                 for prompt in prompts
             ]
@@ -505,6 +538,12 @@ class GatewayService:
                 tools=tools,
                 resources=db_resources,
                 prompts=db_prompts,
+                # Gateway metadata
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via or "api",
+                created_user_agent=created_user_agent,
+                version=1,
             )
 
             # Add to DB

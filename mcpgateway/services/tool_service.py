@@ -308,12 +308,28 @@ class ToolService:
         db.add(metric)
         db.commit()
 
-    async def register_tool(self, db: Session, tool: ToolCreate) -> ToolRead:
+    async def register_tool(
+        self,
+        db: Session,
+        tool: ToolCreate,
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_via: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+        import_batch_id: Optional[str] = None,
+        federation_source: Optional[str] = None,
+    ) -> ToolRead:
         """Register a new tool.
 
         Args:
             db: Database session.
             tool: Tool creation schema.
+            created_by: Username who created this tool.
+            created_from_ip: IP address of creator.
+            created_via: Creation method (ui, api, import, federation).
+            created_user_agent: User agent of creation request.
+            import_batch_id: UUID for bulk import operations.
+            federation_source: Source gateway for federated tools.
 
         Returns:
             Created tool information.
@@ -368,6 +384,14 @@ class ToolService:
                 auth_value=auth_value,
                 gateway_id=tool.gateway_id,
                 tags=tool.tags or [],
+                # Metadata fields
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+                import_batch_id=import_batch_id,
+                federation_source=federation_source,
+                version=1,
             )
             db.add(db_tool)
             db.commit()
@@ -863,7 +887,16 @@ class ToolService:
                     span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
                 await self._record_tool_metric(db, tool, start_time, success, error_message)
 
-    async def update_tool(self, db: Session, tool_id: str, tool_update: ToolUpdate) -> ToolRead:
+    async def update_tool(
+        self,
+        db: Session,
+        tool_id: str,
+        tool_update: ToolUpdate,
+        modified_by: Optional[str] = None,
+        modified_from_ip: Optional[str] = None,
+        modified_via: Optional[str] = None,
+        modified_user_agent: Optional[str] = None,
+    ) -> ToolRead:
         """
         Update an existing tool.
 
@@ -871,6 +904,10 @@ class ToolService:
             db (Session): The SQLAlchemy database session.
             tool_id (str): The unique identifier of the tool.
             tool_update (ToolUpdate): Tool update schema with new data.
+            modified_by (Optional[str]): Username who modified this tool.
+            modified_from_ip (Optional[str]): IP address of modifier.
+            modified_via (Optional[str]): Modification method (ui, api).
+            modified_user_agent (Optional[str]): User agent of modification request.
 
         Returns:
             The updated ToolRead object.
@@ -932,6 +969,22 @@ class ToolService:
             # Update tags if provided
             if tool_update.tags is not None:
                 tool.tags = tool_update.tags
+
+            # Update modification metadata
+            if modified_by is not None:
+                tool.modified_by = modified_by
+            if modified_from_ip is not None:
+                tool.modified_from_ip = modified_from_ip
+            if modified_via is not None:
+                tool.modified_via = modified_via
+            if modified_user_agent is not None:
+                tool.modified_user_agent = modified_user_agent
+
+            # Increment version
+            if hasattr(tool, "version") and tool.version is not None:
+                tool.version += 1
+            else:
+                tool.version = 1
 
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()
