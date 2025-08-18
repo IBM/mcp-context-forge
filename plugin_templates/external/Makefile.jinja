@@ -10,8 +10,8 @@ PROJECT_NAME = {{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}
 TARGET ?= {{ plugin_name|lower|replace(' ', '_')|replace('-', '_') }}
 
 # Virtual-environment variables
-VENVS_DIR := $(HOME)/.venv
-VENV_DIR  := $(VENVS_DIR)/$(PROJECT_NAME)
+VENVS_DIR ?= $(HOME)/.venv
+VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
 
 # =============================================================================
 # Linters
@@ -295,10 +295,23 @@ show-runtime:
 # Targets
 # =============================================================================
 
+.PHONY: venv
+venv:
+	@rm -Rf "$(VENV_DIR)"
+	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
+	@python3 -m venv "$(VENV_DIR)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv"
+	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
+
 .PHONY: install
-install:
+install: venv
 	$(foreach bin,$(REQUIRED_BUILD_BINS), $(if $(shell command -v $(bin) 2> /dev/null),,$(error Couldn't find `$(bin)`)))
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install ."
+
+.PHONY: install-editable
+install-editable: venv
+	$(foreach bin,$(REQUIRED_BUILD_BINS), $(if $(shell command -v $(bin) 2> /dev/null),,$(error Couldn't find `$(bin)`)))
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -e ."
 
 .PHONY: uninstall
 uninstall:
@@ -413,6 +426,7 @@ help:
 	@echo ""
 	@echo "The following are the valid targets for this Makefile:"
 	@echo "...install           Install package from sources"
+	@echo "...install-editable  Install package from sources in editabled mode"
 	@echo "...uninstall         Uninstall package"
 	@echo "...dist              Clean-build wheel *and* sdist into ./dist"
 	@echo "...wheel             Build wheel only"
