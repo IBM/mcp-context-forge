@@ -1,0 +1,19 @@
+[
+  {
+    "name": "list_users",
+    "url": "https://api.example.com/users",
+    "integration_type": "REST",
+    "request_type": "GET"
+  },
+  {
+    "name": "create_user",
+    "url": "https://api.example.com/users",
+    "integration_type": "REST",
+    "request_type": "POST",
+    "input_schema": {
+      "type": "object",
+      "properties": { "body": { "type": "object" } },
+      "required": ["body"]
+    }
+  }
+]
