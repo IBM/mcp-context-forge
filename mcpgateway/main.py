@@ -58,6 +58,7 @@ from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
@@ -103,6 +104,7 @@ from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -1245,12 +1247,13 @@ async def list_tools(
 
 @tool_router.post("", response_model=ToolRead)
 @tool_router.post("/", response_model=ToolRead)
-async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
+async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
     """
     Creates a new tool in the system.
 
     Args:
         tool (ToolCreate): The data needed to create the tool.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -1261,8 +1264,21 @@ async def create_tool(tool: ToolCreate, db: Session = Depends(get_db), user: str
         HTTPException: If the tool name already exists or other validation errors occur.
     """
     try:
+
+        # Extract metadata from request
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
         logger.debug(f"User {user} is creating a new tool")
-        return await tool_service.register_tool(db, tool)
+        return await tool_service.register_tool(
+            db,
+            tool,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
         if isinstance(ex, ToolNameConflictError):
@@ -1324,6 +1340,7 @@ async def get_tool(
 async def update_tool(
     tool_id: str,
     tool: ToolUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
 ) -> ToolRead:
@@ -1333,6 +1350,7 @@ async def update_tool(
     Args:
         tool_id (str): The ID of the tool to update.
         tool (ToolUpdate): The updated tool information.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -1343,8 +1361,24 @@ async def update_tool(
         HTTPException: If an error occurs during the update.
     """
     try:
+
+        # Get current tool to extract current version
+        current_tool = db.get(DbTool, tool_id)
+        current_version = getattr(current_tool, "version", 0) if current_tool else 0
+
+        # Extract modification metadata
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
+
         logger.debug(f"User {user} is updating tool with ID {tool_id}")
-        return await tool_service.update_tool(db, tool_id, tool)
+        return await tool_service.update_tool(
+            db,
+            tool_id,
+            tool,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
     except Exception as ex:
         if isinstance(ex, ToolNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ex))

@@ -836,6 +836,21 @@ class ToolRead(BaseModelWithConfigDict):
     original_name_slug: str
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the tool")
 
+    # Comprehensive metadata for audit tracking
+    created_by: Optional[str] = Field(None, description="Username who created this entity")
+    created_from_ip: Optional[str] = Field(None, description="IP address of creator")
+    created_via: Optional[str] = Field(None, description="Creation method: ui|api|import|federation")
+    created_user_agent: Optional[str] = Field(None, description="User agent of creation request")
+
+    modified_by: Optional[str] = Field(None, description="Username who last modified this entity")
+    modified_from_ip: Optional[str] = Field(None, description="IP address of last modifier")
+    modified_via: Optional[str] = Field(None, description="Modification method")
+    modified_user_agent: Optional[str] = Field(None, description="User agent of modification request")
+
+    import_batch_id: Optional[str] = Field(None, description="UUID of bulk import batch")
+    federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
+    version: Optional[int] = Field(1, description="Entity version for change tracking")
+
 
 class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
@@ -1257,6 +1272,21 @@ class ResourceRead(BaseModelWithConfigDict):
     is_active: bool
     metrics: ResourceMetrics
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the resource")
+
+    # Comprehensive metadata for audit tracking
+    created_by: Optional[str] = Field(None, description="Username who created this entity")
+    created_from_ip: Optional[str] = Field(None, description="IP address of creator")
+    created_via: Optional[str] = Field(None, description="Creation method: ui|api|import|federation")
+    created_user_agent: Optional[str] = Field(None, description="User agent of creation request")
+
+    modified_by: Optional[str] = Field(None, description="Username who last modified this entity")
+    modified_from_ip: Optional[str] = Field(None, description="IP address of last modifier")
+    modified_via: Optional[str] = Field(None, description="Modification method")
+    modified_user_agent: Optional[str] = Field(None, description="User agent of modification request")
+
+    import_batch_id: Optional[str] = Field(None, description="UUID of bulk import batch")
+    federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
+    version: Optional[int] = Field(1, description="Entity version for change tracking")
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -1714,6 +1744,21 @@ class PromptRead(BaseModelWithConfigDict):
     is_active: bool
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the prompt")
     metrics: PromptMetrics
+
+    # Comprehensive metadata for audit tracking
+    created_by: Optional[str] = Field(None, description="Username who created this entity")
+    created_from_ip: Optional[str] = Field(None, description="IP address of creator")
+    created_via: Optional[str] = Field(None, description="Creation method: ui|api|import|federation")
+    created_user_agent: Optional[str] = Field(None, description="User agent of creation request")
+
+    modified_by: Optional[str] = Field(None, description="Username who last modified this entity")
+    modified_from_ip: Optional[str] = Field(None, description="IP address of last modifier")
+    modified_via: Optional[str] = Field(None, description="Modification method")
+    modified_user_agent: Optional[str] = Field(None, description="User agent of modification request")
+
+    import_batch_id: Optional[str] = Field(None, description="UUID of bulk import batch")
+    federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
+    version: Optional[int] = Field(1, description="Entity version for change tracking")
 
 
 class PromptInvocation(BaseModelWithConfigDict):
@@ -2264,6 +2309,21 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the gateway")
+
+    # Comprehensive metadata for audit tracking
+    created_by: Optional[str] = Field(None, description="Username who created this entity")
+    created_from_ip: Optional[str] = Field(None, description="IP address of creator")
+    created_via: Optional[str] = Field(None, description="Creation method: ui|api|import|federation")
+    created_user_agent: Optional[str] = Field(None, description="User agent of creation request")
+
+    modified_by: Optional[str] = Field(None, description="Username who last modified this entity")
+    modified_from_ip: Optional[str] = Field(None, description="IP address of last modifier")
+    modified_via: Optional[str] = Field(None, description="Modification method")
+    modified_user_agent: Optional[str] = Field(None, description="User agent of modification request")
+
+    import_batch_id: Optional[str] = Field(None, description="UUID of bulk import batch")
+    federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
+    version: Optional[int] = Field(1, description="Entity version for change tracking")
 
     slug: str = Field(None, description="Slug for gateway endpoint URL")
 
@@ -2850,6 +2910,21 @@ class ServerRead(BaseModelWithConfigDict):
     associated_prompts: List[int] = []
     metrics: ServerMetrics
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the server")
+
+    # Comprehensive metadata for audit tracking
+    created_by: Optional[str] = Field(None, description="Username who created this entity")
+    created_from_ip: Optional[str] = Field(None, description="IP address of creator")
+    created_via: Optional[str] = Field(None, description="Creation method: ui|api|import|federation")
+    created_user_agent: Optional[str] = Field(None, description="User agent of creation request")
+
+    modified_by: Optional[str] = Field(None, description="Username who last modified this entity")
+    modified_from_ip: Optional[str] = Field(None, description="IP address of last modifier")
+    modified_via: Optional[str] = Field(None, description="Modification method")
+    modified_user_agent: Optional[str] = Field(None, description="User agent of modification request")
+
+    import_batch_id: Optional[str] = Field(None, description="UUID of bulk import batch")
+    federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
+    version: Optional[int] = Field(1, description="Entity version for change tracking")
 
     @model_validator(mode="before")
     @classmethod

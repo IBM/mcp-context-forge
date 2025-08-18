@@ -27,6 +27,7 @@ import json
 from pathlib import Path
 import time
 from typing import Any, cast, Dict, List, Optional, Union
+import uuid
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -40,6 +41,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     GatewayCreate,
@@ -80,6 +82,7 @@ from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import set_auth_cookie
@@ -1975,7 +1978,20 @@ async def admin_add_tool(
     try:
         tool = ToolCreate(**tool_data)
         LOGGER.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
-        await tool_service.register_tool(db, tool)
+
+        # Extract creation metadata
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        await tool_service.register_tool(
+            db,
+            tool,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
         return JSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
             status_code=200,
@@ -2198,7 +2214,23 @@ async def admin_edit_tool(
     LOGGER.debug(f"Tool update data built: {tool_data}")
     try:
         tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
-        await tool_service.update_tool(db, tool_id, tool)
+
+        # Get current tool to extract current version
+        current_tool = db.get(DbTool, tool_id)
+        current_version = getattr(current_tool, "version", 0) if current_tool else 0
+
+        # Extract modification metadata
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
+
+        await tool_service.update_tool(
+            db,
+            tool_id,
+            tool,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
         return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
@@ -4458,11 +4490,26 @@ async def admin_import_tools(
         created, errors = [], []
 
         # ---------- import loop ----------
+        # Generate import batch ID for this bulk operation
+        import_batch_id = str(uuid.uuid4())
+
+        # Extract base metadata for bulk import
+        base_metadata = MetadataCapture.extract_creation_metadata(request, user, import_batch_id=import_batch_id)
+
         for i, item in enumerate(payload):
             name = (item or {}).get("name")
             try:
                 tool = ToolCreate(**item)  # pydantic validation
-                await tool_service.register_tool(db, tool)
+                await tool_service.register_tool(
+                    db,
+                    tool,
+                    created_by=base_metadata["created_by"],
+                    created_from_ip=base_metadata["created_from_ip"],
+                    created_via="import",  # Override to show this is bulk import
+                    created_user_agent=base_metadata["created_user_agent"],
+                    import_batch_id=import_batch_id,
+                    federation_source=base_metadata["federation_source"],
+                )
                 created.append({"index": i, "name": name})
             except IntegrityError as ex:
                 # The formatter can itself throw; guard it.

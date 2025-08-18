@@ -4914,6 +4914,43 @@ async function viewTool(toolId) {
               <li>Last Execution Time: <span class="metric-last-time"></span></li>
             </ul>
           </div>
+          <div class="mt-6 border-t pt-4">
+            <strong>Metadata:</strong>
+            <div class="grid grid-cols-2 gap-4 mt-2 text-sm">
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created By:</span>
+                <span class="ml-2 metadata-created-by"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created At:</span>
+                <span class="ml-2 metadata-created-at"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created From:</span>
+                <span class="ml-2 metadata-created-from"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created Via:</span>
+                <span class="ml-2 metadata-created-via"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified By:</span>
+                <span class="ml-2 metadata-modified-by"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified At:</span>
+                <span class="ml-2 metadata-modified-at"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Version:</span>
+                <span class="ml-2 metadata-version"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Import Batch:</span>
+                <span class="ml-2 metadata-import-batch"></span>
+              </div>
+            </div>
+          </div>
         </div>
       `;
 
@@ -5009,6 +5046,38 @@ async function viewTool(toolId) {
             setTextSafely(
                 ".metric-last-time",
                 tool.metrics?.lastExecutionTime ?? "N/A",
+            );
+
+            // Set metadata fields safely with appropriate fallbacks for legacy entities
+            setTextSafely(
+                ".metadata-created-by",
+                tool.createdBy || "Legacy Entity",
+            );
+            setTextSafely(
+                ".metadata-created-at",
+                tool.createdAt
+                    ? new Date(tool.createdAt).toLocaleString()
+                    : "Pre-metadata",
+            );
+            setTextSafely(
+                ".metadata-created-from",
+                tool.createdFromIp || "Unknown",
+            );
+            setTextSafely(
+                ".metadata-created-via",
+                tool.createdVia || "Unknown",
+            );
+            setTextSafely(".metadata-modified-by", tool.modifiedBy || "N/A");
+            setTextSafely(
+                ".metadata-modified-at",
+                tool.modifiedAt
+                    ? new Date(tool.modifiedAt).toLocaleString()
+                    : "N/A",
+            );
+            setTextSafely(".metadata-version", tool.version || "1");
+            setTextSafely(
+                ".metadata-import-batch",
+                tool.importBatchId || "N/A",
             );
         }
 
