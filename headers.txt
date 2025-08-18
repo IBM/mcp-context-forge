@@ -1,0 +1,6 @@
+HTTP/1.1 307 Temporary Redirect
+date: Wed, 13 Aug 2025 05:39:40 GMT
+server: uvicorn
+content-length: 0
+location: http://localhost:4444/admin/
+
