@@ -376,21 +376,31 @@ npx -y @modelcontextprotocol/inspector
 <summary><strong>🖧 Using the stdio wrapper (mcpgateway-wrapper)</strong></summary>
 
 ```bash
-export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1
+export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN
+export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
 python3 -m mcpgateway.wrapper  # Ctrl-C to exit
 ```
 
 You can also run it with `uv` or inside Docker/Podman - see the *Containers* section above.
 
-In MCP Inspector, define `MCP_AUTH_TOKEN` and `MCP_SERVER_CATALOG_URLS` env variables, and select `python3` as the Command, and `-m mcpgateway.wrapper` as Arguments.
+In MCP Inspector, define `MCP_AUTH` and `MCP_SERVER_URL` env variables, and select `python3` as the Command, and `-m mcpgateway.wrapper` as Arguments.
 
 ```bash
 echo $PWD/.venv/bin/python3 # Using the Python3 full path ensures you have a working venv
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
-export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
+export MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}
 npx -y @modelcontextprotocol/inspector
 ```
+
+or
+
+Pass the url and auth as arguments (no need to set environment variables)
+```bash
+npx -y @modelcontextprotocol/inspector
+command as `python`
+Arguments as `-m mcpgateway.wrapper --url "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp" --auth "Bearer <your token>"`
+```
+
 
 When using a MCP Client such as Claude with stdio:
 
@@ -401,8 +411,8 @@ When using a MCP Client such as Claude with stdio:
       "command": "python",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_AUTH_TOKEN": "your-token-here",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
+        "MCP_AUTH": "your-token-here",
+        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
@@ -591,14 +601,14 @@ The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while ke
 ```bash
 # Set environment variables
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
-export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
+export MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
 export MCP_TOOL_CALL_TIMEOUT=120
 export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
 
 docker run --rm -i \
-  -e MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN \
-  -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1 \
+  -e MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN \
+  -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
   ghcr.io/ibm/mcp-context-forge:0.5.0 \
@@ -615,8 +625,8 @@ Because the wrapper speaks JSON-RPC over stdin/stdout, you can interact with it 
 
 ```bash
 # Start the MCP Gateway Wrapper
-export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/YOUR_SERVER_UUID
+export MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_URL=http://localhost:4444/servers/YOUR_SERVER_UUID
 python3 -m mcpgateway.wrapper
 ```
 
@@ -667,8 +677,8 @@ python3 -m mcpgateway.wrapper
 
 The `mcpgateway.wrapper` exposes everything your Gateway knows about over **stdio**, so any MCP client that *can't* (or *shouldn't*) open an authenticated SSE stream still gets full tool-calling power.
 
-> **Remember** to substitute your real Gateway URL (and server ID) for `http://localhost:4444/servers/UUID_OF_SERVER_1`.
-> When inside Docker/Podman, that often becomes `http://host.docker.internal:4444/servers/UUID_OF_SERVER_1` (macOS/Windows) or the gateway container's hostname (Linux).
+> **Remember** to substitute your real Gateway URL (and server ID) for `http://localhost:4444/servers/UUID_OF_SERVER_1/mcp`.
+> When inside Docker/Podman, that often becomes `http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp` (macOS/Windows) or the gateway container's hostname (Linux).
 
 ---
 
@@ -678,8 +688,8 @@ The `mcpgateway.wrapper` exposes everything your Gateway knows about over **stdi
 ```bash
 docker run -i --rm \
   --network=host \
-  -e MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
-  -e MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
+  -e MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
+  -e MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   ghcr.io/ibm/mcp-context-forge:0.5.0 \
   python3 -m mcpgateway.wrapper
@@ -697,8 +707,8 @@ docker run -i --rm \
 pipx install --include-deps mcp-contextforge-gateway
 
 # Run the stdio wrapper
-MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
-MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
+MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN} \
+MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
 python3 -m mcpgateway.wrapper
 # Alternatively with uv
 uv run --directory . -m mcpgateway.wrapper
@@ -713,8 +723,8 @@ uv run --directory . -m mcpgateway.wrapper
       "command": "python3",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_AUTH_TOKEN": "<your-token>",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
+        "MCP_AUTH": "<your-token>",
+        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
@@ -750,8 +760,8 @@ source ~/.venv/mcpgateway/bin/activate
 uv pip install mcp-contextforge-gateway
 
 # Launch wrapper
-MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
-MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
+MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN} \
+MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
 uv run --directory . -m mcpgateway.wrapper # Use this just for testing, as the Client will run the uv command
 ```
 
@@ -770,8 +780,8 @@ uv run --directory . -m mcpgateway.wrapper # Use this just for testing, as the C
         "mcpgateway.wrapper"
       ],
       "env": {
-        "MCP_AUTH_TOKEN": "<your-token>",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
+        "MCP_AUTH": "<your-token>",
+        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
     }
   }
 }

@@ -58,8 +58,8 @@ python3 -m mcpgateway.translate \
     --stdio "uvx mcp-server-git" --port 9000
 
 # Run the stdio wrapper for MCP clients
-export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID
+export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN
+export MCP_SERVER_URL=http://localhost:4444/servers/UUID/mcp
 python3 -m mcpgateway.wrapper
 ```
 
