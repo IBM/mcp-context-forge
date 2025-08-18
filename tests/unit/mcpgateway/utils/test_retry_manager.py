@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Standard
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 # Third-Party
 import httpx
@@ -229,6 +230,32 @@ async def test_exponential_backoff_increases_delay():
     expected_delays = [1 * (2**i) for i in range(client.max_retries)]
     assert delays == expected_delays
 
+
+@pytest.mark.asyncio
+async def test_stream_success(monkeypatch):
+    client = ResilientHttpClient(max_retries=3, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    class AsyncContextManager:
+        async def __aenter__(self):
+            resp = SimpleNamespace(
+                status_code=200,
+                is_success=True,
+                aiter_bytes=lambda: asyncio.as_completed([b"data"])
+            )
+            return resp
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def mock_stream(*args, **kwargs):
+        # Return the async context manager instance directly (not coroutine)
+        return AsyncContextManager()
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+
+    async with client.stream("GET", "http://example.com") as resp:
+        assert resp.status_code == 200
+        assert resp.is_success
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", [201, 204])
