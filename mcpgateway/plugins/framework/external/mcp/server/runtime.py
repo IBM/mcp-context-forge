@@ -81,9 +81,10 @@ async def prompt_pre_fetch(plugin_name: str, payload: Dict[str, Any], context: D
     def prompt_pre_fetch_func(plugin: Plugin, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """Wrapper function for hook.
 
-        plugin: The plugin instance.
-        payload: The tool name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        Args:
+            plugin: The plugin instance.
+            payload: The tool name and arguments to be analyzed.
+            context: the contextual and state information required for the execution of the hook.
 
         Returns:
             The transformed or filtered response from the plugin hook.
@@ -112,9 +113,10 @@ async def prompt_post_fetch(plugin_name: str, payload: Dict[str, Any], context: 
     def prompt_post_fetch_func(plugin: Plugin, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
         """Wrapper function for hook.
 
-        plugin: The plugin instance.
-        payload: The tool name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        Args:
+            plugin: The plugin instance.
+            payload: The tool name and arguments to be analyzed.
+            context: the contextual and state information required for the execution of the hook.
 
         Returns:
             The transformed or filtered response from the plugin hook.
@@ -143,9 +145,10 @@ async def tool_pre_invoke(plugin_name: str, payload: Dict[str, Any], context: Di
     def tool_pre_invoke_func(plugin: Plugin, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         """Wrapper function for hook.
 
-        plugin: The plugin instance.
-        payload: The tool name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        Args:
+            plugin: The plugin instance.
+            payload: The tool name and arguments to be analyzed.
+            context: the contextual and state information required for the execution of the hook.
 
         Returns:
             The transformed or filtered response from the plugin hook.
@@ -174,9 +177,10 @@ async def tool_post_invoke(plugin_name: str, payload: Dict[str, Any], context: D
     def tool_post_invoke_func(plugin: Plugin, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Wrapper function for hook.
 
-        plugin: The plugin instance.
-        payload: The tool name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        Args:
+            plugin: The plugin instance.
+            payload: The tool name and arguments to be analyzed.
+            context: the contextual and state information required for the execution of the hook.
 
         Returns:
             The transformed or filtered response from the plugin hook.
@@ -205,9 +209,10 @@ async def resource_pre_fetch(plugin_name: str, payload: Dict[str, Any], context:
     def resource_pre_fetch_func(plugin: Plugin, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:  # pragma: no cover
         """Wrapper function for hook.
 
-        plugin: The plugin instance.
-        payload: The tool name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        Args:
+            plugin: The plugin instance.
+            payload: The tool name and arguments to be analyzed.
+            context: the contextual and state information required for the execution of the hook.
 
         Returns:
             The transformed or filtered response from the plugin hook.
@@ -236,9 +241,10 @@ async def resource_post_fetch(plugin_name: str, payload: Dict[str, Any], context
     def resource_post_fetch_func(plugin: Plugin, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:  # pragma: no cover
         """Wrapper function for hook.
 
-        plugin: The plugin instance.
-        payload: The tool name and arguments to be analyzed.
-        context: the contextual and state information required for the execution of the hook.
+        Args:
+            plugin: The plugin instance.
+            payload: The tool name and arguments to be analyzed.
+            context: the contextual and state information required for the execution of the hook.
 
         Returns:
             The transformed or filtered response from the plugin hook.
