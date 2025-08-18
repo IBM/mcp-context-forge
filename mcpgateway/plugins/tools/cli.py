@@ -79,10 +79,10 @@ def command_exists(command_name):
     """Check if a given command-line utility exists and is executable.
 
     Args:
-      command_name: The name of the command to check (e.g., "ls", "git").
+        command_name: The name of the command to check (e.g., "ls", "git").
 
     Returns:
-      True if the command exists and is executable, False otherwise.
+        True if the command exists and is executable, False otherwise.
     """
     return shutil.which(command_name) is not None
 
