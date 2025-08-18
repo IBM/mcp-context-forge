@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Tests for errors module.
 
@@ -19,4 +20,3 @@ async def test_convert_exception_to_error():
 
     assert plugin_error.error.message == "ValueError('This is some error.')"
     assert plugin_error.error.plugin_name == "SomePluginName"
-

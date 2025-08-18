@@ -107,7 +107,7 @@ class ExternalPlugin(Plugin):
             ValueError: if stdio script is not a python script.
         """
         is_python = server_script_path.endswith(PYTHON_SUFFIX) if server_script_path else False
-        if not (is_python):
+        if not is_python:
             raise ValueError("Server script must be a .py file")
 
         current_env = os.environ.copy()

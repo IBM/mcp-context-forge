@@ -268,7 +268,7 @@ class MCPConfig(BaseModel):
             file_path = Path(script)
             if not file_path.is_file():
                 raise ValueError(f"MCP server script {script} does not exist.")
-            elif file_path.suffix != PYTHON_SUFFIX:
+            if file_path.suffix != PYTHON_SUFFIX:
                 raise ValueError(f"MCP server script {script} does not have a .py suffix.")
         return script
 
@@ -309,7 +309,7 @@ class PluginConfig(BaseModel):
     mcp: Optional[MCPConfig] = None
 
     @model_validator(mode=AFTER)
-    def check_url_or_script_filled(self) -> Self:
+    def check_url_or_script_filled(self) -> Self:  # pylint: disable=bad-classmethod-argument
         """Checks to see that at least one of url or script are set depending on MCP server configuration.
 
         Raises:
@@ -322,14 +322,14 @@ class PluginConfig(BaseModel):
             return self
         if self.mcp.proto == TransportType.STDIO and not self.mcp.script:
             raise ValueError(f"Plugin {self.name} has transport type set to SSE but no script value")
-        elif (self.mcp.proto == TransportType.STREAMABLEHTTP or self.mcp.proto == TransportType.SSE) and not self.mcp.url:
+        if self.mcp.proto in (TransportType.STREAMABLEHTTP, TransportType.SSE) and not self.mcp.url:
             raise ValueError(f"Plugin {self.name} has transport type set to StreamableHTTP but no url value")
-        elif self.mcp.proto != TransportType.SSE and self.mcp.proto != TransportType.STREAMABLEHTTP and self.mcp.proto != TransportType.STDIO:
+        if self.mcp.proto not in (TransportType.SSE, TransportType.STREAMABLEHTTP, TransportType.STDIO):
             raise ValueError(f"Plugin {self.name} must set transport type to either SSE or STREAMABLEHTTP or STDIO")
         return self
 
     @model_validator(mode=AFTER)
-    def check_config_and_external(self, info: ValidationInfo) -> Self:
+    def check_config_and_external(self, info: ValidationInfo) -> Self:  # pylint: disable=bad-classmethod-argument
         """Checks to see that a plugin's 'config' section is not defined if the kind is 'external'. This is because developers cannot override items in the plugin config section for external plugins.
 
         Args:

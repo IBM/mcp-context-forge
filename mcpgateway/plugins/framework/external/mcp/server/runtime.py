@@ -36,17 +36,17 @@ from mcpgateway.plugins.framework import (
 
 logger = logging.getLogger(__name__)
 
-server = None
+SERVER = None
 
 
 @mcp_tool(name="get_plugin_configs", description="Get the plugin configurations installed on the server")
 async def get_plugin_configs() -> list[dict]:
-    """Return a list of plugin configurations for plugins currently installed on the MCP server.
+    """Return a list of plugin configurations for plugins currently installed on the MCP SERVER.
 
     Returns:
         A list of plugin configurations.
     """
-    return await server.get_plugin_configs()
+    return await SERVER.get_plugin_configs()
 
 
 @mcp_tool(name="get_plugin_config", description="Get the plugin configuration installed on the server given a plugin name")
@@ -59,7 +59,7 @@ async def get_plugin_config(name: str) -> dict:
     Returns:
         A list of plugin configurations.
     """
-    return await server.get_plugin_config(name)
+    return await SERVER.get_plugin_config(name)
 
 
 @mcp_tool(name="prompt_pre_fetch", description="Execute prompt prefetch hook for a plugin")
@@ -91,7 +91,7 @@ async def prompt_pre_fetch(plugin_name: str, payload: Dict[str, Any], context: D
         """
         return plugin.prompt_pre_fetch(payload, context)
 
-    return await server.invoke_hook(PromptPrehookPayload, prompt_pre_fetch_func, plugin_name, payload, context)
+    return await SERVER.invoke_hook(PromptPrehookPayload, prompt_pre_fetch_func, plugin_name, payload, context)
 
 
 @mcp_tool(name="prompt_post_fetch", description="Execute prompt postfetch hook for a plugin")
@@ -123,7 +123,7 @@ async def prompt_post_fetch(plugin_name: str, payload: Dict[str, Any], context: 
         """
         return plugin.prompt_post_fetch(payload, context)
 
-    return await server.invoke_hook(PromptPosthookPayload, prompt_post_fetch_func, plugin_name, payload, context)
+    return await SERVER.invoke_hook(PromptPosthookPayload, prompt_post_fetch_func, plugin_name, payload, context)
 
 
 @mcp_tool(name="tool_pre_invoke", description="Execute tool pre-invoke hook for a plugin")
@@ -155,7 +155,7 @@ async def tool_pre_invoke(plugin_name: str, payload: Dict[str, Any], context: Di
         """
         return plugin.tool_pre_invoke(payload, context)
 
-    return await server.invoke_hook(ToolPreInvokePayload, tool_pre_invoke_func, plugin_name, payload, context)
+    return await SERVER.invoke_hook(ToolPreInvokePayload, tool_pre_invoke_func, plugin_name, payload, context)
 
 
 @mcp_tool(name="tool_post_invoke", description="Execute tool post-invoke hook for a plugin")
@@ -187,7 +187,7 @@ async def tool_post_invoke(plugin_name: str, payload: Dict[str, Any], context: D
         """
         return plugin.tool_post_invoke(payload, context)
 
-    return await server.invoke_hook(ToolPostInvokePayload, tool_post_invoke_func, plugin_name, payload, context)
+    return await SERVER.invoke_hook(ToolPostInvokePayload, tool_post_invoke_func, plugin_name, payload, context)
 
 
 @mcp_tool(name="resource_pre_fetch", description="Execute resource prefetch hook for a plugin")
@@ -219,7 +219,7 @@ async def resource_pre_fetch(plugin_name: str, payload: Dict[str, Any], context:
         """
         return plugin.resource_pre_fetch(payload, context)
 
-    return await server.invoke_hook(ResourcePreFetchPayload, resource_pre_fetch_func, plugin_name, payload, context)
+    return await SERVER.invoke_hook(ResourcePreFetchPayload, resource_pre_fetch_func, plugin_name, payload, context)
 
 
 @mcp_tool(name="resource_post_fetch", description="Execute resource postfetch hook for a plugin")
@@ -251,25 +251,25 @@ async def resource_post_fetch(plugin_name: str, payload: Dict[str, Any], context
         """
         return plugin.resource_post_fetch(payload, context)
 
-    return await server.invoke_hook(ResourcePostFetchPayload, resource_post_fetch_func, plugin_name, payload, context)
+    return await SERVER.invoke_hook(ResourcePostFetchPayload, resource_post_fetch_func, plugin_name, payload, context)
 
 
 async def run():  # pragma: no cover
-    """Run the external plugin server.
+    """Run the external plugin SERVER.
 
     Raises:
-        Exception: if unnable to run the plugin server.
+        Exception: if unnable to run the plugin SERVER.
     """
-    global server
-    server = ExternalPluginServer()
-    if await server.initialize():
+    global SERVER  # pylint: disable=global-statement
+    SERVER = ExternalPluginServer()
+    if await SERVER.initialize():
         try:
             await main_async()
         except Exception:
             logger.exception("Caught error while executing plugin server")
             raise
         finally:
-            await server.shutdown()
+            await SERVER.shutdown()
 
 
 if __name__ == "__main__":  # pragma: no cover

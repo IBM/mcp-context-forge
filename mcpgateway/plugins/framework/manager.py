@@ -206,7 +206,7 @@ class PluginExecutor(Generic[T]):
                     if pluginref.plugin.mode == PluginMode.ENFORCE:
                         logger.warning(f"Plugin {pluginref.plugin.name} blocked request in enforce mode")
                         return (PluginResult[T](continue_processing=False, modified_payload=current_payload, violation=result.violation, metadata=combined_metadata), res_local_contexts)
-                    elif pluginref.plugin.mode == PluginMode.PERMISSIVE:
+                    if pluginref.plugin.mode == PluginMode.PERMISSIVE:
                         logger.warning(f"Plugin {pluginref.plugin.name} would block (permissive mode): {result.violation.description if result.violation else 'No description'}")
 
             except asyncio.TimeoutError:

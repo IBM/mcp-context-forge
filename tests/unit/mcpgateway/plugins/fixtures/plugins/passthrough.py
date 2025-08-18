@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Passthrough plugin.
 
@@ -73,7 +74,7 @@ class PassThroughPlugin(Plugin):
             The result of the plugin's analysis, including whether the tool result should proceed.
         """
         return ToolPostInvokeResult(continue_processing=True)
-    
+
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
         """Plugin hook run after a resource was fetched.
 
@@ -85,7 +86,7 @@ class PassThroughPlugin(Plugin):
             The result of the plugin's analysis, including whether the resource result should proceed.
         """
         return ResourcePostFetchResult(continue_processing=True)
-    
+
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
         """Plugin hook run before a resource was fetched.
 

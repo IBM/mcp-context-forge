@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Tests for external client on streamable http.
 

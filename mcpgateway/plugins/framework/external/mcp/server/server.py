@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, Type, TypeVar
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.plugins.framework import Plugin
+from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.errors import convert_exception_to_error
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.manager import DEFAULT_PLUGIN_TIMEOUT, PluginManager

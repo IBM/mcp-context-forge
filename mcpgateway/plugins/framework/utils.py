@@ -142,7 +142,7 @@ def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCon
             current_result = False
         if current_result:
             return True
-        elif index < len(conditions) - 1:
+        if index < len(conditions) - 1:
             current_result = True
     return current_result
 
@@ -167,7 +167,7 @@ def post_prompt_matches(payload: PromptPosthookPayload, conditions: list[PluginC
             current_result = False
         if current_result:
             return True
-        elif index < len(conditions) - 1:
+        if index < len(conditions) - 1:
             current_result = True
     return current_result
 
@@ -203,7 +203,7 @@ def pre_tool_matches(payload: ToolPreInvokePayload, conditions: list[PluginCondi
             current_result = False
         if current_result:
             return True
-        elif index < len(conditions) - 1:
+        if index < len(conditions) - 1:
             current_result = True
     return current_result
 
@@ -239,7 +239,7 @@ def post_tool_matches(payload: ToolPostInvokePayload, conditions: list[PluginCon
             current_result = False
         if current_result:
             return True
-        elif index < len(conditions) - 1:
+        if index < len(conditions) - 1:
             current_result = True
     return current_result
 
@@ -275,7 +275,7 @@ def pre_resource_matches(payload: ResourcePreFetchPayload, conditions: list[Plug
             current_result = False
         if current_result:
             return True
-        elif index < len(conditions) - 1:
+        if index < len(conditions) - 1:
             current_result = True
     return current_result
 
@@ -313,6 +313,6 @@ def post_resource_matches(payload: ResourcePostFetchPayload, conditions: list[Pl
             current_result = False
         if current_result:
             return True
-        elif index < len(conditions) - 1:
+        if index < len(conditions) - 1:
             current_result = True
     return current_result

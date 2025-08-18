@@ -23,7 +23,7 @@ from mcpgateway.plugins.framework.utils import import_module, parse_class_name
 logger = logging.getLogger(__name__)
 
 
-class PluginLoader(object):
+class PluginLoader:
     """A plugin loader object for loading and instantiating plugins.
 
     Examples:

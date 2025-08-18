@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """External plugin which connects to a remote server.
 
 Copyright 2025
