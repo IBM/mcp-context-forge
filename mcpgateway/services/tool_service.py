@@ -22,6 +22,7 @@ import json
 import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
+from urllib.parse import parse_qs, urlparse
 import uuid
 
 # Third-Party
@@ -755,6 +756,15 @@ class ToolService:
                                 final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
                             else:
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
+
+                    # --- Extract query params from URL ---
+                    parsed = urlparse(final_url)
+                    final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+                    query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
+                    # Merge leftover payload + query params
+                    payload.update(query_params)
 
                     # Use the tool's request_type rather than defaulting to POST.
                     method = tool.request_type.upper()
