@@ -534,7 +534,7 @@ class ResilientHttpClient:
         """
         return await self.request("DELETE", url, **kwargs)
 
-    @asynccontextmanager  # noqa: DAR401
+    @asynccontextmanager
     async def stream(self, method: str, url: str, **kwargs) -> AsyncContextManager[httpx.Response]:
         """Open a resilient streaming HTTP request.
 
@@ -552,8 +552,8 @@ class ResilientHttpClient:
 
         Examples:
             >>> client = ResilientHttpClient()
-            >>> import inspect
-            >>> inspect.isasyncgenfunction(client.stream)
+            >>> import contextlib
+            >>> isinstance(client.stream("GET", "https://example.com"), contextlib.AbstractAsyncContextManager)
             True
             >>> async def fetch():
             ...     async with client.stream("GET", "https://example.com") as response:
