@@ -10,12 +10,16 @@ Authors: Fred Araujo
 # Future
 from __future__ import annotations
 
+# Standard
+import yaml
+
 # Third-Party
 import pytest
 from typer.testing import CliRunner
 
 # First-Party
 import mcpgateway.plugins.tools.cli as cli
+from mcpgateway.plugins.tools.models import InstallManifest
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -35,3 +39,11 @@ def test_bootrap_command_dry_run(runner: CliRunner):
     raw = ["bootstrap", "--destination", "/tmp/myplugin", "--template_url", ".", "--defaults", "--dry_run"]
     result = runner.invoke(cli.app, raw)
     assert result.exit_code == 0
+
+def test_install_manifest():
+    """Test install manifest."""
+    with open("./tests/unit/mcpgateway/plugins/fixtures/install.yaml") as f:
+        data = yaml.safe_load(f)
+        manifest = InstallManifest.model_validate(data)
+        assert manifest
+        assert len(manifest.packages) > 0
