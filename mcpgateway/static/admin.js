@@ -3240,6 +3240,30 @@ function showTab(tabName) {
                             });
                     }
                 }
+
+                if (tabName === "export-import") {
+                    // Initialize export/import functionality when tab is shown
+                    if (!panel.classList.contains("hidden")) {
+                        console.log(
+                            "🔄 Initializing export/import tab content",
+                        );
+                        try {
+                            // Ensure the export/import functionality is initialized
+                            if (typeof initializeExportImport === "function") {
+                                initializeExportImport();
+                            }
+                            // Load recent imports
+                            if (typeof loadRecentImports === "function") {
+                                loadRecentImports();
+                            }
+                        } catch (error) {
+                            console.error(
+                                "Error loading export/import content:",
+                                error,
+                            );
+                        }
+                    }
+                }
             } catch (error) {
                 console.error(
                     `Error in tab ${tabName} content loading:`,
@@ -5939,6 +5963,26 @@ document.addEventListener("DOMContentLoaded", () => {
         // 4. Handle initial tab/state
         initializeTabState();
 
+        // 5. Set up form validation
+        setupFormValidation();
+
+        // 6. Setup bulk import modal
+        try {
+            setupBulkImportModal();
+        } catch (error) {
+            console.error("Error setting up bulk import modal:", error);
+        }
+
+        // 7. Initialize export/import functionality
+        try {
+            initializeExportImport();
+        } catch (error) {
+            console.error(
+                "Error setting up export/import functionality:",
+                error,
+            );
+        }
+
         // // ✅ 4.1 Set up tab button click handlers
         // document.querySelectorAll('.tab-button').forEach(button => {
         //     button.addEventListener('click', () => {
@@ -5951,9 +5995,6 @@ document.addEventListener("DOMContentLoaded", () => {
         //         document.getElementById(tabId).classList.remove('hidden');
         //     });
         // });
-
-        // 5. Set up form validation
-        setupFormValidation();
 
         // Mark as initialized
         AppState.isInitialized = true;
@@ -6095,6 +6136,7 @@ function setupTabNavigation() {
         "roots",
         "metrics",
         "logs",
+        "export-import",
         "version-info",
     ];
 
@@ -6389,6 +6431,298 @@ window.editServer = editServer;
 window.runToolTest = runToolTest;
 window.closeModal = closeModal;
 window.testGateway = testGateway;
+
+// ===============================================
+// CONFIG EXPORT FUNCTIONALITY
+// ===============================================
+
+/**
+ * Global variables to store current config data
+ */
+let currentConfigData = null;
+let currentConfigType = null;
+let currentServerName = null;
+let currentServerId = null;
+
+/**
+ * Show the config selection modal
+ * @param {string} serverId - The server UUID
+ * @param {string} serverName - The server name
+ */
+function showConfigSelectionModal(serverId, serverName) {
+    currentServerId = serverId;
+    currentServerName = serverName;
+
+    const serverNameDisplay = safeGetElement("server-name-display");
+    if (serverNameDisplay) {
+        serverNameDisplay.textContent = serverName;
+    }
+
+    openModal("config-selection-modal");
+}
+
+/**
+ * Generate and show configuration for selected type
+ * @param {string} configType - Configuration type: 'stdio', 'sse', or 'http'
+ */
+async function generateAndShowConfig(configType) {
+    try {
+        console.log(
+            `Generating ${configType} config for server ${currentServerId}`,
+        );
+
+        // First, fetch the server details
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/servers/${currentServerId}`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const server = await response.json();
+
+        // Generate the configuration
+        const config = generateConfig(server, configType);
+
+        // Store data for modal
+        currentConfigData = config;
+        currentConfigType = configType;
+
+        // Close selection modal and show config display modal
+        closeModal("config-selection-modal");
+        showConfigDisplayModal(server, configType, config);
+
+        console.log("✓ Config generated successfully");
+    } catch (error) {
+        console.error("Error generating config:", error);
+        const errorMessage = handleFetchError(error, "generate configuration");
+        showErrorMessage(errorMessage);
+    }
+}
+
+/**
+ * Export server configuration in specified format
+ * @param {string} serverId - The server UUID
+ * @param {string} configType - Configuration type: 'stdio', 'sse', or 'http'
+ */
+async function exportServerConfig(serverId, configType) {
+    try {
+        console.log(`Exporting ${configType} config for server ${serverId}`);
+
+        // First, fetch the server details
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/servers/${serverId}`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const server = await response.json();
+
+        // Generate the configuration
+        const config = generateConfig(server, configType);
+
+        // Store data for modal
+        currentConfigData = config;
+        currentConfigType = configType;
+        currentServerName = server.name;
+
+        // Show the modal with the config
+        showConfigDisplayModal(server, configType, config);
+
+        console.log("✓ Config generated successfully");
+    } catch (error) {
+        console.error("Error generating config:", error);
+        const errorMessage = handleFetchError(error, "generate configuration");
+        showErrorMessage(errorMessage);
+    }
+}
+
+/**
+ * Generate configuration object based on server and type
+ * @param {Object} server - Server object from API
+ * @param {string} configType - Configuration type
+ * @returns {Object} - Generated configuration object
+ */
+function generateConfig(server, configType) {
+    const currentHost = window.location.hostname;
+    const currentPort =
+        window.location.port ||
+        (window.location.protocol === "https:" ? "443" : "80");
+    const protocol = window.location.protocol;
+    const baseUrl = `${protocol}//${currentHost}${currentPort !== "80" && currentPort !== "443" ? ":" + currentPort : ""}`;
+
+    // Clean server name for use as config key (alphanumeric and hyphens only)
+    const cleanServerName = server.name
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "");
+
+    switch (configType) {
+        case "stdio":
+            return {
+                mcpServers: {
+                    [cleanServerName]: {
+                        command: "python",
+                        args: ["-m", "mcpgateway.wrapper"],
+                        env: {
+                            MCP_AUTH_TOKEN: "your-token-here",
+                            MCP_SERVER_CATALOG_URLS: `${baseUrl}/servers/${server.id}`,
+                            MCP_TOOL_CALL_TIMEOUT: "120",
+                        },
+                    },
+                },
+            };
+
+        case "sse":
+            return {
+                mcpServers: {
+                    [cleanServerName]: {
+                        type: "sse",
+                        url: `${baseUrl}/servers/${server.id}/sse`,
+                        headers: {
+                            Authorization: "Bearer your-token-here",
+                        },
+                    },
+                },
+            };
+
+        case "http":
+            return {
+                mcpServers: {
+                    [cleanServerName]: {
+                        type: "http",
+                        url: `${baseUrl}/servers/${server.id}`,
+                        headers: {
+                            Authorization: "Bearer your-token-here",
+                        },
+                    },
+                },
+            };
+
+        default:
+            throw new Error(`Unknown config type: ${configType}`);
+    }
+}
+
+/**
+ * Show the config display modal with generated configuration
+ * @param {Object} server - Server object
+ * @param {string} configType - Configuration type
+ * @param {Object} config - Generated configuration
+ */
+function showConfigDisplayModal(server, configType, config) {
+    const descriptions = {
+        stdio: "Configuration for Claude Desktop, CLI tools, and stdio-based MCP clients",
+        sse: "Configuration for LangChain, LlamaIndex, and other SSE-based frameworks",
+        http: "Configuration for REST clients and HTTP-based MCP integrations",
+    };
+
+    const usageInstructions = {
+        stdio: "Save as .mcp.json in your user directory or use in Claude Desktop settings",
+        sse: "Use with MCP client libraries that support Server-Sent Events transport",
+        http: "Use with HTTP clients or REST API wrappers for MCP protocol",
+    };
+
+    // Update modal content
+    const descriptionEl = safeGetElement("config-description");
+    const usageEl = safeGetElement("config-usage");
+    const contentEl = safeGetElement("config-content");
+
+    if (descriptionEl) {
+        descriptionEl.textContent = `${descriptions[configType]} for server "${server.name}"`;
+    }
+
+    if (usageEl) {
+        usageEl.textContent = usageInstructions[configType];
+    }
+
+    if (contentEl) {
+        contentEl.value = JSON.stringify(config, null, 2);
+    }
+
+    // Update title and open the modal
+    const titleEl = safeGetElement("config-display-title");
+    if (titleEl) {
+        titleEl.textContent = `${configType.toUpperCase()} Configuration for ${server.name}`;
+    }
+    openModal("config-display-modal");
+}
+
+/**
+ * Copy configuration to clipboard
+ */
+async function copyConfigToClipboard() {
+    try {
+        const contentEl = safeGetElement("config-content");
+        if (!contentEl) {
+            throw new Error("Config content not found");
+        }
+
+        await navigator.clipboard.writeText(contentEl.value);
+        showSuccessMessage("Configuration copied to clipboard!");
+    } catch (error) {
+        console.error("Error copying to clipboard:", error);
+
+        // Fallback: select the text for manual copying
+        const contentEl = safeGetElement("config-content");
+        if (contentEl) {
+            contentEl.select();
+            contentEl.setSelectionRange(0, 99999); // For mobile devices
+            showErrorMessage("Please copy the selected text manually (Ctrl+C)");
+        } else {
+            showErrorMessage("Failed to copy configuration");
+        }
+    }
+}
+
+/**
+ * Download configuration as JSON file
+ */
+function downloadConfig() {
+    if (!currentConfigData || !currentConfigType || !currentServerName) {
+        showErrorMessage("No configuration data available");
+        return;
+    }
+
+    try {
+        const content = JSON.stringify(currentConfigData, null, 2);
+        const blob = new Blob([content], { type: "application/json" });
+        const url = window.URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${currentServerName}-${currentConfigType}-config.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+        showSuccessMessage(`Configuration downloaded as ${a.download}`);
+    } catch (error) {
+        console.error("Error downloading config:", error);
+        showErrorMessage("Failed to download configuration");
+    }
+}
+
+/**
+ * Go back to config selection modal
+ */
+function goBackToSelection() {
+    closeModal("config-display-modal");
+    openModal("config-selection-modal");
+}
+
+// Export functions to global scope immediately after definition
+window.showConfigSelectionModal = showConfigSelectionModal;
+window.generateAndShowConfig = generateAndShowConfig;
+window.exportServerConfig = exportServerConfig;
+window.copyConfigToClipboard = copyConfigToClipboard;
+window.downloadConfig = downloadConfig;
+window.goBackToSelection = goBackToSelection;
 
 // ===============================================
 // TAG FILTERING FUNCTIONALITY
@@ -6906,25 +7240,26 @@ window.loadAuthHeaders = loadAuthHeaders;
 
 console.log("🛡️ ContextForge MCP Gateway admin.js initialized");
 
-
 // ===================================================================
 // BULK IMPORT TOOLS — MODAL WIRING
 // ===================================================================
 
-(function initBulkImportModal() {
-  // ensure it runs after the DOM is ready
-  window.addEventListener("DOMContentLoaded", function () {
-    const openBtn  = safeGetElement("open-bulk-import", true);
-    const modalId  = "bulk-import-modal";
-    const modal    = safeGetElement(modalId, true);
+function setupBulkImportModal() {
+    const openBtn = safeGetElement("open-bulk-import", true);
+    const modalId = "bulk-import-modal";
+    const modal = safeGetElement(modalId, true);
 
     if (!openBtn || !modal) {
-      console.warn("Bulk Import modal wiring skipped (missing button or modal).");
-      return;
+        console.warn(
+            "Bulk Import modal wiring skipped (missing button or modal).",
+        );
+        return;
     }
 
     // avoid double-binding if admin.js gets evaluated more than once
-    if (openBtn.dataset.wired === "1") return;
+    if (openBtn.dataset.wired === "1") {
+        return;
+    }
     openBtn.dataset.wired = "1";
 
     const closeBtn = safeGetElement("close-bulk-import", true);
@@ -6932,54 +7267,824 @@ console.log("🛡️ ContextForge MCP Gateway admin.js initialized");
     const resultEl = safeGetElement("import-result", true);
 
     const focusTarget =
-      modal.querySelector("#tools_json") ||
-      modal.querySelector("#tools_file") ||
-      modal.querySelector("[data-autofocus]");
+        modal?.querySelector("#tools_json") ||
+        modal?.querySelector("#tools_file") ||
+        modal?.querySelector("[data-autofocus]");
 
     // helpers
     const open = (e) => {
-      if (e) e.preventDefault();
-      // clear previous results each time we open
-      if (resultEl) resultEl.innerHTML = "";
-      openModal(modalId);
-      // prevent background scroll
-      document.documentElement.classList.add("overflow-hidden");
-      document.body.classList.add("overflow-hidden");
-      if (focusTarget) setTimeout(() => focusTarget.focus(), 0);
-      return false;
+        if (e) {
+            e.preventDefault();
+        }
+        // clear previous results each time we open
+        if (resultEl) {
+            resultEl.innerHTML = "";
+        }
+        openModal(modalId);
+        // prevent background scroll
+        document.documentElement.classList.add("overflow-hidden");
+        document.body.classList.add("overflow-hidden");
+        if (focusTarget) {
+            setTimeout(() => focusTarget.focus(), 0);
+        }
+        return false;
     };
 
     const close = () => {
-      // also clear results on close to keep things tidy
-      closeModal(modalId, "import-result");
-      document.documentElement.classList.remove("overflow-hidden");
-      document.body.classList.remove("overflow-hidden");
+        // also clear results on close to keep things tidy
+        closeModal(modalId, "import-result");
+        document.documentElement.classList.remove("overflow-hidden");
+        document.body.classList.remove("overflow-hidden");
     };
 
     // wire events
     openBtn.addEventListener("click", open);
 
     if (closeBtn) {
-      closeBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        close();
-      });
+        closeBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            close();
+        });
     }
 
     // click on backdrop only (not the dialog content) closes the modal
     if (backdrop) {
-      backdrop.addEventListener("click", (e) => {
-        if (e.target === backdrop) close();
-      });
+        backdrop.addEventListener("click", (e) => {
+            if (e.target === backdrop) {
+                close();
+            }
+        });
     }
 
     // ESC to close
     modal.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        close();
-      }
+        if (e.key === "Escape") {
+            e.stopPropagation();
+            close();
+        }
     });
 
-  });
-})();
+    // FORM SUBMISSION → handle bulk import
+    const form = safeGetElement("bulk-import-form", true);
+    if (form) {
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const resultEl = safeGetElement("import-result", true);
+            const indicator = safeGetElement("bulk-import-indicator", true);
+
+            try {
+                const formData = new FormData();
+
+                // Get JSON from textarea or file
+                const jsonTextarea = form?.querySelector('[name="tools_json"]');
+                const fileInput = form?.querySelector('[name="tools_file"]');
+
+                let hasData = false;
+
+                // Check for file upload first (takes precedence)
+                if (fileInput && fileInput.files.length > 0) {
+                    formData.append("tools_file", fileInput.files[0]);
+                    hasData = true;
+                } else if (jsonTextarea && jsonTextarea.value.trim()) {
+                    // Validate JSON before sending
+                    try {
+                        const toolsData = JSON.parse(jsonTextarea.value);
+                        if (!Array.isArray(toolsData)) {
+                            throw new Error("JSON must be an array of tools");
+                        }
+                        formData.append("tools", jsonTextarea.value);
+                        hasData = true;
+                    } catch (err) {
+                        if (resultEl) {
+                            resultEl.innerHTML = `
+                                <div class="mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                    <p class="font-semibold">Invalid JSON</p>
+                                    <p class="text-sm mt-1">${escapeHtml(err.message)}</p>
+                                </div>
+                            `;
+                        }
+                        return;
+                    }
+                }
+
+                if (!hasData) {
+                    if (resultEl) {
+                        resultEl.innerHTML = `
+                            <div class="mt-2 p-3 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
+                                <p class="text-sm">Please provide JSON data or upload a file</p>
+                            </div>
+                        `;
+                    }
+                    return;
+                }
+
+                // Show loading state
+                if (indicator) {
+                    indicator.style.display = "flex";
+                }
+
+                // Submit to backend
+                const response = await fetchWithTimeout(
+                    `${window.ROOT_PATH}/admin/tools/import`,
+                    {
+                        method: "POST",
+                        body: formData,
+                    },
+                );
+
+                const result = await response.json();
+
+                // Display results
+                if (resultEl) {
+                    if (result.success) {
+                        resultEl.innerHTML = `
+                            <div class="mt-2 p-3 bg-green-100 border border-green-400 text-green-700 rounded">
+                                <p class="font-semibold">Import Successful</p>
+                                <p class="text-sm mt-1">${escapeHtml(result.message)}</p>
+                            </div>
+                        `;
+
+                        // Close modal and refresh page after delay
+                        setTimeout(() => {
+                            closeModal("bulk-import-modal");
+                            window.location.reload();
+                        }, 2000);
+                    } else if (result.imported > 0) {
+                        // Partial success
+                        let detailsHtml = "";
+                        if (result.details && result.details.failed) {
+                            detailsHtml =
+                                '<ul class="mt-2 text-sm list-disc list-inside">';
+                            result.details.failed.forEach((item) => {
+                                detailsHtml += `<li><strong>${escapeHtml(item.name)}:</strong> ${escapeHtml(item.error)}</li>`;
+                            });
+                            detailsHtml += "</ul>";
+                        }
+
+                        resultEl.innerHTML = `
+                            <div class="mt-2 p-3 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
+                                <p class="font-semibold">Partial Import</p>
+                                <p class="text-sm mt-1">${escapeHtml(result.message)}</p>
+                                ${detailsHtml}
+                            </div>
+                        `;
+                    } else {
+                        // Complete failure
+                        resultEl.innerHTML = `
+                            <div class="mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                <p class="font-semibold">Import Failed</p>
+                                <p class="text-sm mt-1">${escapeHtml(result.message)}</p>
+                            </div>
+                        `;
+                    }
+                }
+            } catch (error) {
+                console.error("Bulk import error:", error);
+                if (resultEl) {
+                    resultEl.innerHTML = `
+                        <div class="mt-2 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                            <p class="font-semibold">Import Error</p>
+                            <p class="text-sm mt-1">${escapeHtml(error.message || "An unexpected error occurred")}</p>
+                        </div>
+                    `;
+                }
+            } finally {
+                // Hide loading state
+                if (indicator) {
+                    indicator.style.display = "none";
+                }
+            }
+
+            return false;
+        });
+    }
+}
+
+// ===================================================================
+// EXPORT/IMPORT FUNCTIONALITY
+// ===================================================================
+
+/**
+ * Initialize export/import functionality
+ */
+function initializeExportImport() {
+    // Prevent double initialization
+    if (window.exportImportInitialized) {
+        console.log("🔄 Export/import already initialized, skipping");
+        return;
+    }
+
+    console.log("🔄 Initializing export/import functionality");
+
+    // Export button handlers
+    const exportAllBtn = document.getElementById("export-all-btn");
+    const exportSelectedBtn = document.getElementById("export-selected-btn");
+
+    if (exportAllBtn) {
+        exportAllBtn.addEventListener("click", handleExportAll);
+    }
+
+    if (exportSelectedBtn) {
+        exportSelectedBtn.addEventListener("click", handleExportSelected);
+    }
+
+    // Import functionality
+    const importDropZone = document.getElementById("import-drop-zone");
+    const importFileInput = document.getElementById("import-file-input");
+    const importValidateBtn = document.getElementById("import-validate-btn");
+    const importExecuteBtn = document.getElementById("import-execute-btn");
+
+    if (importDropZone && importFileInput) {
+        // File input handler
+        importDropZone.addEventListener("click", () => importFileInput.click());
+        importFileInput.addEventListener("change", handleFileSelect);
+
+        // Drag and drop handlers
+        importDropZone.addEventListener("dragover", handleDragOver);
+        importDropZone.addEventListener("drop", handleFileDrop);
+        importDropZone.addEventListener("dragleave", handleDragLeave);
+    }
+
+    if (importValidateBtn) {
+        importValidateBtn.addEventListener("click", () => handleImport(true));
+    }
+
+    if (importExecuteBtn) {
+        importExecuteBtn.addEventListener("click", () => handleImport(false));
+    }
+
+    // Load recent imports when tab is shown
+    loadRecentImports();
+
+    // Mark as initialized
+    window.exportImportInitialized = true;
+}
+
+/**
+ * Handle export all configuration
+ */
+async function handleExportAll() {
+    console.log("📤 Starting export all configuration");
+
+    try {
+        showExportProgress(true);
+
+        const options = getExportOptions();
+        const params = new URLSearchParams();
+
+        if (options.types.length > 0) {
+            params.append("types", options.types.join(","));
+        }
+        if (options.tags) {
+            params.append("tags", options.tags);
+        }
+        if (options.includeInactive) {
+            params.append("include_inactive", "true");
+        }
+        if (!options.includeDependencies) {
+            params.append("include_dependencies", "false");
+        }
+
+        const response = await fetch(`/admin/export/configuration?${params}`, {
+            method: "GET",
+            headers: {
+                Authorization: `Bearer ${getCookie("jwt_token")}`,
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`Export failed: ${response.statusText}`);
+        }
+
+        // Create download
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `mcpgateway-export-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        showNotification("✅ Export completed successfully!", "success");
+    } catch (error) {
+        console.error("Export error:", error);
+        showNotification(`❌ Export failed: ${error.message}`, "error");
+    } finally {
+        showExportProgress(false);
+    }
+}
+
+/**
+ * Handle export selected configuration
+ */
+async function handleExportSelected() {
+    console.log("📋 Starting selective export");
+
+    try {
+        showExportProgress(true);
+
+        // This would need entity selection logic - for now, just do a filtered export
+        await handleExportAll(); // Simplified implementation
+    } catch (error) {
+        console.error("Selective export error:", error);
+        showNotification(
+            `❌ Selective export failed: ${error.message}`,
+            "error",
+        );
+    } finally {
+        showExportProgress(false);
+    }
+}
+
+/**
+ * Get export options from form
+ */
+function getExportOptions() {
+    const types = [];
+
+    if (document.getElementById("export-tools")?.checked) {
+        types.push("tools");
+    }
+    if (document.getElementById("export-gateways")?.checked) {
+        types.push("gateways");
+    }
+    if (document.getElementById("export-servers")?.checked) {
+        types.push("servers");
+    }
+    if (document.getElementById("export-prompts")?.checked) {
+        types.push("prompts");
+    }
+    if (document.getElementById("export-resources")?.checked) {
+        types.push("resources");
+    }
+    if (document.getElementById("export-roots")?.checked) {
+        types.push("roots");
+    }
+
+    return {
+        types,
+        tags: document.getElementById("export-tags")?.value || "",
+        includeInactive:
+            document.getElementById("export-include-inactive")?.checked ||
+            false,
+        includeDependencies:
+            document.getElementById("export-include-dependencies")?.checked ||
+            true,
+    };
+}
+
+/**
+ * Show/hide export progress
+ */
+function showExportProgress(show) {
+    const progressEl = document.getElementById("export-progress");
+    if (progressEl) {
+        progressEl.classList.toggle("hidden", !show);
+        if (show) {
+            let progress = 0;
+            const progressBar = document.getElementById("export-progress-bar");
+            const interval = setInterval(() => {
+                progress += 10;
+                if (progressBar) {
+                    progressBar.style.width = `${Math.min(progress, 90)}%`;
+                }
+                if (progress >= 100) {
+                    clearInterval(interval);
+                }
+            }, 200);
+        }
+    }
+}
+
+/**
+ * Handle file selection for import
+ */
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (file) {
+        processImportFile(file);
+    }
+}
+
+/**
+ * Handle drag over for file drop
+ */
+function handleDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    event.currentTarget.classList.add(
+        "border-blue-500",
+        "bg-blue-50",
+        "dark:bg-blue-900",
+    );
+}
+
+/**
+ * Handle drag leave
+ */
+function handleDragLeave(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove(
+        "border-blue-500",
+        "bg-blue-50",
+        "dark:bg-blue-900",
+    );
+}
+
+/**
+ * Handle file drop
+ */
+function handleFileDrop(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove(
+        "border-blue-500",
+        "bg-blue-50",
+        "dark:bg-blue-900",
+    );
+
+    const files = event.dataTransfer.files;
+    if (files.length > 0) {
+        processImportFile(files[0]);
+    }
+}
+
+/**
+ * Process selected import file
+ */
+function processImportFile(file) {
+    console.log("📁 Processing import file:", file.name);
+
+    if (!file.type.includes("json")) {
+        showNotification("❌ Please select a JSON file", "error");
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        try {
+            const importData = JSON.parse(e.target.result);
+
+            // Validate basic structure
+            if (!importData.version || !importData.entities) {
+                throw new Error("Invalid import file format");
+            }
+
+            // Store import data and enable buttons
+            window.currentImportData = importData;
+
+            const validateBtn = document.getElementById("import-validate-btn");
+            const executeBtn = document.getElementById("import-execute-btn");
+
+            if (validateBtn) {
+                validateBtn.disabled = false;
+            }
+            if (executeBtn) {
+                executeBtn.disabled = false;
+            }
+
+            // Update drop zone to show file loaded
+            updateDropZoneStatus(file.name, importData);
+
+            showNotification(`✅ Import file loaded: ${file.name}`, "success");
+        } catch (error) {
+            console.error("File processing error:", error);
+            showNotification(`❌ Invalid JSON file: ${error.message}`, "error");
+        }
+    };
+
+    reader.readAsText(file);
+}
+
+/**
+ * Update drop zone to show loaded file
+ */
+function updateDropZoneStatus(fileName, importData) {
+    const dropZone = document.getElementById("import-drop-zone");
+    if (dropZone) {
+        const entityCounts = importData.metadata?.entity_counts || {};
+        const totalEntities = Object.values(entityCounts).reduce(
+            (sum, count) => sum + count,
+            0,
+        );
+
+        dropZone.innerHTML = `
+            <div class="space-y-2">
+                <svg class="mx-auto h-8 w-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <div class="text-sm text-gray-900 dark:text-white font-medium">
+                    📁 ${escapeHtml(fileName)}
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                    ${totalEntities} entities • Version ${escapeHtml(importData.version || "unknown")}
+                </div>
+                <button class="text-xs text-blue-600 dark:text-blue-400 hover:underline" onclick="resetImportFile()">
+                    Choose different file
+                </button>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Reset import file selection
+ */
+function resetImportFile() {
+    window.currentImportData = null;
+
+    const dropZone = document.getElementById("import-drop-zone");
+    if (dropZone) {
+        dropZone.innerHTML = `
+            <div class="space-y-2">
+                <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3-3m-3 3l3 3m-3-3V8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <div class="text-sm text-gray-600 dark:text-gray-300">
+                    <span class="font-medium text-blue-600 dark:text-blue-400">Click to upload</span>
+                    or drag and drop
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">JSON export files only</p>
+            </div>
+        `;
+    }
+
+    const validateBtn = document.getElementById("import-validate-btn");
+    const executeBtn = document.getElementById("import-execute-btn");
+
+    if (validateBtn) {
+        validateBtn.disabled = true;
+    }
+    if (executeBtn) {
+        executeBtn.disabled = true;
+    }
+
+    // Hide status section
+    const statusSection = document.getElementById("import-status-section");
+    if (statusSection) {
+        statusSection.classList.add("hidden");
+    }
+}
+
+/**
+ * Handle import (validate or execute)
+ */
+async function handleImport(dryRun = false) {
+    console.log(`🔄 Starting import (dry_run=${dryRun})`);
+
+    if (!window.currentImportData) {
+        showNotification("❌ Please select an import file first", "error");
+        return;
+    }
+
+    try {
+        showImportProgress(true);
+
+        const conflictStrategy =
+            document.getElementById("import-conflict-strategy")?.value ||
+            "update";
+        const rekeySecret =
+            document.getElementById("import-rekey-secret")?.value || null;
+
+        const requestData = {
+            import_data: window.currentImportData,
+            conflict_strategy: conflictStrategy,
+            dry_run: dryRun,
+            rekey_secret: rekeySecret,
+        };
+
+        const response = await fetch("/admin/import/configuration", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${getCookie("jwt_token")}`,
+            },
+            body: JSON.stringify(requestData),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(
+                errorData.detail || `Import failed: ${response.statusText}`,
+            );
+        }
+
+        const result = await response.json();
+        displayImportResults(result, dryRun);
+
+        if (!dryRun) {
+            // Refresh the current tab data if import was successful
+            refreshCurrentTabData();
+        }
+    } catch (error) {
+        console.error("Import error:", error);
+        showNotification(`❌ Import failed: ${error.message}`, "error");
+    } finally {
+        showImportProgress(false);
+    }
+}
+
+/**
+ * Display import results
+ */
+function displayImportResults(result, isDryRun) {
+    const statusSection = document.getElementById("import-status-section");
+    if (statusSection) {
+        statusSection.classList.remove("hidden");
+    }
+
+    const progress = result.progress || {};
+
+    // Update progress bars and counts
+    updateImportCounts(progress);
+
+    // Show messages
+    displayImportMessages(result.errors || [], result.warnings || [], isDryRun);
+
+    const action = isDryRun ? "validation" : "import";
+    const statusText = result.status || "completed";
+    showNotification(`✅ ${action} ${statusText}!`, "success");
+}
+
+/**
+ * Update import progress counts
+ */
+function updateImportCounts(progress) {
+    const total = progress.total || 0;
+    const processed = progress.processed || 0;
+    const created = progress.created || 0;
+    const updated = progress.updated || 0;
+    const failed = progress.failed || 0;
+
+    document.getElementById("import-total").textContent = total;
+    document.getElementById("import-created").textContent = created;
+    document.getElementById("import-updated").textContent = updated;
+    document.getElementById("import-failed").textContent = failed;
+
+    // Update progress bar
+    const progressBar = document.getElementById("import-progress-bar");
+    const progressText = document.getElementById("import-progress-text");
+
+    if (progressBar && progressText && total > 0) {
+        const percentage = Math.round((processed / total) * 100);
+        progressBar.style.width = `${percentage}%`;
+        progressText.textContent = `${percentage}%`;
+    }
+}
+
+/**
+ * Display import messages (errors and warnings)
+ */
+function displayImportMessages(errors, warnings, isDryRun) {
+    const messagesContainer = document.getElementById("import-messages");
+    if (!messagesContainer) {
+        return;
+    }
+
+    messagesContainer.innerHTML = "";
+
+    // Show errors
+    if (errors.length > 0) {
+        const errorDiv = document.createElement("div");
+        errorDiv.className =
+            "bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-600 text-red-700 dark:text-red-300 px-4 py-3 rounded";
+        errorDiv.innerHTML = `
+            <div class="font-bold">❌ Errors (${errors.length})</div>
+            <ul class="mt-2 text-sm list-disc list-inside">
+                ${errors
+                    .slice(0, 5)
+                    .map((error) => `<li>${escapeHtml(error)}</li>`)
+                    .join("")}
+                ${errors.length > 5 ? `<li class="text-gray-600 dark:text-gray-400">... and ${errors.length - 5} more errors</li>` : ""}
+            </ul>
+        `;
+        messagesContainer.appendChild(errorDiv);
+    }
+
+    // Show warnings
+    if (warnings.length > 0) {
+        const warningDiv = document.createElement("div");
+        warningDiv.className =
+            "bg-yellow-100 dark:bg-yellow-900 border border-yellow-400 dark:border-yellow-600 text-yellow-700 dark:text-yellow-300 px-4 py-3 rounded";
+        const warningTitle = isDryRun ? "🔍 Would Import" : "⚠️ Warnings";
+        warningDiv.innerHTML = `
+            <div class="font-bold">${warningTitle} (${warnings.length})</div>
+            <ul class="mt-2 text-sm list-disc list-inside">
+                ${warnings
+                    .slice(0, 5)
+                    .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+                    .join("")}
+                ${warnings.length > 5 ? `<li class="text-gray-600 dark:text-gray-400">... and ${warnings.length - 5} more warnings</li>` : ""}
+            </ul>
+        `;
+        messagesContainer.appendChild(warningDiv);
+    }
+}
+
+/**
+ * Show/hide import progress
+ */
+function showImportProgress(show) {
+    // Disable/enable buttons during operation
+    const validateBtn = document.getElementById("import-validate-btn");
+    const executeBtn = document.getElementById("import-execute-btn");
+
+    if (validateBtn) {
+        validateBtn.disabled = show;
+    }
+    if (executeBtn) {
+        executeBtn.disabled = show;
+    }
+}
+
+/**
+ * Load recent import operations
+ */
+async function loadRecentImports() {
+    try {
+        const response = await fetch("/admin/import/status", {
+            headers: {
+                Authorization: `Bearer ${getCookie("jwt_token")}`,
+            },
+        });
+
+        if (response.ok) {
+            const imports = await response.json();
+            console.log("Loaded recent imports:", imports.length);
+        }
+    } catch (error) {
+        console.error("Failed to load recent imports:", error);
+    }
+}
+
+/**
+ * Refresh current tab data after successful import
+ */
+function refreshCurrentTabData() {
+    // Find the currently active tab and refresh its data
+    const activeTab = document.querySelector(".tab-link.border-indigo-500");
+    if (activeTab) {
+        const href = activeTab.getAttribute("href");
+        if (href === "#catalog") {
+            // Refresh servers
+            if (typeof window.loadCatalog === "function") {
+                window.loadCatalog();
+            }
+        } else if (href === "#tools") {
+            // Refresh tools
+            if (typeof window.loadTools === "function") {
+                window.loadTools();
+            }
+        } else if (href === "#gateways") {
+            // Refresh gateways
+            if (typeof window.loadGateways === "function") {
+                window.loadGateways();
+            }
+        }
+        // Add other tab refresh logic as needed
+    }
+}
+
+/**
+ * Show notification (simple implementation)
+ */
+function showNotification(message, type = "info") {
+    console.log(`${type.toUpperCase()}: ${message}`);
+
+    // Create a simple toast notification
+    const toast = document.createElement("div");
+    toast.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-md text-sm font-medium max-w-sm ${
+        type === "success"
+            ? "bg-green-100 text-green-800 border border-green-400"
+            : type === "error"
+              ? "bg-red-100 text-red-800 border border-red-400"
+              : "bg-blue-100 text-blue-800 border border-blue-400"
+    }`;
+    toast.textContent = message;
+
+    document.body.appendChild(toast);
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (toast.parentNode) {
+            toast.parentNode.removeChild(toast);
+        }
+    }, 5000);
+}
+
+/**
+ * Utility function to get cookie value
+ */
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+        return parts.pop().split(";").shift();
+    }
+    return "";
+}
+
+// Expose functions used in dynamically generated HTML
+window.resetImportFile = resetImportFile;
