@@ -8,7 +8,7 @@ MCP Gateway provides comprehensive metadata tracking for all entities (Tools, Re
 
 Every entity in MCP Gateway now includes detailed metadata about:
 - **Who** created or modified the entity
-- **When** the operation occurred 
+- **When** the operation occurred
 - **From where** (IP address, user agent)
 - **How** it was created (UI, API, bulk import, federation)
 - **Source tracking** for federated entities and bulk operations
@@ -79,7 +79,7 @@ curl -H "Authorization: Bearer $TOKEN" \
   "createdFromIp": "192.168.1.100",
   "createdVia": "ui",
   "createdUserAgent": "Mozilla/5.0...",
-  "modifiedBy": "alice", 
+  "modifiedBy": "alice",
   "modifiedAt": "2024-01-16T14:22:00Z",
   "version": 3,
   "importBatchId": null,
@@ -136,7 +136,7 @@ Metadata tracking works seamlessly across all authentication modes:
 ```bash
 # Example: Anonymous creation
 {
-  "createdBy": "anonymous", 
+  "createdBy": "anonymous",
   "createdVia": "api",
   "createdFromIp": "192.168.1.100"
 }
@@ -157,7 +157,7 @@ Each entity maintains a version number that increments on modifications:
 # Initial creation
 POST /tools -> version: 1
 
-# First update  
+# First update
 PUT /tools/123 -> version: 2
 
 # Second update
@@ -253,7 +253,7 @@ For enhanced audit trails, optionally backfill known metadata:
 
 ```sql
 -- Backfill system-created entities
-UPDATE tools SET 
+UPDATE tools SET
     created_by = 'system',
     created_via = 'migration',
     version = 1
