@@ -125,8 +125,9 @@ def bootstrap(
         destination: The directory in which to bootstrap the plugin project.
         template_url: The URL to the plugins copier template.
         vcs_ref: The version control system tag/branch/commit to use for the template.
-        answers-file: The copier answers file that can be used to skip interactive mode.
+        answers_file: The copier answers file that can be used to skip interactive mode.
         defaults: Bootstrap with defaults.
+        dry_run: Run but do not make any changes.
     """
     run_copy(
         src_path=template_url,
