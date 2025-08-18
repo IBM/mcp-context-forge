@@ -99,13 +99,13 @@ Implemented a registry for known well-known URIs with metadata:
 WELL_KNOWN_REGISTRY = {
     "robots.txt": {
         "content_type": "text/plain",
-        "description": "Robot exclusion standard", 
+        "description": "Robot exclusion standard",
         "rfc": "RFC 9309"
     },
     "security.txt": {
         "content_type": "text/plain",
         "description": "Security contact information",
-        "rfc": "RFC 9116" 
+        "rfc": "RFC 9116"
     },
     # ... additional standard URIs
 }
