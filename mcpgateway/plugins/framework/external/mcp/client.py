@@ -32,7 +32,23 @@ from mcpgateway.plugins.framework.constants import (
     PYTHON,
     PYTHON_SUFFIX,
 )
-from mcpgateway.plugins.framework.models import HookType, PluginConfig, PluginContext, PromptPosthookPayload, PromptPosthookResult, PromptPrehookPayload, PromptPrehookResult
+from mcpgateway.plugins.framework.models import (
+    HookType,
+    PluginConfig,
+    PluginContext,
+    PromptPosthookPayload,
+    PromptPosthookResult,
+    PromptPrehookPayload,
+    PromptPrehookResult,
+    ResourcePostFetchPayload,
+    ResourcePostFetchResult,
+    ResourcePreFetchPayload,
+    ResourcePreFetchResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
+)
 from mcpgateway.schemas import TransportType
 
 logger = logging.getLogger(__name__)
@@ -161,6 +177,74 @@ class ExternalPlugin(Plugin):
             res = json.loads(content.text)
             return PromptPosthookResult.model_validate(res)
         return PromptPosthookResult(continue_processing=True)
+
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Plugin hook run before a tool is invoked.
+
+        Args:
+            payload: The tool payload to be analyzed.
+            context: contextual information about the hook call. Including why it was called.
+
+        Returns:
+            The tool prehook with name and arguments as modified or blocked by the plugin.
+        """
+
+        result = await self._session.call_tool(HookType.TOOL_PRE_INVOKE, {PLUGIN_NAME: self.name, PAYLOAD: payload, CONTEXT: context})
+        for content in result.content:
+            res = json.loads(content.text)
+            return ToolPreInvokeResult.model_validate(res)
+        return ToolPreInvokeResult(continue_processing=True)
+
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Plugin hook run after a tool is invoked.
+
+        Args:
+            payload: The tool payload to be analyzed.
+            context: contextual information about the hook call. Including why it was called.
+
+        Returns:
+            The tool posthook with name and arguments as modified or blocked by the plugin.
+        """
+
+        result = await self._session.call_tool(HookType.TOOL_POST_INVOKE, {PLUGIN_NAME: self.name, PAYLOAD: payload, CONTEXT: context})
+        for content in result.content:
+            res = json.loads(content.text)
+            return ToolPostInvokeResult.model_validate(res)
+        return ToolPostInvokeResult(continue_processing=True)
+
+    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
+        """Plugin hook run before a resource is fetched.
+
+        Args:
+            payload: The resource payload to be analyzed.
+            context: contextual information about the hook call. Including why it was called.
+
+        Returns:
+            The resource prehook with name and arguments as modified or blocked by the plugin.
+        """
+
+        result = await self._session.call_tool(HookType.RESOURCE_PRE_FETCH, {PLUGIN_NAME: self.name, PAYLOAD: payload, CONTEXT: context})
+        for content in result.content:
+            res = json.loads(content.text)
+            return ResourcePreFetchResult.model_validate(res)
+        return ResourcePreFetchResult(continue_processing=True)
+
+    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Plugin hook run after a resource is fetched.
+
+        Args:
+            payload: The resource payload to be analyzed.
+            context: contextual information about the hook call. Including why it was called.
+
+        Returns:
+            The resource posthook with name and arguments as modified or blocked by the plugin.
+        """
+
+        result = await self._session.call_tool(HookType.RESOURCE_POST_FETCH, {PLUGIN_NAME: self.name, PAYLOAD: payload, CONTEXT: context})
+        for content in result.content:
+            res = json.loads(content.text)
+            return ResourcePostFetchResult.model_validate(res)
+        return ResourcePostFetchResult(continue_processing=True)
 
     async def __get_plugin_config(self) -> PluginConfig | None:
         """Retrieve plugin configuration for the current plugin on the remote MCP server.

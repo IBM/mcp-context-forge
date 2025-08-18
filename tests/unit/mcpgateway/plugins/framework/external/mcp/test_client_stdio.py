@@ -13,8 +13,21 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework import ConfigLoader, PluginConfig, PluginLoader, PluginContext, PromptPrehookPayload, PromptPosthookPayload
+from mcpgateway.models import Message, PromptResult, ResourceContent, Role, TextContent
+from mcpgateway.plugins.framework import (
+    ConfigLoader,
+    GlobalContext,
+    PluginConfig,
+    PluginLoader,
+    PluginManager,
+    PluginContext,
+    PromptPrehookPayload,
+    PromptPosthookPayload,
+    ResourcePostFetchPayload,
+    ResourcePreFetchPayload,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
+)
 from plugins.regex_filter.search_replace import SearchReplaceConfig
 
 
@@ -143,3 +156,51 @@ async def test_client_get_plugin_configs():
     assert srconfig.words[0].search == "crap"
     assert srconfig.words[0].replace == "crud"
     assert len(all_configs) == 2
+
+@pytest.mark.asyncio
+async def test_hooks():
+    os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin_passthrough.yaml"
+    os.environ["PYTHONPATH"] = "."
+    pm = PluginManager()
+    if pm.initialized:
+        await pm.shutdown()
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin_passthrough.yaml")
+    await plugin_manager.initialize()
+    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is a crap argument"})
+    global_context = GlobalContext(request_id="1")
+    result, _ = await plugin_manager.prompt_pre_fetch(payload, global_context)
+    # Assert expected behaviors
+    assert result.continue_processing
+    """Test prompt post hook across all registered plugins."""
+    # Customize payload for testing
+    message = Message(content=TextContent(type="text", text="prompt"), role=Role.USER)
+    prompt_result = PromptResult(messages=[message])
+    payload = PromptPosthookPayload(name="test_prompt", result=prompt_result)
+    result, _ = await plugin_manager.prompt_post_fetch(payload, global_context)
+    # Assert expected behaviors
+    assert result.continue_processing
+    """Test tool pre hook across all registered plugins."""
+    # Customize payload for testing
+    payload = ToolPreInvokePayload(name="test_prompt", args={"arg0": "This is an argument"})
+    result, _ = await plugin_manager.tool_pre_invoke(payload, global_context)
+    # Assert expected behaviors
+    assert result.continue_processing
+    """Test tool post hook across all registered plugins."""
+    # Customize payload for testing
+    payload = ToolPostInvokePayload(name="test_tool", result={"output0": "output value"})
+    result, _ = await plugin_manager.tool_post_invoke(payload, global_context)
+    # Assert expected behaviors
+    assert result.continue_processing
+
+    payload = ResourcePreFetchPayload(uri="file:///data.txt")
+    result, _ = await plugin_manager.resource_pre_fetch(payload, global_context)
+    # Assert expected behaviors
+    assert result.continue_processing
+
+    content = ResourceContent(type="resource", uri="file:///data.txt",
+           text="Hello World")
+    payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
+    result, _ = await plugin_manager.resource_post_fetch(payload, global_context)
+    # Assert expected behaviors
+    assert result.continue_processing
+    await plugin_manager.shutdown()
