@@ -9,7 +9,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PromptPrehookPayload,
-    )
+)
 
 
 @pytest.mark.asyncio
@@ -19,7 +19,7 @@ async def test_{{plugin_name.lower().replace(' ', '_').replace('-', '_')}}():
         name="test",
         kind="{{plugin_name.lower().replace(' ', '_').replace('-', '_')}}.{{plugin_name}}",
         hooks=["prompt_pre_fetch"],
-        config={"setting_one": "test_value"}
+        config={"setting_one": "test_value"},
     )
 
     plugin = {{plugin_name}}(config)
