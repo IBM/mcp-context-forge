@@ -140,7 +140,7 @@ def bootstrap(
 
 
 @app.callback()
-def callback():
+def callback():  # pragma: no cover
     """This function exists to force 'bootstrap' to be a subcommand."""
     pass
 
