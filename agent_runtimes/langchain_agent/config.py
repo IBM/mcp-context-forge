@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 from functools import lru_cache
 from typing import Optional, List
@@ -15,7 +16,7 @@ def get_settings() -> AgentConfig:
     """Get application settings from environment variables"""
     return AgentConfig(
         mcp_gateway_url=os.getenv(
-            "MCP_GATEWAY_URL", 
+            "MCP_GATEWAY_URL",
             "http://localhost:4444"
         ),
         gateway_bearer_token=os.getenv("GATEWAY_BEARER_TOKEN"),
@@ -31,15 +32,15 @@ def validate_environment() -> dict:
     """Validate environment configuration and return status"""
     issues = []
     warnings = []
-    
+
     # Check required environment variables
     if not os.getenv("GATEWAY_BEARER_TOKEN"):
         warnings.append("GATEWAY_BEARER_TOKEN not set - authentication may fail")
-    
+
     # Check optional but recommended settings
     if not os.getenv("OPENAI_API_KEY"):
         issues.append("OPENAI_API_KEY not set - Langchain LLM will fail")
-    
+
     # Validate numeric settings
     try:
         max_iter = int(os.getenv("MAX_ITERATIONS", "10"))
@@ -47,14 +48,14 @@ def validate_environment() -> dict:
             warnings.append("MAX_ITERATIONS should be >= 1")
     except ValueError:
         warnings.append("MAX_ITERATIONS is not a valid integer")
-    
+
     try:
         temp = float(os.getenv("TEMPERATURE", "0.7"))
         if not 0.0 <= temp <= 2.0:
             warnings.append("TEMPERATURE should be between 0.0 and 2.0")
     except ValueError:
         warnings.append("TEMPERATURE is not a valid float")
-    
+
     return {
         "valid": len(issues) == 0,
         "issues": issues,

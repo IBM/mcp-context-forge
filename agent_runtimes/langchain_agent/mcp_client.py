@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -86,7 +87,7 @@ class MCPClient:
         2) RESTful invoke/execute variants under /tools and /admin/tools
         3) Batch invoke endpoints
         4) (fallback) Direct REST call to the tool's URL using metadata from /tools
-        
+
         Includes schema validation based on tool introspection.
         """
         # Best-effort: fetch catalog to find a human name for /rpc and resolve name to ID
@@ -150,7 +151,7 @@ class MCPClient:
                 r = self._client.request(method, url, headers=self._headers(), json=body)
                 if getattr(self, "debug", False):
                     print(f"[MCPClient] -> {r.status_code}, {r.text[:160]}")
-                
+
                 if r.status_code // 100 == 2:
                     response_data = r.json()
                     # Check if it's a JSON-RPC error response
@@ -158,7 +159,7 @@ class MCPClient:
                         last_err = f"JSON-RPC error: {response_data['error'].get('message', 'Unknown error')}"
                         continue  # Try next method instead of returning error
                     return response_data
-                    
+
                 if r.status_code in (401, 403):
                     return {"error": f"Auth failed at {path} (HTTP {r.status_code})."}
                 last_err = f"HTTP {r.status_code}"
@@ -170,16 +171,16 @@ class MCPClient:
             try:
                 # Handle different method types
                 method_type = (tool_meta.method or "GET").upper()
-                
+
                 # SSE is typically GET with streaming, treat as GET for direct calls
                 if method_type == "SSE":
                     method_type = "GET"
-                
+
                 headers = tool_meta.headers or {}
                 # Don't overwrite explicit Content-Type if provided in tool
                 if "Content-Type" not in {k.title(): v for k, v in headers.items()}:
                     headers.setdefault("Content-Type", "application/json")
-                
+
                 # Build request
                 if method_type in ("GET", "HEAD", "DELETE"):
                     # For GET requests, add args as query parameters
@@ -188,13 +189,13 @@ class MCPClient:
                     # For POST/PUT, send args as JSON body
                     payload = args.get("body", args) if isinstance(args, dict) else args
                     resp = self._client.request(method_type, tool_meta.url, json=payload, headers=headers)
-                
+
                 # Parse result
                 try:
                     data = resp.json()
                 except Exception:
                     data = resp.text
-                    
+
                 return {
                     "tool_id": actual_tool_id,
                     "executed_via": "direct_rest_fallback",
@@ -214,20 +215,20 @@ class MCPClient:
             # Basic schema validation
             if not isinstance(schema, dict):
                 return {"valid": True, "note": "Schema not a dict, skipping validation"}
-            
+
             schema_type = schema.get("type")
             if schema_type != "object":
                 return {"valid": True, "note": f"Schema type '{schema_type}' not object, skipping validation"}
-            
+
             properties = schema.get("properties", {})
             required = schema.get("required", [])
-            
+
             # Check required fields
             missing_required = []
             for req_field in required:
                 if req_field not in args:
                     missing_required.append(req_field)
-            
+
             if missing_required:
                 return {
                     "valid": False,
@@ -235,18 +236,18 @@ class MCPClient:
                     "required": required,
                     "provided": list(args.keys())
                 }
-            
+
             # Check for unexpected fields (warning only)
             unexpected_fields = []
             for arg_key in args.keys():
                 if arg_key not in properties:
                     unexpected_fields.append(arg_key)
-            
+
             result = {"valid": True}
             if unexpected_fields:
                 result["warnings"] = f"Unexpected fields (not in schema): {unexpected_fields}"
-            
+
             return result
-            
+
         except Exception as e:
             return {"valid": True, "note": f"Schema validation error: {e}"}

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,8 +11,8 @@ import asyncio
 import logging
 
 from .models import (
-    ChatCompletionRequest, 
-    ChatCompletionResponse, 
+    ChatCompletionRequest,
+    ChatCompletionResponse,
     ChatCompletionChoice,
     ChatMessage,
     Usage,
@@ -83,7 +84,7 @@ async def readiness_check():
         is_ready = await agent.check_readiness()
         if not is_ready:
             raise HTTPException(status_code=503, detail="Service not ready")
-        
+
         return ReadyResponse(
             ready=True,
             timestamp=datetime.utcnow().isoformat(),
@@ -138,10 +139,10 @@ async def chat_completions(request: ChatCompletionRequest):
 async def _complete_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
     """Handle non-streaming chat completion"""
     start_time = time.time()
-    
+
     # Convert messages to langchain format
     messages = [msg.dict() for msg in request.messages]
-    
+
     # Run the agent
     response = await agent.run_async(
         messages=messages,
@@ -150,12 +151,12 @@ async def _complete_chat(request: ChatCompletionRequest) -> ChatCompletionRespon
         temperature=request.temperature,
         tools_enabled=True
     )
-    
+
     # Calculate token usage (approximate)
     prompt_tokens = sum(len(msg.content.split()) for msg in request.messages if msg.content)
     completion_tokens = len(response.split()) if isinstance(response, str) else 0
     total_tokens = prompt_tokens + completion_tokens
-    
+
     # Create response
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
@@ -183,10 +184,10 @@ async def _stream_chat_completion(request: ChatCompletionRequest) -> AsyncGenera
     """Handle streaming chat completion"""
     start_time = time.time()
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    
+
     # Convert messages to langchain format
     messages = [msg.dict() for msg in request.messages]
-    
+
     # Stream the agent response
     async for chunk in agent.stream_async(
         messages=messages,
@@ -209,9 +210,9 @@ async def _stream_chat_completion(request: ChatCompletionRequest) -> AsyncGenera
                 }
             ]
         }
-        
+
         yield f"data: {json.dumps(stream_chunk)}\n\n"
-    
+
     # Send final chunk
     final_chunk = {
         "id": completion_id,
@@ -226,7 +227,7 @@ async def _stream_chat_completion(request: ChatCompletionRequest) -> AsyncGenera
             }
         ]
     }
-    
+
     yield f"data: {json.dumps(final_chunk)}\n\n"
     yield "data: [DONE]\n\n"
 
@@ -251,10 +252,10 @@ async def invoke_tool(request: Dict[str, Any]):
     try:
         tool_id = request.get("tool_id")
         args = request.get("args", {})
-        
+
         if not tool_id:
             raise HTTPException(status_code=400, detail="tool_id is required")
-        
+
         result = await agent.invoke_tool(tool_id, args)
         return {"result": result}
     except Exception as e:
@@ -270,9 +271,9 @@ async def agent_to_agent(request: Dict[str, Any]):
             params = request.get("params", {})
             tool_id = params.get("tool")
             args = params.get("args", {})
-            
+
             result = await agent.invoke_tool(tool_id, args)
-            
+
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
