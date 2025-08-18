@@ -209,9 +209,9 @@ Planned hooks (not yet implemented):
 ### Plugin Structure
 
 ```python
-from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.models import PluginConfig
-from mcpgateway.plugins.framework.plugin_types import (
+from mcpgateway.plugins.framework import (
+    Plugin,
+    PluginConfig,
     PluginContext,
     PromptPrehookPayload,
     PromptPrehookResult,
@@ -520,7 +520,7 @@ default_config:
 
 ```python
 # plugins/my_plugin/plugin.py
-from mcpgateway.plugins.framework.base import Plugin
+from mcpgateway.plugins.framework import Plugin
 
 class MyPlugin(Plugin):
     # Implementation here
@@ -544,7 +544,7 @@ plugins:
 # tests/test_my_plugin.py
 import pytest
 from plugins.my_plugin.plugin import MyPlugin
-from mcpgateway.plugins.framework.models import PluginConfig
+from mcpgateway.plugins.framework import PluginConfig
 
 @pytest.mark.asyncio
 async def test_my_plugin():
