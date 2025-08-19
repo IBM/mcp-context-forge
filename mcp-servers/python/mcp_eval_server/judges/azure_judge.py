@@ -20,6 +20,9 @@ class AzureOpenAIJudge(OpenAIJudge):
 
         Args:
             config: Configuration dictionary with Azure OpenAI settings
+
+        Raises:
+            ValueError: If API key or API base are not found in environment variables
         """
         # Initialize parent without calling parent's __init__ to avoid OpenAI client creation
         self.config = config

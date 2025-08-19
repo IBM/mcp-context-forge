@@ -2,7 +2,8 @@
 """MCP tools for calibration and meta-evaluation."""
 
 # Standard
-import random
+from collections import Counter
+import secrets
 import statistics
 from typing import Any, Dict, List, Optional
 
@@ -38,6 +39,9 @@ class CalibrationTools:
 
         Returns:
             Agreement analysis results
+
+        Raises:
+            ValueError: If fewer than 2 judges provided for agreement testing
         """
         if len(judge_models) < 2:
             raise ValueError("Need at least 2 judges for agreement testing")
@@ -76,7 +80,15 @@ class CalibrationTools:
         }
 
     async def _evaluate_test_cases(self, test_cases: List[Dict[str, Any]], judge_model: str) -> List[Dict[str, Any]]:
-        """Evaluate test cases with a specific judge."""
+        """Evaluate test cases with a specific judge.
+
+        Args:
+            test_cases: List of test cases to evaluate
+            judge_model: Model to use for evaluation
+
+        Returns:
+            List of evaluation results for each test case
+        """
 
         evaluations = []
 
@@ -97,7 +109,15 @@ class CalibrationTools:
         return evaluations
 
     def _calculate_inter_judge_agreement(self, judge_evaluations: Dict[str, List[Dict[str, Any]]], metric: str) -> Dict[str, Any]:
-        """Calculate agreement between judges."""
+        """Calculate agreement between judges.
+
+        Args:
+            judge_evaluations: Evaluations from different judges
+            metric: Correlation metric to use ('pearson', 'spearman', 'cohen_kappa')
+
+        Returns:
+            Dictionary containing agreement analysis results
+        """
 
         judge_names = list(judge_evaluations.keys())
         agreement_matrix = {}
@@ -148,7 +168,16 @@ class CalibrationTools:
         }
 
     def _calculate_human_judge_agreement(self, human_labels: Dict[str, Any], judge_evaluations: List[Dict[str, Any]], metric: str) -> Dict[str, Any]:
-        """Calculate agreement between human and judge evaluations."""
+        """Calculate agreement between human and judge evaluations.
+
+        Args:
+            human_labels: Ground truth human evaluation labels
+            judge_evaluations: Judge evaluation results
+            metric: Correlation metric to use
+
+        Returns:
+            Dictionary containing human-judge agreement analysis
+        """
 
         human_scores = []
         judge_scores = []
@@ -185,7 +214,15 @@ class CalibrationTools:
         }
 
     def _pearson_correlation(self, x: List[float], y: List[float]) -> float:
-        """Calculate Pearson correlation coefficient."""
+        """Calculate Pearson correlation coefficient.
+
+        Args:
+            x: First list of values
+            y: Second list of values
+
+        Returns:
+            Pearson correlation coefficient between -1 and 1
+        """
         if len(x) != len(y) or len(x) < 2:
             return 0.0
 
@@ -205,7 +242,15 @@ class CalibrationTools:
         return numerator / denominator
 
     def _spearman_correlation(self, x: List[float], y: List[float]) -> float:
-        """Calculate Spearman rank correlation coefficient."""
+        """Calculate Spearman rank correlation coefficient.
+
+        Args:
+            x: First list of values
+            y: Second list of values
+
+        Returns:
+            Spearman rank correlation coefficient between -1 and 1
+        """
         if len(x) != len(y) or len(x) < 2:
             return 0.0
 
@@ -223,7 +268,15 @@ class CalibrationTools:
         return self._pearson_correlation(rank_x, rank_y)
 
     def _cohen_kappa(self, x: List[float], y: List[float]) -> float:
-        """Calculate Cohen's kappa (simplified for continuous values)."""
+        """Calculate Cohen's kappa (simplified for continuous values).
+
+        Args:
+            x: First list of continuous values to compare.
+            y: Second list of continuous values to compare.
+
+        Returns:
+            float: Cohen's kappa coefficient between -1 and 1.
+        """
         if len(x) != len(y) or len(x) < 2:
             return 0.0
 
@@ -247,9 +300,6 @@ class CalibrationTools:
         po = agreements / len(cat_x)
 
         # Calculate expected agreement (simplified)
-        # Standard
-        from collections import Counter
-
         count_x = Counter(cat_x)
         count_y = Counter(cat_y)
 
@@ -263,7 +313,15 @@ class CalibrationTools:
         return (po - pe) / (1 - pe)
 
     def _analyze_judge_bias(self, judge_evaluations: Dict[str, List[Dict[str, Any]]], human_labels: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Analyze systematic bias patterns in judges."""
+        """Analyze systematic bias patterns in judges.
+
+        Args:
+            judge_evaluations: Dictionary of judge evaluation results by judge name.
+            human_labels: Optional ground truth human evaluation labels.
+
+        Returns:
+            Dict[str, Any]: Bias analysis for each judge including severity metrics.
+        """
 
         bias_analysis = {}
 
@@ -302,7 +360,15 @@ class CalibrationTools:
         return bias_analysis
 
     def _classify_bias_severity(self, severity_bias: float, range_restriction: float) -> str:
-        """Classify overall bias severity."""
+        """Classify overall bias severity.
+
+        Args:
+            severity_bias: Magnitude of severity bias (difference from expected mean).
+            range_restriction: Degree of range restriction (0-1 scale).
+
+        Returns:
+            str: Bias severity classification ('low', 'medium', or 'high').
+        """
 
         severity_magnitude = abs(severity_bias)
 
@@ -314,7 +380,14 @@ class CalibrationTools:
             return "low"
 
     def _calculate_reliability_metrics(self, judge_evaluations: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
-        """Calculate reliability metrics for judges."""
+        """Calculate reliability metrics for judges.
+
+        Args:
+            judge_evaluations: Dictionary of judge evaluation results by judge name.
+
+        Returns:
+            Dict[str, Any]: Reliability metrics for each judge including success rate and consistency.
+        """
 
         reliability_metrics = {}
 
@@ -333,7 +406,7 @@ class CalibrationTools:
             consistency = max(0.0, min(1.0, consistency))
 
             # Response time consistency (mock data)
-            response_times = [random.uniform(2.0, 8.0) for _ in successful_evals]
+            response_times = [secrets.SystemRandom().uniform(2.0, 8.0) for _ in successful_evals]
             time_consistency = 1.0 - (statistics.variance(response_times) / 100.0)
             time_consistency = max(0.0, min(1.0, time_consistency))
 
@@ -421,7 +494,15 @@ class CalibrationTools:
         }
 
     def _generate_rubric_variations(self, base_rubric: Dict[str, Any], iteration: int) -> List[Dict[str, Any]]:
-        """Generate variations of a rubric for optimization."""
+        """Generate variations of a rubric for optimization.
+
+        Args:
+            base_rubric: Base rubric to generate variations from.
+            iteration: Current optimization iteration number.
+
+        Returns:
+            List[Dict[str, Any]]: List of rubric variations to test.
+        """
 
         variations = []
 
@@ -442,7 +523,7 @@ class CalibrationTools:
             for criterion in variation_2["criteria"]:
                 # Slightly adjust weights
                 current_weight = criterion.get("weight", 1.0)
-                criterion["weight"] = max(0.1, min(2.0, current_weight * (0.8 + random.random() * 0.4)))
+                criterion["weight"] = max(0.1, min(2.0, current_weight * (0.8 + secrets.SystemRandom().random() * 0.4)))
         variations.append(variation_2)
 
         # Variation 3: Add new criteria or modify existing ones
@@ -456,7 +537,16 @@ class CalibrationTools:
         return variations
 
     async def _evaluate_rubric_performance(self, rubric: Dict[str, Any], human_labels: Dict[str, Any], optimization_target: str) -> float:
-        """Evaluate performance of a rubric."""
+        """Evaluate performance of a rubric.
+
+        Args:
+            rubric: Rubric definition to evaluate.
+            human_labels: Ground truth human evaluation labels.
+            optimization_target: Target metric for optimization ('agreement', 'consistency', 'bias').
+
+        Returns:
+            float: Performance score for the rubric between 0.0 and 1.0.
+        """
 
         # Simulate rubric performance (in real implementation, would test with judges)
         base_performance = 0.7
@@ -490,12 +580,20 @@ class CalibrationTools:
             performance = base_performance
 
         # Add some randomness
-        performance += random.uniform(-0.05, 0.05)
+        performance += secrets.SystemRandom().uniform(-0.05, 0.05)
 
         return max(0.0, min(1.0, performance))
 
     def _analyze_rubric_changes(self, original_rubric: Dict[str, Any], optimized_rubric: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze changes made during rubric optimization."""
+        """Analyze changes made during rubric optimization.
+
+        Args:
+            original_rubric: Original rubric before optimization.
+            optimized_rubric: Rubric after optimization.
+
+        Returns:
+            Dict[str, Any]: Analysis of changes including new criteria, weight changes, and scale changes.
+        """
 
         changes = {"criteria_changes": [], "scale_changes": [], "weight_changes": [], "new_criteria": [], "removed_criteria": []}
 
@@ -529,7 +627,16 @@ class CalibrationTools:
         return changes
 
     def _generate_agreement_recommendations(self, inter_judge_agreement: Dict[str, Any], human_judge_agreement: Dict[str, Any], bias_analysis: Dict[str, Any]) -> List[str]:
-        """Generate recommendations based on agreement analysis."""
+        """Generate recommendations based on agreement analysis.
+
+        Args:
+            inter_judge_agreement: Analysis of agreement between judges.
+            human_judge_agreement: Analysis of agreement between judges and humans.
+            bias_analysis: Analysis of systematic bias in judges.
+
+        Returns:
+            List[str]: List of recommendation messages.
+        """
 
         recommendations = []
 
@@ -555,7 +662,16 @@ class CalibrationTools:
         return recommendations
 
     def _generate_optimization_recommendations(self, performance_gain: Dict[str, Any], changes_made: Dict[str, Any], optimization_target: str) -> List[str]:
-        """Generate recommendations based on rubric optimization."""
+        """Generate recommendations based on rubric optimization.
+
+        Args:
+            performance_gain: Performance improvement metrics from optimization.
+            changes_made: Analysis of changes made during optimization.
+            optimization_target: Target metric that was optimized for.
+
+        Returns:
+            List[str]: List of recommendation messages.
+        """
 
         recommendations = []
 

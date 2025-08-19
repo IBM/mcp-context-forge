@@ -4,6 +4,7 @@
 # Standard
 import asyncio
 import os
+import statistics
 from typing import Any, Dict, List, Optional
 
 # Third-Party
@@ -33,7 +34,11 @@ class JudgeTools:
         self._load_judges()
 
     def _load_judges(self) -> None:
-        """Load all configured judge models."""
+        """Load all configured judge models from configuration file or defaults.
+
+        This method initializes OpenAI, Azure OpenAI, and rule-based judges
+        based on the configuration file or default settings if file is missing.
+        """
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
@@ -59,7 +64,11 @@ class JudgeTools:
         self.judges["rule-based"] = RuleBasedJudge({"model_name": "rule-based"})
 
     def _get_default_config(self) -> Dict[str, Any]:
-        """Get default configuration when config file is missing."""
+        """Get default configuration when config file is missing.
+
+        Returns:
+            Dict[str, Any]: Default configuration with OpenAI and Azure model settings.
+        """
         return {
             "models": {
                 "openai": {
@@ -83,7 +92,11 @@ class JudgeTools:
         }
 
     def get_available_judges(self) -> List[str]:
-        """Get list of available judge models."""
+        """Get list of available judge models.
+
+        Returns:
+            List[str]: List of available judge model names.
+        """
         return list(self.judges.keys())
 
     async def evaluate_response(
@@ -176,6 +189,9 @@ class JudgeTools:
 
         Returns:
             Ranking result as dict
+
+        Raises:
+            ValueError: If fewer than 2 responses provided for ranking.
         """
         if len(responses) < 2:
             raise ValueError("Need at least 2 responses to rank")
@@ -285,6 +301,9 @@ class JudgeTools:
 
         Returns:
             Aggregated evaluation results from multiple judges
+
+        Raises:
+            Exception: If all judge evaluations fail.
         """
         tasks = []
         for judge_model in judge_models:
@@ -314,9 +333,6 @@ class JudgeTools:
         overall_score = sum(consensus_scores.values()) / len(consensus_scores)
 
         # Calculate agreement (standard deviation)
-        # Standard
-        import statistics
-
         agreement_scores = {}
         for criterion_name in criteria_names:
             scores = [r["scores"].get(criterion_name, 0) for r in valid_results]
@@ -340,7 +356,17 @@ class JudgeTools:
         }
 
     def _get_judge_with_fallback(self, judge_model: str):
-        """Get judge with fallback to available alternatives."""
+        """Get judge with fallback to available alternatives.
+
+        Args:
+            judge_model: Name of the requested judge model.
+
+        Returns:
+            Judge instance, falling back to gpt-4, gpt-3.5-turbo, or rule-based if needed.
+
+        Raises:
+            ValueError: If no judges are available.
+        """
         if judge_model in self.judges:
             return self.judges[judge_model]
 
@@ -359,7 +385,15 @@ class JudgeTools:
         raise ValueError(f"No judges available. Requested: {judge_model}")
 
     def get_judge_info(self, judge_model: str) -> Dict[str, Any]:
-        """Get information about a judge model."""
+        """Get information about a judge model.
+
+        Args:
+            judge_model: Name of the judge model to get information for.
+
+        Returns:
+            Dict[str, Any]: Information about the judge including model name,
+                temperature, max tokens, provider, and availability.
+        """
         if judge_model not in self.judges:
             return {"error": f"Judge model {judge_model} not found"}
 

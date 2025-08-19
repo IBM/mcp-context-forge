@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 # Third-Party
 from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 import textstat
 
 # Local
@@ -44,7 +45,18 @@ class RuleBasedJudge(BaseJudge):
         context: Optional[str] = None,
         use_cot: bool = True,
     ) -> EvaluationResult:
-        """Evaluate response using rule-based metrics."""
+        """Evaluate response using rule-based metrics.
+
+        Args:
+            response: Text response to evaluate
+            criteria: List of evaluation criteria
+            rubric: Detailed scoring rubric
+            context: Optional context for evaluation
+            use_cot: Whether to use chain-of-thought reasoning (not used in rule-based)
+
+        Returns:
+            EvaluationResult with scores and reasoning for each criterion
+        """
 
         scores = {}
         reasoning = {}
@@ -65,7 +77,16 @@ class RuleBasedJudge(BaseJudge):
         )
 
     async def _evaluate_criterion(self, response: str, criterion: EvaluationCriteria, context: Optional[str] = None) -> tuple[float, str]:
-        """Evaluate a single criterion."""
+        """Evaluate a single criterion.
+
+        Args:
+            response: Text response to evaluate
+            criterion: Single evaluation criterion to assess
+            context: Optional context for evaluation
+
+        Returns:
+            Tuple of (score, reasoning) for the criterion
+        """
 
         criterion_name = criterion.name.lower()
 
@@ -88,7 +109,15 @@ class RuleBasedJudge(BaseJudge):
             return self._evaluate_basic_quality(response, criterion)
 
     def _evaluate_length(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
-        """Evaluate response length."""
+        """Evaluate response length.
+
+        Args:
+            response: Text response to evaluate
+            criterion: Length evaluation criterion
+
+        Returns:
+            Tuple of (score, reasoning) for length evaluation
+        """
         word_count = len(response.split())
         char_count = len(response)
 
@@ -106,7 +135,15 @@ class RuleBasedJudge(BaseJudge):
         return score, reason
 
     def _evaluate_readability(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
-        """Evaluate readability using Flesch reading ease."""
+        """Evaluate readability using Flesch reading ease.
+
+        Args:
+            response: Text response to evaluate
+            criterion: Readability evaluation criterion
+
+        Returns:
+            Tuple of (score, reasoning) for readability evaluation
+        """
         try:
             flesch_score = textstat.flesch_reading_ease(response)
 
@@ -136,7 +173,15 @@ class RuleBasedJudge(BaseJudge):
             return 3.0, f"Could not calculate readability: {str(e)}"
 
     def _evaluate_grammar_spelling(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
-        """Basic grammar and spelling evaluation."""
+        """Basic grammar and spelling evaluation.
+
+        Args:
+            response: Text response to evaluate
+            criterion: Grammar/spelling evaluation criterion
+
+        Returns:
+            Tuple of (score, reasoning) for grammar and spelling evaluation
+        """
 
         issues = []
 
@@ -176,7 +221,15 @@ class RuleBasedJudge(BaseJudge):
         return score, reason
 
     def _evaluate_structure(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
-        """Evaluate response structure and formatting."""
+        """Evaluate response structure and formatting.
+
+        Args:
+            response: Text response to evaluate
+            criterion: Structure evaluation criterion
+
+        Returns:
+            Tuple of (score, reasoning) for structure evaluation
+        """
 
         structure_score = 0
         reasons = []
@@ -215,7 +268,16 @@ class RuleBasedJudge(BaseJudge):
         return score, reason
 
     def _evaluate_keywords(self, response: str, criterion: EvaluationCriteria, context: Optional[str] = None) -> tuple[float, str]:
-        """Evaluate presence of relevant keywords."""
+        """Evaluate presence of relevant keywords.
+
+        Args:
+            response: Text response to evaluate
+            criterion: Keyword evaluation criterion
+            context: Optional context containing relevant keywords
+
+        Returns:
+            Tuple of (score, reasoning) for keyword evaluation
+        """
 
         if not context:
             return 3.0, "No context provided for keyword evaluation"
@@ -242,7 +304,15 @@ class RuleBasedJudge(BaseJudge):
         return score, f"Keyword overlap: {overlap}/{total_context_keywords} ({overlap_ratio:.1%})"
 
     def _evaluate_sentiment(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
-        """Basic sentiment evaluation."""
+        """Basic sentiment evaluation.
+
+        Args:
+            response: Text response to evaluate
+            criterion: Sentiment evaluation criterion
+
+        Returns:
+            Tuple of (score, reasoning) for sentiment evaluation
+        """
 
         # Simple word-based sentiment analysis
         positive_words = {"good", "great", "excellent", "wonderful", "amazing", "fantastic", "helpful", "useful", "beneficial"}
@@ -265,7 +335,16 @@ class RuleBasedJudge(BaseJudge):
         return score, f"Sentiment: {sentiment} (+{positive_count}/-{negative_count})"
 
     def _evaluate_completeness(self, response: str, criterion: EvaluationCriteria, context: Optional[str] = None) -> tuple[float, str]:
-        """Evaluate response completeness."""
+        """Evaluate response completeness.
+
+        Args:
+            response: Text response to evaluate
+            criterion: Completeness evaluation criterion
+            context: Optional context for evaluation
+
+        Returns:
+            Tuple of (score, reasoning) for completeness evaluation
+        """
 
         # Basic completeness metrics
         word_count = len(response.split())
@@ -301,7 +380,15 @@ class RuleBasedJudge(BaseJudge):
         return score, reason
 
     def _evaluate_basic_quality(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
-        """Basic quality evaluation combining multiple factors."""
+        """Basic quality evaluation combining multiple factors.
+
+        Args:
+            response: Text response to evaluate
+            criterion: Quality evaluation criterion
+
+        Returns:
+            Tuple of (score, reasoning) for basic quality evaluation
+        """
 
         # Combine length, readability, and structure
         length_score, _ = self._evaluate_length(response, criterion)
@@ -320,7 +407,18 @@ class RuleBasedJudge(BaseJudge):
         context: Optional[str] = None,
         position_bias_mitigation: bool = True,
     ) -> PairwiseResult:
-        """Compare two responses using rule-based metrics."""
+        """Compare two responses using rule-based metrics.
+
+        Args:
+            response_a: First response to compare
+            response_b: Second response to compare
+            criteria: List of evaluation criteria
+            context: Optional context for evaluation
+            position_bias_mitigation: Whether to mitigate position bias (not used in rule-based)
+
+        Returns:
+            PairwiseResult indicating which response is better
+        """
 
         # Evaluate both responses
         rubric = EvaluationRubric(criteria=criteria)
@@ -362,7 +460,17 @@ class RuleBasedJudge(BaseJudge):
         context: Optional[str] = None,
         ranking_method: str = "scoring",
     ) -> RankingResult:
-        """Rank responses using rule-based scoring."""
+        """Rank responses using rule-based scoring.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: List of evaluation criteria
+            context: Optional context for evaluation
+            ranking_method: Method for ranking (only "scoring" supported)
+
+        Returns:
+            RankingResult with responses ranked by rule-based scores
+        """
 
         rubric = EvaluationRubric(criteria=criteria)
 
@@ -388,16 +496,23 @@ class RuleBasedJudge(BaseJudge):
         evaluation_type: str = "factuality",
         tolerance: str = "moderate",
     ) -> ReferenceEvaluationResult:
-        """Evaluate response against reference using rule-based metrics."""
+        """Evaluate response against reference using rule-based metrics.
+
+        Args:
+            response: Response text to evaluate
+            reference: Reference text to compare against
+            evaluation_type: Type of evaluation ("factuality", "completeness", etc.)
+            tolerance: Tolerance level for evaluation
+
+        Returns:
+            ReferenceEvaluationResult with similarity score and analysis
+        """
 
         # Semantic similarity using sentence embeddings
         response_embedding = self.embedding_model.encode([response])
         reference_embedding = self.embedding_model.encode([reference])
 
         # Calculate cosine similarity
-        # Third-Party
-        from sklearn.metrics.pairwise import cosine_similarity
-
         similarity = cosine_similarity(response_embedding, reference_embedding)[0][0]
 
         # Basic keyword overlap

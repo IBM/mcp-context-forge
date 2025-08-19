@@ -7,6 +7,7 @@ import statistics
 from typing import Any, Dict, List, Optional
 
 # Local
+from ..judges.rule_judge import RuleBasedJudge
 from .judge_tools import JudgeTools
 
 
@@ -82,7 +83,14 @@ class PromptTools:
         }
 
     def _analyze_clarity_rules(self, prompt_text: str) -> Dict[str, Any]:
-        """Analyze prompt clarity using rule-based metrics."""
+        """Analyze prompt clarity using rule-based metrics.
+
+        Args:
+            prompt_text: The prompt text to analyze for clarity issues.
+
+        Returns:
+            Dict[str, Any]: Clarity analysis including score, ambiguity points, and metrics.
+        """
         clarity_score = 5.0
         ambiguity_points = []
 
@@ -194,7 +202,16 @@ class PromptTools:
         }
 
     async def _analyze_consistency(self, all_outputs: List[str], consistency_data: Dict[str, List[str]], judge_model: str) -> Dict[str, Any]:  # pylint: disable=unused-argument
-        """Analyze consistency of outputs."""
+        """Analyze consistency of outputs.
+
+        Args:
+            all_outputs: List of all generated outputs to analyze.
+            consistency_data: Organized output data by input and temperature.
+            judge_model: Judge model for evaluation (currently unused).
+
+        Returns:
+            Dict[str, Any]: Consistency analysis with scores, variance, and outlier detection.
+        """
 
         # Basic length consistency
         lengths = [len(output) for output in all_outputs]
@@ -317,9 +334,6 @@ class PromptTools:
             Relevance assessment result
         """
         # Use rule-based judge for semantic similarity
-        # Local
-        from ..judges.rule_judge import RuleBasedJudge
-
         rule_judge = RuleBasedJudge({"embedding_model": embedding_model})
 
         relevance_scores = []
@@ -378,7 +392,15 @@ class PromptTools:
         }
 
     def _generate_clarity_recommendations(self, rule_metrics: Dict[str, Any], llm_evaluation: Dict[str, Any]) -> List[str]:
-        """Generate recommendations for improving prompt clarity."""
+        """Generate recommendations for improving prompt clarity.
+
+        Args:
+            rule_metrics: Rule-based clarity analysis results.
+            llm_evaluation: LLM-based evaluation results.
+
+        Returns:
+            List[str]: List of recommendation messages for clarity improvement.
+        """
         recommendations = []
 
         if rule_metrics["clarity_score"] < 3.0:
@@ -401,7 +423,15 @@ class PromptTools:
         return recommendations
 
     def _generate_completeness_recommendations(self, missing_components: List[str], component_scores: Dict[str, float]) -> List[str]:
-        """Generate recommendations for improving prompt completeness."""
+        """Generate recommendations for improving prompt completeness.
+
+        Args:
+            missing_components: List of components that are frequently missing.
+            component_scores: Coverage scores for each expected component.
+
+        Returns:
+            List[str]: List of recommendation messages for completeness improvement.
+        """
         recommendations = []
 
         if missing_components:
@@ -417,7 +447,16 @@ class PromptTools:
         return recommendations
 
     def _generate_relevance_recommendations(self, avg_relevance: float, semantic_drift: float, on_topic_percentage: float) -> List[str]:
-        """Generate recommendations for improving prompt relevance."""
+        """Generate recommendations for improving prompt relevance.
+
+        Args:
+            avg_relevance: Average relevance score across all outputs.
+            semantic_drift: Measure of variability in semantic relevance.
+            on_topic_percentage: Percentage of outputs that meet relevance threshold.
+
+        Returns:
+            List[str]: List of recommendation messages for relevance improvement.
+        """
         recommendations = []
 
         if avg_relevance < 0.6:

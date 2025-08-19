@@ -2,6 +2,8 @@
 """MCP tools for agent evaluation."""
 
 # Standard
+import re
+import secrets
 import statistics
 from typing import Any, Dict, List, Optional
 
@@ -105,7 +107,14 @@ class AgentTools:
         }
 
     def _extract_tool_calls(self, agent_trace: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract tool calls from agent execution trace."""
+        """Extract tool calls from agent execution trace.
+
+        Args:
+            agent_trace: Complete execution trace with tool calls
+
+        Returns:
+            List of formatted tool call dictionaries
+        """
         tool_calls = []
 
         # Handle different trace formats
@@ -140,7 +149,15 @@ class AgentTools:
         return formatted_calls
 
     def _evaluate_tool_sequence(self, used_tools: List[str], expected_tools: List[str]) -> float:
-        """Evaluate correctness of tool usage sequence."""
+        """Evaluate correctness of tool usage sequence.
+
+        Args:
+            used_tools: List of tools used by the agent
+            expected_tools: Expected sequence of tools
+
+        Returns:
+            Float score between 0.0 and 1.0 for sequence accuracy
+        """
         if not expected_tools or len(expected_tools) <= 1:
             return 1.0
 
@@ -164,7 +181,15 @@ class AgentTools:
         return sequence_score
 
     def _evaluate_tool_efficiency(self, tool_calls: List[Dict[str, Any]], expected_tools: List[str]) -> float:
-        """Evaluate efficiency of tool usage."""
+        """Evaluate efficiency of tool usage.
+
+        Args:
+            tool_calls: List of tool call dictionaries
+            expected_tools: Expected tools that should be used
+
+        Returns:
+            Float score between 0.0 and 1.0 for tool usage efficiency
+        """
         if not tool_calls:
             return 0.0
 
@@ -188,7 +213,15 @@ class AgentTools:
         return min(1.0, efficiency_score)
 
     async def _evaluate_parameters(self, tool_calls: List[Dict[str, Any]], judge_model: str) -> float:  # pylint: disable=unused-argument
-        """Evaluate correctness of tool parameters."""
+        """Evaluate correctness of tool parameters.
+
+        Args:
+            tool_calls: List of tool call dictionaries with parameters
+            judge_model: Judge model for evaluation (currently unused)
+
+        Returns:
+            Float score between 0.0 and 1.0 for parameter correctness
+        """
         if not tool_calls:
             return 1.0
 
@@ -197,7 +230,6 @@ class AgentTools:
 
         for call in tool_calls:
             parameters = call.get("parameters", {})
-            _tool_name = call.get("tool_name", "unknown")  # Store for future use
 
             # Basic parameter validation
             param_score = 1.0
@@ -220,7 +252,14 @@ class AgentTools:
         return total_score / evaluated_calls if evaluated_calls > 0 else 1.0
 
     def _analyze_error_handling(self, agent_trace: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze agent's error handling capabilities."""
+        """Analyze agent's error handling capabilities.
+
+        Args:
+            agent_trace: Complete execution trace containing error information.
+
+        Returns:
+            Dict[str, Any]: Error handling analysis including score, recovery rate, and details.
+        """
         error_events = []
         recovery_attempts = []
 
@@ -316,7 +355,17 @@ class AgentTools:
         }
 
     async def _evaluate_success_criterion(self, criterion: Dict[str, Any], agent_trace: Dict[str, Any], final_state: Optional[Dict[str, Any]], judge_model: str) -> Dict[str, Any]:
-        """Evaluate a single success criterion."""
+        """Evaluate a single success criterion.
+
+        Args:
+            criterion: Success criterion definition with type, name, weight, and threshold.
+            agent_trace: Complete execution trace.
+            final_state: Optional final system state after execution.
+            judge_model: Judge model for evaluation.
+
+        Returns:
+            Dict[str, Any]: Criterion evaluation result with score, met status, and details.
+        """
 
         criterion_type = criterion.get("type", "output_check")
         criterion_name = criterion.get("name", "unnamed")
@@ -334,7 +383,16 @@ class AgentTools:
         return {"name": criterion_name, "type": criterion_type, "score": score, "met": met, "weight": weight, "details": criterion.get("details", ""), "threshold": criterion.get("threshold", 0.8)}
 
     async def _check_output_criterion(self, criterion: Dict[str, Any], agent_trace: Dict[str, Any], judge_model: str) -> tuple[float, bool]:
-        """Check output-based success criterion."""
+        """Check output-based success criterion.
+
+        Args:
+            criterion: Output criterion definition with expected output and threshold.
+            agent_trace: Complete execution trace containing final output.
+            judge_model: Judge model for output comparison.
+
+        Returns:
+            tuple[float, bool]: Score and whether criterion was met.
+        """
 
         expected_output = criterion.get("expected_output", "")
         threshold = criterion.get("threshold", 0.8)
@@ -358,7 +416,15 @@ class AgentTools:
         return score, met
 
     def _check_state_criterion(self, criterion: Dict[str, Any], final_state: Optional[Dict[str, Any]]) -> tuple[float, bool]:
-        """Check state-based success criterion."""
+        """Check state-based success criterion.
+
+        Args:
+            criterion: State criterion definition with expected state and threshold.
+            final_state: Optional final system state after execution.
+
+        Returns:
+            tuple[float, bool]: Score and whether criterion was met.
+        """
 
         if not final_state:
             return 0.0, False
@@ -385,7 +451,15 @@ class AgentTools:
         return score, met
 
     def _check_process_criterion(self, criterion: Dict[str, Any], agent_trace: Dict[str, Any]) -> tuple[float, bool]:
-        """Check process-based success criterion."""
+        """Check process-based success criterion.
+
+        Args:
+            criterion: Process criterion definition with required actions and threshold.
+            agent_trace: Complete execution trace containing actions.
+
+        Returns:
+            tuple[float, bool]: Score and whether criterion was met.
+        """
 
         required_actions = criterion.get("required_actions", [])
         threshold = criterion.get("threshold", 0.8)
@@ -411,7 +485,15 @@ class AgentTools:
         return score, met
 
     def _action_matches(self, action: Dict[str, Any], required: Dict[str, Any]) -> bool:
-        """Check if action matches required action pattern."""
+        """Check if action matches required action pattern.
+
+        Args:
+            action: Actual action performed by the agent.
+            required: Required action pattern to match against.
+
+        Returns:
+            bool: True if action matches the required pattern, False otherwise.
+        """
 
         action_type = action.get("type", action.get("action_type", ""))
         required_type = required.get("type", required.get("action_type", ""))
@@ -470,7 +552,15 @@ class AgentTools:
         }
 
     async def _evaluate_reasoning_quality(self, reasoning_trace: List[Dict[str, Any]], judge_model: str) -> float:
-        """Evaluate quality of reasoning using LLM judge."""
+        """Evaluate quality of reasoning using LLM judge.
+
+        Args:
+            reasoning_trace: List of reasoning steps with thoughts and rationale.
+            judge_model: Judge model for evaluation.
+
+        Returns:
+            float: Reasoning quality score between 0.0 and 1.0.
+        """
 
         if not reasoning_trace:
             return 0.0
@@ -496,7 +586,15 @@ class AgentTools:
         return result["overall_score"] / 5.0  # Normalize to 0-1
 
     def _evaluate_decision_accuracy(self, decision_points: List[Dict[str, Any]], optimal_path: Optional[List[str]] = None) -> float:
-        """Evaluate accuracy of decisions made."""
+        """Evaluate accuracy of decisions made.
+
+        Args:
+            decision_points: List of key decision points made by the agent.
+            optimal_path: Optional list of optimal decisions for comparison.
+
+        Returns:
+            float: Decision accuracy score between 0.0 and 1.0.
+        """
 
         if not decision_points:
             return 1.0
@@ -518,7 +616,15 @@ class AgentTools:
         return matching_decisions / len(decision_points)
 
     def _evaluate_reasoning_efficiency(self, reasoning_trace: List[Dict[str, Any]], optimal_path: Optional[List[str]] = None) -> float:
-        """Evaluate efficiency of reasoning process."""
+        """Evaluate efficiency of reasoning process.
+
+        Args:
+            reasoning_trace: List of reasoning steps taken by the agent.
+            optimal_path: Optional list of optimal reasoning steps for comparison.
+
+        Returns:
+            float: Reasoning efficiency score between 0.0 and 1.0.
+        """
 
         if not reasoning_trace:
             return 1.0
@@ -544,7 +650,16 @@ class AgentTools:
         return efficiency
 
     async def _detect_hallucinations(self, reasoning_trace: List[Dict[str, Any]], context: Dict[str, Any], judge_model: str) -> Dict[str, Any]:  # pylint: disable=unused-argument
-        """Detect hallucinations in reasoning."""
+        """Detect hallucinations in reasoning.
+
+        Args:
+            reasoning_trace: List of reasoning steps to analyze for hallucinations.
+            context: Available context information to check claims against.
+            judge_model: Judge model to use for hallucination detection.
+
+        Returns:
+            Dict[str, Any]: Hallucination analysis including rate, claims, and severity.
+        """
 
         hallucinations = []
         total_claims = 0
@@ -554,8 +669,6 @@ class AgentTools:
 
             # Simple pattern matching for factual claims
             # Standard
-            import re
-
             claims = re.findall(r"(.*(?:is|are|was|were|will be|has|have).+?[.!?])", reasoning_text)
             total_claims += len(claims)
 
@@ -574,7 +687,15 @@ class AgentTools:
         }
 
     def _claim_supported_by_context(self, claim: str, context: Dict[str, Any]) -> bool:
-        """Check if claim is supported by available context (simplified)."""
+        """Check if claim is supported by available context (simplified).
+
+        Args:
+            claim: Text claim to verify against context.
+            context: Available context information.
+
+        Returns:
+            bool: True if claim is supported by context, False otherwise.
+        """
 
         claim_lower = claim.lower()
         context_text = " ".join(str(v) for v in context.values()).lower()
@@ -589,7 +710,17 @@ class AgentTools:
         return support_ratio > 0.3  # At least 30% word overlap
 
     def _generate_tool_recommendations(self, missing_tools: set, extra_tools: set, efficiency_score: float, parameter_accuracy: float) -> List[str]:
-        """Generate recommendations for tool usage improvement."""
+        """Generate recommendations for tool usage improvement.
+
+        Args:
+            missing_tools: Set of tools that should have been used but weren't.
+            extra_tools: Set of tools that were used but weren't necessary.
+            efficiency_score: Tool usage efficiency score.
+            parameter_accuracy: Parameter correctness score.
+
+        Returns:
+            List[str]: List of recommendation messages.
+        """
         recommendations = []
 
         if missing_tools:
@@ -607,7 +738,15 @@ class AgentTools:
         return recommendations
 
     def _generate_completion_recommendations(self, failed_criteria: List[Dict[str, Any]], completion_rate: float) -> List[str]:
-        """Generate recommendations for task completion improvement."""
+        """Generate recommendations for task completion improvement.
+
+        Args:
+            failed_criteria: List of criteria that were not met.
+            completion_rate: Overall task completion rate.
+
+        Returns:
+            List[str]: List of recommendation messages.
+        """
         recommendations = []
 
         if completion_rate < 0.5:
@@ -624,7 +763,17 @@ class AgentTools:
         return recommendations
 
     def _generate_reasoning_recommendations(self, reasoning_quality: float, decision_accuracy: float, efficiency: float, hallucination_analysis: Dict[str, Any]) -> List[str]:
-        """Generate recommendations for reasoning improvement."""
+        """Generate recommendations for reasoning improvement.
+
+        Args:
+            reasoning_quality: Quality score of the reasoning process.
+            decision_accuracy: Accuracy score of decisions made.
+            efficiency: Efficiency score of the reasoning process.
+            hallucination_analysis: Analysis of hallucinations in reasoning.
+
+        Returns:
+            List[str]: List of recommendation messages.
+        """
         recommendations = []
 
         if reasoning_quality < 0.6:
@@ -703,7 +852,14 @@ class AgentTools:
         }
 
     def _get_benchmark_tasks(self, suite: str) -> List[Dict[str, Any]]:
-        """Get benchmark tasks for specified suite."""
+        """Get benchmark tasks for specified suite.
+
+        Args:
+            suite: Name of the benchmark suite (basic, intermediate, advanced).
+
+        Returns:
+            List[Dict[str, Any]]: List of benchmark task definitions.
+        """
 
         task_suites = {
             "basic": [
@@ -723,35 +879,48 @@ class AgentTools:
         return task_suites.get(suite, task_suites["basic"])
 
     async def _run_benchmark_task(self, task: Dict[str, Any], agent_config: Dict[str, Any]) -> Dict[str, Any]:  # pylint: disable=unused-argument
-        """Run a single benchmark task."""
+        """Run a single benchmark task.
+
+        Args:
+            task: Task definition with expected tools and complexity.
+            agent_config: Agent configuration for the benchmark run.
+
+        Returns:
+            Dict[str, Any]: Task execution results with accuracy, efficiency, and reliability scores.
+        """
 
         # Simulate task execution (in real implementation, would run actual agent)
-        # Standard
-        import random
-
         # Generate mock results based on task complexity
         complexity_multiplier = {"low": 0.9, "medium": 0.7, "high": 0.5}
         base_score = complexity_multiplier.get(task.get("complexity", "medium"), 0.7)
 
         # Add some randomness
-        noise = random.uniform(-0.2, 0.2)
+        noise = secrets.SystemRandom().uniform(-0.2, 0.2)
 
         accuracy = max(0.0, min(1.0, base_score + noise))
-        efficiency = max(0.0, min(1.0, base_score + random.uniform(-0.1, 0.1)))
-        reliability = max(0.0, min(1.0, base_score + random.uniform(-0.15, 0.15)))
+        efficiency = max(0.0, min(1.0, base_score + secrets.SystemRandom().uniform(-0.1, 0.1)))
+        reliability = max(0.0, min(1.0, base_score + secrets.SystemRandom().uniform(-0.15, 0.15)))
 
         return {
             "task_name": task["name"],
             "accuracy": accuracy,
             "efficiency": efficiency,
             "reliability": reliability,
-            "completion_time": random.uniform(1.0, 10.0),
+            "completion_time": secrets.SystemRandom().uniform(1.0, 10.0),
             "tool_calls": len(task.get("expected_tools", [])),
             "success": accuracy > 0.6,
         }
 
     def _compare_to_baseline(self, scores: Dict[str, float], baseline: Dict[str, Any]) -> Dict[str, Any]:
-        """Compare performance to baseline."""
+        """Compare performance to baseline.
+
+        Args:
+            scores: Current performance scores by metric.
+            baseline: Baseline performance data for comparison.
+
+        Returns:
+            Dict[str, Any]: Comparison results including ranking and improvements.
+        """
 
         baseline_scores = baseline.get("scores", {})
 
@@ -777,7 +946,14 @@ class AgentTools:
         return {"ranking": ranking, "improvements": improvements, "overall_improvement": overall_improvement, "baseline_name": baseline.get("name", "Unknown")}
 
     def _analyze_strengths_weaknesses(self, scores: Dict[str, float]) -> Dict[str, Any]:
-        """Analyze agent strengths and weaknesses."""
+        """Analyze agent strengths and weaknesses.
+
+        Args:
+            scores: Performance scores by metric.
+
+        Returns:
+            Dict[str, Any]: Analysis of strengths, weaknesses, and top/bottom metrics.
+        """
 
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
@@ -797,7 +973,15 @@ class AgentTools:
         return {"strengths": strengths, "weaknesses": weaknesses, "top_metric": sorted_scores[0][0] if sorted_scores else None, "bottom_metric": sorted_scores[-1][0] if sorted_scores else None}
 
     def _generate_benchmark_recommendations(self, scores: Dict[str, float], detailed_results: List[Dict[str, Any]]) -> List[str]:
-        """Generate benchmark-based recommendations."""
+        """Generate benchmark-based recommendations.
+
+        Args:
+            scores: Aggregate performance scores by metric.
+            detailed_results: Detailed results for each benchmark task.
+
+        Returns:
+            List[str]: List of recommendation messages based on benchmark results.
+        """
 
         recommendations = []
 
@@ -826,7 +1010,15 @@ class AgentTools:
         return recommendations
 
     def _analyze_task_failures(self, failed_criteria: List[Dict[str, Any]], agent_trace: Dict[str, Any]) -> Dict[str, Any]:  # pylint: disable=unused-argument
-        """Analyze why tasks failed."""
+        """Analyze why tasks failed.
+
+        Args:
+            failed_criteria: List of criteria that were not met.
+            agent_trace: Complete execution trace for analysis.
+
+        Returns:
+            Dict[str, Any]: Failure analysis with types, issues, and primary failure type.
+        """
 
         failure_types = {}
         common_issues = []

@@ -96,9 +96,6 @@ class BaseJudge(abc.ABC):
             rubric: Detailed scoring rubric
             context: Optional context (e.g., original question)
             use_cot: Whether to use chain-of-thought reasoning
-
-        Returns:
-            Evaluation result with scores and reasoning
         """
 
     @abc.abstractmethod
@@ -118,9 +115,6 @@ class BaseJudge(abc.ABC):
             criteria: Comparison criteria
             context: Optional context (e.g., original question)
             position_bias_mitigation: Whether to mitigate position bias
-
-        Returns:
-            Pairwise comparison result
         """
 
     @abc.abstractmethod
@@ -138,9 +132,6 @@ class BaseJudge(abc.ABC):
             criteria: Ranking criteria
             context: Optional context
             ranking_method: Method to use ('tournament', 'round_robin', 'scoring')
-
-        Returns:
-            Ranking result with ordered list
         """
 
     @abc.abstractmethod
@@ -158,20 +149,31 @@ class BaseJudge(abc.ABC):
             reference: Gold standard reference
             evaluation_type: Type of evaluation ('factuality', 'completeness', 'style_match')
             tolerance: Matching tolerance ('strict', 'moderate', 'loose')
-
-        Returns:
-            Reference evaluation result
         """
 
     def _format_criteria(self, criteria: List[EvaluationCriteria]) -> str:
-        """Format criteria for prompt inclusion."""
+        """Format criteria for prompt inclusion.
+
+        Args:
+            criteria: List of evaluation criteria to format
+
+        Returns:
+            Formatted criteria string
+        """
         formatted = []
         for criterion in criteria:
             formatted.append(f"- {criterion.name}: {criterion.description} (Scale: {criterion.scale})")
         return "\n".join(formatted)
 
     def _format_rubric(self, rubric: EvaluationRubric) -> str:
-        """Format rubric for prompt inclusion."""
+        """Format rubric for prompt inclusion.
+
+        Args:
+            rubric: Evaluation rubric to format
+
+        Returns:
+            Formatted rubric string
+        """
         parts = []
 
         # Add scale descriptions
@@ -190,7 +192,15 @@ class BaseJudge(abc.ABC):
         return "\n".join(parts)
 
     def _calculate_overall_score(self, scores: Dict[str, float], criteria: List[EvaluationCriteria]) -> float:
-        """Calculate weighted overall score."""
+        """Calculate weighted overall score.
+
+        Args:
+            scores: Score dictionary by criterion name
+            criteria: List of evaluation criteria with weights
+
+        Returns:
+            Weighted overall score
+        """
         total_weight = sum(c.weight for c in criteria)
         if total_weight == 0:
             return 0.0
@@ -239,7 +249,15 @@ class JudgeProtocol(Protocol):
         context: Optional[str] = None,
         use_cot: bool = True,
     ) -> EvaluationResult:
-        """Evaluate a single response."""
+        """Evaluate a single response.
+
+        Args:
+            response: Text response to evaluate
+            criteria: List of evaluation criteria
+            rubric: Detailed scoring rubric
+            context: Optional context
+            use_cot: Whether to use chain-of-thought reasoning
+        """
         ...
 
     async def pairwise_comparison(
@@ -250,5 +268,13 @@ class JudgeProtocol(Protocol):
         context: Optional[str] = None,
         position_bias_mitigation: bool = True,
     ) -> PairwiseResult:
-        """Compare two responses."""
+        """Compare two responses.
+
+        Args:
+            response_a: First response
+            response_b: Second response
+            criteria: Comparison criteria
+            context: Optional context
+            position_bias_mitigation: Whether to mitigate position bias
+        """
         ...

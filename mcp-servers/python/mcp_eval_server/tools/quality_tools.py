@@ -106,7 +106,14 @@ class QualityTools:
         }
 
     def _extract_factual_claims(self, response: str) -> List[str]:
-        """Extract factual claims from response text."""
+        """Extract factual claims from response text.
+
+        Args:
+            response: Text response to analyze for factual claims.
+
+        Returns:
+            List[str]: List of extracted factual claims (limited to first 10).
+        """
 
         # Split into sentences
         sentences = re.split(r"[.!?]+", response)
@@ -140,7 +147,16 @@ class QualityTools:
         return factual_claims[:10]  # Limit to first 10 claims
 
     async def _verify_claim(self, claim: str, knowledge_base: Optional[Dict[str, Any]], model: str) -> Dict[str, Any]:
-        """Verify a single factual claim."""
+        """Verify a single factual claim.
+
+        Args:
+            claim: The factual claim to verify.
+            knowledge_base: Optional knowledge base to check against.
+            model: Model to use for verification.
+
+        Returns:
+            Dict[str, Any]: Verification result with is_factual, confidence, and evidence.
+        """
 
         if knowledge_base:
             # Check against knowledge base
@@ -171,7 +187,15 @@ class QualityTools:
         return {"is_factual": is_factual, "confidence": confidence, "reason": result["reasoning"].get("factual_accuracy", ""), "evidence": "LLM evaluation"}
 
     def _check_against_kb(self, claim: str, knowledge_base: Dict[str, Any]) -> Dict[str, Any]:
-        """Check claim against knowledge base."""
+        """Check claim against knowledge base.
+
+        Args:
+            claim: The claim to check.
+            knowledge_base: Dictionary of knowledge base sources and content.
+
+        Returns:
+            Dict[str, Any]: Result with found status, factuality, confidence, and evidence.
+        """
 
         claim_lower = claim.lower()
 
@@ -190,7 +214,15 @@ class QualityTools:
         return {"found": False}
 
     async def _llm_factuality_check(self, response: str, judge_model: str) -> Dict[str, Any]:
-        """LLM-based factuality assessment."""
+        """LLM-based factuality assessment.
+
+        Args:
+            response: Response text to assess for factuality.
+            judge_model: Judge model to use for assessment.
+
+        Returns:
+            Dict[str, Any]: Assessment result with score and reasoning.
+        """
 
         criteria = [{"name": "overall_factuality", "description": "Overall factual accuracy of the response", "scale": "1-5", "weight": 1.0}]
 
@@ -267,7 +299,14 @@ class QualityTools:
         }
 
     def _analyze_coherence_rules(self, text: str) -> Dict[str, Any]:
-        """Rule-based coherence analysis."""
+        """Rule-based coherence analysis.
+
+        Args:
+            text: Text to analyze for coherence.
+
+        Returns:
+            Dict[str, Any]: Coherence analysis with scores and identified issues.
+        """
 
         coherence_score = 5.0
         consistency_issues = []
@@ -341,7 +380,14 @@ class QualityTools:
         }
 
     def _get_coherence_description(self, dimension: str) -> str:
-        """Get description for coherence dimension."""
+        """Get description for coherence dimension.
+
+        Args:
+            dimension: The coherence dimension to get description for.
+
+        Returns:
+            str: Human-readable description of the coherence dimension.
+        """
         descriptions = {
             "logical_flow": "How well ideas connect and flow logically",
             "consistency": "Absence of contradictions and conflicts",
@@ -424,7 +470,16 @@ class QualityTools:
         }
 
     def _detect_toxicity_rules(self, content: str, categories: List[str], sensitivity: str) -> Dict[str, Any]:
-        """Rule-based toxicity detection."""
+        """Rule-based toxicity detection.
+
+        Args:
+            content: Content to analyze for toxicity.
+            categories: List of toxicity categories to check.
+            sensitivity: Sensitivity level for detection ('strict', 'moderate', 'loose').
+
+        Returns:
+            Dict[str, Any]: Toxicity scores and flagged segments by category.
+        """
 
         content_lower = content.lower()
         scores = {}
@@ -458,7 +513,16 @@ class QualityTools:
         return {"scores": scores, "flagged_segments": flagged_segments}
 
     async def _assess_toxicity_llm(self, content: str, categories: List[str], judge_model: str) -> Dict[str, Any]:
-        """LLM-based toxicity assessment."""
+        """LLM-based toxicity assessment.
+
+        Args:
+            content: Content to assess for toxicity.
+            categories: List of toxicity categories to check.
+            judge_model: Judge model to use for assessment.
+
+        Returns:
+            Dict[str, Any]: Toxicity scores and reasoning by category.
+        """
 
         criteria = []
         for category in categories:
@@ -482,7 +546,14 @@ class QualityTools:
         return {"scores": scores, "reasoning": result["reasoning"]}
 
     def _detect_bias(self, content: str) -> Dict[str, Any]:
-        """Detect potential bias in content."""
+        """Detect potential bias in content.
+
+        Args:
+            content: Content to analyze for bias.
+
+        Returns:
+            Dict[str, Any]: Bias detection results with counts, segments, and severity.
+        """
 
         bias_indicators = {
             "gender_bias": [r"\b(all|most|typical)\s+(women|men|girls|boys)\s+(are|do|have)\b", r"\b(women|men)\s+(should|must|need to|ought to)\b"],
@@ -516,7 +587,16 @@ class QualityTools:
         return {"detected_biases": detected_biases, "bias_segments": bias_segments[:5], "total_indicators": total_bias_indicators, "severity": bias_severity}  # Limit to first 5
 
     def _generate_factuality_recommendations(self, score: float, disputed_claims: List[Dict[str, Any]], unsupported_claims: List[Dict[str, Any]]) -> List[str]:
-        """Generate recommendations for improving factuality."""
+        """Generate recommendations for improving factuality.
+
+        Args:
+            score: Overall factuality score.
+            disputed_claims: List of claims that were disputed.
+            unsupported_claims: List of claims lacking sufficient evidence.
+
+        Returns:
+            List[str]: List of recommendation messages for improving factuality.
+        """
         recommendations = []
 
         if score < 0.5:
@@ -536,7 +616,16 @@ class QualityTools:
         return recommendations
 
     def _generate_coherence_recommendations(self, score: float, rule_analysis: Dict[str, Any], llm_analysis: Dict[str, Any]) -> List[str]:
-        """Generate recommendations for improving coherence."""
+        """Generate recommendations for improving coherence.
+
+        Args:
+            score: Overall coherence score.
+            rule_analysis: Rule-based coherence analysis results.
+            llm_analysis: LLM-based coherence analysis results.
+
+        Returns:
+            List[str]: List of recommendation messages for improving coherence.
+        """
         recommendations = []
 
         if score < 0.6:
@@ -557,7 +646,16 @@ class QualityTools:
         return recommendations
 
     def _generate_toxicity_recommendations(self, scores: Dict[str, float], safety_rating: str, bias_analysis: Dict[str, Any]) -> List[str]:
-        """Generate recommendations for reducing toxicity."""
+        """Generate recommendations for reducing toxicity.
+
+        Args:
+            scores: Toxicity scores by category.
+            safety_rating: Overall safety rating (Safe, Low Risk, Medium Risk, High Risk).
+            bias_analysis: Bias detection analysis results.
+
+        Returns:
+            List[str]: List of recommendation messages for reducing toxicity.
+        """
         recommendations = []
 
         if safety_rating in ["High Risk", "Medium Risk"]:

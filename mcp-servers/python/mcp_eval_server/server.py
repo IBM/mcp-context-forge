@@ -47,7 +47,12 @@ results_store = ResultsStore()
 
 @server.list_tools()
 async def list_tools() -> List[Tool]:
-    """List all available evaluation tools."""
+    """List all available evaluation tools.
+
+    Returns:
+        List[Tool]: List of all available tools for evaluation including judge,
+            prompt, agent, quality, workflow, and calibration tools.
+    """
     return [
         # Judge tools
         Tool(
@@ -369,7 +374,18 @@ async def list_tools() -> List[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
-    """Handle tool calls."""
+    """Handle tool calls.
+
+    Args:
+        name: Name of the tool to call.
+        arguments: Arguments to pass to the tool.
+
+    Returns:
+        List[TextContent]: List containing the tool execution result as JSON text content.
+
+    Raises:
+        ValueError: If the tool name is not recognized.
+    """
     try:
         logger.info(f"Calling tool: {name} with arguments: {arguments}")
 

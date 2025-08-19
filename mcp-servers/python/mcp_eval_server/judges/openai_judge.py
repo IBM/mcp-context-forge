@@ -32,6 +32,9 @@ class OpenAIJudge(BaseJudge):
 
         Args:
             config: Configuration dictionary with OpenAI settings
+
+        Raises:
+            ValueError: If API key not found in environment
         """
         super().__init__(config)
 
@@ -44,7 +47,16 @@ class OpenAIJudge(BaseJudge):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def _make_api_call(self, messages: List[Dict[str, str]], temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> str:
-        """Make API call with retry logic."""
+        """Make API call with retry logic.
+
+        Args:
+            messages: Chat messages for the API call
+            temperature: Optional temperature override
+            max_tokens: Optional max tokens override
+
+        Returns:
+            Response content from the API
+        """
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=messages,
@@ -61,7 +73,18 @@ class OpenAIJudge(BaseJudge):
         context: Optional[str] = None,
         use_cot: bool = True,
     ) -> EvaluationResult:
-        """Evaluate a single response using OpenAI."""
+        """Evaluate a single response using OpenAI.
+
+        Args:
+            response: Text response to evaluate
+            criteria: List of evaluation criteria
+            rubric: Detailed scoring rubric
+            context: Optional context
+            use_cot: Whether to use chain-of-thought reasoning
+
+        Returns:
+            Evaluation result with scores and reasoning
+        """
 
         criteria_text = self._format_criteria(criteria)
         rubric_text = self._format_rubric(rubric)
@@ -140,7 +163,18 @@ Ensure all scores are within the specified scale for each criterion."""
         context: Optional[str] = None,
         position_bias_mitigation: bool = True,
     ) -> PairwiseResult:
-        """Compare two responses using OpenAI."""
+        """Compare two responses using OpenAI.
+
+        Args:
+            response_a: First response
+            response_b: Second response
+            criteria: Comparison criteria
+            context: Optional context
+            position_bias_mitigation: Whether to mitigate position bias
+
+        Returns:
+            Pairwise comparison result
+        """
 
         # Position bias mitigation: randomly swap A and B
         original_order = True
@@ -220,7 +254,20 @@ Provide your evaluation in the following JSON format:
         context: Optional[str] = None,
         ranking_method: str = "tournament",
     ) -> RankingResult:
-        """Rank multiple responses using OpenAI."""
+        """Rank multiple responses using OpenAI.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: List of evaluation criteria for ranking
+            context: Optional context for evaluation
+            ranking_method: Method to use for ranking ("tournament", "scoring", "round_robin")
+
+        Returns:
+            RankingResult containing ranked responses and consistency score
+
+        Raises:
+            ValueError: If less than 2 responses provided or unknown ranking method
+        """
 
         if len(responses) < 2:
             raise ValueError("Need at least 2 responses to rank")
@@ -235,7 +282,16 @@ Provide your evaluation in the following JSON format:
             raise ValueError(f"Unknown ranking method: {ranking_method}")
 
     async def _rank_by_scoring(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank by scoring each response individually."""
+        """Rank by scoring each response individually.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: List of evaluation criteria for scoring
+            context: Optional context for evaluation
+
+        Returns:
+            RankingResult with responses ranked by individual scores
+        """
 
         # Create a simple rubric for ranking
         rubric = EvaluationRubric(criteria=criteria, scale_description={"1": "Poor", "2": "Below Average", "3": "Average", "4": "Good", "5": "Excellent"})
@@ -255,7 +311,16 @@ Provide your evaluation in the following JSON format:
         return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")  # Single judge, perfectly consistent
 
     async def _rank_by_tournament(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using tournament-style pairwise comparisons."""
+        """Rank using tournament-style pairwise comparisons.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: List of evaluation criteria for comparison
+            context: Optional context for evaluation
+
+        Returns:
+            RankingResult with responses ranked by tournament wins
+        """
 
         n = len(responses)
         wins = [0] * n
@@ -294,7 +359,16 @@ Provide your evaluation in the following JSON format:
         return RankingResult(rankings=ranked_results, consistency_score=max(0.0, consistency), reasoning="Ranked by tournament-style pairwise comparisons")
 
     async def _rank_by_round_robin(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using round-robin pairwise comparisons."""
+        """Rank using round-robin pairwise comparisons.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: List of evaluation criteria for comparison
+            context: Optional context for evaluation
+
+        Returns:
+            RankingResult with responses ranked by round-robin comparisons
+        """
 
         # For now, implement same as tournament
         # In a full implementation, this could include multiple rounds
@@ -307,7 +381,17 @@ Provide your evaluation in the following JSON format:
         evaluation_type: str = "factuality",
         tolerance: str = "moderate",
     ) -> ReferenceEvaluationResult:
-        """Evaluate response against reference using OpenAI."""
+        """Evaluate response against reference using OpenAI.
+
+        Args:
+            response: Response text to evaluate
+            reference: Reference text to compare against
+            evaluation_type: Type of evaluation ("factuality", "completeness", "style_match")
+            tolerance: Tolerance level for evaluation ("strict", "moderate", "lenient")
+
+        Returns:
+            ReferenceEvaluationResult containing score and analysis
+        """
 
         type_descriptions = {
             "factuality": "Compare the factual accuracy and correctness of information",

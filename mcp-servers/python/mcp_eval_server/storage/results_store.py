@@ -150,7 +150,14 @@ class ResultsStore:
         return results_id
 
     def _extract_score(self, result: Dict[str, Any]) -> Optional[float]:
-        """Extract numeric score from result."""
+        """Extract numeric score from result.
+
+        Args:
+            result: Dictionary containing result data that may have score fields.
+
+        Returns:
+            Optional[float]: Extracted score as float if found, None otherwise.
+        """
         score_fields = ["overall_score", "score", "clarity_score", "coherence_score", "factuality_score", "completion_rate", "accuracy"]
 
         for field in score_fields:

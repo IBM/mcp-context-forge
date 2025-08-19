@@ -28,14 +28,28 @@ class EvaluationCache:
         self.ttl_seconds = ttl_seconds
 
     def _generate_key(self, **kwargs) -> str:
-        """Generate cache key from parameters."""
+        """Generate cache key from parameters.
+
+        Args:
+            **kwargs: Keyword arguments to generate cache key from.
+
+        Returns:
+            str: MD5 hash of the sorted parameters as cache key.
+        """
         # Sort kwargs for consistent key generation
         sorted_items = sorted(kwargs.items())
         key_string = json.dumps(sorted_items, sort_keys=True)
         return hashlib.md5(key_string.encode()).hexdigest()
 
     async def get(self, **kwargs) -> Optional[Dict[str, Any]]:
-        """Get cached evaluation result."""
+        """Get cached evaluation result.
+
+        Args:
+            **kwargs: Parameters that were used to generate the cache key.
+
+        Returns:
+            Optional[Dict[str, Any]]: Cached result if found and still valid, None otherwise.
+        """
         cache_key = self._generate_key(**kwargs)
 
         # Check memory cache first
@@ -62,7 +76,12 @@ class EvaluationCache:
         return None
 
     async def set(self, result: Dict[str, Any], **kwargs) -> None:
-        """Cache evaluation result."""
+        """Cache evaluation result.
+
+        Args:
+            result: The evaluation result to cache.
+            **kwargs: Parameters used to generate the cache key.
+        """
         cache_key = self._generate_key(**kwargs)
 
         # Add timestamp
@@ -80,7 +99,11 @@ class EvaluationCache:
                 pass
 
     async def invalidate(self, **kwargs) -> None:
-        """Invalidate cached result."""
+        """Invalidate cached result.
+
+        Args:
+            **kwargs: Parameters used to identify the cache entry to invalidate.
+        """
         cache_key = self._generate_key(**kwargs)
 
         # Remove from memory cache
@@ -107,7 +130,11 @@ class EvaluationCache:
                 pass
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get cache statistics."""
+        """Get cache statistics.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing memory and disk cache statistics.
+        """
         memory_stats = {"size": len(self.memory_cache), "max_size": self.memory_cache.maxsize, "hits": getattr(self.memory_cache, "hits", 0), "misses": getattr(self.memory_cache, "misses", 0)}
 
         disk_stats = {}
@@ -121,11 +148,29 @@ class JudgeResponseCache(EvaluationCache):
     """Specialized cache for judge responses."""
 
     async def get_judge_result(self, judge_model: str, response: str, criteria: list, context: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get cached judge evaluation result."""
+        """Get cached judge evaluation result.
+
+        Args:
+            judge_model: The judge model used for evaluation.
+            response: The response that was evaluated.
+            criteria: List of evaluation criteria.
+            context: Optional context for the evaluation.
+
+        Returns:
+            Optional[Dict[str, Any]]: Cached judge result if found, None otherwise.
+        """
         return await self.get(judge_model=judge_model, response=response, criteria=criteria, context=context)
 
     async def cache_judge_result(self, result: Dict[str, Any], judge_model: str, response: str, criteria: list, context: Optional[str] = None) -> None:
-        """Cache judge evaluation result."""
+        """Cache judge evaluation result.
+
+        Args:
+            result: The judge evaluation result to cache.
+            judge_model: The judge model used for evaluation.
+            response: The response that was evaluated.
+            criteria: List of evaluation criteria.
+            context: Optional context for the evaluation.
+        """
         await self.set(result, judge_model=judge_model, response=response, criteria=criteria, context=context)
 
 
@@ -133,9 +178,23 @@ class BenchmarkCache(EvaluationCache):
     """Specialized cache for benchmark results."""
 
     async def get_benchmark_result(self, benchmark_suite: str, agent_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Get cached benchmark result."""
+        """Get cached benchmark result.
+
+        Args:
+            benchmark_suite: Name of the benchmark suite.
+            agent_config: Configuration of the agent that was benchmarked.
+
+        Returns:
+            Optional[Dict[str, Any]]: Cached benchmark result if found, None otherwise.
+        """
         return await self.get(benchmark_suite=benchmark_suite, agent_config=agent_config)
 
     async def cache_benchmark_result(self, result: Dict[str, Any], benchmark_suite: str, agent_config: Dict[str, Any]) -> None:
-        """Cache benchmark result."""
+        """Cache benchmark result.
+
+        Args:
+            result: The benchmark result to cache.
+            benchmark_suite: Name of the benchmark suite.
+            agent_config: Configuration of the agent that was benchmarked.
+        """
         await self.set(result, benchmark_suite=benchmark_suite, agent_config=agent_config)

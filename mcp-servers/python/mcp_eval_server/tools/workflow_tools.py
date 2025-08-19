@@ -55,6 +55,9 @@ class WorkflowTools:
 
         Returns:
             Suite configuration with unique ID
+
+        Raises:
+            ValueError: If unknown evaluation tool specified in steps
         """
         suite_id = str(uuid.uuid4())
 
@@ -90,7 +93,11 @@ class WorkflowTools:
         return {"suite_id": suite_id, "configuration": suite_config, "total_steps": len(evaluation_steps), "estimated_duration": self._estimate_duration(evaluation_steps)}
 
     def _get_valid_tools(self) -> List[str]:
-        """Get list of valid evaluation tools."""
+        """Get list of valid evaluation tools.
+
+        Returns:
+            List[str]: List of supported tool identifiers.
+        """
         return [
             # Judge tools
             "judge.evaluate_response",
@@ -114,7 +121,14 @@ class WorkflowTools:
         ]
 
     def _estimate_duration(self, evaluation_steps: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Estimate evaluation duration."""
+        """Estimate evaluation duration.
+
+        Args:
+            evaluation_steps: List of evaluation steps to estimate duration for.
+
+        Returns:
+            Dict[str, Any]: Duration estimates in seconds and minutes, plus complexity rating.
+        """
 
         # Duration estimates in seconds
         tool_durations = {
@@ -158,6 +172,9 @@ class WorkflowTools:
 
         Returns:
             Evaluation results
+
+        Raises:
+            ValueError: If evaluation suite not found
         """
         if suite_id not in self.evaluation_suites:
             raise ValueError(f"Evaluation suite not found: {suite_id}")
@@ -209,7 +226,16 @@ class WorkflowTools:
         return detailed_results
 
     async def _run_steps_parallel(self, steps: List[Dict[str, Any]], test_data: Dict[str, Any], max_concurrent: int) -> List[Dict[str, Any]]:
-        """Run evaluation steps in parallel."""
+        """Run evaluation steps in parallel.
+
+        Args:
+            steps: List of evaluation steps to execute.
+            test_data: Test data to pass to each step.
+            max_concurrent: Maximum number of concurrent executions.
+
+        Returns:
+            List[Dict[str, Any]]: List of step execution results.
+        """
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -221,7 +247,15 @@ class WorkflowTools:
         return await asyncio.gather(*tasks)
 
     async def _run_steps_sequential(self, steps: List[Dict[str, Any]], test_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Run evaluation steps sequentially."""
+        """Run evaluation steps sequentially.
+
+        Args:
+            steps: List of evaluation steps to execute.
+            test_data: Test data to pass to each step.
+
+        Returns:
+            List[Dict[str, Any]]: List of step execution results.
+        """
 
         results = []
         for step in steps:
@@ -231,7 +265,18 @@ class WorkflowTools:
         return results
 
     async def _execute_evaluation_step(self, step: Dict[str, Any], test_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a single evaluation step."""
+        """Execute a single evaluation step.
+
+        Args:
+            step: Evaluation step configuration
+            test_data: Data to evaluate
+
+        Returns:
+            Step execution result
+
+        Raises:
+            ValueError: If unknown tool type specified
+        """
 
         tool = step["tool"]
         params = step.get("parameters", {})
@@ -268,7 +313,18 @@ class WorkflowTools:
         return {"tool": tool, "success": success, "result": result, "error": error, "execution_time": duration, "parameters_used": combined_params, "weight": step.get("weight", 1.0)}
 
     async def _execute_judge_tool(self, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute judge tool."""
+        """Execute judge tool.
+
+        Args:
+            tool: Judge tool identifier
+            params: Tool parameters
+
+        Returns:
+            Tool execution result
+
+        Raises:
+            ValueError: If unknown judge tool specified
+        """
 
         if tool == "judge.evaluate_response":
             return await self.judge_tools.evaluate_response(**params)
@@ -282,7 +338,18 @@ class WorkflowTools:
             raise ValueError(f"Unknown judge tool: {tool}")
 
     async def _execute_prompt_tool(self, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute prompt tool."""
+        """Execute prompt tool.
+
+        Args:
+            tool: Prompt tool identifier
+            params: Tool parameters
+
+        Returns:
+            Tool execution result
+
+        Raises:
+            ValueError: If unknown prompt tool specified
+        """
 
         if tool == "prompt.evaluate_clarity":
             return await self.prompt_tools.evaluate_clarity(**params)
@@ -296,7 +363,18 @@ class WorkflowTools:
             raise ValueError(f"Unknown prompt tool: {tool}")
 
     async def _execute_agent_tool(self, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute agent tool."""
+        """Execute agent tool.
+
+        Args:
+            tool: Agent tool identifier
+            params: Tool parameters
+
+        Returns:
+            Tool execution result
+
+        Raises:
+            ValueError: If unknown agent tool specified
+        """
 
         if tool == "agent.evaluate_tool_use":
             return await self.agent_tools.evaluate_tool_use(**params)
@@ -310,7 +388,18 @@ class WorkflowTools:
             raise ValueError(f"Unknown agent tool: {tool}")
 
     async def _execute_quality_tool(self, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute quality tool."""
+        """Execute quality tool.
+
+        Args:
+            tool: Quality tool identifier
+            params: Tool parameters
+
+        Returns:
+            Tool execution result
+
+        Raises:
+            ValueError: If unknown quality tool specified
+        """
 
         if tool == "quality.evaluate_factuality":
             return await self.quality_tools.evaluate_factuality(**params)
@@ -322,7 +411,15 @@ class WorkflowTools:
             raise ValueError(f"Unknown quality tool: {tool}")
 
     def _calculate_overall_score(self, step_results: List[Dict[str, Any]], weights: Dict[str, float]) -> float:
-        """Calculate weighted overall score."""
+        """Calculate weighted overall score.
+
+        Args:
+            step_results: List of step execution results.
+            weights: Weight dictionary for different tools.
+
+        Returns:
+            float: Weighted overall score between 0.0 and 1.0.
+        """
 
         total_weighted_score = 0.0
         total_weight = 0.0
@@ -343,7 +440,14 @@ class WorkflowTools:
         return total_weighted_score / total_weight if total_weight > 0 else 0.0
 
     def _extract_score_from_result(self, result: Dict[str, Any]) -> float:
-        """Extract numeric score from evaluation result."""
+        """Extract numeric score from evaluation result.
+
+        Args:
+            result: Evaluation result dictionary.
+
+        Returns:
+            float: Extracted numeric score, defaulting to 0.5 if not found.
+        """
 
         # Try common score field names
         score_fields = ["overall_score", "score", "clarity_score", "coherence_score", "factuality_score", "completion_rate", "accuracy", "efficiency"]
@@ -364,7 +468,15 @@ class WorkflowTools:
         return 0.5
 
     def _check_success_criteria(self, step_results: List[Dict[str, Any]], thresholds: Dict[str, float]) -> Dict[str, Any]:
-        """Check if evaluation meets success criteria."""
+        """Check if evaluation meets success criteria.
+
+        Args:
+            step_results: List of step execution results.
+            thresholds: Success threshold values for different criteria.
+
+        Returns:
+            Dict[str, Any]: Pass/fail status with detailed breakdown.
+        """
 
         passed_criteria = {}
         failed_criteria = {}
@@ -393,7 +505,14 @@ class WorkflowTools:
         return {"passed": all_passed, "passed_criteria": passed_criteria, "failed_criteria": failed_criteria, "success_rate": len(passed_criteria) / len(thresholds) if thresholds else 1.0}
 
     def _summarize_test_data(self, test_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Summarize test data for reporting."""
+        """Summarize test data for reporting.
+
+        Args:
+            test_data: Test data dictionary to summarize.
+
+        Returns:
+            Dict[str, Any]: Summary of test data with type and size information.
+        """
 
         summary = {}
 
@@ -410,7 +529,16 @@ class WorkflowTools:
         return summary
 
     def _generate_result_summary(self, step_results: List[Dict[str, Any]], overall_score: float, pass_fail_status: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate a summary of evaluation results."""
+        """Generate a summary of evaluation results.
+
+        Args:
+            step_results: List of step execution results.
+            overall_score: Calculated overall score.
+            pass_fail_status: Pass/fail status information.
+
+        Returns:
+            Dict[str, Any]: Comprehensive summary of evaluation performance.
+        """
 
         successful_steps = [step for step in step_results if step["success"]]
         failed_steps = [step for step in step_results if not step["success"]]
@@ -436,7 +564,15 @@ class WorkflowTools:
         }
 
     def _get_performance_grade(self, overall_score: float, success_rate: float) -> str:
-        """Get letter grade for performance."""
+        """Get letter grade for performance.
+
+        Args:
+            overall_score: Overall evaluation score.
+            success_rate: Success rate of evaluation criteria.
+
+        Returns:
+            str: Letter grade (A, B, C, D, or F) based on combined score.
+        """
 
         combined_score = (overall_score + success_rate) / 2
 
@@ -466,6 +602,9 @@ class WorkflowTools:
 
         Returns:
             Comparison analysis
+
+        Raises:
+            ValueError: If fewer than 2 evaluations provided or evaluation not found
         """
         if len(evaluation_ids) < 2:
             raise ValueError("Need at least 2 evaluations to compare")
@@ -502,7 +641,14 @@ class WorkflowTools:
         }
 
     def _create_comparison_matrix(self, evaluations: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Create side-by-side comparison matrix."""
+        """Create side-by-side comparison matrix.
+
+        Args:
+            evaluations: List of evaluation results to compare.
+
+        Returns:
+            Dict[str, Any]: Comparison matrix with scores, times, and step comparisons.
+        """
 
         matrix = {
             "evaluation_ids": [eval_data["results_id"] for eval_data in evaluations],
@@ -534,7 +680,15 @@ class WorkflowTools:
         return matrix
 
     def _perform_statistical_analysis(self, evaluations: List[Dict[str, Any]], comparison_type: str) -> Dict[str, Any]:
-        """Perform statistical significance testing."""
+        """Perform statistical significance testing.
+
+        Args:
+            evaluations: List of evaluation results to analyze.
+            comparison_type: Type of comparison being performed.
+
+        Returns:
+            Dict[str, Any]: Statistical analysis results including significance and p-values.
+        """
 
         scores = [eval_data["overall_score"] for eval_data in evaluations]
 
@@ -570,7 +724,15 @@ class WorkflowTools:
         }
 
     def _interpret_significance(self, difference: float, significance: str) -> str:
-        """Interpret statistical significance results."""
+        """Interpret statistical significance results.
+
+        Args:
+            difference: Numerical difference between scores.
+            significance: Significance level ('low', 'medium', 'high').
+
+        Returns:
+            str: Human-readable interpretation of statistical results.
+        """
 
         if significance == "low":
             return "No statistically significant difference detected"
@@ -583,7 +745,15 @@ class WorkflowTools:
             return f"Moderate {direction} detected"
 
     def _analyze_trends(self, evaluations: List[Dict[str, Any]], comparison_type: str) -> Dict[str, Any]:
-        """Analyze performance trends over time."""
+        """Analyze performance trends over time.
+
+        Args:
+            evaluations: List of evaluation results to analyze.
+            comparison_type: Type of comparison being performed.
+
+        Returns:
+            Dict[str, Any]: Trend analysis including direction, volatility, and consistency.
+        """
 
         # Sort by timestamp
         sorted_evals = sorted(evaluations, key=lambda x: x["execution_info"]["start_time"])
@@ -620,7 +790,16 @@ class WorkflowTools:
         }
 
     def _generate_comparison_recommendations(self, comparison_matrix: Dict[str, Any], trend_analysis: Dict[str, Any], statistical_analysis: Dict[str, Any]) -> List[str]:
-        """Generate recommendations based on comparison."""
+        """Generate recommendations based on comparison.
+
+        Args:
+            comparison_matrix: Matrix of comparison results.
+            trend_analysis: Trend analysis results.
+            statistical_analysis: Statistical significance analysis.
+
+        Returns:
+            List[str]: List of recommendation messages based on comparison analysis.
+        """
 
         recommendations = []
 
@@ -654,7 +833,15 @@ class WorkflowTools:
         return recommendations
 
     def _summarize_comparison(self, comparison_matrix: Dict[str, Any], trend_analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """Summarize comparison results."""
+        """Summarize comparison results.
+
+        Args:
+            comparison_matrix: Matrix of comparison results.
+            trend_analysis: Trend analysis results.
+
+        Returns:
+            Dict[str, Any]: Summary of comparison including best/worst performance and trends.
+        """
 
         scores = comparison_matrix["overall_scores"]
 
@@ -669,22 +856,44 @@ class WorkflowTools:
         }
 
     def get_evaluation_suite(self, suite_id: str) -> Optional[Dict[str, Any]]:
-        """Get evaluation suite configuration."""
+        """Get evaluation suite configuration.
+
+        Args:
+            suite_id: Unique identifier for the evaluation suite.
+
+        Returns:
+            Optional[Dict[str, Any]]: Suite configuration if found, None otherwise.
+        """
         return self.evaluation_suites.get(suite_id)
 
     def get_evaluation_result(self, results_id: str) -> Optional[Dict[str, Any]]:
-        """Get evaluation results."""
+        """Get evaluation results.
+
+        Args:
+            results_id: Unique identifier for the evaluation results.
+
+        Returns:
+            Optional[Dict[str, Any]]: Evaluation results if found, None otherwise.
+        """
         return self.evaluation_results.get(results_id)
 
     def list_evaluation_suites(self) -> List[Dict[str, Any]]:
-        """List all evaluation suites."""
+        """List all evaluation suites.
+
+        Returns:
+            List[Dict[str, Any]]: List of suite summaries with basic information.
+        """
         return [
             {"suite_id": suite_id, "name": config["name"], "description": config["description"], "created_at": config["created_at"], "steps": len(config["evaluation_steps"])}
             for suite_id, config in self.evaluation_suites.items()
         ]
 
     def list_evaluation_results(self) -> List[Dict[str, Any]]:
-        """List all evaluation results."""
+        """List all evaluation results.
+
+        Returns:
+            List[Dict[str, Any]]: List of result summaries with basic information.
+        """
         return [
             {
                 "results_id": results_id,
