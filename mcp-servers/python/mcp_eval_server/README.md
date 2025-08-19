@@ -118,8 +118,8 @@ export AZURE_OPENAI_KEY="your-azure-key"
 }
 ```
 
-**Protocol**: stdio (Model Context Protocol)  
-**Transport**: Standard input/output (no HTTP port needed)  
+**Protocol**: stdio (Model Context Protocol)
+**Transport**: Standard input/output (no HTTP port needed)
 **Tools Available**: 29 specialized evaluation tools
 
 ### **Docker Deployment**
@@ -491,7 +491,7 @@ benchmarks:
 # 1. Run MCP server (for Claude Desktop, etc.)
 make dev                    # Shows connection info + starts server
 
-# 2. Test basic functionality  
+# 2. Test basic functionality
 make example               # Run evaluation example
 make test-mcp             # Test MCP protocol
 ```
@@ -546,7 +546,7 @@ curl -X POST \
      -H "Content-Type: application/json" \
      -d '{
        "jsonrpc": "2.0",
-       "id": 2, 
+       "id": 2,
        "method": "tools/call",
        "params": {
          "name": "judge.evaluate_response",
@@ -569,7 +569,7 @@ import asyncio
 async def evaluate_via_http():
     async with httpx.AsyncClient() as client:
         base_url = "http://localhost:9000"
-        
+
         # List tools via JSON-RPC
         tools_request = {
             "jsonrpc": "2.0",
@@ -577,12 +577,12 @@ async def evaluate_via_http():
             "method": "tools/list",
             "params": {}
         }
-        
+
         response = await client.post(base_url, json=tools_request)
         result = response.json()
         tools = result.get("result", [])
         print(f"Available tools: {len(tools)}")
-        
+
         # Evaluate response via JSON-RPC
         eval_request = {
             "jsonrpc": "2.0",
@@ -598,7 +598,7 @@ async def evaluate_via_http():
                 }
             }
         }
-        
+
         response = await client.post(base_url, json=eval_request)
         result = response.json()
         print(f"Evaluation result: {result}")
