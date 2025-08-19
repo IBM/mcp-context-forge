@@ -57,7 +57,28 @@ Repository = "https://github.com/IBM/mcp-context-forge"
 Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 
 [tool.uv.sources]
-mcp-contextforge-gateway = { git = "https://github.com/araujof/mcp-context-forge.git", rev = "feat/720-plugins-cli" }
+mcp-contextforge-gateway = { git = "https://github.com/IBM/mcp-context-forge.git", rev = "main" }
+
+# ----------------------------------------------------------------
+# Optional dependency groups (extras)
+# ----------------------------------------------------------------
+[project.optional-dependencies]
+dev = [
+    "black>=25.1.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.2.1",
+    "pytest-dotenv>=0.5.2",
+    "pytest-env>=1.1.5",
+    "pytest-examples>=0.0.18",
+    "pytest-md-report>=0.7.0",
+    "pytest-rerunfailures>=15.1",
+    "pytest-trio>=0.8.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.12.9",
+    "unimport>=1.2.1",
+    "uv>=0.8.11",
+]
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration

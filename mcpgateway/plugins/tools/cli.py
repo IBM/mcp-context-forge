@@ -45,9 +45,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration defaults
 # ---------------------------------------------------------------------------
-DEFAULT_TEMPLATE_BASE_URL = "https://github.com/IBM/mcp-context-forge.git"
-DEFAULT_TEMPLATE_TYPE = "external"
-DEFAULT_TEMPLATE_URL = f"{DEFAULT_TEMPLATE_BASE_URL}::plugin_templates/{DEFAULT_TEMPLATE_TYPE}"
+DEFAULT_TEMPLATE_URL = "https://github.com/IBM/mcp-context-forge.git"
 DEFAULT_AUTHOR_NAME = "<changeme>"
 DEFAULT_AUTHOR_EMAIL = "<changeme>"
 DEFAULT_PROJECT_DIR = Path("./.")
