@@ -154,7 +154,8 @@ server_service = ServerService()
 tag_service = TagService()
 export_service = ExportService()
 import_service = ImportService()
-a2a_service = A2AAgentService()
+# Initialize A2A service only if A2A features are enabled
+a2a_service = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
 
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
@@ -227,7 +228,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await sampling_handler.initialize()
         await export_service.initialize()
         await import_service.initialize()
-        await a2a_service.initialize()
+        if a2a_service:
+            await a2a_service.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
         refresh_slugs_on_startup()
@@ -251,12 +253,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 logger.error(f"Error shutting down plugin manager: {str(e)}")
         logger.info("Shutting down MCP Gateway services")
         # await stop_streamablehttp()
-        for service in [
+        # Build service list conditionally
+        services_to_shutdown = [
             resource_cache,
             sampling_handler,
             import_service,
             export_service,
-            a2a_service,
             logging_service,
             completion_service,
             root_service,
@@ -265,7 +267,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             resource_service,
             tool_service,
             streamable_http_session,
-        ]:
+        ]
+
+        if a2a_service:
+            services_to_shutdown.insert(4, a2a_service)  # Insert after export_service
+
+        for service in services_to_shutdown:
             try:
                 await service.shutdown()
             except Exception as e:
@@ -2913,14 +2920,20 @@ async def get_metrics(db: Session = Depends(get_db), user: str = Depends(require
     resource_metrics = await resource_service.aggregate_metrics(db)
     server_metrics = await server_service.aggregate_metrics(db)
     prompt_metrics = await prompt_service.aggregate_metrics(db)
-    a2a_metrics = await a2a_service.aggregate_metrics(db)
-    return {
+
+    metrics_result = {
         "tools": tool_metrics,
         "resources": resource_metrics,
         "servers": server_metrics,
         "prompts": prompt_metrics,
-        "a2a_agents": a2a_metrics,
     }
+
+    # Include A2A metrics only if A2A features are enabled
+    if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
+        a2a_metrics = await a2a_service.aggregate_metrics(db)
+        metrics_result["a2a_agents"] = a2a_metrics
+
+    return metrics_result
 
 
 @metrics_router.post("/reset", response_model=dict)
@@ -2948,7 +2961,8 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
         await resource_service.reset_metrics(db)
         await server_service.reset_metrics(db)
         await prompt_service.reset_metrics(db)
-        await a2a_service.reset_metrics(db)
+        if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
+            await a2a_service.reset_metrics(db)
     elif entity.lower() == "tool":
         await tool_service.reset_metrics(db, entity_id)
     elif entity.lower() == "resource":
@@ -2958,7 +2972,10 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
     elif entity.lower() == "prompt":
         await prompt_service.reset_metrics(db)
     elif entity.lower() in ("a2a_agent", "a2a"):
-        await a2a_service.reset_metrics(db, entity_id)
+        if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
+            await a2a_service.reset_metrics(db, entity_id)
+        else:
+            raise HTTPException(status_code=400, detail="A2A features are disabled")
     else:
         raise HTTPException(status_code=400, detail="Invalid entity type for metrics reset")
     return {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
@@ -3342,7 +3359,14 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
-app.include_router(a2a_router)
+
+# Conditionally include A2A router if A2A features are enabled
+if settings.mcpgateway_a2a_enabled:
+    app.include_router(a2a_router)
+    logger.info("A2A router included - A2A features enabled")
+else:
+    logger.info("A2A router not included - A2A features disabled")
+
 app.include_router(well_known_router)
 
 # Include OAuth router

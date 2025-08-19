@@ -423,12 +423,12 @@ class A2AAgentService:
             Aggregated metrics.
         """
         # Get total number of agents
-        total_agents = db.execute(select(func.count(DbA2AAgent.id))).scalar()
-        active_agents = db.execute(select(func.count(DbA2AAgent.id)).where(DbA2AAgent.enabled.is_(True))).scalar()
+        total_agents = db.execute(select(func.count(DbA2AAgent.id))).scalar()  # pylint: disable=not-callable
+        active_agents = db.execute(select(func.count(DbA2AAgent.id)).where(DbA2AAgent.enabled.is_(True))).scalar()  # pylint: disable=not-callable
 
         # Get overall metrics
         metrics_query = select(
-            func.count(A2AAgentMetric.id).label("total_interactions"),
+            func.count(A2AAgentMetric.id).label("total_interactions"),  # pylint: disable=not-callable
             func.sum(case((A2AAgentMetric.is_success.is_(True), 1), else_=0)).label("successful_interactions"),
             func.avg(A2AAgentMetric.response_time).label("avg_response_time"),
             func.min(A2AAgentMetric.response_time).label("min_response_time"),

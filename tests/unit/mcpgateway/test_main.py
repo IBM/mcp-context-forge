@@ -1151,14 +1151,17 @@ class TestMetricsEndpoints:
     @patch("mcpgateway.main.resource_service.aggregate_metrics")
     @patch("mcpgateway.main.server_service.aggregate_metrics")
     @patch("mcpgateway.main.prompt_service.aggregate_metrics")
-    @patch("mcpgateway.main.a2a_service.aggregate_metrics")
-    def test_get_metrics(self, mock_a2a, mock_prompt, mock_server, mock_resource, mock_tool, test_client, auth_headers):
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.settings.mcpgateway_a2a_metrics_enabled", True)
+    def test_get_metrics(self, mock_a2a_enabled, mock_a2a_service, mock_prompt, mock_server, mock_resource, mock_tool, test_client, auth_headers):
         """Test retrieving aggregated metrics for all entity types."""
         mock_tool.return_value = {"total": 5}
         mock_resource.return_value = {"total": 3}
         mock_server.return_value = {"total": 2}
         mock_prompt.return_value = {"total": 1}
-        mock_a2a.return_value = {"total": 4}
+
+        # Mock A2A service with aggregate_metrics method
+        mock_a2a_service.aggregate_metrics.return_value = {"total": 4}
 
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200
@@ -1171,9 +1174,13 @@ class TestMetricsEndpoints:
     @patch("mcpgateway.main.resource_service.reset_metrics")
     @patch("mcpgateway.main.server_service.reset_metrics")
     @patch("mcpgateway.main.prompt_service.reset_metrics")
-    @patch("mcpgateway.main.a2a_service.reset_metrics")
-    def test_reset_all_metrics(self, mock_a2a_reset, mock_prompt_reset, mock_server_reset, mock_resource_reset, mock_tool_reset, test_client, auth_headers):
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.settings.mcpgateway_a2a_metrics_enabled", True)
+    def test_reset_all_metrics(self, mock_a2a_enabled, mock_a2a_service, mock_prompt_reset, mock_server_reset, mock_resource_reset, mock_tool_reset, test_client, auth_headers):
         """Test resetting metrics for all entity types."""
+        # Mock A2A service with reset_metrics method
+        mock_a2a_service.reset_metrics = MagicMock()
+
         response = test_client.post("/metrics/reset", headers=auth_headers)
         assert response.status_code == 200
 
@@ -1182,7 +1189,7 @@ class TestMetricsEndpoints:
         mock_resource_reset.assert_called_once()
         mock_server_reset.assert_called_once()
         mock_prompt_reset.assert_called_once()
-        mock_a2a_reset.assert_called_once()
+        mock_a2a_service.reset_metrics.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.reset_metrics")
     def test_reset_specific_entity_metrics(self, mock_tool_reset, test_client, auth_headers):
@@ -1224,7 +1231,7 @@ class TestA2AAgentEndpoints:
             "metrics": MOCK_METRICS,
         }
         mock_get.return_value = mock_agent
-        
+
         response = test_client.get("/a2a/test-id", headers=auth_headers)
         assert response.status_code == 200
         mock_get.assert_called_once()

@@ -191,12 +191,12 @@ class TestA2AAgentService:
         """Test successful agent update."""
         # Set version attribute to avoid TypeError
         sample_db_agent.version = 1
-        
+
         # Mock database queries
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [sample_db_agent, None]  # Agent exists, no name conflict
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
-        
+
         # Mock the _db_to_schema method properly
         with patch.object(service, '_db_to_schema') as mock_schema:
             mock_schema.return_value = MagicMock()
@@ -396,14 +396,14 @@ class TestA2AAgentService:
         metric1.is_success = True
         metric1.response_time = 1.0
         metric1.timestamp = datetime.now(timezone.utc)
-        
+
         metric2 = MagicMock()
         metric2.is_success = False
         metric2.response_time = 2.0
         metric2.timestamp = datetime.now(timezone.utc)
-        
+
         sample_db_agent.metrics = [metric1, metric2]
-        
+
         # Set all required attributes that might be missing
         sample_db_agent.created_by = "test_user"
         sample_db_agent.created_from_ip = "127.0.0.1"

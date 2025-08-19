@@ -1338,17 +1338,10 @@ class ToolService:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "parameters": {
-                        "type": "object",
-                        "description": "Parameters to pass to the A2A agent"
-                    },
-                    "interaction_type": {
-                        "type": "string",
-                        "description": "Type of interaction",
-                        "default": "query"
-                    }
+                    "parameters": {"type": "object", "description": "Parameters to pass to the A2A agent"},
+                    "interaction_type": {"type": "string", "description": "Type of interaction", "default": "query"},
                 },
-                "required": ["parameters"]
+                "required": ["parameters"],
             },
             annotations={
                 "title": f"A2A Agent: {agent.name}",
@@ -1391,7 +1384,7 @@ class ToolService:
         # Get the A2A agent
         agent_query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
         agent = db.execute(agent_query).scalar_one_or_none()
-        
+
         if not agent:
             raise ToolNotFoundError(f"A2A agent not found for tool '{tool.name}' (agent ID: {agent_id})")
 
@@ -1410,13 +1403,13 @@ class ToolService:
             # Make the A2A agent call
             response_data = await self._call_a2a_agent(agent, parameters, interaction_type)
             success = True
-            
+
             # Convert A2A response to MCP ToolResult format
             if isinstance(response_data, dict) and "response" in response_data:
                 content = [TextContent(type="text", text=str(response_data["response"]))]
             else:
                 content = [TextContent(type="text", text=str(response_data))]
-                
+
             result = ToolResult(content=content, is_error=False)
 
         except Exception as e:
@@ -1441,12 +1434,7 @@ class ToolService:
 
         return result
 
-    async def _call_a2a_agent(
-        self,
-        agent: DbA2AAgent,
-        parameters: Dict[str, Any],
-        interaction_type: str = "query"
-    ) -> Dict[str, Any]:
+    async def _call_a2a_agent(self, agent: DbA2AAgent, parameters: Dict[str, Any], interaction_type: str = "query") -> Dict[str, Any]:
         """Call an A2A agent directly.
 
         Args:
@@ -1460,29 +1448,21 @@ class ToolService:
         Raises:
             Exception: If the call fails.
         """
-        request_data = {
-            "interaction_type": interaction_type,
-            "parameters": parameters,
-            "protocol_version": agent.protocol_version
-        }
+        request_data = {"interaction_type": interaction_type, "parameters": parameters, "protocol_version": agent.protocol_version}
 
         # Make HTTP request to the agent endpoint
         async with httpx.AsyncClient(timeout=30.0) as client:
             headers = {"Content-Type": "application/json"}
-            
+
             # Add authentication if configured
             if agent.auth_type == "api_key" and agent.auth_value:
                 headers["Authorization"] = f"Bearer {agent.auth_value}"
             elif agent.auth_type == "bearer" and agent.auth_value:
                 headers["Authorization"] = f"Bearer {agent.auth_value}"
 
-            http_response = await client.post(
-                agent.endpoint_url,
-                json=request_data,
-                headers=headers
-            )
+            http_response = await client.post(agent.endpoint_url, json=request_data, headers=headers)
 
             if http_response.status_code == 200:
                 return http_response.json()
-            else:
-                raise Exception(f"HTTP {http_response.status_code}: {http_response.text}")
+
+            raise Exception(f"HTTP {http_response.status_code}: {http_response.text}")

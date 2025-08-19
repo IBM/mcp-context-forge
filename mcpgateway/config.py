@@ -157,6 +157,13 @@ class Settings(BaseSettings):
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
 
+    # A2A (Agent-to-Agent) Feature Flags
+    mcpgateway_a2a_enabled: bool = True
+    mcpgateway_a2a_max_agents: int = 100
+    mcpgateway_a2a_default_timeout: int = 30
+    mcpgateway_a2a_max_retries: int = 3
+    mcpgateway_a2a_metrics_enabled: bool = True
+
     # Security
     skip_ssl_verify: bool = False
     cors_enabled: bool = True

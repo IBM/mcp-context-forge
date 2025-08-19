@@ -142,6 +142,13 @@ MCPGATEWAY_BULK_IMPORT_ENABLED=true      # Enable/disable bulk import endpoint
 MCPGATEWAY_BULK_IMPORT_MAX_TOOLS=200     # Maximum tools per import batch
 MCPGATEWAY_BULK_IMPORT_RATE_LIMIT=10     # Requests per minute limit
 
+# A2A (Agent-to-Agent) Features
+MCPGATEWAY_A2A_ENABLED=true              # Enable/disable A2A agent features
+MCPGATEWAY_A2A_MAX_AGENTS=100            # Maximum number of A2A agents allowed
+MCPGATEWAY_A2A_DEFAULT_TIMEOUT=30        # Default timeout for A2A HTTP requests (seconds)
+MCPGATEWAY_A2A_MAX_RETRIES=3             # Maximum retry attempts for A2A calls
+MCPGATEWAY_A2A_METRICS_ENABLED=true      # Enable/disable A2A metrics collection
+
 # Federation
 MCPGATEWAY_ENABLE_MDNS_DISCOVERY=true
 MCPGATEWAY_ENABLE_FEDERATION=true
@@ -259,6 +266,41 @@ The gateway supports A2A (Agent-to-Agent) compatible agents that can be integrat
 3. **Auto-Tool Creation**: Gateway automatically creates tools for associated agents
 4. **Tool Invocation**: Tools can be invoked normally, routing calls to A2A agents
 5. **Metrics Collection**: All interactions are tracked with comprehensive metrics
+
+### A2A Configuration Options
+
+The A2A features can be configured via environment variables:
+
+```bash
+# Core A2A Settings
+MCPGATEWAY_A2A_ENABLED=true              # Master switch for A2A features
+MCPGATEWAY_A2A_MAX_AGENTS=100            # Limit on number of agents
+MCPGATEWAY_A2A_METRICS_ENABLED=true      # Enable metrics collection
+
+# Performance Settings
+MCPGATEWAY_A2A_DEFAULT_TIMEOUT=30        # HTTP timeout for agent calls (seconds)
+MCPGATEWAY_A2A_MAX_RETRIES=3             # Retry attempts for failed calls
+```
+
+**Configuration Effects:**
+
+- `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features
+  - A2A API endpoints return 404
+  - A2A tab hidden in admin UI
+  - A2A agents cannot be invoked as tools
+  - A2A metrics excluded from aggregations
+
+- `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics for A2A agents
+  - Agent interactions still work
+  - No performance data collected
+  - Metrics endpoints exclude A2A data
+
+**Security Considerations:**
+
+- A2A agents can access external endpoints
+- Credentials are stored encrypted in the database
+- Rate limiting applies to agent invocations
+- All interactions are logged for audit trails
 
 ## API Endpoints Overview
 

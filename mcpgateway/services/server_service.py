@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
@@ -236,22 +237,22 @@ class ServerService:
             >>> # Test with all None values
             >>> result = service._assemble_associated_items(None, None, None)
             >>> result
-            {'tools': [], 'resources': [], 'prompts': []}
+            {'tools': [], 'resources': [], 'prompts': [], 'a2a_agents': []}
 
             >>> # Test with empty lists
             >>> result = service._assemble_associated_items([], [], [])
             >>> result
-            {'tools': [], 'resources': [], 'prompts': []}
+            {'tools': [], 'resources': [], 'prompts': [], 'a2a_agents': []}
 
             >>> # Test with actual values
             >>> result = service._assemble_associated_items(['tool1', 'tool2'], ['res1'], ['prompt1'])
             >>> result
-            {'tools': ['tool1', 'tool2'], 'resources': ['res1'], 'prompts': ['prompt1']}
+            {'tools': ['tool1', 'tool2'], 'resources': ['res1'], 'prompts': ['prompt1'], 'a2a_agents': []}
 
             >>> # Test with mixed None and values
             >>> result = service._assemble_associated_items(['tool1'], None, ['prompt1'])
             >>> result
-            {'tools': ['tool1'], 'resources': [], 'prompts': ['prompt1']}
+            {'tools': ['tool1'], 'resources': [], 'prompts': ['prompt1'], 'a2a_agents': []}
         """
         return {
             "tools": tools or [],
@@ -347,9 +348,6 @@ class ServerService:
 
             # Associate A2A agents, verifying each exists and creating corresponding tools
             if server_in.associated_a2a_agents:
-                # Import here to avoid circular imports
-                from mcpgateway.db import A2AAgent as DbA2AAgent
-                
                 for agent_id in server_in.associated_a2a_agents:
                     if agent_id.strip() == "":
                         continue
