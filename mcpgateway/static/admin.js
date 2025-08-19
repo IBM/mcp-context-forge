@@ -4771,6 +4771,7 @@ async function testGateway(gatewayURL) {
                     {
                         mode: "application/json",
                         lineNumbers: true,
+                        lineWrapping: true,
                     },
                 );
                 gatewayTestHeadersEditor.setSize(null, 100);
@@ -4786,6 +4787,7 @@ async function testGateway(gatewayURL) {
                     {
                         mode: "application/json",
                         lineNumbers: true,
+                        lineWrapping: true,
                     },
                 );
                 gatewayTestBodyEditor.setSize(null, 100);
@@ -6450,6 +6452,7 @@ function initializeCodeMirrorEditors() {
                         autoCloseBrackets: true,
                         matchBrackets: true,
                         tabSize: 2,
+                        lineWrapping: true,
                     },
                 );
                 console.log(`✓ Initialized ${config.varName}`);
