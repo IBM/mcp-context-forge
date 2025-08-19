@@ -2,7 +2,7 @@
 """Caching system for MCP Eval Server."""
 
 # Standard
-import hashlib
+from hashlib import sha256
 import json
 import time
 from typing import Any, Dict, Optional
@@ -39,7 +39,7 @@ class EvaluationCache:
         # Sort kwargs for consistent key generation
         sorted_items = sorted(kwargs.items())
         key_string = json.dumps(sorted_items, sort_keys=True)
-        return hashlib.md5(key_string.encode()).hexdigest()  # nosec B303 - Used for cache keys, not cryptographic security
+        return sha256(key_string.encode()).hexdigest()
 
     async def get(self, **kwargs) -> Optional[Dict[str, Any]]:
         """Get cached evaluation result.

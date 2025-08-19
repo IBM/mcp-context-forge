@@ -124,7 +124,7 @@ class CalibrationTools:
 
         # Pairwise agreement calculation
         for i, judge_a in enumerate(judge_names):
-            for j, judge_b in enumerate(judge_names[i + 1 :], i + 1):
+            for j, judge_b in enumerate(judge_names[i + 1 :], i + 1):  # noqa: E203
                 scores_a = []
                 scores_b = []
 

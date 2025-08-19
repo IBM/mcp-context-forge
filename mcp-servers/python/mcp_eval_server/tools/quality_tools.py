@@ -331,7 +331,7 @@ class QualityTools:
         contradiction_patterns = [(r"\bnot\b", r"\bis\b"), (r"\bno\b", r"\byes\b"), (r"\bincrease\b", r"\bdecrease\b"), (r"\bgood\b", r"\bbad\b")]
 
         for i, sentence1 in enumerate(sentences):
-            for j, sentence2 in enumerate(sentences[i + 1 :], i + 1):
+            for j, sentence2 in enumerate(sentences[i + 1 :], i + 1):  # noqa: E203
                 for pos_pattern, neg_pattern in contradiction_patterns:
                     if re.search(pos_pattern, sentence1, re.IGNORECASE) and re.search(neg_pattern, sentence2, re.IGNORECASE):
                         coherence_score -= 0.3
