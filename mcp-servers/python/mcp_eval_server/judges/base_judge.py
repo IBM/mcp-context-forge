@@ -257,8 +257,11 @@ class JudgeProtocol(Protocol):
             rubric: Detailed scoring rubric
             context: Optional context
             use_cot: Whether to use chain-of-thought reasoning
+
+        Raises:
+            NotImplementedError: This is an abstract method that must be implemented by subclasses.
         """
-        ...
+        raise NotImplementedError
 
     async def pairwise_comparison(
         self,
@@ -276,5 +279,8 @@ class JudgeProtocol(Protocol):
             criteria: Comparison criteria
             context: Optional context
             position_bias_mitigation: Whether to mitigate position bias
+
+        Raises:
+            NotImplementedError: This is an abstract method that must be implemented by subclasses.
         """
-        ...
+        raise NotImplementedError
