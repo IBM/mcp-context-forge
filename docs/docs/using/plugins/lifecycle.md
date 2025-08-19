@@ -13,7 +13,6 @@ graph LR
     B(["$> bootstrap"])
     C(["$> build"])
     D(["$> serve"])
-    E["gateway"]
 
     subgraph dev
         A -.-> B
@@ -26,7 +25,7 @@ graph LR
     B --> C
 
     subgraph CF["Context Forge"]
-
+        E["gateway"]
         D o--"MCP<br>&nbsp;&nbsp;<small>tools/call <i>hook</i></small>&nbsp;&nbsp;"--o E
     end
 
