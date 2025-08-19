@@ -17,6 +17,7 @@ This section focuses on how to use MCP Gateway effectively as a developer, integ
 
 | Page | Description |
 |------|-------------|
+| [Tool Annotations](tool-annotations.md) | Configure behavior hints for tools (safety, idempotency, etc.) |
 | [mcpgateway-wrapper](mcpgateway-wrapper.md) | Wrap CLI tools or subprocesses to expose them via SSE/stdio |
 | [Clients](clients/index.md) | Compatible UIs and developer tools |
 | [Agents](agents/index.md) | LangChain, LangGraph, CrewAI, and other frameworks |
