@@ -92,6 +92,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.content_security import SecurityError
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -291,8 +292,8 @@ app = FastAPI(
 
 
 # Global exceptions handlers
-@app.exception_handler(ValidationError)
-async def validation_exception_handler(_request: Request, exc: ValidationError):
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_request: Request, exc: RequestValidationError):
     """Handle Pydantic validation errors globally.
 
     Intercepts ValidationError exceptions raised anywhere in the application
@@ -1810,8 +1811,6 @@ async def list_resources(
     return resources
 
 
-from mcpgateway.services.content_security import SecurityError, ValidationError
-
 @resource_router.post("", response_model=ResourceRead)
 @resource_router.post("/", response_model=ResourceRead)
 async def create_resource(
@@ -1822,6 +1821,18 @@ async def create_resource(
 ) -> ResourceRead:
     """
     Create a new resource.
+
+    Args:
+        resource (ResourceCreate): Resource creation schema.
+        request (Request): FastAPI request object for context.
+        db (Session): Database session.
+        user (str): Authenticated user.
+
+    Returns:
+        ResourceRead: The created resource.
+
+    Raises:
+        HTTPException: If creation fails due to security, validation, conflict, or integrity errors.
     """
     logger.debug(f"User {user} is creating a new resource")
     try:
@@ -2049,6 +2060,18 @@ async def create_prompt(
 ) -> PromptRead:
     """
     Create a new prompt.
+
+    Args:
+        prompt (PromptCreate): Prompt creation schema.
+        request (Request): FastAPI request object for context.
+        db (Session): Database session.
+        user (str): Authenticated user.
+
+    Returns:
+        PromptRead: The created prompt.
+
+    Raises:
+        HTTPException: If creation fails due to security, validation, or integrity errors.
     """
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
     try:
