@@ -3467,7 +3467,7 @@ function showTab(tabName) {
                     const agentsList = safeGetElement("a2a-agents-list");
                     if (agentsList && agentsList.innerHTML.trim() === "") {
                         // Trigger HTMX load manually
-                        htmx.trigger(agentsList, "load");
+                        window.htmx.trigger(agentsList, "load");
                     }
                 }
 
@@ -8643,37 +8643,43 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
     try {
         // Show loading state
         const testResult = document.getElementById(`test-result-${agentId}`);
-        testResult.innerHTML = '<div class="text-blue-600">🔄 Testing agent...</div>';
-        testResult.classList.remove('hidden');
+        testResult.innerHTML =
+            '<div class="text-blue-600">🔄 Testing agent...</div>';
+        testResult.classList.remove("hidden");
 
         // Get auth token from cookie or local storage
-        let token = getCookie('jwt_token');
+        let token = getCookie("jwt_token");
 
         // Try alternative cookie names if primary not found
         if (!token) {
-            token = getCookie('access_token') || getCookie('auth_token');
+            token = getCookie("access_token") || getCookie("auth_token");
         }
 
         // Try to get from localStorage as fallback
         if (!token) {
-            token = localStorage.getItem('jwt_token') || localStorage.getItem('auth_token');
+            token =
+                localStorage.getItem("jwt_token") ||
+                localStorage.getItem("auth_token");
         }
 
         // Debug logging
-        console.log('Available cookies:', document.cookie);
-        console.log('Found token:', token ? 'Yes (length: ' + token.length + ')' : 'No');
+        console.log("Available cookies:", document.cookie);
+        console.log(
+            "Found token:",
+            token ? "Yes (length: " + token.length + ")" : "No",
+        );
 
         // Prepare headers
         const headers = {
-            'Content-Type': 'application/json'
+            "Content-Type": "application/json",
         };
 
         if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
+            headers.Authorization = `Bearer ${token}`;
         } else {
             // Fallback to basic auth if JWT not available
-            console.warn('JWT token not found, attempting basic auth fallback');
-            headers['Authorization'] = 'Basic ' + btoa('admin:changeme'); // Default admin credentials
+            console.warn("JWT token not found, attempting basic auth fallback");
+            headers.Authorization = "Basic " + btoa("admin:changeme"); // Default admin credentials
         }
 
         // Test payload is now determined server-side based on agent configuration
@@ -8683,11 +8689,11 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/a2a/${agentId}/test`,
             {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify(testPayload)
+                method: "POST",
+                headers,
+                body: JSON.stringify(testPayload),
             },
-            10000 // 10 second timeout
+            10000, // 10 second timeout
         );
 
         if (!response.ok) {
@@ -8702,7 +8708,7 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
             resultHtml = `
                 <div class="text-red-600">
                     <div>❌ Test Failed</div>
-                    <div class="text-xs mt-1">Error: ${escapeHtml(result.error || 'Unknown error')}</div>
+                    <div class="text-xs mt-1">Error: ${escapeHtml(result.error || "Unknown error")}</div>
                 </div>`;
         } else {
             // Check if the agent result contains an error (agent-level error)
@@ -8726,11 +8732,10 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
 
         // Auto-hide after 10 seconds
         setTimeout(() => {
-            testResult.classList.add('hidden');
+            testResult.classList.add("hidden");
         }, 10000);
-
     } catch (error) {
-        console.error('A2A agent test failed:', error);
+        console.error("A2A agent test failed:", error);
 
         const testResult = document.getElementById(`test-result-${agentId}`);
         testResult.innerHTML = `
@@ -8738,15 +8743,14 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
                 <div>❌ Test Failed</div>
                 <div class="text-xs mt-1">Error: ${escapeHtml(error.message)}</div>
             </div>`;
-        testResult.classList.remove('hidden');
+        testResult.classList.remove("hidden");
 
         // Auto-hide after 10 seconds
         setTimeout(() => {
-            testResult.classList.add('hidden');
+            testResult.classList.add("hidden");
         }, 10000);
     }
 }
-
 
 // Expose A2A test function to global scope
 window.testA2AAgent = testA2AAgent;

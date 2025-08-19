@@ -33,6 +33,7 @@ import os
 
 os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
 os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
+os.environ["MCPGATEWAY_A2A_ENABLED"] = "false"  # Disable A2A for e2e tests
 
 # Standard
 import logging
