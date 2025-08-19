@@ -408,6 +408,19 @@ async def forward_once(
             return
 
         async def _process_line(line: str):
+            """
+            Asynchronously processes a single line of text, expected to be a JSON-encoded string.
+
+            If the system is shutting down, the function returns immediately.
+            Otherwise, it attempts to parse the line as JSON and sends the resulting object to stdout.
+            If parsing fails, logs a warning and sends a standardized error response to stdout.
+
+            Args:
+                line (str): A string that should contain a valid JSON object.
+
+            Returns:
+                None
+            """
             if shutting_down():
                 return
             try:
@@ -568,6 +581,18 @@ async def main_async(settings: Settings) -> None:
                 break
 
             async def _worker(payload=item):
+                """
+                Executes an asynchronous request with concurrency control.
+
+                Acquires a semaphore to limit the number of concurrent executions.
+                If the system is not shutting down, sends the given payload using `make_request`.
+
+                Args:
+                    payload (Any): The data to be sent in the request. Defaults to `item`.
+
+                Returns:
+                    None
+                """
                 async with sem:
                     if not shutting_down():
                         await make_request(resilient, settings, payload)
