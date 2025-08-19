@@ -100,7 +100,7 @@ The **MCP Evaluation Server** is the most comprehensive evaluation platform in t
 cd mcp-servers/python/mcp_eval_server
 pip install -e ".[dev]"
 
-# Set up API keys
+# Set up API keys (optional - rule-based judge works without them)
 export OPENAI_API_KEY="sk-your-key-here"
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 export AZURE_OPENAI_KEY="your-azure-key"
@@ -108,6 +108,19 @@ export AZURE_OPENAI_KEY="your-azure-key"
 # Note: No heavy ML dependencies required!
 # Uses efficient TF-IDF + scikit-learn instead of transformers
 ```
+
+### **MCP Client Connection**
+```json
+{
+  "command": "python",
+  "args": ["-m", "mcp_eval_server.server"],
+  "cwd": "/path/to/mcp-servers/python/mcp_eval_server"
+}
+```
+
+**Protocol**: stdio (Model Context Protocol)  
+**Transport**: Standard input/output (no HTTP port needed)  
+**Tools Available**: 29 specialized evaluation tools
 
 ### **Docker Deployment**
 ```bash
@@ -462,24 +475,50 @@ benchmarks:
 
 ## 🚀 **Getting Started**
 
+### **🎯 Deployment Options Quick Reference**
+
+| Mode | Command | Protocol | Port | Auth | Use Case |
+|------|---------|----------|------|------|----------|
+| **MCP Server** | `make dev` | stdio | none | none | Claude Desktop, MCP clients |
+| **HTTP Local** | `make serve-http` | JSON-RPC/HTTP | 9000 | none | Local development, testing |
+| **HTTP Public** | `make serve-http-public` | JSON-RPC/HTTP | 9000 | none | Remote access, integration |
+| **Container** | `make run` | HTTP | 8080 | none | Docker deployment |
+
 ### **Immediate Quick Start**
+
+#### **Option 1: MCP Server (stdio)**
 ```bash
-# 1. Run the server
-python -m mcp_eval_server.server
+# 1. Run MCP server (for Claude Desktop, etc.)
+make dev                    # Shows connection info + starts server
 
-# 2. Test basic functionality
-make example
+# 2. Test basic functionality  
+make example               # Run evaluation example
+make test-mcp             # Test MCP protocol
+```
 
-# 3. Run comprehensive tests
-make test
+#### **Option 2: HTTP Server (REST API)**
+```bash
+# 1. Run HTTP server with Bearer token auth
+make serve-http           # Starts on http://localhost:9000
 
-# 4. Deploy with Docker
+# 2. Test HTTP endpoints
+make test-http           # Test all endpoints
+
+# 3. Get connection info
+make http-info           # Show complete HTTP setup guide
+```
+
+#### **Option 3: Docker Deployment**
+```bash
+# Build and deploy
 make build && make run
 ```
 
 ### **Integration Examples**
+
+#### **MCP Client Integration**
 ```python
-# Basic integration
+# Basic MCP integration
 from mcp import Client
 client = Client("mcp-eval-server")
 
@@ -489,6 +528,83 @@ result = await client.call_tool("judge.evaluate_response", {
     "criteria": [{"name": "quality", "description": "Overall quality", "scale": "1-5", "weight": 1.0}],
     "rubric": {"criteria": [], "scale_description": {"1": "Poor", "5": "Excellent"}}
 })
+```
+
+#### **HTTP API Integration**
+```bash
+# Start HTTP server
+make serve-http
+
+# List available tools (JSON-RPC)
+curl -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}' \
+     http://localhost:9000/
+
+# Evaluate response via HTTP (JSON-RPC)
+curl -X POST \
+     -H "Content-Type: application/json" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 2, 
+       "method": "tools/call",
+       "params": {
+         "name": "judge.evaluate_response",
+         "arguments": {
+           "response": "Paris is the capital of France.",
+           "criteria": [{"name": "accuracy", "description": "Factual accuracy", "scale": "1-5", "weight": 1.0}],
+           "rubric": {"criteria": [], "scale_description": {"1": "Wrong", "5": "Correct"}},
+           "judge_model": "rule-based"
+         }
+       }
+     }' \
+     http://localhost:9000/
+```
+
+#### **Python HTTP Client Integration**
+```python
+import httpx
+import asyncio
+
+async def evaluate_via_http():
+    async with httpx.AsyncClient() as client:
+        base_url = "http://localhost:9000"
+        
+        # List tools via JSON-RPC
+        tools_request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {}
+        }
+        
+        response = await client.post(base_url, json=tools_request)
+        result = response.json()
+        tools = result.get("result", [])
+        print(f"Available tools: {len(tools)}")
+        
+        # Evaluate response via JSON-RPC
+        eval_request = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "judge.evaluate_response",
+                "arguments": {
+                    "response": "Your AI response here",
+                    "criteria": [{"name": "quality", "description": "Overall quality", "scale": "1-5", "weight": 1.0}],
+                    "rubric": {"criteria": [], "scale_description": {"1": "Poor", "5": "Excellent"}},
+                    "judge_model": "rule-based"
+                }
+            }
+        }
+        
+        response = await client.post(base_url, json=eval_request)
+        result = response.json()
+        print(f"Evaluation result: {result}")
+
+# Run evaluation
+asyncio.run(evaluate_via_http())
 ```
 
 ## 🎖️ **Quality Assurance**
@@ -524,6 +640,20 @@ result = await client.call_tool("judge.evaluate_response", {
 - **Disaster Recovery**: Backup and restore capabilities with point-in-time recovery
 
 ## 🔗 **Ecosystem Integration**
+
+### **Deployment Modes**
+
+#### **🔌 MCP Server Mode (stdio)**
+- **Native MCP Protocol**: Direct stdio communication for Claude Desktop, MCP clients
+- **Zero Configuration**: No ports, no authentication setup required
+- **Optimal Performance**: Direct protocol communication without HTTP overhead
+- **Client Integration**: Perfect for Claude Desktop, MCP Inspector, development tools
+
+#### **🌐 HTTP Server Mode (REST API)**
+- **HTTP/REST API**: Accessible via standard HTTP requests with Bearer token auth
+- **Remote Access**: Can be deployed as a service and accessed from anywhere
+- **Language Agnostic**: Any programming language can integrate via HTTP
+- **Enterprise Ready**: Bearer token authentication, health checks, monitoring endpoints
 
 ### **MCP Ecosystem**
 - **Full MCP Protocol Support**: Complete implementation of Model Context Protocol
