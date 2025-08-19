@@ -71,7 +71,17 @@ Inspect those two files and get familiar with them. There are many options you c
 
 ### Dependencies
 
-Plugins are Python packages with dependencies managed by `uv`. Just like the gateway, you can add, lock, lint, and ensure that best practices are followed when creating your plugins. To ensure compatibility with the gateway linters, we do not directly install them in the template. Instead, please install the gateway package with the dev extras, which will include all required linters.
+Plugins are Python packages with dependencies managed by `uv`. Just like the gateway, you can add, lock, lint, and ensure that best practices are followed when creating your plugins. To install dependencies with dev packages (required for linting and testing), run:
+
+```bash
+make install-dev
+```
+
+Alternatively, you can also install it in editable mode:
+
+```bash
+make install-editable
+```
 
 ### Test
 
