@@ -26,7 +26,7 @@ graph LR
 
     subgraph CF["Context Forge"]
         E["gateway"]
-        D o--"MCP<br>&nbsp;&nbsp;<small>tools/call <i>hook</i></small>&nbsp;&nbsp;"--o E
+        D o--"MCP<br>&nbsp;&nbsp;<small>tools/call <i>hook</i></small>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"--o E
     end
 
     style A stroke-dasharray: 3 3;
