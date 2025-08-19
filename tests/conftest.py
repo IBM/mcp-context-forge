@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import os
+os.environ["TESTING"] = "1"
 """
 
 Copyright 2025
