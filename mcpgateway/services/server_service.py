@@ -355,6 +355,15 @@ class ServerService:
                     if not agent_obj:
                         raise ServerError(f"A2A Agent with id {agent_id} does not exist.")
                     db_server.a2a_agents.append(agent_obj)
+                    
+                    # Auto-create tool for this A2A agent
+                    try:
+                        from mcpgateway.services.tool_service import ToolService
+                        tool_service = ToolService()
+                        await tool_service.create_tool_from_a2a_agent(db, agent_obj)
+                        logger.info(f"Auto-created tool for A2A agent: {agent_obj.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to auto-create tool for A2A agent {agent_obj.name}: {e}")
 
             # Commit the new record and refresh.
             db.commit()
