@@ -1,0 +1,422 @@
+# -*- coding: utf-8 -*-
+"""Rule-based judge for deterministic evaluations."""
+
+# Standard
+import re
+from typing import Any, Dict, List, Optional
+
+# Third-Party
+from sentence_transformers import SentenceTransformer
+import textstat
+
+# Local
+from .base_judge import (
+    BaseJudge,
+    EvaluationCriteria,
+    EvaluationResult,
+    EvaluationRubric,
+    PairwiseResult,
+    RankingResult,
+    ReferenceEvaluationResult,
+)
+
+
+class RuleBasedJudge(BaseJudge):
+    """Judge implementation using rule-based metrics."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """Initialize rule-based judge.
+
+        Args:
+            config: Configuration dictionary
+        """
+        super().__init__(config)
+
+        # Initialize sentence transformer for semantic similarity
+        model_name = config.get("embedding_model", "all-MiniLM-L6-v2")
+        self.embedding_model = SentenceTransformer(model_name)
+
+    async def evaluate_response(
+        self,
+        response: str,
+        criteria: List[EvaluationCriteria],
+        rubric: EvaluationRubric,
+        context: Optional[str] = None,
+        use_cot: bool = True,
+    ) -> EvaluationResult:
+        """Evaluate response using rule-based metrics."""
+
+        scores = {}
+        reasoning = {}
+
+        for criterion in criteria:
+            score, reason = await self._evaluate_criterion(response, criterion, context)
+            scores[criterion.name] = score
+            reasoning[criterion.name] = reason
+
+        overall_score = self._calculate_overall_score(scores, criteria)
+
+        return EvaluationResult(
+            scores=scores,
+            reasoning=reasoning,
+            overall_score=overall_score,
+            confidence=0.9,  # High confidence for rule-based metrics
+            metadata={"model": "rule-based", "metrics_used": list(scores.keys())},
+        )
+
+    async def _evaluate_criterion(self, response: str, criterion: EvaluationCriteria, context: Optional[str] = None) -> tuple[float, str]:
+        """Evaluate a single criterion."""
+
+        criterion_name = criterion.name.lower()
+
+        if "length" in criterion_name:
+            return self._evaluate_length(response, criterion)
+        elif "readability" in criterion_name:
+            return self._evaluate_readability(response, criterion)
+        elif "grammar" in criterion_name or "spelling" in criterion_name:
+            return self._evaluate_grammar_spelling(response, criterion)
+        elif "structure" in criterion_name or "format" in criterion_name:
+            return self._evaluate_structure(response, criterion)
+        elif "keyword" in criterion_name or "term" in criterion_name:
+            return self._evaluate_keywords(response, criterion, context)
+        elif "sentiment" in criterion_name:
+            return self._evaluate_sentiment(response, criterion)
+        elif "completeness" in criterion_name:
+            return self._evaluate_completeness(response, criterion, context)
+        else:
+            # Default to basic quality metrics
+            return self._evaluate_basic_quality(response, criterion)
+
+    def _evaluate_length(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
+        """Evaluate response length."""
+        word_count = len(response.split())
+        char_count = len(response)
+
+        # Simple heuristic: ideal range is 50-500 words
+        if 50 <= word_count <= 500:
+            score = 5.0
+            reason = f"Good length: {word_count} words, {char_count} characters"
+        elif word_count < 50:
+            score = max(1.0, 5.0 * (word_count / 50))
+            reason = f"Too short: {word_count} words (recommended: 50+ words)"
+        else:  # > 500
+            score = max(1.0, 5.0 * (500 / word_count))
+            reason = f"Too long: {word_count} words (recommended: <500 words)"
+
+        return score, reason
+
+    def _evaluate_readability(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
+        """Evaluate readability using Flesch reading ease."""
+        try:
+            flesch_score = textstat.flesch_reading_ease(response)
+
+            # Convert Flesch score to 1-5 scale
+            # 90-100: Very Easy (5), 80-90: Easy (4), 70-80: Fairly Easy (3)
+            # 60-70: Standard (3), 50-60: Fairly Difficult (2), 0-50: Difficult (1)
+            if flesch_score >= 80:
+                score = 5.0
+                level = "Easy"
+            elif flesch_score >= 70:
+                score = 4.0
+                level = "Fairly Easy"
+            elif flesch_score >= 50:
+                score = 3.0
+                level = "Standard"
+            elif flesch_score >= 30:
+                score = 2.0
+                level = "Fairly Difficult"
+            else:
+                score = 1.0
+                level = "Difficult"
+
+            reason = f"Readability: {flesch_score:.1f} ({level})"
+            return score, reason
+
+        except Exception as e:
+            return 3.0, f"Could not calculate readability: {str(e)}"
+
+    def _evaluate_grammar_spelling(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
+        """Basic grammar and spelling evaluation."""
+
+        issues = []
+
+        # Check for common grammar issues
+        if re.search(r"\s+[.!?]", response):
+            issues.append("spaces before punctuation")
+
+        if re.search(r"[.!?][a-z]", response):
+            issues.append("missing spaces after punctuation")
+
+        # Check for repeated punctuation
+        if re.search(r"[.!?]{2,}", response):
+            issues.append("repeated punctuation")
+
+        # Check capitalization at sentence start
+        sentences = re.split(r"[.!?]+", response)
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if sentence and not sentence[0].isupper():
+                issues.append("capitalization errors")
+                break
+
+        # Score based on issues found
+        if not issues:
+            score = 5.0
+            reason = "No obvious grammar or spelling issues detected"
+        elif len(issues) == 1:
+            score = 4.0
+            reason = f"Minor issue: {issues[0]}"
+        elif len(issues) <= 3:
+            score = 3.0
+            reason = f"Some issues: {', '.join(issues)}"
+        else:
+            score = 2.0
+            reason = f"Multiple issues: {', '.join(issues[:3])}..."
+
+        return score, reason
+
+    def _evaluate_structure(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
+        """Evaluate response structure and formatting."""
+
+        structure_score = 0
+        reasons = []
+
+        # Check for paragraphs
+        paragraphs = response.split("\n\n")
+        if len(paragraphs) > 1:
+            structure_score += 1
+            reasons.append("has multiple paragraphs")
+
+        # Check for lists or bullet points
+        if re.search(r"^\s*[-*•]\s+", response, re.MULTILINE):
+            structure_score += 1
+            reasons.append("uses bullet points")
+
+        # Check for numbered lists
+        if re.search(r"^\s*\d+\.\s+", response, re.MULTILINE):
+            structure_score += 1
+            reasons.append("uses numbered lists")
+
+        # Check for headings (simple heuristic)
+        if re.search(r"^[A-Z][^.!?]*:?\s*$", response, re.MULTILINE):
+            structure_score += 1
+            reasons.append("has section headings")
+
+        # Check for logical flow (sentences that connect)
+        sentences = re.split(r"[.!?]+", response)
+        if len(sentences) >= 3:
+            structure_score += 1
+            reasons.append("has multiple sentences")
+
+        # Convert to 1-5 scale
+        score = min(5.0, max(1.0, 1.0 + structure_score))
+        reason = f"Structure: {', '.join(reasons) if reasons else 'basic structure'}"
+
+        return score, reason
+
+    def _evaluate_keywords(self, response: str, criterion: EvaluationCriteria, context: Optional[str] = None) -> tuple[float, str]:
+        """Evaluate presence of relevant keywords."""
+
+        if not context:
+            return 3.0, "No context provided for keyword evaluation"
+
+        # Extract potential keywords from context (simple approach)
+        context_words = set(re.findall(r"\b[a-zA-Z]{3,}\b", context.lower()))
+        response_words = set(re.findall(r"\b[a-zA-Z]{3,}\b", response.lower()))
+
+        # Remove common stop words
+        stop_words = {"the", "and", "but", "for", "are", "with", "this", "that", "from", "they", "have", "been", "said", "each", "which", "will", "there", "could", "would", "should"}
+        context_keywords = context_words - stop_words
+        response_keywords = response_words - stop_words
+
+        # Calculate overlap
+        overlap = len(context_keywords & response_keywords)
+        total_context_keywords = len(context_keywords)
+
+        if total_context_keywords == 0:
+            return 3.0, "No meaningful keywords found in context"
+
+        overlap_ratio = overlap / total_context_keywords
+        score = 1.0 + 4.0 * overlap_ratio
+
+        return score, f"Keyword overlap: {overlap}/{total_context_keywords} ({overlap_ratio:.1%})"
+
+    def _evaluate_sentiment(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
+        """Basic sentiment evaluation."""
+
+        # Simple word-based sentiment analysis
+        positive_words = {"good", "great", "excellent", "wonderful", "amazing", "fantastic", "helpful", "useful", "beneficial"}
+        negative_words = {"bad", "terrible", "awful", "horrible", "useless", "harmful", "wrong", "error", "problem"}
+
+        words = set(response.lower().split())
+        positive_count = len(words & positive_words)
+        negative_count = len(words & negative_words)
+
+        if positive_count > negative_count:
+            score = 4.0 + min(1.0, (positive_count - negative_count) * 0.2)
+            sentiment = "positive"
+        elif negative_count > positive_count:
+            score = 2.0 - min(1.0, (negative_count - positive_count) * 0.2)
+            sentiment = "negative"
+        else:
+            score = 3.0
+            sentiment = "neutral"
+
+        return score, f"Sentiment: {sentiment} (+{positive_count}/-{negative_count})"
+
+    def _evaluate_completeness(self, response: str, criterion: EvaluationCriteria, context: Optional[str] = None) -> tuple[float, str]:
+        """Evaluate response completeness."""
+
+        # Basic completeness metrics
+        word_count = len(response.split())
+        sentence_count = len(re.split(r"[.!?]+", response))
+
+        # Heuristics for completeness
+        completeness_score = 0
+        reasons = []
+
+        if word_count >= 20:
+            completeness_score += 1
+            reasons.append("adequate length")
+
+        if sentence_count >= 2:
+            completeness_score += 1
+            reasons.append("multiple sentences")
+
+        if "?" in response or re.search(r"\b(how|what|why|when|where|who)\b", response.lower()):
+            completeness_score += 1
+            reasons.append("addresses questions")
+
+        if re.search(r"\b(therefore|because|since|due to|as a result)\b", response.lower()):
+            completeness_score += 1
+            reasons.append("provides explanations")
+
+        if re.search(r"\b(example|instance|such as|for example)\b", response.lower()):
+            completeness_score += 1
+            reasons.append("includes examples")
+
+        score = min(5.0, max(1.0, 1.0 + completeness_score))
+        reason = f"Completeness: {', '.join(reasons) if reasons else 'basic response'}"
+
+        return score, reason
+
+    def _evaluate_basic_quality(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:
+        """Basic quality evaluation combining multiple factors."""
+
+        # Combine length, readability, and structure
+        length_score, _ = self._evaluate_length(response, criterion)
+        readability_score, _ = self._evaluate_readability(response, criterion)
+        structure_score, _ = self._evaluate_structure(response, criterion)
+
+        overall_score = (length_score + readability_score + structure_score) / 3
+
+        return overall_score, "Combined quality score based on length, readability, and structure"
+
+    async def pairwise_comparison(
+        self,
+        response_a: str,
+        response_b: str,
+        criteria: List[EvaluationCriteria],
+        context: Optional[str] = None,
+        position_bias_mitigation: bool = True,
+    ) -> PairwiseResult:
+        """Compare two responses using rule-based metrics."""
+
+        # Evaluate both responses
+        rubric = EvaluationRubric(criteria=criteria)
+        eval_a = await self.evaluate_response(response_a, criteria, rubric, context)
+        eval_b = await self.evaluate_response(response_b, criteria, rubric, context)
+
+        # Determine winner
+        if eval_a.overall_score > eval_b.overall_score:
+            winner = "A"
+            margin = (eval_a.overall_score - eval_b.overall_score) / 5.0
+        elif eval_b.overall_score > eval_a.overall_score:
+            winner = "B"
+            margin = (eval_b.overall_score - eval_a.overall_score) / 5.0
+        else:
+            winner = "tie"
+            margin = 0.0
+
+        # Criterion-level comparison
+        criterion_scores = {}
+        for criterion in criteria:
+            score_a = eval_a.scores.get(criterion.name, 0)
+            score_b = eval_b.scores.get(criterion.name, 0)
+
+            if score_a > score_b:
+                criterion_scores[criterion.name] = "A"
+            elif score_b > score_a:
+                criterion_scores[criterion.name] = "B"
+            else:
+                criterion_scores[criterion.name] = "tie"
+
+        reasoning = f"Response A score: {eval_a.overall_score:.2f}, Response B score: {eval_b.overall_score:.2f}"
+
+        return PairwiseResult(winner=winner, confidence_score=0.9, reasoning=reasoning, criterion_scores=criterion_scores, margin=margin)  # High confidence for rule-based
+
+    async def rank_responses(
+        self,
+        responses: List[str],
+        criteria: List[EvaluationCriteria],
+        context: Optional[str] = None,
+        ranking_method: str = "scoring",
+    ) -> RankingResult:
+        """Rank responses using rule-based scoring."""
+
+        rubric = EvaluationRubric(criteria=criteria)
+
+        # Evaluate all responses
+        evaluations = []
+        for i, response in enumerate(responses):
+            evaluation = await self.evaluate_response(response, criteria, rubric, context)
+            evaluations.append(evaluation)
+
+        # Sort by overall score
+        ranked_results = []
+        for i, evaluation in enumerate(evaluations):
+            ranked_results.append({"response_index": i, "response": responses[i], "score": evaluation.overall_score, "reasoning": f"Rule-based score: {evaluation.overall_score:.2f}"})
+
+        ranked_results.sort(key=lambda x: x["score"], reverse=True)
+
+        return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by rule-based scoring")  # Deterministic, perfectly consistent
+
+    async def evaluate_with_reference(
+        self,
+        response: str,
+        reference: str,
+        evaluation_type: str = "factuality",
+        tolerance: str = "moderate",
+    ) -> ReferenceEvaluationResult:
+        """Evaluate response against reference using rule-based metrics."""
+
+        # Semantic similarity using sentence embeddings
+        response_embedding = self.embedding_model.encode([response])
+        reference_embedding = self.embedding_model.encode([reference])
+
+        # Calculate cosine similarity
+        # Third-Party
+        from sklearn.metrics.pairwise import cosine_similarity
+
+        similarity = cosine_similarity(response_embedding, reference_embedding)[0][0]
+
+        # Basic keyword overlap
+        response_words = set(response.lower().split())
+        reference_words = set(reference.lower().split())
+
+        common_words = response_words & reference_words
+        missing_words = reference_words - response_words
+        extra_words = response_words - reference_words
+
+        # Simple factual error detection (very basic)
+        factual_errors = []
+        if len(response.split()) < len(reference.split()) * 0.3:
+            factual_errors.append("Response too short compared to reference")
+
+        return ReferenceEvaluationResult(
+            similarity_score=float(similarity),
+            missing_elements=list(missing_words)[:10],  # Limit to first 10
+            extra_elements=list(extra_words)[:10],
+            factual_errors=factual_errors,
+            reasoning=f"Semantic similarity: {similarity:.3f}, Word overlap: {len(common_words)}/{len(reference_words)}",
+        )
