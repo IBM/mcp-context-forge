@@ -11,7 +11,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # Local
-from ..judges.rule_judge import RuleBasedJudge
 from .judge_tools import JudgeTools
 
 

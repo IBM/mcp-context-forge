@@ -1,9 +1,9 @@
 # MCP Evaluation Server
 
-> **Author**: Mihai Criveti  
-> **Version**: 0.1.0  
-> **Status**: 🚀 Production Ready  
-> **Code Quality**: 🏆 Perfect 10/10 PyLint Score  
+> **Author**: Mihai Criveti
+> **Version**: 0.1.0
+> **Status**: 🚀 Production Ready
+> **Code Quality**: 🏆 Perfect 10/10 PyLint Score
 > **Coverage**: 29 Specialized Evaluation Tools
 
 A **world-class MCP server** for comprehensive agent performance evaluation, prompt effectiveness testing, and LLM behavior analysis using state-of-the-art **LLM-as-a-judge techniques**.
@@ -14,7 +14,7 @@ The **MCP Evaluation Server** is the most comprehensive evaluation platform in t
 
 ### 🎯 **Revolutionary Capabilities**
 - 🤖 **Advanced LLM-as-a-Judge**: GPT-4, GPT-4-Turbo, GPT-3.5, Azure OpenAI with position bias mitigation
-- 📝 **Intelligent Prompt Assessment**: Multi-dimensional analysis with automated improvement suggestions  
+- 📝 **Intelligent Prompt Assessment**: Multi-dimensional analysis with automated improvement suggestions
 - 🛠️ **Comprehensive Agent Evaluation**: Tool usage optimization, reasoning analysis, performance benchmarking
 - 🔍 **Deep Quality Analytics**: Factuality verification, coherence scoring, toxicity detection with bias analysis
 - 🔄 **Advanced Workflow Management**: End-to-end evaluation suites with statistical comparison and trending
@@ -152,7 +152,7 @@ result = await mcp_client.call_tool("judge.evaluate_response", {
         "criteria": [],
         "scale_description": {
             "1": "Severely lacking",
-            "2": "Below expectations", 
+            "2": "Below expectations",
             "3": "Meets basic requirements",
             "4": "Exceeds expectations",
             "5": "Outstanding quality"
@@ -211,7 +211,7 @@ suite = await mcp_client.call_tool("workflow.create_evaluation_suite", {
             "parameters": {"target_model": "gpt-4", "domain_context": "technical"}
         },
         {
-            "tool": "judge.evaluate_response", 
+            "tool": "judge.evaluate_response",
             "weight": 0.25,
             "parameters": {
                 "criteria": [
@@ -299,7 +299,7 @@ rubrics:
         weight: 0.3
       - name: "innovation"
         description: "Novel approaches and creative solutions"
-        scale: "1-10" 
+        scale: "1-10"
         weight: 0.25
       - name: "scalability"
         description: "System scalability and performance considerations"
@@ -329,7 +329,7 @@ benchmarks:
         difficulty: "advanced"
         expected_tools: ["security_scanner", "vulnerability_analyzer", "mitigation_planner"]
         evaluation_metrics: ["threat_identification", "risk_assessment", "solution_quality"]
-      - name: "performance_optimization" 
+      - name: "performance_optimization"
         description: "System performance analysis and optimization"
         difficulty: "advanced"
         expected_tools: ["profiler", "optimizer", "benchmarker"]
@@ -500,7 +500,7 @@ result = await client.call_tool("judge.evaluate_response", {
 - 🔒 **Zero Security Issues** - All vulnerabilities resolved
 - 📚 **100% Documentation** - Complete Google-style docstring coverage
 
-### **Testing & Reliability** 
+### **Testing & Reliability**
 - ✅ **Comprehensive Test Suite** - Full pytest coverage with async testing
 - 🔄 **Continuous Integration** - Automated testing and quality checks
 - 📊 **Performance Testing** - Load testing and benchmark validation

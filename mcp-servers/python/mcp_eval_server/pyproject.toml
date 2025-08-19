@@ -31,11 +31,10 @@ dependencies = [
     "httpx>=0.24.0",
     "aiofiles>=23.0.0",
     "PyYAML>=6.0.0",
-    "numpy>=1.24.0",
-    "scipy>=1.10.0",
-    "scikit-learn>=1.3.0",
+    "numpy>=1.21.0",
+    "scipy>=1.7.0",
+    "scikit-learn>=1.0.0",
     "textstat>=0.7.0",
-    "asyncio-throttle>=1.0.0",
     "tenacity>=8.0.0",
     "cachetools>=5.0.0",
     "diskcache>=5.6.0",
@@ -44,25 +43,25 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "black>=25.1.0",
-    "flake8>=7.3.0",
-    "isort>=6.0.1",
-    "mypy>=1.17.1",
-    "pre-commit>=4.3.0",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.1.0",
-    "pytest-cov>=6.2.1",
-    "pytest-mock>=3.14.1",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.4.0",
+    "pre-commit>=3.3.0",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
 ]
 docs = [
-    "mkdocs>=1.6.1",
-    "mkdocs-material>=9.6.17",
-    "mkdocstrings[python]>=0.30.0",
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+    "mkdocstrings[python]>=0.22.0",
 ]
 benchmark = [
-    "locust>=2.38.1",
+    "locust>=2.15.0",
     "memory-profiler>=0.61.0",
-    "psutil>=7.0.0",
+    "psutil>=5.9.0",
 ]
 
 [project.urls]
