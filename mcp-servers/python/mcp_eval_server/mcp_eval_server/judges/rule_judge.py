@@ -143,7 +143,12 @@ class RuleBasedJudge(BaseJudge):
             Tuple of (score, reasoning) for readability evaluation
         """
         try:
-            flesch_score = textstat.flesch_reading_ease(response)
+            # Try to use textstat flesch reading ease with fallback
+            if hasattr(textstat, "flesch_reading_ease"):
+                flesch_score = textstat.flesch_reading_ease(response)
+            else:
+                # Implement simple readability scoring
+                flesch_score = self._calculate_simple_readability(response)
 
             # Convert Flesch score to 1-5 scale
             # 90-100: Very Easy (5), 80-90: Easy (4), 70-80: Fairly Easy (3)
@@ -169,6 +174,47 @@ class RuleBasedJudge(BaseJudge):
 
         except Exception as e:
             return 3.0, f"Could not calculate readability: {str(e)}"
+
+    def _calculate_simple_readability(self, text: str) -> float:
+        """Calculate simple readability score based on sentence and word length.
+
+        Args:
+            text: Text to analyze for readability
+
+        Returns:
+            Simple readability score (0-100, higher is more readable)
+        """
+        if not text.strip():
+            return 50.0
+
+        # Count sentences (simple approximation)
+        sentences = len([s for s in re.split(r"[.!?]+", text) if s.strip()])
+        if sentences == 0:
+            sentences = 1
+
+        # Count words
+        words = len(text.split())
+        if words == 0:
+            return 50.0
+
+        # Count syllables (very simple approximation)
+        syllables = 0
+        for word in text.split():
+            word = word.lower().strip('.,!?";')
+            if word:
+                # Simple syllable counting: count vowel groups
+                vowel_count = len(re.findall(r"[aeiouAEIOU]+", word))
+                syllables += max(1, vowel_count)
+
+        # Simple Flesch approximation
+        avg_sentence_length = words / sentences
+        avg_syllables_per_word = syllables / words
+
+        # Simplified Flesch formula approximation
+        readability = 206.835 - (1.015 * avg_sentence_length) - (84.6 * avg_syllables_per_word)
+
+        # Clamp to reasonable range
+        return max(0.0, min(100.0, readability))
 
     def _evaluate_grammar_spelling(self, response: str, criterion: EvaluationCriteria) -> tuple[float, str]:  # pylint: disable=unused-argument
         """Basic grammar and spelling evaluation.

@@ -320,7 +320,7 @@ class PromptTools:
         self,
         prompt: str,
         outputs: List[str],
-        embedding_model: str = "all-MiniLM-L6-v2",
+        embedding_model: str = "tfidf",  # pylint: disable=unused-argument
         relevance_threshold: float = 0.7,
         judge_model: str = "gpt-4",
     ) -> Dict[str, Any]:
@@ -352,7 +352,7 @@ class PromptTools:
             prompt_vector = tfidf_matrix[0:1]
 
             for i, output in enumerate(outputs):
-                output_vector = tfidf_matrix[i + 1 : i + 2]
+                output_vector = tfidf_matrix[i + 1 : i + 2]  # noqa: E203
                 relevance_score = cosine_similarity(prompt_vector, output_vector)[0][0]
                 relevance_scores.append(relevance_score)
 
