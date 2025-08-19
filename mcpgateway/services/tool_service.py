@@ -1451,19 +1451,10 @@ class ToolService:
         # Format request based on agent type and endpoint
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
             # Use JSONRPC format for agents that expect it
-            request_data = {
-                "jsonrpc": "2.0",
-                "method": parameters.get("method", "message/send"),
-                "params": parameters.get("params", parameters),
-                "id": 1
-            }
+            request_data = {"jsonrpc": "2.0", "method": parameters.get("method", "message/send"), "params": parameters.get("params", parameters), "id": 1}
         else:
             # Use custom A2A format
-            request_data = {
-                "interaction_type": interaction_type,
-                "parameters": parameters,
-                "protocol_version": agent.protocol_version
-            }
+            request_data = {"interaction_type": interaction_type, "parameters": parameters, "protocol_version": agent.protocol_version}
 
         # Make HTTP request to the agent endpoint
         async with httpx.AsyncClient(timeout=30.0) as client:

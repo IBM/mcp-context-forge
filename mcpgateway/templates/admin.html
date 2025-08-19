@@ -3472,8 +3472,16 @@
                         {% endfor %}
                       </div>
                       {% endif %}
+                      <!-- Test result placeholder -->
+                      <div id="test-result-{{ agent.id }}" class="mt-2 p-2 rounded-md bg-gray-50 dark:bg-gray-700 hidden"></div>
                     </div>
                     <div class="flex space-x-2">
+                      <button
+                        onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
+                        class="px-3 py-1 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        Test
+                      </button>
                       <form method="post" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="inline">
                         <input type="hidden" name="activate" value="{% if agent.enabled %}false{% else %}true{% endif %}" />
                         <button

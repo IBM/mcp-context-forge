@@ -5612,3 +5612,52 @@ async def admin_delete_a2a_agent(
         LOGGER.error(f"Error deleting A2A agent: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+
+
+@admin_router.post("/a2a/{agent_id}/test")
+async def admin_test_a2a_agent(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> JSONResponse:
+    """Test A2A agent via admin UI.
+
+    Args:
+        agent_id: Agent ID
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        JSON response with test results
+
+    Raises:
+        HTTPException: If A2A features are disabled
+    """
+    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+        return JSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
+
+    try:
+        # Get the agent by ID
+        agent = await a2a_service.get_agent(db, agent_id)
+
+        # Prepare test parameters based on agent type and endpoint
+        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+            # JSONRPC format for agents that expect it
+            test_params = {
+                "method": "message/send",
+                "params": {"message": {"messageId": f"admin-test-{int(time.time())}", "role": "user", "parts": [{"type": "text", "text": "Hello from MCP Gateway Admin UI test!"}]}},
+            }
+        else:
+            # Generic test format
+            test_params = {"message": "Hello from MCP Gateway Admin UI test!", "test": True, "timestamp": int(time.time())}
+
+        # Invoke the agent
+        result = await a2a_service.invoke_agent(db, agent.name, test_params, "admin_test")
+
+        return JSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
+
+    except Exception as e:
+        LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
+        return JSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
