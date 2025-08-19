@@ -335,7 +335,7 @@ class QualityTools:
                 for pos_pattern, neg_pattern in contradiction_patterns:
                     if re.search(pos_pattern, sentence1, re.IGNORECASE) and re.search(neg_pattern, sentence2, re.IGNORECASE):
                         coherence_score -= 0.3
-                        consistency_issues.append(f"Potential contradiction between sentences {i+1} and {j+1}")
+                        consistency_issues.append(f"Potential contradiction between sentences {i + 1} and {j + 1}")
 
         # Check pronoun references
         pronouns = ["it", "this", "that", "they", "them", "these", "those"]
@@ -526,7 +526,7 @@ class QualityTools:
 
         criteria = []
         for category in categories:
-            criteria.append({"name": category, "description": f'Level of {category.replace("_", " ")} in the content', "scale": "1-5", "weight": 1.0 / len(categories)})
+            criteria.append({"name": category, "description": f"Level of {category.replace('_', ' ')} in the content", "scale": "1-5", "weight": 1.0 / len(categories)})
 
         rubric = {
             "criteria": criteria,

@@ -830,9 +830,7 @@ class ToolService:
                                     headers = {"Authorization": f"Bearer {access_token}"}
                                 else:
                                     # No valid token available - user needs to complete OAuth flow
-                                    raise ToolInvocationError(
-                                        f"OAuth Authorization Code flow requires user consent. " f"Please complete the OAuth flow for gateway '{gateway.name}' before using tools."
-                                    )
+                                    raise ToolInvocationError(f"OAuth Authorization Code flow requires user consent. Please complete the OAuth flow for gateway '{gateway.name}' before using tools.")
                             except Exception as e:
                                 logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")

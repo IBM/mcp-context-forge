@@ -181,7 +181,7 @@ class PromptTools:
                 for run in range(num_runs):
                     # Placeholder: In real implementation, call target model here
                     # For now, simulate with slight variations
-                    simulated_output = f"Response to '{test_input}' (run {run+1}, temp {temp})"
+                    simulated_output = f"Response to '{test_input}' (run {run + 1}, temp {temp})"
                     run_outputs.append(simulated_output)
 
                 temp_outputs.extend(run_outputs)

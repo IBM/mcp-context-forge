@@ -39,7 +39,7 @@ class EvaluationCache:
         # Sort kwargs for consistent key generation
         sorted_items = sorted(kwargs.items())
         key_string = json.dumps(sorted_items, sort_keys=True)
-        return hashlib.md5(key_string.encode()).hexdigest()
+        return hashlib.md5(key_string.encode()).hexdigest()  # nosec B303 - Used for cache keys, not cryptographic security
 
     async def get(self, **kwargs) -> Optional[Dict[str, Any]]:
         """Get cached evaluation result.
