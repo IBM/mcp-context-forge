@@ -308,10 +308,15 @@ install: venv
 	$(foreach bin,$(REQUIRED_BUILD_BINS), $(if $(shell command -v $(bin) 2> /dev/null),,$(error Couldn't find `$(bin)`)))
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install ."
 
+.PHONY: install-dev
+install-dev: venv
+	$(foreach bin,$(REQUIRED_BUILD_BINS), $(if $(shell command -v $(bin) 2> /dev/null),,$(error Couldn't find `$(bin)`)))
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -e .[dev]"
+
 .PHONY: install-editable
 install-editable: venv
 	$(foreach bin,$(REQUIRED_BUILD_BINS), $(if $(shell command -v $(bin) 2> /dev/null),,$(error Couldn't find `$(bin)`)))
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -e ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -e .[dev]"
 
 .PHONY: uninstall
 uninstall:
@@ -426,6 +431,7 @@ help:
 	@echo ""
 	@echo "The following are the valid targets for this Makefile:"
 	@echo "...install           Install package from sources"
+	@echo "...install-dev       Install package from sources with dev packages"
 	@echo "...install-editable  Install package from sources in editabled mode"
 	@echo "...uninstall         Uninstall package"
 	@echo "...dist              Clean-build wheel *and* sdist into ./dist"
