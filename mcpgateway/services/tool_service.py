@@ -44,6 +44,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
@@ -167,6 +168,10 @@ class ToolService:
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
         self._plugin_manager: PluginManager | None = PluginManager() if settings.plugins_enabled else None
+        self.oauth_manager = OAuthManager(
+            request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
+            max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
+        )
 
     async def initialize(self) -> None:
         """Initialize the service.
@@ -731,10 +736,19 @@ class ToolService:
                 # headers = self._get_combined_headers(db, tool, tool.headers or {}, request_headers)
                 headers = tool.headers or {}
                 if tool.integration_type == "REST":
-                    credentials = decode_auth(tool.auth_value)
-                    # Filter out empty header names/values to avoid "Illegal header name" errors
-                    filtered_credentials = {k: v for k, v in credentials.items() if k and v}
-                    headers.update(filtered_credentials)
+                    # Handle OAuth authentication for REST tools
+                    if tool.auth_type == "oauth" and hasattr(tool, "oauth_config") and tool.oauth_config:
+                        try:
+                            access_token = await self.oauth_manager.get_access_token(tool.oauth_config)
+                            headers["Authorization"] = f"Bearer {access_token}"
+                        except Exception as e:
+                            logger.error(f"Failed to obtain OAuth access token for tool {tool.name}: {e}")
+                            raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
+                    else:
+                        credentials = decode_auth(tool.auth_value)
+                        # Filter out empty header names/values to avoid "Illegal header name" errors
+                        filtered_credentials = {k: v for k, v in credentials.items() if k and v}
+                        headers.update(filtered_credentials)
 
                     # Only call get_passthrough_headers if we actually have request headers to pass through
                     if request_headers:
@@ -795,7 +809,43 @@ class ToolService:
                 elif tool.integration_type == "MCP":
                     transport = tool.request_type.lower()
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
-                    headers = decode_auth(gateway.auth_value if gateway else None)
+
+                    # Handle OAuth authentication for the gateway
+                    if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+                        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+                        if grant_type == "authorization_code":
+                            # For Authorization Code flow, try to get stored tokens
+                            try:
+                                # First-Party
+                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                token_storage = TokenStorageService(db)
+
+                                # Try to get a valid token for any user (for now, we'll use a placeholder)
+                                # In a real implementation, you might want to specify which user's tokens to use
+                                access_token = await token_storage.get_any_valid_token(gateway.id)
+
+                                if access_token:
+                                    headers = {"Authorization": f"Bearer {access_token}"}
+                                else:
+                                    # No valid token available - user needs to complete OAuth flow
+                                    raise ToolInvocationError(
+                                        f"OAuth Authorization Code flow requires user consent. " f"Please complete the OAuth flow for gateway '{gateway.name}' before using tools."
+                                    )
+                            except Exception as e:
+                                logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                                raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+                        else:
+                            # For Client Credentials flow, get token directly
+                            try:
+                                access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                headers = {"Authorization": f"Bearer {access_token}"}
+                            except Exception as e:
+                                logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
+                                raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
+                    else:
+                        headers = decode_auth(gateway.auth_value if gateway else None)
 
                     # Get combined headers including gateway auth and passthrough
                     if request_headers:

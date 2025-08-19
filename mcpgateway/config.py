@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     #  Encryption key phrase for auth storage
     auth_encryption_secret: str = "my-test-salt"
 
+    # OAuth Configuration
+    oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
+    oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
+
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
