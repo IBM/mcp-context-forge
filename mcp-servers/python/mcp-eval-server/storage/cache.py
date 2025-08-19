@@ -1,0 +1,124 @@
+"""Caching system for MCP Eval Server."""
+
+# Standard
+import asyncio
+import hashlib
+import json
+import time
+from typing import Any, Dict, Optional, Union
+
+# Third-Party
+from cachetools import TTLCache
+import diskcache as dc
+
+
+class EvaluationCache:
+    """Cache for evaluation results with TTL and persistence options."""
+
+    def __init__(self, max_size: int = 1000, ttl_seconds: int = 3600, disk_cache_dir: Optional[str] = None):
+        """Initialize cache.
+
+        Args:
+            max_size: Maximum number of cached items
+            ttl_seconds: Time to live in seconds
+            disk_cache_dir: Directory for persistent disk cache
+        """
+        self.memory_cache = TTLCache(maxsize=max_size, ttl=ttl_seconds)
+        self.disk_cache = dc.Cache(disk_cache_dir) if disk_cache_dir else None
+        self.ttl_seconds = ttl_seconds
+
+    def _generate_key(self, **kwargs) -> str:
+        """Generate cache key from parameters."""
+        # Sort kwargs for consistent key generation
+        sorted_items = sorted(kwargs.items())
+        key_string = json.dumps(sorted_items, sort_keys=True)
+        return hashlib.md5(key_string.encode()).hexdigest()
+
+    async def get(self, **kwargs) -> Optional[Dict[str, Any]]:
+        """Get cached evaluation result."""
+        cache_key = self._generate_key(**kwargs)
+
+        # Check memory cache first
+        if cache_key in self.memory_cache:
+            return self.memory_cache[cache_key]
+
+        # Check disk cache if available
+        if self.disk_cache and cache_key in self.disk_cache:
+            result = self.disk_cache[cache_key]
+
+            # Check if still valid
+            if time.time() - result.get("cached_at", 0) < self.ttl_seconds:
+                # Restore to memory cache
+                self.memory_cache[cache_key] = result
+                return result
+            else:
+                # Expired, remove from disk cache
+                del self.disk_cache[cache_key]
+
+        return None
+
+    async def set(self, result: Dict[str, Any], **kwargs) -> None:
+        """Cache evaluation result."""
+        cache_key = self._generate_key(**kwargs)
+
+        # Add timestamp
+        cached_result = {**result, "cached_at": time.time(), "cache_key": cache_key}
+
+        # Store in memory cache
+        self.memory_cache[cache_key] = cached_result
+
+        # Store in disk cache if available
+        if self.disk_cache:
+            self.disk_cache[cache_key] = cached_result
+
+    async def invalidate(self, **kwargs) -> None:
+        """Invalidate cached result."""
+        cache_key = self._generate_key(**kwargs)
+
+        # Remove from memory cache
+        self.memory_cache.pop(cache_key, None)
+
+        # Remove from disk cache
+        if self.disk_cache and cache_key in self.disk_cache:
+            del self.disk_cache[cache_key]
+
+    async def clear(self) -> None:
+        """Clear all cached results."""
+        self.memory_cache.clear()
+
+        if self.disk_cache:
+            self.disk_cache.clear()
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        memory_stats = {"size": len(self.memory_cache), "max_size": self.memory_cache.maxsize, "hits": getattr(self.memory_cache, "hits", 0), "misses": getattr(self.memory_cache, "misses", 0)}
+
+        disk_stats = {}
+        if self.disk_cache:
+            disk_stats = {"size": len(self.disk_cache), "volume": self.disk_cache.volume()}
+
+        return {"memory_cache": memory_stats, "disk_cache": disk_stats, "ttl_seconds": self.ttl_seconds}
+
+
+class JudgeResponseCache(EvaluationCache):
+    """Specialized cache for judge responses."""
+
+    async def get_judge_result(self, judge_model: str, response: str, criteria: list, context: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get cached judge evaluation result."""
+        return await self.get(judge_model=judge_model, response=response, criteria=criteria, context=context)
+
+    async def cache_judge_result(self, result: Dict[str, Any], judge_model: str, response: str, criteria: list, context: Optional[str] = None) -> None:
+        """Cache judge evaluation result."""
+        await self.set(result, judge_model=judge_model, response=response, criteria=criteria, context=context)
+
+
+class BenchmarkCache(EvaluationCache):
+    """Specialized cache for benchmark results."""
+
+    async def get_benchmark_result(self, benchmark_suite: str, agent_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Get cached benchmark result."""
+        return await self.get(benchmark_suite=benchmark_suite, agent_config=agent_config)
+
+    async def cache_benchmark_result(self, result: Dict[str, Any], benchmark_suite: str, agent_config: Dict[str, Any]) -> None:
+        """Cache benchmark result."""
+        await self.set(result, benchmark_suite=benchmark_suite, agent_config=agent_config)
