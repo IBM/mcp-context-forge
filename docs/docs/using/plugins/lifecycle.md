@@ -4,8 +4,10 @@ The plugin framework includes CLI tools to help you create, test, and deploy you
 
 ## Development Flow
 
+The plugin development workflow  follows a straightforward workflow that gets you from idea to running plugin quickly.
+
 ```mermaid
-flowchart LR
+graph LR
 
     A["template"]
     B(["$> bootstrap"])
@@ -22,8 +24,22 @@ flowchart LR
 
     B --> C
 
+    subgraph CF["Context Forge"]
+        E["gateway"]
+        D o--"MCP<br>&nbsp;&nbsp;<small>tools/call <i>hook</i></small>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"--o E
+    end
+
     style A stroke-dasharray: 3 3;
 ```
+
+The process breaks down into these main steps:
+
+- **Bootstrap**: Start with a plugin template and run the bootstrap command to set up your project structure
+- **Build**: Compile and package your plugin code
+- **Serve**: Launch a local development server to test your plugin
+- **Connect**: Your served plugin automatically integrates with Context Forge's gateway via MCP (Model Context Protocol), using tool calls over standardized hooks for seamless communication
+
+This streamlined approach lets developers focus on building functionality rather than wrestling with configuration, while ensuring plugins work smoothly within the broader Context Forge ecosystem.
 
 ### Bootstrap
 
