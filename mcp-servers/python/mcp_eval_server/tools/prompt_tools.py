@@ -6,6 +6,10 @@ import re
 import statistics
 from typing import Any, Dict, List, Optional
 
+# Third-Party
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
 # Local
 from ..judges.rule_judge import RuleBasedJudge
 from .judge_tools import JudgeTools
@@ -333,22 +337,56 @@ class PromptTools:
         Returns:
             Relevance assessment result
         """
-        # Use rule-based judge for semantic similarity
-        rule_judge = RuleBasedJudge({"embedding_model": embedding_model})
+        # Use TF-IDF vectorizer for semantic similarity
+        vectorizer = TfidfVectorizer(max_features=5000, stop_words="english", ngram_range=(1, 2), lowercase=True)
 
         relevance_scores = []
         semantic_analyses = []
 
-        for i, output in enumerate(outputs):
-            # Calculate semantic similarity
-            result = await rule_judge.evaluate_with_reference(response=output, reference=prompt, evaluation_type="semantic_similarity")
+        # Calculate semantic similarity for all outputs
+        try:
+            # Prepare texts for vectorization
+            all_texts = [prompt] + outputs
+            tfidf_matrix = vectorizer.fit_transform(all_texts)
 
-            relevance_score = result.similarity_score
-            relevance_scores.append(relevance_score)
+            # Calculate similarity between prompt and each output
+            prompt_vector = tfidf_matrix[0:1]
 
-            semantic_analyses.append(
-                {"output_index": i, "relevance_score": relevance_score, "is_relevant": relevance_score >= relevance_threshold, "output_preview": output[:100] + "..." if len(output) > 100 else output}
-            )
+            for i, output in enumerate(outputs):
+                output_vector = tfidf_matrix[i + 1 : i + 2]
+                relevance_score = cosine_similarity(prompt_vector, output_vector)[0][0]
+                relevance_scores.append(relevance_score)
+
+                semantic_analyses.append(
+                    {
+                        "output_index": i,
+                        "relevance_score": relevance_score,
+                        "is_relevant": relevance_score >= relevance_threshold,
+                        "output_preview": output[:100] + "..." if len(output) > 100 else output,
+                    }
+                )
+
+        except Exception:
+            # Fallback to simple word overlap
+            prompt_words = set(prompt.lower().split())
+
+            for i, output in enumerate(outputs):
+                output_words = set(output.lower().split())
+                if not prompt_words:
+                    relevance_score = 0.0
+                else:
+                    overlap = len(prompt_words & output_words)
+                    relevance_score = overlap / len(prompt_words)
+
+                relevance_scores.append(relevance_score)
+                semantic_analyses.append(
+                    {
+                        "output_index": i,
+                        "relevance_score": relevance_score,
+                        "is_relevant": relevance_score >= relevance_threshold,
+                        "output_preview": output[:100] + "..." if len(output) > 100 else output,
+                    }
+                )
 
         # Calculate overall metrics
         avg_relevance = statistics.mean(relevance_scores)

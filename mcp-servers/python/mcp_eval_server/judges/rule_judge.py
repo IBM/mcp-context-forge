@@ -6,7 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import textstat
 
@@ -33,9 +33,8 @@ class RuleBasedJudge(BaseJudge):
         """
         super().__init__(config)
 
-        # Initialize sentence transformer for semantic similarity
-        model_name = config.get("embedding_model", "all-MiniLM-L6-v2")
-        self.embedding_model = SentenceTransformer(model_name)
+        # Initialize TF-IDF vectorizer for semantic similarity
+        self.vectorizer = TfidfVectorizer(max_features=10000, stop_words="english", ngram_range=(1, 2), lowercase=True)
 
     async def evaluate_response(
         self,
@@ -507,12 +506,22 @@ class RuleBasedJudge(BaseJudge):
             ReferenceEvaluationResult with similarity score and analysis
         """
 
-        # Semantic similarity using sentence embeddings
-        response_embedding = self.embedding_model.encode([response])
-        reference_embedding = self.embedding_model.encode([reference])
+        # Semantic similarity using TF-IDF
+        try:
+            # Fit and transform both texts
+            tfidf_matrix = self.vectorizer.fit_transform([response, reference])
 
-        # Calculate cosine similarity
-        similarity = cosine_similarity(response_embedding, reference_embedding)[0][0]
+            # Calculate cosine similarity
+            similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+        except Exception:
+            # Fallback to simple word overlap if TF-IDF fails
+            response_words = set(response.lower().split())
+            reference_words = set(reference.lower().split())
+            if not reference_words:
+                similarity = 0.0
+            else:
+                overlap = len(response_words & reference_words)
+                similarity = overlap / len(reference_words)
 
         # Basic keyword overlap
         response_words = set(response.lower().split())

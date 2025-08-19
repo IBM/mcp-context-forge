@@ -33,7 +33,7 @@ The **MCP Evaluation Server** is the most comprehensive evaluation platform in t
 - **🔍 Clarity Analysis**: Rule-based ambiguity detection + LLM semantic analysis with improvement recommendations
 - **🔄 Consistency Testing**: Multi-run variance analysis across temperature settings with outlier detection
 - **✅ Completeness Measurement**: Component coverage analysis with visual heatmap generation
-- **🎯 Relevance Assessment**: Semantic alignment using state-of-the-art embeddings with drift analysis
+- **🎯 Relevance Assessment**: Semantic alignment using TF-IDF vectorization with drift analysis
 
 ### 🛠️ **Agent Evaluation Tools** (4 Tools)
 - **⚙️ Tool Usage Evaluation**: Selection accuracy, sequence optimization, parameter validation with efficiency scoring
@@ -71,11 +71,12 @@ The **MCP Evaluation Server** is the most comprehensive evaluation platform in t
 - **Human Alignment**: Regular calibration against ground truth evaluations
 
 ### **⚡ Performance & Scalability**
+- **Lightweight Dependencies**: Uses standard libraries (scikit-learn, numpy) instead of heavy ML frameworks
 - **Smart Caching**: Multi-level caching (memory + disk) with TTL and invalidation
 - **Async Processing**: Non-blocking evaluation execution with configurable concurrency
 - **Batch Operations**: Efficient multi-item processing with progress tracking
 - **Resource Management**: Memory and CPU optimization with automatic scaling
-- **Rate Limiting**: API usage optimization with intelligent throttling
+- **Fast Startup**: Quick initialization without loading large pre-trained models
 
 ### **🔒 Enterprise Security**
 - **Cryptographic Random**: Secure random number generation for bias mitigation
@@ -95,7 +96,7 @@ The **MCP Evaluation Server** is the most comprehensive evaluation platform in t
 
 ### **Quick Installation**
 ```bash
-# Clone and install
+# Clone and install (lightweight dependencies only)
 cd mcp-servers/python/mcp_eval_server
 pip install -e ".[dev]"
 
@@ -103,6 +104,9 @@ pip install -e ".[dev]"
 export OPENAI_API_KEY="sk-your-key-here"
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 export AZURE_OPENAI_KEY="your-azure-key"
+
+# Note: No heavy ML dependencies required!
+# Uses efficient TF-IDF + scikit-learn instead of transformers
 ```
 
 ### **Docker Deployment**
@@ -394,7 +398,7 @@ benchmarks:
 | `prompt.evaluate_clarity` | Clarity assessment | Rule-based + LLM analysis, ambiguity detection |
 | `prompt.test_consistency` | Consistency testing | Multi-run analysis, temperature variance |
 | `prompt.measure_completeness` | Completeness analysis | Component coverage, heatmap visualization |
-| `prompt.assess_relevance` | Relevance measurement | Semantic alignment, drift analysis |
+| `prompt.assess_relevance` | Relevance measurement | TF-IDF semantic alignment, drift analysis |
 
 ### **Agent Tools (4/29)**
 | Tool | Description | Key Features |

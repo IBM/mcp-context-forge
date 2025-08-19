@@ -49,10 +49,7 @@ RUN set -euo pipefail \
          python${PYTHON_VERSION}-devel \
          python${PYTHON_VERSION}-pip \
          gcc \
-         gcc-c++ \
-         gfortran \
          binutils \
-         git \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && dnf clean all
 
@@ -76,7 +73,6 @@ COPY README.md /app/
 RUN set -euo pipefail \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && /app/.venv/bin/pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && /app/.venv/bin/pip install --no-cache-dir -e ".[dev]" \
     && /app/.venv/bin/pip uninstall --yes pip setuptools wheel \
     && rm -rf /root/.cache /var/cache/dnf \
@@ -195,7 +191,7 @@ RUN rm -rf ${ROOTFS_PATH:?}/usr/bin/dnf* \
 # - This reduces the final image size and removes build tools in one step
 # ----------------------------------------------------------------------------
 RUN find "${ROOTFS_PATH:?}/usr/lib64" -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true \
-    && dnf remove -y gcc gcc-c++ gfortran binutils git \
+    && dnf remove -y gcc binutils \
     && dnf clean all
 
 # ----------------------------------------------------------------------------
