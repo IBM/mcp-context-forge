@@ -1264,7 +1264,6 @@ async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(
         HTTPException: If the tool name already exists or other validation errors occur.
     """
     try:
-
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
@@ -1361,7 +1360,6 @@ async def update_tool(
         HTTPException: If an error occurs during the update.
     """
     try:
-
         # Get current tool to extract current version
         current_tool = db.get(DbTool, tool_id)
         current_version = getattr(current_tool, "version", 0) if current_tool else 0

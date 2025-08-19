@@ -631,7 +631,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             access_token = await token_storage.get_any_valid_token(gateway.id)
 
             if not access_token:
-                raise GatewayConnectionError(f"No valid OAuth tokens found for gateway {gateway.name}. " "Please complete the OAuth authorization flow first.")
+                raise GatewayConnectionError(f"No valid OAuth tokens found for gateway {gateway.name}. Please complete the OAuth authorization flow first.")
 
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}
