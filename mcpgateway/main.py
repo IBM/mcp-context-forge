@@ -3083,6 +3083,16 @@ app.include_router(tag_router)
 app.include_router(export_import_router)
 app.include_router(well_known_router)
 
+# Include OAuth router
+try:
+    # First-Party
+    from mcpgateway.routers.oauth_router import oauth_router
+
+    app.include_router(oauth_router)
+    logger.info("OAuth router included")
+except ImportError:
+    logger.debug("OAuth router not available")
+
 # Include reverse proxy router if enabled
 try:
     # First-Party

@@ -1844,7 +1844,7 @@ class GatewayCreate(BaseModel):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -1852,6 +1852,9 @@ class GatewayCreate(BaseModel):
     auth_header_key: Optional[str] = Field(None, description="Key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="Value for custom headers authentication")
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
@@ -2003,6 +2006,12 @@ class GatewayCreate(BaseModel):
 
             return encode_auth({"Authorization": f"Bearer {token}"})
 
+        if auth_type == "oauth":
+            # For OAuth authentication, we don't encode anything here
+            # The OAuth configuration is handled separately in the oauth_config field
+            # This method is only called for traditional auth types
+            return None
+
         if auth_type == "authheaders":
             # Support both new multi-headers format and legacy single header format
             auth_headers = data.get("auth_headers")
@@ -2056,7 +2065,7 @@ class GatewayCreate(BaseModel):
 
             return encode_auth({header_key: header_value})
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, or headers.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
 class GatewayUpdate(BaseModelWithConfigDict):
@@ -2171,13 +2180,13 @@ class GatewayUpdate(BaseModelWithConfigDict):
         return auth_value
 
     @staticmethod
-    def _process_auth_fields(values: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _process_auth_fields(info: ValidationInfo) -> Optional[Dict[str, Any]]:
         """
         Processes the input authentication fields and returns the correct auth_value.
         This method is called based on the selected auth_type.
 
         Args:
-            values: Dict container auth information auth_type, auth_username, auth_password, auth_token, auth_header_key and auth_header_value
+            info: ValidationInfo containing auth fields
 
         Returns:
             dict: Encoded auth information
@@ -2186,12 +2195,13 @@ class GatewayUpdate(BaseModelWithConfigDict):
             ValueError: If auth type is invalid
         """
 
-        auth_type = values.data.get("auth_type")
+        data = info.data
+        auth_type = data.get("auth_type")
 
         if auth_type == "basic":
             # For basic authentication, both username and password must be present
-            username = values.data.get("auth_username")
-            password = values.data.get("auth_password")
+            username = data.get("auth_username")
+            password = data.get("auth_password")
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
@@ -2200,16 +2210,22 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
         if auth_type == "bearer":
             # For bearer authentication, only token is required
-            token = values.data.get("auth_token")
+            token = data.get("auth_token")
 
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
 
             return encode_auth({"Authorization": f"Bearer {token}"})
 
+        if auth_type == "oauth":
+            # For OAuth authentication, we don't encode anything here
+            # The OAuth configuration is handled separately in the oauth_config field
+            # This method is only called for traditional auth types
+            return None
+
         if auth_type == "authheaders":
             # Support both new multi-headers format and legacy single header format
-            auth_headers = values.data.get("auth_headers")
+            auth_headers = data.get("auth_headers")
             if auth_headers and isinstance(auth_headers, list):
                 # New multi-headers format with enhanced validation
                 header_dict = {}
@@ -2252,15 +2268,15 @@ class GatewayUpdate(BaseModelWithConfigDict):
                 return encode_auth(header_dict)
 
             # Legacy single header format (backward compatibility)
-            header_key = values.data.get("auth_header_key")
-            header_value = values.data.get("auth_header_value")
+            header_key = data.get("auth_header_key")
+            header_value = data.get("auth_header_value")
 
             if not header_key or not header_value:
                 raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
             return encode_auth({header_key: header_value})
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, or headers.")
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
 class GatewayRead(BaseModelWithConfigDict):
@@ -2273,8 +2289,9 @@ class GatewayRead(BaseModelWithConfigDict):
     - enabled status
     - reachable status
     - Last seen timestamp
-    - Authentication type: basic, bearer, headers
+    - Authentication type: basic, bearer, headers, oauth
     - Authentication value: username/password or token or custom headers
+    - OAuth configuration for OAuth 2.0 authentication
 
     Auto Populated fields:
     - Authentication username: for basic auth
@@ -2299,8 +2316,11 @@ class GatewayRead(BaseModelWithConfigDict):
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
 
     # auth_value will populate the following fields
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
@@ -2399,6 +2419,12 @@ class GatewayRead(BaseModelWithConfigDict):
 
         # Skip validation logic if masked value
         if auth_value_encoded == settings.masked_auth_value:
+            return values
+
+        # Handle OAuth authentication (no auth_value to decode)
+        if auth_type == "oauth":
+            # OAuth gateways don't have traditional auth_value to decode
+            # They use oauth_config instead
             return values
 
         auth_value = decode_auth(auth_value_encoded)

@@ -83,6 +83,7 @@ from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolS
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
+from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import set_auth_cookie
@@ -1558,7 +1559,9 @@ async def admin_ui(
     servers = [server.model_dump(by_alias=True) for server in await server_service.list_servers(db, include_inactive=include_inactive)]
     resources = [resource.model_dump(by_alias=True) for resource in await resource_service.list_resources(db, include_inactive=include_inactive)]
     prompts = [prompt.model_dump(by_alias=True) for prompt in await prompt_service.list_prompts(db, include_inactive=include_inactive)]
-    gateways = [gateway.model_dump(by_alias=True) for gateway in await gateway_service.list_gateways(db, include_inactive=include_inactive)]
+    gateways_raw = await gateway_service.list_gateways(db, include_inactive=include_inactive)
+    gateways = [gateway.model_dump(by_alias=True) for gateway in gateways_raw]
+
     roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
@@ -2654,6 +2657,20 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             except (json.JSONDecodeError, ValueError):
                 auth_headers = []
 
+        # Parse OAuth configuration if present
+        oauth_config_json = str(form.get("oauth_config"))
+        oauth_config: Optional[dict[str, Any]] = None
+        if oauth_config_json and oauth_config_json != "None":
+            try:
+                oauth_config = json.loads(oauth_config_json)
+                # Encrypt the client secret if present
+                if oauth_config and "client_secret" in oauth_config:
+                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
+            except (json.JSONDecodeError, ValueError) as e:
+                LOGGER.error(f"Failed to parse OAuth config: {e}")
+                oauth_config = None
+
         # Handle passthrough_headers
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
@@ -2678,6 +2695,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             auth_header_key=str(form.get("auth_header_key", "")),
             auth_header_value=str(form.get("auth_header_value", "")),
             auth_headers=auth_headers if auth_headers else None,
+            oauth_config=oauth_config,
             passthrough_headers=passthrough_headers,
         )
     except KeyError as e:
@@ -2701,8 +2719,22 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             created_via=metadata["created_via"],
             created_user_agent=metadata["created_user_agent"],
         )
+
+        # Provide specific guidance for OAuth Authorization Code flow
+        message = "Gateway registered successfully!"
+        if oauth_config and oauth_config.get("grant_type") == "authorization_code":
+            message = (
+                "Gateway registered successfully! 🎉\n\n"
+                "⚠️  IMPORTANT: This gateway uses OAuth Authorization Code flow.\n"
+                "You must complete the OAuth authorization before tools will work:\n\n"
+                "1. Go to the Gateways list\n"
+                "2. Click the '🔐 Authorize' button for this gateway\n"
+                "3. Complete the OAuth consent flow\n"
+                "4. Return to the admin panel\n\n"
+                "Tools will not work until OAuth authorization is completed."
+            )
         return JSONResponse(
-            content={"message": "Gateway registered successfully!", "success": True},
+            content={"message": message, "success": True},
             status_code=200,
         )
 
@@ -2718,6 +2750,10 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
+
+# OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
+# This route has been removed to avoid conflicts with the complete implementation
 
 
 @admin_router.post("/gateways/{gateway_id}/edit")

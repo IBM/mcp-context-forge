@@ -2783,6 +2783,36 @@
                     >
                       Test
                     </button>
+
+                    <!-- Debug: Show gateway data for troubleshooting -->
+                    <!-- Gateway ID: {{ gateway.id }} -->
+                    <!-- Auth Type: {{ gateway.auth_type }} -->
+                    <!-- OAuth Config: {{ gateway.oauth_config }} -->
+                    <!-- Grant Type: {{ gateway.oauth_config.grant_type if gateway.oauth_config else 'None' }} -->
+                    <script>
+                      console.log('Auth Type:', '{{ gateway.authType }}');
+                      console.log('OAuth Config:', '{{ gateway.oauthConfig }}');
+                    </script>
+
+                    {% if gateway.authType == 'oauth' %}
+                    <a
+                      href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
+                      class="inline-block text-indigo-600 hover:text-indigo-500 mr-2"
+                      title="🔐 Authorize Users for OAuth"
+                    >
+                      🔐 Authorize
+                    </a>
+
+                    <!-- Show Fetch Tools button if gateway is authorized but has no tools -->
+                    <button
+                      onclick="fetchToolsForGateway('{{ gateway.id }}', '{{ gateway.name }}')"
+                      class="inline-block bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm mr-2"
+                      title="🔧 Fetch Tools from MCP Server"
+                      id="fetch-tools-{{ gateway.id }}"
+                    >
+                      🔧 Fetch Tools
+                    </button>
+                    {% endif %}
                     {% if gateway.enabled %}
                     <form
                       method="POST"
@@ -2933,6 +2963,7 @@
                   <option value="basic">Basic</option>
                   <option value="bearer">Bearer Token</option>
                   <option value="authheaders">Custom Headers</option>
+                  <option value="oauth">OAuth 2.0</option>
                 </select>
               </div>
               <div id="auth-basic-fields-gw" style="display: none">
@@ -3006,6 +3037,168 @@
                     name="auth_headers"
                     id="auth-headers-json-gw"
                   />
+                </div>
+              </div>
+
+              <!-- OAuth Configuration Fields -->
+              <div id="auth-oauth-fields-gw" style="display: none">
+                <div class="space-y-4">
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Grant Type
+                    </label>
+                    <select
+                      name="oauth_grant_type"
+                      id="oauth-grant-type-gw"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                    >
+                      <option value="client_credentials">Client Credentials (Machine-to-Machine)</option>
+                      <option value="authorization_code">Authorization Code (User Delegation)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Client ID
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_client_id"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="Your OAuth client ID"
+                    />
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Client Secret
+                    </label>
+                    <input
+                      type="password"
+                      name="oauth_client_secret"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="Your OAuth client secret"
+                    />
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Token URL
+                    </label>
+                    <input
+                      type="url"
+                      name="oauth_token_url"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="https://oauth.example.com/token"
+                    />
+                  </div>
+
+                  <div id="oauth-auth-code-fields-gw" style="display: none">
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Authorization URL
+                      </label>
+                      <input
+                        type="url"
+                        name="oauth_authorization_url"
+                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="https://oauth.example.com/authorize"
+                      />
+                      <p class="mt-1 text-sm text-gray-500">
+                        The OAuth provider's authorization endpoint URL
+                      </p>
+                    </div>
+
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Redirect URI
+                      </label>
+                      <input
+                        type="url"
+                        name="oauth_redirect_uri"
+                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="https://gateway.example.com/oauth/callback"
+                      />
+                      <p class="mt-1 text-sm text-gray-500">
+                        This must match the redirect URI configured in your OAuth application
+                      </p>
+                      <p class="mt-1 text-sm text-blue-600 font-medium">
+                        💡 Use: <code class="bg-blue-100 px-1 rounded">{{ request.base_url }}oauth/callback</code>
+                      </p>
+                    </div>
+
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Token Management
+                      </label>
+                      <div class="mt-2 space-y-2">
+                        <label class="flex items-center">
+                          <input
+                            type="checkbox"
+                            name="oauth_store_tokens"
+                            checked
+                            class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                            Store access tokens for reuse
+                          </span>
+                        </label>
+                        <label class="flex items-center">
+                          <input
+                            type="checkbox"
+                            name="oauth_auto_refresh"
+                            checked
+                            class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                            Automatically refresh expired tokens
+                          </span>
+                        </label>
+                      </div>
+                      <p class="mt-1 text-sm text-gray-500">
+                        Token management options for Authorization Code flow
+                      </p>
+                    </div>
+
+                    <div class="bg-blue-50 border border-blue-200 rounded-md p-4 dark:bg-blue-900/20 dark:border-blue-800">
+                      <div class="flex">
+                        <div class="flex-shrink-0">
+                          <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                          </svg>
+                        </div>
+                        <div class="ml-3">
+                          <h3 class="text-sm font-medium text-blue-800 dark:text-blue-200">
+                            Authorization Code Flow Setup
+                          </h3>
+                          <div class="mt-2 text-sm text-blue-700 dark:text-blue-300">
+                            <p>After creating this gateway, you'll need to:</p>
+                            <ol class="list-decimal list-inside mt-1 space-y-1">
+                              <li>Click the "🔐 Authorize" button in the gateway list</li>
+                              <li>Complete the OAuth consent flow with your provider</li>
+                              <li>Return to the admin panel to see authorization status</li>
+                            </ol>
+                            <p class="mt-2 font-medium">Note: The gateway will be created but tools won't work until OAuth authorization is completed.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Scopes
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_scopes"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="repo read:user (space-separated)"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      Space-separated list of OAuth scopes (e.g., "repo read:user")
+                    </p>
+                  </div>
                 </div>
               </div>
               <div>
