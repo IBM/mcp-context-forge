@@ -95,23 +95,20 @@ scan: ## Scan container for vulnerabilities
 
 # Example usage
 example: ## Run example evaluation
-	$(PYTHON) -c "
-import asyncio
-import json
-from mcp_eval_server.tools.judge_tools import JudgeTools
-
-async def main():
-    jt = JudgeTools()
-    result = await jt.evaluate_response(
-        response='Paris is the capital of France.',
-        criteria=[{'name': 'accuracy', 'description': 'Factual accuracy', 'scale': '1-5', 'weight': 1.0}],
-        rubric={'criteria': [], 'scale_description': {'1': 'Wrong', '5': 'Correct'}},
-        judge_model='rule-based'
-    )
-    print(json.dumps(result, indent=2))
-
-asyncio.run(main())
-"
+	@$(PYTHON) -c "\
+import asyncio; \
+import json; \
+from mcp_eval_server.tools.judge_tools import JudgeTools; \
+async def main(): \
+    jt = JudgeTools(); \
+    result = await jt.evaluate_response( \
+        response='Paris is the capital of France.', \
+        criteria=[{'name': 'accuracy', 'description': 'Factual accuracy', 'scale': '1-5', 'weight': 1.0}], \
+        rubric={'criteria': [], 'scale_description': {'1': 'Wrong', '5': 'Correct'}}, \
+        judge_model='rule-based' \
+    ); \
+    print(json.dumps(result, indent=2)); \
+asyncio.run(main())"
 
 # Documentation
 docs: ## Generate documentation
