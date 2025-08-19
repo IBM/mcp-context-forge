@@ -373,19 +373,10 @@ class A2AAgentService:
             # Format request based on agent type and endpoint
             if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
                 # Use JSONRPC format for agents that expect it
-                request_data = {
-                    "jsonrpc": "2.0",
-                    "method": parameters.get("method", "message/send"),
-                    "params": parameters.get("params", parameters),
-                    "id": 1
-                }
+                request_data = {"jsonrpc": "2.0", "method": parameters.get("method", "message/send"), "params": parameters.get("params", parameters), "id": 1}
             else:
                 # Use custom A2A format
-                request_data = {
-                    "interaction_type": interaction_type,
-                    "parameters": parameters,
-                    "protocol_version": agent.protocol_version
-                }
+                request_data = {"interaction_type": interaction_type, "parameters": parameters, "protocol_version": agent.protocol_version}
 
             # Make HTTP request to the agent endpoint
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -500,7 +491,7 @@ class A2AAgentService:
         total_executions = len(db_agent.metrics)
         successful_executions = sum(1 for m in db_agent.metrics if m.is_success)
         failed_executions = total_executions - successful_executions
-        failure_rate = (failed_executions / total_executions) if total_executions > 0 else 0.0
+        failure_rate = (failed_executions / total_executions) * 100 if total_executions > 0 else 0.0
 
         min_response_time = None
         max_response_time = None

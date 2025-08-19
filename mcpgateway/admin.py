@@ -5536,7 +5536,7 @@ async def admin_toggle_a2a_agent(
     agent_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ) -> RedirectResponse:
     """Toggle A2A agent status via admin UI.
 
@@ -5579,7 +5579,7 @@ async def admin_delete_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ) -> RedirectResponse:
     """Delete A2A agent via admin UI.
 
@@ -5617,9 +5617,9 @@ async def admin_delete_a2a_agent(
 @admin_router.post("/a2a/{agent_id}/test")
 async def admin_test_a2a_agent(
     agent_id: str,
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ) -> JSONResponse:
     """Test A2A agent via admin UI.
 
