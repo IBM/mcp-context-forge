@@ -274,12 +274,11 @@ Provide your evaluation in the following JSON format:
 
         if ranking_method == "scoring":
             return await self._rank_by_scoring(responses, criteria, context)
-        elif ranking_method == "tournament":
+        if ranking_method == "tournament":
             return await self._rank_by_tournament(responses, criteria, context)
-        elif ranking_method == "round_robin":
+        if ranking_method == "round_robin":
             return await self._rank_by_round_robin(responses, criteria, context)
-        else:
-            raise ValueError(f"Unknown ranking method: {ranking_method}")
+        raise ValueError(f"Unknown ranking method: {ranking_method}")
 
     async def _rank_by_scoring(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
         """Rank by scoring each response individually.

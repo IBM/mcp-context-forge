@@ -328,14 +328,13 @@ class WorkflowTools:
 
         if tool == "judge.evaluate_response":
             return await self.judge_tools.evaluate_response(**params)
-        elif tool == "judge.pairwise_comparison":
+        if tool == "judge.pairwise_comparison":
             return await self.judge_tools.pairwise_comparison(**params)
-        elif tool == "judge.rank_responses":
+        if tool == "judge.rank_responses":
             return await self.judge_tools.rank_responses(**params)
-        elif tool == "judge.evaluate_with_reference":
+        if tool == "judge.evaluate_with_reference":
             return await self.judge_tools.evaluate_with_reference(**params)
-        else:
-            raise ValueError(f"Unknown judge tool: {tool}")
+        raise ValueError(f"Unknown judge tool: {tool}")
 
     async def _execute_prompt_tool(self, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute prompt tool.
@@ -353,14 +352,13 @@ class WorkflowTools:
 
         if tool == "prompt.evaluate_clarity":
             return await self.prompt_tools.evaluate_clarity(**params)
-        elif tool == "prompt.test_consistency":
+        if tool == "prompt.test_consistency":
             return await self.prompt_tools.test_consistency(**params)
-        elif tool == "prompt.measure_completeness":
+        if tool == "prompt.measure_completeness":
             return await self.prompt_tools.measure_completeness(**params)
-        elif tool == "prompt.assess_relevance":
+        if tool == "prompt.assess_relevance":
             return await self.prompt_tools.assess_relevance(**params)
-        else:
-            raise ValueError(f"Unknown prompt tool: {tool}")
+        raise ValueError(f"Unknown prompt tool: {tool}")
 
     async def _execute_agent_tool(self, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute agent tool.
@@ -378,14 +376,13 @@ class WorkflowTools:
 
         if tool == "agent.evaluate_tool_use":
             return await self.agent_tools.evaluate_tool_use(**params)
-        elif tool == "agent.measure_task_completion":
+        if tool == "agent.measure_task_completion":
             return await self.agent_tools.measure_task_completion(**params)
-        elif tool == "agent.analyze_reasoning":
+        if tool == "agent.analyze_reasoning":
             return await self.agent_tools.analyze_reasoning(**params)
-        elif tool == "agent.benchmark_performance":
+        if tool == "agent.benchmark_performance":
             return await self.agent_tools.benchmark_performance(**params)
-        else:
-            raise ValueError(f"Unknown agent tool: {tool}")
+        raise ValueError(f"Unknown agent tool: {tool}")
 
     async def _execute_quality_tool(self, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute quality tool.
@@ -403,12 +400,11 @@ class WorkflowTools:
 
         if tool == "quality.evaluate_factuality":
             return await self.quality_tools.evaluate_factuality(**params)
-        elif tool == "quality.measure_coherence":
+        if tool == "quality.measure_coherence":
             return await self.quality_tools.measure_coherence(**params)
-        elif tool == "quality.assess_toxicity":
+        if tool == "quality.assess_toxicity":
             return await self.quality_tools.assess_toxicity(**params)
-        else:
-            raise ValueError(f"Unknown quality tool: {tool}")
+        raise ValueError(f"Unknown quality tool: {tool}")
 
     def _calculate_overall_score(self, step_results: List[Dict[str, Any]], weights: Dict[str, float]) -> float:
         """Calculate weighted overall score.
@@ -578,14 +574,13 @@ class WorkflowTools:
 
         if combined_score >= 0.9:
             return "A"
-        elif combined_score >= 0.8:
+        if combined_score >= 0.8:
             return "B"
-        elif combined_score >= 0.7:
+        if combined_score >= 0.7:
             return "C"
-        elif combined_score >= 0.6:
+        if combined_score >= 0.6:
             return "D"
-        else:
-            return "F"
+        return "F"
 
     async def compare_evaluations(
         self,
@@ -679,7 +674,7 @@ class WorkflowTools:
 
         return matrix
 
-    def _perform_statistical_analysis(self, evaluations: List[Dict[str, Any]], comparison_type: str) -> Dict[str, Any]:
+    def _perform_statistical_analysis(self, evaluations: List[Dict[str, Any]], comparison_type: str) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """Perform statistical significance testing.
 
         Args:
@@ -741,10 +736,9 @@ class WorkflowTools:
 
         if significance == "high":
             return f"Statistically significant {direction} detected"
-        else:
-            return f"Moderate {direction} detected"
+        return f"Moderate {direction} detected"
 
-    def _analyze_trends(self, evaluations: List[Dict[str, Any]], comparison_type: str) -> Dict[str, Any]:
+    def _analyze_trends(self, evaluations: List[Dict[str, Any]], comparison_type: str) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """Analyze performance trends over time.
 
         Args:

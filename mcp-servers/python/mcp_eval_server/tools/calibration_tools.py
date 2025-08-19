@@ -124,7 +124,7 @@ class CalibrationTools:
 
         # Pairwise agreement calculation
         for i, judge_a in enumerate(judge_names):
-            for j, judge_b in enumerate(judge_names[i + 1 :], i + 1):  # noqa: E203
+            for judge_b in judge_names[i + 1 :]:  # noqa: E203
                 scores_a = []
                 scores_b = []
 
@@ -373,10 +373,9 @@ class CalibrationTools:
 
         if severity_magnitude > 1.0 or range_restriction > 0.7:
             return "high"
-        elif severity_magnitude > 0.5 or range_restriction > 0.5:
+        if severity_magnitude > 0.5 or range_restriction > 0.5:
             return "medium"
-        else:
-            return "low"
+        return "low"
 
     def _calculate_reliability_metrics(self, judge_evaluations: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         """Calculate reliability metrics for judges.
@@ -535,7 +534,7 @@ class CalibrationTools:
 
         return variations
 
-    async def _evaluate_rubric_performance(self, rubric: Dict[str, Any], human_labels: Dict[str, Any], optimization_target: str) -> float:
+    async def _evaluate_rubric_performance(self, rubric: Dict[str, Any], human_labels: Dict[str, Any], optimization_target: str) -> float:  # pylint: disable=unused-argument
         """Evaluate performance of a rubric.
 
         Args:
@@ -660,7 +659,7 @@ class CalibrationTools:
 
         return recommendations
 
-    def _generate_optimization_recommendations(self, performance_gain: Dict[str, Any], changes_made: Dict[str, Any], optimization_target: str) -> List[str]:
+    def _generate_optimization_recommendations(self, performance_gain: Dict[str, Any], changes_made: Dict[str, Any], optimization_target: str) -> List[str]:  # pylint: disable=unused-argument
         """Generate recommendations based on rubric optimization.
 
         Args:

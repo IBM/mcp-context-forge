@@ -148,11 +148,11 @@ class PromptTools:
 
     async def test_consistency(
         self,
-        prompt: str,
+        prompt: str,  # pylint: disable=unused-argument
         test_inputs: List[str],
         num_runs: int = 3,
         temperature_range: Optional[List[float]] = None,
-        judge_model: str = "gpt-4",
+        judge_model: str = "gpt-4",  # pylint: disable=unused-argument
     ) -> Dict[str, Any]:
         """Test prompt consistency across multiple runs.
 

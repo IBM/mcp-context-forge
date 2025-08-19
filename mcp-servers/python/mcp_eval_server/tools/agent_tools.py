@@ -239,7 +239,7 @@ class AgentTools:
                 param_score = 0.5
             else:
                 # Check for common parameter issues
-                for key, value in parameters.items():
+                for _key, value in parameters.items():
                     if value is None or value == "":
                         param_score -= 0.2
                     elif isinstance(value, str) and len(value) < 2:
