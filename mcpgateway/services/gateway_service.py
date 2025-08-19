@@ -1598,6 +1598,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             tools = []
             resources = []
             prompts = []
+            if auth_type in ("basic", "bearer", "headers"):
+                authentication = decode_auth(authentication)
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication)
             elif transport.lower() == "streamablehttp":
