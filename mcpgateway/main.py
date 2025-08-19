@@ -66,6 +66,9 @@ from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
+    A2AAgentCreate,
+    A2AAgentRead,
+    A2AAgentUpdate,
     GatewayCreate,
     GatewayRead,
     GatewayUpdate,
@@ -87,6 +90,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
@@ -150,6 +154,7 @@ server_service = ServerService()
 tag_service = TagService()
 export_service = ExportService()
 import_service = ImportService()
+a2a_service = A2AAgentService()
 
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
@@ -222,6 +227,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await sampling_handler.initialize()
         await export_service.initialize()
         await import_service.initialize()
+        await a2a_service.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
         refresh_slugs_on_startup()
@@ -250,6 +256,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             sampling_handler,
             import_service,
             export_service,
+            a2a_service,
             logging_service,
             completion_service,
             root_service,
@@ -574,6 +581,7 @@ server_router = APIRouter(prefix="/servers", tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
 tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 export_import_router = APIRouter(tags=["Export/Import"])
+a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"])
 
 # Basic Auth setup
 
@@ -1200,6 +1208,256 @@ async def server_get_prompts(
     logger.debug(f"User: {user} has listed prompts for the server_id: {server_id}")
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
+
+
+##################
+# A2A Agent APIs #
+##################
+@a2a_router.get("", response_model=List[A2AAgentRead])
+@a2a_router.get("/", response_model=List[A2AAgentRead])
+async def list_a2a_agents(
+    include_inactive: bool = False,
+    tags: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> List[A2AAgentRead]:
+    """
+    Lists all A2A agents in the system, optionally including inactive ones.
+
+    Args:
+        include_inactive (bool): Whether to include inactive agents in the response.
+        tags (Optional[str]): Comma-separated list of tags to filter by.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        List[A2AAgentRead]: A list of A2A agent objects.
+    """
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    logger.debug(f"User {user} requested A2A agent list with tags={tags_list}")
+    return await a2a_service.list_agents(db, include_inactive=include_inactive, tags=tags_list)
+
+
+@a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
+async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> A2AAgentRead:
+    """
+    Retrieves an A2A agent by its ID.
+
+    Args:
+        agent_id (str): The ID of the agent to retrieve.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AAgentRead: The agent object with the specified ID.
+
+    Raises:
+        HTTPException: If the agent is not found.
+    """
+    try:
+        logger.debug(f"User {user} requested A2A agent with ID {agent_id}")
+        return await a2a_service.get_agent(db, agent_id)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@a2a_router.post("", response_model=A2AAgentRead, status_code=201)
+@a2a_router.post("/", response_model=A2AAgentRead, status_code=201)
+async def create_a2a_agent(
+    agent: A2AAgentCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> A2AAgentRead:
+    """
+    Creates a new A2A agent.
+
+    Args:
+        agent (A2AAgentCreate): The data for the new agent.
+        request (Request): The FastAPI request object for metadata extraction.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AAgentRead: The created agent object.
+
+    Raises:
+        HTTPException: If there is a conflict with the agent name or other errors.
+    """
+    try:
+        logger.debug(f"User {user} is creating a new A2A agent")
+        # Extract metadata from request
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        return await a2a_service.register_agent(
+            db,
+            agent,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
+    except A2AAgentNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        logger.error(f"Validation error while creating A2A agent: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while creating A2A agent: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+
+
+@a2a_router.put("/{agent_id}", response_model=A2AAgentRead)
+async def update_a2a_agent(
+    agent_id: str,
+    agent: A2AAgentUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> A2AAgentRead:
+    """
+    Updates the information of an existing A2A agent.
+
+    Args:
+        agent_id (str): The ID of the agent to update.
+        agent (A2AAgentUpdate): The updated agent data.
+        request (Request): The FastAPI request object for metadata extraction.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AAgentRead: The updated agent object.
+
+    Raises:
+        HTTPException: If the agent is not found, there is a name conflict, or other errors.
+    """
+    try:
+        logger.debug(f"User {user} is updating A2A agent with ID {agent_id}")
+        # Extract modification metadata
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
+
+        return await a2a_service.update_agent(
+            db,
+            agent_id,
+            agent,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        logger.error(f"Validation error while updating A2A agent {agent_id}: {e}")
+        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while updating A2A agent {agent_id}: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+
+
+@a2a_router.post("/{agent_id}/toggle", response_model=A2AAgentRead)
+async def toggle_a2a_agent_status(
+    agent_id: str,
+    activate: bool = True,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> A2AAgentRead:
+    """
+    Toggles the status of an A2A agent (activate or deactivate).
+
+    Args:
+        agent_id (str): The ID of the agent to toggle.
+        activate (bool): Whether to activate or deactivate the agent.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AAgentRead: The agent object after the status change.
+
+    Raises:
+        HTTPException: If the agent is not found or there is an error.
+    """
+    try:
+        logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
+        return await a2a_service.toggle_agent_status(db, agent_id, activate)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
+async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+    """
+    Deletes an A2A agent by its ID.
+
+    Args:
+        agent_id (str): The ID of the agent to delete.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        Dict[str, str]: A success message indicating the agent was deleted.
+
+    Raises:
+        HTTPException: If the agent is not found or there is an error.
+    """
+    try:
+        logger.debug(f"User {user} is deleting A2A agent with ID {agent_id}")
+        await a2a_service.delete_agent(db, agent_id)
+        return {
+            "status": "success",
+            "message": f"A2A Agent {agent_id} deleted successfully",
+        }
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
+async def invoke_a2a_agent(
+    agent_name: str,
+    parameters: Dict[str, Any] = Body(default_factory=dict),
+    interaction_type: str = Body(default="query"),
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> Dict[str, Any]:
+    """
+    Invokes an A2A agent with the specified parameters.
+
+    Args:
+        agent_name (str): The name of the agent to invoke.
+        parameters (Dict[str, Any]): Parameters for the agent interaction.
+        interaction_type (str): Type of interaction (query, execute, etc.).
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        Dict[str, Any]: The response from the A2A agent.
+
+    Raises:
+        HTTPException: If the agent is not found or there is an error during invocation.
+    """
+    try:
+        logger.debug(f"User {user} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
+        return await a2a_service.invoke_agent(db, agent_name, parameters, interaction_type)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 #############
@@ -2641,7 +2899,7 @@ async def set_log_level(request: Request, user: str = Depends(require_auth)) -> 
 @metrics_router.get("", response_model=dict)
 async def get_metrics(db: Session = Depends(get_db), user: str = Depends(require_auth)) -> dict:
     """
-    Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts).
+    Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
 
     Args:
         db: Database session
@@ -2655,11 +2913,13 @@ async def get_metrics(db: Session = Depends(get_db), user: str = Depends(require
     resource_metrics = await resource_service.aggregate_metrics(db)
     server_metrics = await server_service.aggregate_metrics(db)
     prompt_metrics = await prompt_service.aggregate_metrics(db)
+    a2a_metrics = await a2a_service.aggregate_metrics(db)
     return {
         "tools": tool_metrics,
         "resources": resource_metrics,
         "servers": server_metrics,
         "prompts": prompt_metrics,
+        "a2a_agents": a2a_metrics,
     }
 
 
@@ -2670,7 +2930,7 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
     or perform a global reset if no entity is specified.
 
     Args:
-        entity: One of "tool", "resource", "server", "prompt", or None for global reset.
+        entity: One of "tool", "resource", "server", "prompt", "a2a_agent", or None for global reset.
         entity_id: Specific entity ID to reset metrics for (optional).
         db: Database session
         user: Authenticated user
@@ -2688,6 +2948,7 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
         await resource_service.reset_metrics(db)
         await server_service.reset_metrics(db)
         await prompt_service.reset_metrics(db)
+        await a2a_service.reset_metrics(db)
     elif entity.lower() == "tool":
         await tool_service.reset_metrics(db, entity_id)
     elif entity.lower() == "resource":
@@ -2696,6 +2957,8 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
         await server_service.reset_metrics(db)
     elif entity.lower() == "prompt":
         await prompt_service.reset_metrics(db)
+    elif entity.lower() in ("a2a_agent", "a2a"):
+        await a2a_service.reset_metrics(db, entity_id)
     else:
         raise HTTPException(status_code=400, detail="Invalid entity type for metrics reset")
     return {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
@@ -3079,6 +3342,7 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+app.include_router(a2a_router)
 app.include_router(well_known_router)
 
 # Include OAuth router

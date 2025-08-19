@@ -1151,24 +1151,28 @@ class TestMetricsEndpoints:
     @patch("mcpgateway.main.resource_service.aggregate_metrics")
     @patch("mcpgateway.main.server_service.aggregate_metrics")
     @patch("mcpgateway.main.prompt_service.aggregate_metrics")
-    def test_get_metrics(self, mock_prompt, mock_server, mock_resource, mock_tool, test_client, auth_headers):
+    @patch("mcpgateway.main.a2a_service.aggregate_metrics")
+    def test_get_metrics(self, mock_a2a, mock_prompt, mock_server, mock_resource, mock_tool, test_client, auth_headers):
         """Test retrieving aggregated metrics for all entity types."""
         mock_tool.return_value = {"total": 5}
         mock_resource.return_value = {"total": 3}
         mock_server.return_value = {"total": 2}
         mock_prompt.return_value = {"total": 1}
+        mock_a2a.return_value = {"total": 4}
 
         response = test_client.get("/metrics", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
         assert "tools" in data and "resources" in data
         assert "servers" in data and "prompts" in data
+        assert "a2a_agents" in data
 
     @patch("mcpgateway.main.tool_service.reset_metrics")
     @patch("mcpgateway.main.resource_service.reset_metrics")
     @patch("mcpgateway.main.server_service.reset_metrics")
     @patch("mcpgateway.main.prompt_service.reset_metrics")
-    def test_reset_all_metrics(self, mock_prompt_reset, mock_server_reset, mock_resource_reset, mock_tool_reset, test_client, auth_headers):
+    @patch("mcpgateway.main.a2a_service.reset_metrics")
+    def test_reset_all_metrics(self, mock_a2a_reset, mock_prompt_reset, mock_server_reset, mock_resource_reset, mock_tool_reset, test_client, auth_headers):
         """Test resetting metrics for all entity types."""
         response = test_client.post("/metrics/reset", headers=auth_headers)
         assert response.status_code == 200
@@ -1178,6 +1182,7 @@ class TestMetricsEndpoints:
         mock_resource_reset.assert_called_once()
         mock_server_reset.assert_called_once()
         mock_prompt_reset.assert_called_once()
+        mock_a2a_reset.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.reset_metrics")
     def test_reset_specific_entity_metrics(self, mock_tool_reset, test_client, auth_headers):
@@ -1190,6 +1195,113 @@ class TestMetricsEndpoints:
         """Test error handling for invalid entity type in metrics reset."""
         response = test_client.post("/metrics/reset?entity=invalid", headers=auth_headers)
         assert response.status_code == 400
+
+
+# ----------------------------------------------------- #
+# A2A Agent API Tests                                   #
+# ----------------------------------------------------- #
+class TestA2AAgentEndpoints:
+    """Test A2A agent API endpoints."""
+
+    @patch("mcpgateway.main.a2a_service.list_agents")
+    def test_list_a2a_agents(self, mock_list, test_client, auth_headers):
+        """Test listing A2A agents."""
+        mock_list.return_value = []
+        response = test_client.get("/a2a", headers=auth_headers)
+        assert response.status_code == 200
+        mock_list.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service.get_agent")
+    def test_get_a2a_agent(self, mock_get, test_client, auth_headers):
+        """Test getting specific A2A agent."""
+        mock_agent = {
+            "id": "test-id",
+            "name": "test-agent",
+            "description": "Test agent",
+            "endpoint_url": "https://api.example.com",
+            "agent_type": "generic",
+            "enabled": True,
+            "metrics": MOCK_METRICS,
+        }
+        mock_get.return_value = mock_agent
+        
+        response = test_client.get("/a2a/test-id", headers=auth_headers)
+        assert response.status_code == 200
+        mock_get.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service.register_agent")
+    @patch("mcpgateway.main.MetadataCapture.extract_creation_metadata")
+    def test_create_a2a_agent(self, mock_metadata, mock_register, test_client, auth_headers):
+        """Test creating A2A agent."""
+        mock_metadata.return_value = {
+            "created_by": "test_user",
+            "created_from_ip": "127.0.0.1",
+            "created_via": "api",
+            "created_user_agent": "test",
+            "import_batch_id": None,
+            "federation_source": None,
+        }
+        mock_register.return_value = {"id": "new-id", "name": "new-agent"}
+
+        agent_data = {
+            "name": "new-agent",
+            "endpoint_url": "https://api.example.com/agent",
+            "agent_type": "custom",
+            "description": "New test agent",
+        }
+
+        response = test_client.post("/a2a", json=agent_data, headers=auth_headers)
+        assert response.status_code == 201
+        mock_register.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service.update_agent")
+    @patch("mcpgateway.main.MetadataCapture.extract_modification_metadata")
+    def test_update_a2a_agent(self, mock_metadata, mock_update, test_client, auth_headers):
+        """Test updating A2A agent."""
+        mock_metadata.return_value = {
+            "modified_by": "test_user",
+            "modified_from_ip": "127.0.0.1",
+            "modified_via": "api",
+            "modified_user_agent": "test",
+        }
+        mock_update.return_value = {"id": "test-id", "name": "updated-agent"}
+
+        update_data = {"description": "Updated description"}
+
+        response = test_client.put("/a2a/test-id", json=update_data, headers=auth_headers)
+        assert response.status_code == 200
+        mock_update.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service.toggle_agent_status")
+    def test_toggle_a2a_agent_status(self, mock_toggle, test_client, auth_headers):
+        """Test toggling A2A agent status."""
+        mock_toggle.return_value = {"id": "test-id", "enabled": False}
+
+        response = test_client.post("/a2a/test-id/toggle?activate=false", headers=auth_headers)
+        assert response.status_code == 200
+        mock_toggle.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service.delete_agent")
+    def test_delete_a2a_agent(self, mock_delete, test_client, auth_headers):
+        """Test deleting A2A agent."""
+        mock_delete.return_value = None
+
+        response = test_client.delete("/a2a/test-id", headers=auth_headers)
+        assert response.status_code == 200
+        mock_delete.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service.invoke_agent")
+    def test_invoke_a2a_agent(self, mock_invoke, test_client, auth_headers):
+        """Test invoking A2A agent."""
+        mock_invoke.return_value = {"response": "Agent response", "status": "success"}
+
+        response = test_client.post(
+            "/a2a/test-agent/invoke",
+            json={"parameters": {"query": "test"}, "interaction_type": "query"},
+            headers=auth_headers
+        )
+        assert response.status_code == 200
+        mock_invoke.assert_called_once()
 
 
 # ----------------------------------------------------- #

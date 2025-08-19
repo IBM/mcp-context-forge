@@ -214,6 +214,52 @@ pytest -m "not slow"
 3. Register in `plugins/config.yaml`
 4. Implement required hooks (pre/post request/response)
 
+## A2A (Agent-to-Agent) Integration
+
+The gateway supports A2A (Agent-to-Agent) compatible agents that can be integrated as tools within virtual servers. A2A agents represent external AI agents (e.g., OpenAI, Anthropic, custom agents) that support standardized Agent-to-Agent communication protocols.
+
+### A2A Agent Features
+
+- **Multi-Agent Support**: Support for different agent types (OpenAI, Anthropic, custom, etc.)
+- **Protocol Versioning**: A2A protocol version support for compatibility
+- **Authentication**: Flexible auth types (API key, OAuth, bearer tokens)
+- **Metrics & Monitoring**: Full metrics collection for agent interactions
+- **Virtual Server Integration**: Agents can be exposed as tools within virtual servers
+- **Tagging System**: Tag-based categorization and filtering
+- **Admin UI**: Dedicated tab in admin interface for agent management
+
+### A2A Agent Configuration
+
+```json
+{
+  "name": "my-assistant-agent",
+  "description": "Custom AI assistant for specific tasks",
+  "endpoint_url": "https://api.example.com/agent",
+  "agent_type": "custom",
+  "protocol_version": "1.0",
+  "capabilities": {
+    "chat": true,
+    "tools": false,
+    "streaming": true
+  },
+  "config": {
+    "max_tokens": 1000,
+    "temperature": 0.7
+  },
+  "auth_type": "api_key",
+  "auth_value": "your-api-key",
+  "tags": ["ai", "assistant", "production"]
+}
+```
+
+### A2A Agent Integration Workflow
+
+1. **Register Agent**: Add A2A agent via `/a2a` API or Admin UI
+2. **Associate with Server**: Include agent ID in virtual server's `associated_a2a_agents`
+3. **Auto-Tool Creation**: Gateway automatically creates tools for associated agents
+4. **Tool Invocation**: Tools can be invoked normally, routing calls to A2A agents
+5. **Metrics Collection**: All interactions are tracked with comprehensive metrics
+
 ## API Endpoints Overview
 
 ### Core MCP Operations
@@ -227,7 +273,17 @@ pytest -m "not slow"
 - `GET/POST /prompts` - Prompt templates
 - `GET/POST /servers` - Virtual servers
 - `GET/POST /gateways` - Peer gateways
+- `GET/POST /a2a` - A2A (Agent-to-Agent) agent management
 - `GET /admin` - Admin UI dashboard
+
+### A2A Agent Management
+- `GET /a2a` - List A2A agents with filtering
+- `POST /a2a` - Register new A2A agent
+- `GET /a2a/{agent_id}` - Get specific agent details
+- `PUT /a2a/{agent_id}` - Update agent configuration
+- `DELETE /a2a/{agent_id}` - Remove agent
+- `POST /a2a/{agent_id}/toggle` - Enable/disable agent
+- `POST /a2a/{agent_name}/invoke` - Direct agent invocation
 
 # You have access to cli tools
 - You can use `gh` for github commands, e.g. gh issue view 586

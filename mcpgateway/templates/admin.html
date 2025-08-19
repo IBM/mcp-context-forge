@@ -135,6 +135,14 @@
               Gateways/MCP Servers
             </a>
             <a
+              href="#a2a-agents"
+              id="tab-a2a-agents"
+              data-testid="a2a-agents-tab"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+              A2A Agents
+            </a>
+            <a
               href="#roots"
               id="tab-roots"
               class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
@@ -3233,6 +3241,209 @@
               </button>
             </div>
           </form>
+        </div>
+      </div>
+
+      <!-- A2A Agents Panel -->
+      <div id="a2a-agents-panel" class="tab-panel hidden">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-2xl font-bold dark:text-gray-200">
+            A2A Agents Catalog
+          </h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Manage Agent-to-Agent compatible agents that can be integrated as tools
+          </p>
+          <div class="flex items-center">
+            <input
+              type="checkbox"
+              id="show-inactive-a2a-agents"
+              class="mr-2"
+              onchange="toggleInactiveItems('a2a-agents')"
+            />
+            <label
+              for="show-inactive-a2a-agents"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Show Inactive</label
+            >
+          </div>
+        </div>
+
+        <!-- A2A Agent Filter Section -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex flex-wrap gap-4 items-center">
+            <div class="flex-1 min-w-64">
+              <label
+                for="a2a-agent-tag-filter"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                >Filter by Tags:</label
+              >
+              <input
+                type="text"
+                id="a2a-agent-tag-filter"
+                placeholder="e.g., ai,assistant (comma-separated)"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                oninput="filterEntitiesByTags('a2a-agents', this.value)"
+              />
+            </div>
+            <div id="a2a-agent-available-tags" class="flex flex-wrap gap-2">
+              <!-- Available tags will be populated by JavaScript -->
+            </div>
+            <button
+              onclick="clearTagFilter('a2a-agents')"
+              class="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-600 dark:text-gray-300 dark:border-gray-500 dark:hover:bg-gray-500"
+            >
+              Clear Filter
+            </button>
+          </div>
+        </div>
+
+        <!-- A2A Agent Add Form -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
+            Add New A2A Agent
+          </h3>
+          <form
+            hx-post="{{ root_path }}/admin/a2a"
+            hx-target="#a2a-agents-list"
+            hx-trigger="submit"
+            hx-on::after-request="this.reset()"
+            class="grid grid-cols-1 gap-4 sm:grid-cols-2"
+          >
+            <div>
+              <label
+                for="a2a-agent-name"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Agent Name</label
+              >
+              <input
+                type="text"
+                id="a2a-agent-name"
+                name="name"
+                required
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="my-assistant-agent"
+              />
+            </div>
+            <div>
+              <label
+                for="a2a-agent-endpoint-url"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Endpoint URL</label
+              >
+              <input
+                type="url"
+                id="a2a-agent-endpoint-url"
+                name="endpoint_url"
+                required
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="https://api.example.com/agent"
+              />
+            </div>
+            <div>
+              <label
+                for="a2a-agent-type"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Agent Type</label
+              >
+              <select
+                id="a2a-agent-type"
+                name="agent_type"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+              >
+                <option value="generic">Generic</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div>
+              <label
+                for="a2a-agent-auth-type"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Authentication Type</label
+              >
+              <select
+                id="a2a-agent-auth-type"
+                name="auth_type"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+              >
+                <option value="">None</option>
+                <option value="api_key">API Key</option>
+                <option value="bearer">Bearer Token</option>
+                <option value="oauth">OAuth</option>
+              </select>
+            </div>
+            <div class="sm:col-span-2">
+              <label
+                for="a2a-agent-description"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Description</label
+              >
+              <textarea
+                id="a2a-agent-description"
+                name="description"
+                rows="2"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="Description of the agent's capabilities"
+              ></textarea>
+            </div>
+            <div>
+              <label
+                for="a2a-agent-auth-value"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Authentication Value</label
+              >
+              <input
+                type="password"
+                id="a2a-agent-auth-value"
+                name="auth_value"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="API key, token, etc."
+              />
+            </div>
+            <div>
+              <label
+                for="a2a-agent-tags"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Tags</label
+              >
+              <input
+                type="text"
+                id="a2a-agent-tags"
+                name="tags"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="ai,assistant,production (comma-separated)"
+              />
+            </div>
+            <div class="sm:col-span-2">
+              <button
+                type="submit"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                Add A2A Agent
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- A2A Agents List -->
+        <div class="bg-white shadow rounded-lg dark:bg-gray-800">
+          <div class="p-6">
+            <h3
+              class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4"
+            >
+              Registered A2A Agents
+            </h3>
+            <div
+              id="a2a-agents-list"
+              hx-get="{{ root_path }}/admin/a2a"
+              hx-trigger="load"
+              hx-target="this"
+              class="space-y-4"
+            >
+              <!-- A2A agents will be loaded here -->
+            </div>
+          </div>
         </div>
       </div>
 

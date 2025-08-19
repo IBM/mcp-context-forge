@@ -3462,6 +3462,15 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "a2a-agents") {
+                    // Load A2A agents list if not already loaded
+                    const agentsList = safeGetElement("a2a-agents-list");
+                    if (agentsList && agentsList.innerHTML.trim() === "") {
+                        // Trigger HTMX load manually
+                        htmx.trigger(agentsList, "load");
+                    }
+                }
+
                 if (tabName === "version-info") {
                     const versionPanel = safeGetElement("version-info-panel");
                     if (versionPanel && versionPanel.innerHTML.trim() === "") {
@@ -6506,6 +6515,7 @@ function setupTabNavigation() {
         "resources",
         "prompts",
         "gateways",
+        "a2a-agents",
         "roots",
         "metrics",
         "logs",
