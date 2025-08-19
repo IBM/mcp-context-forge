@@ -30,6 +30,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+# Content security and rate limiting
+from mcpgateway.services.content_security import content_security, SecurityError, ValidationError
+from mcpgateway.middleware.rate_limiter import content_rate_limiter
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
@@ -250,6 +253,7 @@ class PromptService:
         created_user_agent: Optional[str] = None,
         import_batch_id: Optional[str] = None,
         federation_source: Optional[str] = None,
+        user: Optional[str] = None,
     ) -> PromptRead:
         """Register a new prompt template.
 
@@ -288,7 +292,20 @@ class PromptService:
             ... except Exception:
             ...     pass
         """
+        user_id = user.get("id") if isinstance(user, dict) else user or created_by or "system"
+        # Rate limit check
+        if not await content_rate_limiter.check_rate_limit(user_id, "prompt_create"):
+            raise PromptError("Rate limit exceeded. Please try again later.")
+        await content_rate_limiter.record_operation(user_id, "prompt_create")
         try:
+            # Content security validation
+            if prompt.template:
+                validated_template = await content_security.validate_prompt_content(
+                    template=prompt.template,
+                    name=prompt.name
+                )
+                prompt.template = validated_template
+
             # Validate template syntax
             self._validate_template(prompt.template)
 
@@ -335,13 +352,14 @@ class PromptService:
             logger.info(f"Registered prompt: {prompt.name}")
             prompt_dict = self._convert_db_prompt(db_prompt)
             return PromptRead.model_validate(prompt_dict)
-
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to register prompt: {str(e)}")
+        finally:
+            await content_rate_limiter.end_operation(user_id)
 
     async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> List[PromptRead]:
         """
@@ -588,7 +606,7 @@ class PromptService:
 
             return result
 
-    async def update_prompt(self, db: Session, name: str, prompt_update: PromptUpdate) -> PromptRead:
+    async def update_prompt(self, db: Session, name: str, prompt_update: PromptUpdate, user: Optional[str] = None) -> PromptRead:
         """
         Update a prompt template.
 
@@ -636,8 +654,21 @@ class PromptService:
             if prompt_update.description is not None:
                 prompt.description = prompt_update.description
             if prompt_update.template is not None:
-                prompt.template = prompt_update.template
-                self._validate_template(prompt.template)
+                user_id = user.get("id") if isinstance(user, dict) else user or "system"
+                if not await content_rate_limiter.check_rate_limit(user_id, "prompt_update"):
+                    raise PromptError("Rate limit exceeded. Please try again later.")
+                await content_rate_limiter.record_operation(user_id, "prompt_update")
+                try:
+                    # Content security validation
+                    validated_template = await content_security.validate_prompt_content(
+                        template=prompt_update.template,
+                        name=prompt_update.name or name
+                    )
+                    prompt_update.template = validated_template
+                    prompt.template = prompt_update.template
+                    self._validate_template(prompt.template)
+                finally:
+                    await content_rate_limiter.end_operation(user_id)
             if prompt_update.arguments is not None:
                 required_args = self._get_required_arguments(prompt.template)
                 argument_schema = {

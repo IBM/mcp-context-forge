@@ -414,6 +414,42 @@ class Settings(BaseSettings):
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
 
     # ===================================
+    # Content Security Configuration
+    # ===================================
+    # Maximum content sizes (in bytes)
+    content_max_resource_size: int = Field(default=100 * 1024, env="CONTENT_MAX_RESOURCE_SIZE")  # 100KB default for resources
+    content_max_prompt_size: int = Field(default=10 * 1024, env="CONTENT_MAX_PROMPT_SIZE")      # 10KB default for prompt templates
+
+    # Allowed MIME types for resources (restrictive by default)
+    content_allowed_resource_mimetypes: str = Field(default="text/plain,text/markdown", env="CONTENT_ALLOWED_RESOURCE_MIMETYPES")
+    # Allowed MIME types for prompts (text only)
+    content_allowed_prompt_mimetypes: str = Field(default="text/plain,text/markdown", env="CONTENT_ALLOWED_PROMPT_MIMETYPES")
+
+    # Content validation
+    content_validate_encoding: bool = Field(default=True, env="CONTENT_VALIDATE_ENCODING")  # Validate UTF-8 encoding
+    content_validate_patterns: bool = Field(default=True, env="CONTENT_VALIDATE_PATTERNS")  # Check for malicious patterns
+    content_strip_null_bytes: bool = Field(default=True, env="CONTENT_STRIP_NULL_BYTES")    # Remove null bytes from content
+
+    # Rate limiting for content creation
+    content_create_rate_limit_per_minute: int = Field(default=3, env="CONTENT_CREATE_RATE_LIMIT_PER_MINUTE")  # Max creates per minute per user
+    content_max_concurrent_operations: int = Field(default=2, env="CONTENT_MAX_CONCURRENT_OPERATIONS")        # Max concurrent operations per user
+
+    # Security patterns to block
+    content_blocked_patterns: str = Field(default="<script,javascript:,vbscript:,onload=,onerror=,onclick=,<iframe,<embed,<object", env="CONTENT_BLOCKED_PATTERNS")
+
+    # Computed properties for easier access
+    @property
+    def allowed_resource_mimetypes(self) -> set[str]:
+        return set(self.content_allowed_resource_mimetypes.split(","))
+
+    @property
+    def allowed_prompt_mimetypes(self) -> set[str]:
+        return set(self.content_allowed_prompt_mimetypes.split(","))
+
+    @property
+    def blocked_patterns(self) -> set[str]:
+        return set(self.content_blocked_patterns.split(","))
+    # ===================================
     # Well-Known URI Configuration
     # ===================================
 

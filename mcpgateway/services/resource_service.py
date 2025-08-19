@@ -51,6 +51,10 @@ from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, Re
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
 
+# Content security and rate limiting
+from mcpgateway.services.content_security import content_security, SecurityError, ValidationError
+from mcpgateway.middleware.rate_limiter import content_rate_limiter
+
 # Plugin support imports (conditional)
 try:
     # First-Party
@@ -229,6 +233,7 @@ class ResourceService:
         created_user_agent: Optional[str] = None,
         import_batch_id: Optional[str] = None,
         federation_source: Optional[str] = None,
+        user: Optional[str] = None,
     ) -> ResourceRead:
         """Register a new resource.
 
@@ -267,7 +272,23 @@ class ResourceService:
             >>> asyncio.run(service.register_resource(db, resource))
             'resource_read'
         """
+        user_id = user.get("id") if isinstance(user, dict) else user or created_by or "system"
+        # Rate limit check
+        if not await content_rate_limiter.check_rate_limit(user_id, "resource_create"):
+            raise ResourceError("Rate limit exceeded. Please try again later.")
+        await content_rate_limiter.record_operation(user_id, "resource_create")
         try:
+            # Content security validation
+            if resource.content:
+                validated_content, detected_mime = await content_security.validate_resource_content(
+                    content=resource.content,
+                    uri=resource.uri,
+                    mime_type=resource.mime_type
+                )
+                resource.content = validated_content
+                if not resource.mime_type:
+                    resource.mime_type = detected_mime
+
             # Detect mime type if not provided
             mime_type = resource.mime_type
             if not mime_type:
@@ -298,6 +319,9 @@ class ResourceService:
 
             # Add to DB
             db.add(db_resource)
+        finally:
+            await content_rate_limiter.end_operation(user_id)
+        try:
             db.commit()
             db.refresh(db_resource)
 
@@ -686,7 +710,7 @@ class ResourceService:
             db.rollback()
             logger.error(f"Failed to unsubscribe: {str(e)}")
 
-    async def update_resource(self, db: Session, uri: str, resource_update: ResourceUpdate) -> ResourceRead:
+    async def update_resource(self, db: Session, uri: str, resource_update: ResourceUpdate, user: Optional[str] = None) -> ResourceRead:
         """
         Update a resource.
 
@@ -746,7 +770,20 @@ class ResourceService:
 
             # Update content if provided
             if resource_update.content is not None:
-                # Determine content storage
+                user_id = user.get("id") if isinstance(user, dict) else user or "system"
+                if not await content_rate_limiter.check_rate_limit(user_id, "resource_update"):
+                    raise ResourceError("Rate limit exceeded. Please try again later.")
+                await content_rate_limiter.record_operation(user_id, "resource_update")
+                try:
+                    # Content security validation
+                    validated_content, detected_mime = await content_security.validate_resource_content(
+                        content=resource_update.content,
+                        uri=uri,
+                        mime_type=resource_update.mime_type or resource.mime_type
+                    )
+                    resource_update.content = validated_content
+                finally:
+                    await content_rate_limiter.end_operation(user_id)
                 is_text = resource.mime_type and resource.mime_type.startswith("text/") or isinstance(resource_update.content, str)
 
                 resource.text_content = resource_update.content if is_text else None

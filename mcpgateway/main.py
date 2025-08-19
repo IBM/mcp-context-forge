@@ -1810,6 +1810,8 @@ async def list_resources(
     return resources
 
 
+from mcpgateway.services.content_security import SecurityError, ValidationError
+
 @resource_router.post("", response_model=ResourceRead)
 @resource_router.post("/", response_model=ResourceRead)
 async def create_resource(
@@ -1820,23 +1822,10 @@ async def create_resource(
 ) -> ResourceRead:
     """
     Create a new resource.
-
-    Args:
-        resource (ResourceCreate): Data for the new resource.
-        request (Request): FastAPI request object for metadata extraction.
-        db (Session): Database session.
-        user (str): Authenticated user.
-
-    Returns:
-        ResourceRead: The created resource.
-
-    Raises:
-        HTTPException: On conflict or validation errors or IntegrityError.
     """
     logger.debug(f"User {user} is creating a new resource")
     try:
         metadata = MetadataCapture.extract_creation_metadata(request, user)
-
         return await resource_service.register_resource(
             db,
             resource,
@@ -1846,15 +1835,19 @@ async def create_resource(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            user=user,
         )
+    except SecurityError as e:
+        logger.warning(f"Security violation in resource creation by user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail="Content failed security validation")
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
+        if "Rate limit" in str(e):
+            raise HTTPException(status_code=429, detail=str(e))
         raise HTTPException(status_code=400, detail=str(e))
-    except ValidationError as e:
-        # Handle validation errors from Pydantic
-        logger.error(f"Validation error while creating resource: {e}")
-        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
@@ -2056,26 +2049,10 @@ async def create_prompt(
 ) -> PromptRead:
     """
     Create a new prompt.
-
-    Args:
-        prompt (PromptCreate): Payload describing the prompt to create.
-        request (Request): The FastAPI request object for metadata extraction.
-        db (Session): Active SQLAlchemy session.
-        user (str): Authenticated username.
-
-    Returns:
-        PromptRead: The newly-created prompt.
-
-    Raises:
-        HTTPException: * **409 Conflict** - another prompt with the same name already exists.
-            * **400 Bad Request** - validation or persistence error raised
-                by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
     try:
-        # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
-
         return await prompt_service.register_prompt(
             db,
             prompt,
@@ -2085,25 +2062,22 @@ async def create_prompt(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            user=user,
         )
-    except Exception as e:
-        if isinstance(e, PromptNameConflictError):
-            # If the prompt name already exists, return a 409 Conflict error
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-        if isinstance(e, PromptError):
-            # If there is a general prompt error, return a 400 Bad Request error
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        if isinstance(e, ValidationError):
-            # If there is a validation error, return a 422 Unprocessable Entity error
-            logger.error(f"Validation error while creating prompt: {e}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(e))
-        if isinstance(e, IntegrityError):
-            # If there is an integrity error, return a 409 Conflict error
-            logger.error(f"Integrity error while creating prompt: {e}")
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(e))
-        # For any other unexpected errors, return a 500 Internal Server Error
-        logger.error(f"Unexpected error while creating prompt: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
+    except SecurityError as e:
+        logger.warning(f"Security violation in prompt creation by user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail="Template failed security validation")
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PromptNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except PromptError as e:
+        if "Rate limit" in str(e):
+            raise HTTPException(status_code=429, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while creating prompt: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
 @prompt_router.post("/{name}")
