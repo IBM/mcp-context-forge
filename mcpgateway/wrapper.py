@@ -589,9 +589,6 @@ async def main_async(settings: Settings) -> None:
 
                 Args:
                     payload (Any): The data to be sent in the request. Defaults to `item`.
-
-                Returns:
-                    None
                 """
                 async with sem:
                     if not shutting_down():

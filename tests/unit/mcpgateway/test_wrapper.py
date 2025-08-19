@@ -1,5 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Rewritten tests for mcpgateway.wrapper to achieve full coverage."""
+"""Tests for the MCP *wrapper* module (single file, full coverage).
+
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti + contributors
+
+This suite fakes the "mcp" dependency tree so that no real network or
+pydantic models are required and exercises almost every branch inside
+*mcpgateway.wrapper*.
+"""
 
 import asyncio
 import json
