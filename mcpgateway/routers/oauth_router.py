@@ -177,8 +177,8 @@ async def oauth_callback(
             <h1 class="success">✅ OAuth Authorization Successful</h1>
             <div class="info">
                 <p><strong>Gateway:</strong> {gateway.name}</p>
-                <p><strong>User ID:</strong> {result.get('user_id', 'Unknown')}</p>
-                <p><strong>Expires:</strong> {result.get('expires_at', 'Unknown')}</p>
+                <p><strong>User ID:</strong> {result.get("user_id", "Unknown")}</p>
+                <p><strong>Expires:</strong> {result.get("expires_at", "Unknown")}</p>
                 <p><strong>Status:</strong> Authorization completed successfully</p>
             </div>
 

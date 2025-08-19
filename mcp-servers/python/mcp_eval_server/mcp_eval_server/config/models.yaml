@@ -1,0 +1,122 @@
+# Model Configuration for MCP Eval Server
+# Configure available judge models for evaluation
+
+models:
+  openai:
+    gpt-4:
+      provider: "openai"
+      model_name: "gpt-4"
+      api_key_env: "OPENAI_API_KEY"
+      default_temperature: 0.3
+      max_tokens: 2000
+      organization: null  # Optional: set via OPENAI_ORG_ID env var
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 8192
+        optimal_temperature: 0.3
+        consistency_level: "high"
+
+    gpt-4-turbo:
+      provider: "openai"
+      model_name: "gpt-4-turbo-preview"
+      api_key_env: "OPENAI_API_KEY"
+      default_temperature: 0.3
+      max_tokens: 4000
+      organization: null
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 128000
+        optimal_temperature: 0.3
+        consistency_level: "high"
+
+    gpt-3.5-turbo:
+      provider: "openai"
+      model_name: "gpt-3.5-turbo"
+      api_key_env: "OPENAI_API_KEY"
+      default_temperature: 0.3
+      max_tokens: 2000
+      organization: null
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: false  # Less reliable for complex ranking
+        supports_reference: true
+        max_context_length: 16384
+        optimal_temperature: 0.2
+        consistency_level: "medium"
+
+  azure:
+    gpt-4-azure:
+      provider: "azure"
+      deployment_name: "gpt-4"
+      model_name: "gpt-4"
+      api_base_env: "AZURE_OPENAI_ENDPOINT"
+      api_key_env: "AZURE_OPENAI_KEY"
+      api_version: "2024-02-01"
+      default_temperature: 0.3
+      max_tokens: 2000
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 8192
+        optimal_temperature: 0.3
+        consistency_level: "high"
+
+    gpt-4-turbo-azure:
+      provider: "azure"
+      deployment_name: "gpt-4-turbo"
+      model_name: "gpt-4-turbo"
+      api_base_env: "AZURE_OPENAI_ENDPOINT"
+      api_key_env: "AZURE_OPENAI_KEY"
+      api_version: "2024-02-01"
+      default_temperature: 0.3
+      max_tokens: 4000
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 128000
+        optimal_temperature: 0.3
+        consistency_level: "high"
+
+    gpt-35-turbo-azure:
+      provider: "azure"
+      deployment_name: "gpt-35-turbo"
+      model_name: "gpt-3.5-turbo"
+      api_base_env: "AZURE_OPENAI_ENDPOINT"
+      api_key_env: "AZURE_OPENAI_KEY"
+      api_version: "2024-02-01"
+      default_temperature: 0.3
+      max_tokens: 2000
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: false
+        supports_reference: true
+        max_context_length: 16384
+        optimal_temperature: 0.2
+        consistency_level: "medium"
+
+# Default model selection preferences
+defaults:
+  primary_judge: "gpt-4"
+  fallback_judge: "gpt-3.5-turbo"
+  fast_judge: "gpt-3.5-turbo"  # For quick evaluations
+  consensus_judges: ["gpt-4", "gpt-4-turbo"]  # For multi-judge consensus
+
+# Model usage recommendations
+recommendations:
+  high_stakes_evaluation: ["gpt-4", "gpt-4-turbo"]
+  batch_processing: ["gpt-3.5-turbo", "gpt-35-turbo-azure"]
+  complex_reasoning: ["gpt-4-turbo", "gpt-4"]
+  cost_effective: ["gpt-3.5-turbo"]
+  multilingual: ["gpt-4", "gpt-4-turbo"]
