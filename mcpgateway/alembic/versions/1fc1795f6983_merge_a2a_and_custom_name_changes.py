@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """merge_a2a_and_custom_name_changes
 
 Revision ID: 1fc1795f6983

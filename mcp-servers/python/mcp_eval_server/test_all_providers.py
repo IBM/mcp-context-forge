@@ -11,17 +11,19 @@ import sys
 # Add current directory to path for imports
 sys.path.insert(0, ".")
 
-# Load .env file if it exists
+# Third-Party
 try:
     # Third-Party
-    from dotenv import load_dotenv
-
-    load_dotenv()
+    from dotenv import load_dotenv  # noqa: E402
 except ImportError:
-    pass
+    load_dotenv = None
 
 # Third-Party
-from mcp_eval_server.tools.judge_tools import JudgeTools
+from mcp_eval_server.tools.judge_tools import JudgeTools  # noqa: E402
+
+# Load .env if available
+if load_dotenv:
+    load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S")
@@ -29,7 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 def setup_test_environment():
-    """Set up test environment variables for all providers."""
+    """Set up test environment variables for all providers.
+
+    Returns:
+        dict: Dictionary of environment variables that were set
+    """
     test_env = {
         # OpenAI
         "OPENAI_API_KEY": "sk-test-key",
@@ -63,7 +69,11 @@ def setup_test_environment():
 
 
 async def test_all_providers():
-    """Test all provider configurations."""
+    """Test all provider configurations.
+
+    Returns:
+        bool: True if at least one judge is available, False otherwise
+    """
     logger.info("🧪 Testing All LLM Providers for MCP Eval Server")
     logger.info("=" * 60)
 

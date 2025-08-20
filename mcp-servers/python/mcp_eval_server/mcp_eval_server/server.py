@@ -548,7 +548,7 @@ async def main():
             deployment = os.getenv("AZURE_DEPLOYMENT_NAME", "not configured")
             endpoint_info = f" → {endpoint} (deployment: {deployment})"
         elif provider == "anthropic":
-            endpoint_info = f" → https://api.anthropic.com"
+            endpoint_info = " → https://api.anthropic.com"
         elif provider == "ollama":
             base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
             # Test OLLAMA connectivity for status display
@@ -562,19 +562,19 @@ async def main():
                         async with aiohttp.ClientSession(timeout=timeout) as session:
                             async with session.get(f"{base_url}/api/tags") as response:
                                 return response.status == 200
-                    except:
+                    except Exception:
                         return False
 
                 is_connected = await test_ollama()
                 status = "🟢 connected" if is_connected else "🔴 not reachable"
                 endpoint_info = f" → {base_url} ({status})"
-            except:
+            except Exception:
                 endpoint_info = f" → {base_url} (🔴 not reachable)"
         elif provider == "bedrock":
             region = os.getenv("AWS_REGION", "us-east-1")
             endpoint_info = f" → AWS Bedrock ({region})"
         elif provider == "gemini":
-            endpoint_info = f" → Google AI Studio"
+            endpoint_info = " → Google AI Studio"
         elif provider == "watsonx":
             watsonx_url = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
             project_id = os.getenv("WATSONX_PROJECT_ID", "not configured")

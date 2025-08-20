@@ -95,6 +95,9 @@ class WatsonxJudge(BaseJudge):
 
         Returns:
             Response content from the API
+
+        Raises:
+            Exception: If Watsonx.ai API call fails
         """
         self.logger.debug(f"🔗 Making Watsonx.ai API call to {self.model}")
         self.logger.debug(f"   Messages: {len(messages)}, Temperature: {temperature or self.temperature}, Max tokens: {max_tokens or self.max_tokens}")
@@ -359,7 +362,16 @@ Provide your evaluation in the following JSON format:
         raise ValueError(f"Unknown ranking method: {ranking_method}")
 
     async def _rank_by_scoring(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank by scoring each response individually."""
+        """Rank by scoring each response individually.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: Evaluation criteria to use for scoring
+            context: Optional context for evaluation
+
+        Returns:
+            RankingResult containing ranked responses with scores and reasoning
+        """
         rubric = EvaluationRubric(criteria=criteria, scale_description={"1": "Poor", "2": "Below Average", "3": "Average", "4": "Good", "5": "Excellent"})
 
         # Evaluate each response
@@ -376,7 +388,16 @@ Provide your evaluation in the following JSON format:
         return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")
 
     async def _rank_by_tournament(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using tournament-style pairwise comparisons."""
+        """Rank using tournament-style pairwise comparisons.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: Evaluation criteria to use for comparisons
+            context: Optional context for evaluation
+
+        Returns:
+            RankingResult containing ranked responses based on tournament wins
+        """
         n = len(responses)
         wins = [0] * n
 
@@ -414,7 +435,16 @@ Provide your evaluation in the following JSON format:
         return RankingResult(rankings=ranked_results, consistency_score=max(0.0, consistency), reasoning="Ranked by tournament-style pairwise comparisons")
 
     async def _rank_by_round_robin(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using round-robin pairwise comparisons."""
+        """Rank using round-robin pairwise comparisons.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: Evaluation criteria to use for comparisons
+            context: Optional context for evaluation
+
+        Returns:
+            RankingResult containing ranked responses based on round-robin wins
+        """
         # For now, implement same as tournament
         return await self._rank_by_tournament(responses, criteria, context)
 

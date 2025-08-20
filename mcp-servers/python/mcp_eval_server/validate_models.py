@@ -13,7 +13,7 @@ from typing import Dict
 sys.path.insert(0, ".")
 
 # Third-Party
-from mcp_eval_server.tools.judge_tools import JudgeTools
+from mcp_eval_server.tools.judge_tools import JudgeTools  # noqa: E402
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S")
@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 def check_environment_variables() -> Dict[str, bool]:
-    """Check for required environment variables."""
+    """Check for required environment variables.
+
+    Returns:
+        Dict[str, bool]: Dictionary mapping environment variable names to their presence status
+    """
     env_checks = {}
 
     # OpenAI
@@ -57,7 +61,15 @@ def check_environment_variables() -> Dict[str, bool]:
 
 
 async def test_judge_functionality(judge_tools: JudgeTools, judge_name: str) -> bool:
-    """Test basic functionality of a judge."""
+    """Test basic functionality of a judge.
+
+    Args:
+        judge_tools: Initialized JudgeTools instance
+        judge_name: Name of the judge to test
+
+    Returns:
+        bool: True if judge test passes, False otherwise
+    """
     try:
         # Simple test evaluation
         criteria = [{"name": "accuracy", "description": "Factual accuracy", "scale": "1-5", "weight": 1.0}]
@@ -74,7 +86,11 @@ async def test_judge_functionality(judge_tools: JudgeTools, judge_name: str) -> 
 
 
 async def main():
-    """Main validation function."""
+    """Main validation function.
+
+    Returns:
+        bool: True if at least one judge is available and working, False otherwise
+    """
     logger.info("🔍 MCP Eval Server - Model Validation & Connectivity Test")
     logger.info("=" * 60)
 
