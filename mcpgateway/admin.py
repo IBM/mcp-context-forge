@@ -5399,8 +5399,8 @@ async def admin_list_a2a_agents(
         <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-3">
           <div class="flex items-start justify-between">
             <div class="flex-1">
-              <h4 class="text-lg font-medium text-gray-900 dark:text-gray-200">{agent['name']}</h4>
-              <p class="text-sm text-gray-600 dark:text-gray-400">{agent['description']}</p>
+              <h4 class="text-lg font-medium text-gray-900 dark:text-gray-200">{agent["name"]}</h4>
+              <p class="text-sm text-gray-600 dark:text-gray-400">{agent["description"]}</p>
               <div class="mt-2 flex flex-wrap gap-2">
                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {status_class}">
                   {active_text}
@@ -5409,23 +5409,23 @@ async def admin_list_a2a_agents(
                   {reachable_text}
                 </span>
                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                  {agent['agent_type']}
+                  {agent["agent_type"]}
                 </span>
                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                  Auth: {agent['auth_type']}
+                  Auth: {agent["auth_type"]}
                 </span>
               </div>
               <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                <div>Endpoint: {agent['endpoint_url']}</div>
-                <div>Executions: {agent['execution_count']} | Success Rate: {agent['success_rate']}</div>
-                <div>Created: {agent['created_at'][:19]}</div>
+                <div>Endpoint: {agent["endpoint_url"]}</div>
+                <div>Executions: {agent["execution_count"]} | Success Rate: {agent["success_rate"]}</div>
+                <div>Created: {agent["created_at"][:19]}</div>
                 {last_interaction_html}
               </div>
               {tags_html}
             </div>
             <div class="flex space-x-2">
               <button
-                hx-post="{{ root_path }}/admin/a2a/{agent['id']}/toggle"
+                hx-post="{{ root_path }}/admin/a2a/{agent["id"]}/toggle"
                 hx-vals='{{"activate": "{toggle_action}"}}'
                 hx-target="#a2a-agents-list"
                 hx-trigger="click"
@@ -5434,7 +5434,7 @@ async def admin_list_a2a_agents(
                 {toggle_text}
               </button>
               <button
-                hx-post="{{ root_path }}/admin/a2a/{agent['id']}/delete"
+                hx-post="{{ root_path }}/admin/a2a/{agent["id"]}/delete"
                 hx-target="#a2a-agents-list"
                 hx-trigger="click"
                 hx-confirm="Are you sure you want to delete this A2A agent?"

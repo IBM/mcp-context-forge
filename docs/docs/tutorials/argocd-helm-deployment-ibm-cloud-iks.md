@@ -694,8 +694,8 @@ Add to your Claude Desktop configuration:
       "command": "python",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_AUTH_TOKEN": "<MCPGATEWAY_BEARER_TOKEN>",
-        "MCP_SERVER_CATALOG_URLS": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1"
+        "MCP_AUTH": "<MCPGATEWAY_BEARER_TOKEN>",
+        "MCP_SERVER_URL": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/mcp"
       }
     }
   }

@@ -51,8 +51,8 @@ To integrate Cline with your MCP Gateway:
             "mcpgateway.wrapper"
             ],
             "env": {
-               "MCP_SERVER_CATALOG_URLS": "http://localhost:4444",
-               "MCP_AUTH_TOKEN": "REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN",
+               "MCP_SERVER_URL": "http://localhost:4444",
+               "MCP_AUTH": "Bearer REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN",
                "MCP_WRAPPER_LOG_LEVEL": "OFF"
             }
          }

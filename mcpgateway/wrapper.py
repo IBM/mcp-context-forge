@@ -1,968 +1,715 @@
 # -*- coding: utf-8 -*-
 """
-MCP Gateway Wrapper server.
+MCP Gateway Wrapper.
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan, Mihai Criveti, Madhav Kandukuri
+Authors: Keval Mahajan
 
-This module implements a wrapper bridge that facilitates
+MCP Client (stdio) <-> MCP Gateway Bridge
+
+This module implements a wrapper stdio bridge that facilitates
 interaction between the MCP client and the MCP gateway.
 It provides several functionalities, including listing tools,
 invoking tools, managing resources, retrieving prompts,
 and handling tool calls via the MCP gateway.
 
-A **stdio** bridge that exposes a remote MCP Gateway
-(HTTP-/JSON-RPC APIs) as a local MCP server. All JSON-RPC
-traffic is written to **stdout**; every log or trace message
-is emitted on **stderr** so that protocol messages and
-diagnostics never mix.
+- All JSON-RPC traffic is written to stdout.
+- All logs/diagnostics are written to stderr, ensuring clean separation.
 
-Environment variables:
-- MCP_SERVER_CATALOG_URLS: Comma-separated list of gateway catalog URLs (required)
-- MCP_AUTH_TOKEN: Bearer token for the gateway (optional)
-- MCP_TOOL_CALL_TIMEOUT: Seconds to wait for a gateway RPC call (default 90)
-- MCP_WRAPPER_LOG_LEVEL: Python log level name or OFF/NONE to disable logging (default INFO)
+Environment Variables
+---------------------
+- **MCP_SERVER_URL** (or `--url`): Gateway MCP endpoint URL.
+- **MCP_AUTH** (or `--auth`): Authorization header value.
+- **MCP_TOOL_CALL_TIMEOUT** (or `--timeout`): Response timeout in seconds (default: 60).
+- **MCP_WRAPPER_LOG_LEVEL** (or `--log-level`): Logging level, or OFF to disable.
+- **CONCURRENCY**: Max concurrent tool calls (default: 10).
 
-Example:
-    $ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
-    $ export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-    $ export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
+Example usage:
+--------------
+
+Method 1: Using environment variables
+    $ export MCP_SERVER_URL='http://localhost:4444/servers/UUID/mcp'
+    $ export MCP_AUTH='Bearer <token>'
     $ export MCP_TOOL_CALL_TIMEOUT=120
-    $ export MCP_WRAPPER_LOG_LEVEL=DEBUG # OFF to disable logging
+    $ export MCP_WRAPPER_LOG_LEVEL=DEBUG
     $ python3 -m mcpgateway.wrapper
+
+Method 2: Using command-line arguments
+    $ python3 -m mcpgateway.wrapper --url 'http://localhost:4444/servers/UUID/mcp' --auth 'Bearer <token>' --timeout 120 --log-level DEBUG
 """
 
+# Future
+from __future__ import annotations
+
 # Standard
+import argparse
 import asyncio
+import codecs
+from contextlib import suppress
+from dataclasses import dataclass
+import errno
+import json
 import logging
 import os
+import signal
 import sys
-from typing import Any, Dict, List, Optional, Union
-from urllib.parse import urlparse
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 # Third-Party
 import httpx
-from mcp import types
-from mcp.server import NotificationOptions, Server
-from mcp.server.models import InitializationOptions
-import mcp.server.stdio
-from pydantic import AnyUrl
 
 # First-Party
-from mcpgateway import __version__
-from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
-# -----------------------------------------------------------------------------
-# Configuration
-# -----------------------------------------------------------------------------
-ENV_SERVER_CATALOGS = "MCP_SERVER_CATALOG_URLS"
-ENV_AUTH_TOKEN = "MCP_AUTH_TOKEN"  # nosec B105 - this is an *environment variable name*, not a secret
-ENV_TIMEOUT = "MCP_TOOL_CALL_TIMEOUT"
-ENV_LOG_LEVEL = "MCP_WRAPPER_LOG_LEVEL"
+# -----------------------
+# Configuration Defaults
+# -----------------------
+DEFAULT_CONCURRENCY = int(os.environ.get("CONCURRENCY", "10"))
+DEFAULT_CONNECT_TIMEOUT = 15
+DEFAULT_RESPONSE_TIMEOUT = float(os.environ.get("MCP_TOOL_CALL_TIMEOUT", "60"))
 
-RAW_CATALOGS: str = os.getenv(ENV_SERVER_CATALOGS, "")
-SERVER_CATALOG_URLS: List[str] = [u.strip() for u in RAW_CATALOGS.split(",") if u.strip()]
+JSONRPC_PARSE_ERROR = -32700
+JSONRPC_INTERNAL_ERROR = -32603
+JSONRPC_SERVER_ERROR = -32000
 
-AUTH_TOKEN: str = os.getenv(ENV_AUTH_TOKEN, "")
-TOOL_CALL_TIMEOUT: int = int(os.getenv(ENV_TIMEOUT, "90"))
+# Global logger
+logger = logging.getLogger("mcpgateway.wrapper")
+logger.addHandler(logging.StreamHandler(sys.stderr))
+logger.propagate = False
+logger.disabled = True  # default: disabled
 
-# Validate required configuration (only when run as script)
-if __name__ == "__main__" and not SERVER_CATALOG_URLS:
-    print(f"Error: {ENV_SERVER_CATALOGS} environment variable is required", file=sys.stderr)
-    sys.exit(1)
+# Shutdown flag
+_shutdown = asyncio.Event()
 
 
-# -----------------------------------------------------------------------------
-# Base URL Extraction
-# -----------------------------------------------------------------------------
-def _extract_base_url(url: str) -> str:
-    """Return the gateway-level base URL.
-
-    The function keeps any application root path (`APP_ROOT_PATH`) that the
-    remote gateway is mounted under (for example `/gateway`) while removing
-    the `/servers/<id>` suffix that appears in catalog endpoints. It also
-    discards any query string or fragment.
+def _mark_shutdown():
+    """Mark the shutdown flag for graceful termination.
+    This is triggered when stdin closes, stdout fails, or a signal is caught.
 
     Args:
-        url (str): Full catalog URL, e.g.
-            `https://host.com/gateway/servers/UUID_OF_SERVER_1`.
-
-    Returns:
-        str: Clean base URL suitable for building `/tools/`, `/prompts/`,
-        or `/resources/` endpoints-for example
-        `https://host.com/gateway`.
-
-    Raises:
-        ValueError: If *url* lacks a scheme or network location.
+        None
 
     Examples:
-        >>> _extract_base_url("https://host.com/servers/UUID_OF_SERVER_2")
-        'https://host.com'
-        >>> _extract_base_url("https://host.com/gateway/servers/UUID_OF_SERVER_2")
-        'https://host.com/gateway'
-        >>> _extract_base_url("https://host.com/gateway/servers")
-        'https://host.com/gateway'
-        >>> _extract_base_url("https://host.com/gateway")
-        'https://host.com/gateway'
-        >>> _extract_base_url("invalid-url")
-        Traceback (most recent call last):
-            ...
-        ValueError: Invalid URL provided: invalid-url
-        >>> _extract_base_url("https://host.com/")
-        'https://host.com/'
-        >>> _extract_base_url("https://host.com")
-        'https://host.com'
-
-    Note:
-        If the target server was started with `APP_ROOT_PATH=/gateway`, the
-        resulting catalog URLs include that prefix.  This helper preserves the
-        prefix so the wrapper's follow-up calls remain correctly scoped.
+        >>> _mark_shutdown()  # doctest: +ELLIPSIS
+        >>> shutting_down()
+        True
+        >>> # Reset for following doctests:
+        >>> _ = _shutdown.clear()
     """
-    parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
-        raise ValueError(f"Invalid URL provided: {url}")
-
-    path = parsed.path or ""
-    if "/servers/" in path:
-        path = path.split("/servers")[0]  # ".../servers/UUID_OF_SERVER_123" -> "..."
-    elif path.endswith("/servers"):
-        path = path[: -len("/servers")]  # ".../servers"     -> "..."
-    # otherwise keep the existing path (supports APP_ROOT_PATH)
-
-    return f"{parsed.scheme}://{parsed.netloc}{path}"
+    if not _shutdown.is_set():
+        _shutdown.set()
 
 
-BASE_URL: str = _extract_base_url(SERVER_CATALOG_URLS[0]) if SERVER_CATALOG_URLS else ""
+def shutting_down() -> bool:
+    """Check whether the server is shutting down.
 
-# -----------------------------------------------------------------------------
-# Logging Setup
-# -----------------------------------------------------------------------------
-_log_level = os.getenv(ENV_LOG_LEVEL, "INFO").upper()
-if _log_level in {"OFF", "NONE", "DISABLE", "FALSE", "0"}:
-    logging.disable(logging.CRITICAL)
-else:
-    logging.basicConfig(
-        level=getattr(logging, _log_level, logging.INFO),
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-        stream=sys.stderr,
+    Args:
+        None
+
+    Returns:
+        bool: True if shutdown has been triggered, False otherwise.
+
+    Examples:
+        >>> shutting_down()
+        False
+    """
+    return _shutdown.is_set()
+
+
+# -----------------------
+# Utilities
+# -----------------------
+def setup_logging(level: Optional[str]) -> None:
+    """Configure logging for the wrapper.
+
+    Args:
+        level: Logging level (e.g. "INFO", "DEBUG"), or OFF/None to disable.
+
+    Examples:
+        >>> setup_logging("DEBUG")
+        >>> logger.disabled
+        False
+        >>> setup_logging("OFF")
+        >>> logger.disabled
+        True
+    """
+    if not level:
+        logger.disabled = True
+        return
+
+    log_level = level.strip().upper()
+    if log_level in {"OFF", "NONE", "DISABLE", "FALSE", "0"}:
+        logger.disabled = True
+        return
+
+    logger.setLevel(getattr(logging, log_level, logging.INFO))
+    formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
+    for handler in logger.handlers:
+        handler.setFormatter(formatter)
+    logger.disabled = False
+
+
+def convert_url(url: str) -> str:
+    """Normalize an MCP server URL.
+
+    - If it ends with `/sse`, replace with `/mcp`.
+    - If it ends with `/mcp` already, leave unchanged.
+    - Otherwise, append `/mcp`.
+
+    Args:
+        url: The input server URL.
+
+    Returns:
+        str: Normalized MCP URL.
+
+    Examples:
+        >>> convert_url("http://localhost:4444/servers/uuid")
+        'http://localhost:4444/servers/uuid/mcp'
+        >>> convert_url("http://localhost:4444/servers/uuid/sse")
+        'http://localhost:4444/servers/uuid/mcp'
+        >>> convert_url("http://localhost:4444/servers/uuid/mcp")
+        'http://localhost:4444/servers/uuid/mcp'
+    """
+    if url.endswith("/mcp") or url.endswith("/mcp/"):
+        return url
+    if url.endswith("/sse"):
+        return url.replace("/sse", "/mcp")
+    return url + "/mcp"
+
+
+def send_to_stdout(obj: Union[dict, str]) -> None:
+    """Write JSON-serializable object to stdout.
+
+    Args:
+        obj: Object to serialize and write. Falls back to str() if JSON fails.
+
+    Notes:
+        If writing fails (e.g., broken pipe), triggers shutdown.
+    """
+    try:
+        line = json.dumps(obj, ensure_ascii=False)
+    except Exception:
+        line = str(obj)
+    try:
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+    except OSError as e:
+        if e.errno in (errno.EPIPE, errno.EINVAL):
+            _mark_shutdown()
+        else:
+            _mark_shutdown()
+
+
+def make_error(message: str, code: int = JSONRPC_INTERNAL_ERROR, data: Any = None) -> dict:
+    """Construct a JSON-RPC error response.
+
+    Args:
+        message: Error message.
+        code: JSON-RPC error code (default -32603).
+        data: Optional extra error data.
+
+    Returns:
+        dict: JSON-RPC error object.
+
+    Examples:
+        >>> make_error("Invalid input", code=-32600)
+        {'jsonrpc': '2.0', 'id': 'bridge', 'error': {'code': -32600, 'message': 'Invalid input'}}
+        >>> make_error("Oops", data={"info": 1})["error"]["data"]
+        {'info': 1}
+    """
+    err: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": "bridge",
+        "error": {"code": code, "message": message},
+    }
+    if data is not None:
+        err["error"]["data"] = data
+    return err
+
+
+async def stdin_reader(queue: "asyncio.Queue[Union[dict, list, str, None]]") -> None:
+    """Read lines from stdin and push parsed JSON into a queue.
+
+    Args:
+        queue: Target asyncio.Queue where parsed messages are enqueued.
+
+    Notes:
+        - On EOF, pushes None and triggers shutdown.
+        - Invalid JSON produces a JSON-RPC error object.
+
+    Examples:
+        >>> # Example pattern (not executed): asyncio.create_task(stdin_reader(q))
+        >>> True
+        True
+    """
+    while True:
+        line = await asyncio.to_thread(sys.stdin.readline)
+        if not line:
+            await queue.put(None)
+            _mark_shutdown()
+            break
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            obj = make_error("Invalid JSON from stdin", JSONRPC_PARSE_ERROR, line)
+        await queue.put(obj)
+
+
+# -----------------------
+# Stream Parsers
+# -----------------------
+async def ndjson_lines(resp: httpx.Response) -> AsyncIterator[str]:
+    """Parse newline-delimited JSON (NDJSON) from an HTTP response.
+
+    Args:
+        resp: httpx.Response with NDJSON content.
+
+    Yields:
+        str: Individual JSON lines as strings.
+
+    Examples:
+        >>> # This function is a parser for network streams; doctest uses patterns only.
+        >>> True
+        True
+    """
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    buffer = ""
+    async for chunk in resp.aiter_bytes():
+        if shutting_down():
+            break
+        if not chunk:
+            continue
+        text = decoder.decode(chunk)
+        buffer += text
+        while True:
+            nl_idx = buffer.find("\n")
+            if nl_idx == -1:
+                break
+            line = buffer[:nl_idx]
+            buffer = buffer[nl_idx + 1 :]  # noqa: E203
+            if line.strip():
+                yield line.strip()
+    tail = decoder.decode(b"", final=True)
+    buffer += tail
+    if buffer.strip():
+        yield buffer.strip()
+
+
+async def sse_events(resp: httpx.Response) -> AsyncIterator[str]:
+    """Parse Server-Sent Events (SSE) from an HTTP response.
+
+    Args:
+        resp: httpx.Response with SSE content.
+
+    Yields:
+        str: Event payload data lines.
+    """
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    buffer = ""
+    event_lines: List[str] = []
+    async for chunk in resp.aiter_bytes():
+        if shutting_down():
+            break
+        if not chunk:
+            continue
+        text = decoder.decode(chunk)
+        buffer += text
+        while True:
+            nl_idx = buffer.find("\n")
+            if nl_idx == -1:
+                break
+            raw_line = buffer[:nl_idx]
+            buffer = buffer[nl_idx + 1 :]  # noqa: E203
+
+            line = raw_line.rstrip("\r")
+            if line == "":
+                if event_lines:
+                    yield "\n".join(event_lines)
+                    event_lines = []
+                continue
+            if line.startswith(":"):
+                continue
+            if ":" in line:
+                field, value = line.split(":", 1)
+                value = value.lstrip(" ")
+            else:
+                field, value = line, ""
+            if field == "data":
+                event_lines.append(value)
+    tail = decoder.decode(b"", final=True)
+    buffer += tail
+    for line in buffer.splitlines():
+        line = line.rstrip("\r")
+        if line == "":
+            if event_lines:
+                yield "\n".join(event_lines)
+                event_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if ":" in line:
+            field, value = line.split(":", 1)
+            value = value.lstrip(" ")
+        else:
+            field, value = line, ""
+        if field == "data":
+            event_lines.append(value)
+    if event_lines:
+        yield "\n".join(event_lines)
+
+
+# -----------------------
+# Core HTTP forwarder
+# -----------------------
+async def forward_once(
+    client: ResilientHttpClient,
+    settings: "Settings",
+    payload: Union[str, Dict[str, Any], List[Any]],
+) -> None:
+    """Forward a single JSON-RPC payload to the MCP gateway and stream responses.
+
+    The function:
+    - Sets content negotiation headers (JSON, NDJSON, SSE)
+    - Adds Authorization header when configured
+    - Streams the gateway response and forwards every JSON object to stdout
+      (supports application/json, application/x-ndjson, and text/event-stream)
+
+    Args:
+        client: Resilient HTTP client used to make the request.
+        settings: Bridge configuration (URL, auth, timeouts).
+        payload: JSON-RPC request payload as str/dict/list.
+    """
+    if shutting_down():
+        return
+
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "application/json, application/x-ndjson, text/event-stream",
+    }
+    if settings.auth_header:
+        headers["Authorization"] = settings.auth_header
+
+    body: str = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+
+    async with client.stream("POST", settings.server_url, data=body.encode("utf-8"), headers=headers) as resp:
+        ctype = (resp.headers.get("Content-Type") or "").lower()
+        status = resp.status_code
+        logger.debug("HTTP %s %s", status, ctype)
+
+        if shutting_down():
+            return
+
+        if status < 200 or status >= 300:
+            send_to_stdout(make_error(f"HTTP {status}", code=status))
+            return
+
+        async def _process_line(line: str):
+            """
+            Asynchronously processes a single line of text, expected to be a JSON-encoded string.
+
+            If the system is shutting down, the function returns immediately.
+            Otherwise, it attempts to parse the line as JSON and sends the resulting object to stdout.
+            If parsing fails, logs a warning and sends a standardized error response to stdout.
+
+            Args:
+                line (str): A string that should contain a valid JSON object.
+
+            Returns:
+                None
+            """
+            if shutting_down():
+                return
+            try:
+                obj = json.loads(line)
+                send_to_stdout(obj)
+            except Exception:
+                logger.warning("Invalid JSON from server: %s", line)
+                send_to_stdout(make_error("Invalid JSON from server", JSONRPC_PARSE_ERROR, line))
+
+        if "event-stream" in ctype:
+            async for data_payload in sse_events(resp):
+                if shutting_down():
+                    break
+                if not data_payload:
+                    continue
+                await _process_line(data_payload)
+            return
+
+        if "x-ndjson" in ctype or "ndjson" in ctype:
+            async for line in ndjson_lines(resp):
+                if shutting_down():
+                    break
+                await _process_line(line)
+            return
+
+        if "application/json" in ctype:
+            raw = await resp.aread()
+            if not shutting_down():
+                text = raw.decode("utf-8", errors="replace")
+                try:
+                    send_to_stdout(json.loads(text))
+                except Exception:
+                    send_to_stdout(make_error("Invalid JSON response", JSONRPC_PARSE_ERROR, text))
+            return
+
+        async for line in ndjson_lines(resp):
+            if shutting_down():
+                break
+            await _process_line(line)
+
+
+async def make_request(
+    client: ResilientHttpClient,
+    settings: "Settings",
+    payload: Union[str, Dict[str, Any], List[Any]],
+    *,
+    max_retries: int = 5,
+    base_delay: float = 0.25,
+) -> None:
+    """Make a gateway request with retry/backoff around a single forward attempt.
+
+    Args:
+        client: Resilient HTTP client used to make the request.
+        settings: Bridge configuration (URL, auth, timeouts).
+        payload: JSON-RPC request payload as str/dict/list.
+        max_retries: Maximum retry attempts upon exceptions (default 5).
+        base_delay: Base delay in seconds for exponential backoff (default 0.25).
+    """
+    attempt = 0
+    while not shutting_down():
+        try:
+            await forward_once(client, settings, payload)
+            return
+        except Exception as e:
+            if shutting_down():
+                return
+            logger.warning("Network or unexpected error in forward_once: %s", e)
+            attempt += 1
+            if attempt > max_retries:
+                send_to_stdout(make_error("max retries exceeded", JSONRPC_SERVER_ERROR))
+                return
+            delay = min(base_delay * (2 ** (attempt - 1)), 8.0)
+            await asyncio.sleep(delay)
+
+
+# -----------------------
+# Main loop & CLI
+# -----------------------
+@dataclass
+class Settings:
+    """Bridge configuration settings.
+
+    Args:
+        server_url: MCP server URL
+        auth_header: Authorization header (optional)
+        connect_timeout: HTTP connect timeout in seconds
+        response_timeout: Max response wait in seconds
+        concurrency: Max concurrent tool calls
+        log_level: Logging verbosity
+
+    Examples:
+        >>> s = Settings("http://x/mcp", "Bearer token", 5, 10, 2, "DEBUG")
+        >>> s.server_url
+        'http://x/mcp'
+        >>> s.concurrency
+        2
+    """
+
+    server_url: str
+    auth_header: Optional[str]
+    connect_timeout: float = DEFAULT_CONNECT_TIMEOUT
+    response_timeout: float = DEFAULT_RESPONSE_TIMEOUT
+    concurrency: int = DEFAULT_CONCURRENCY
+    log_level: Optional[str] = None
+
+
+async def main_async(settings: Settings) -> None:
+    """Main async loop: reads stdin JSON lines and forwards them to the gateway.
+
+    - Spawns a reader task that pushes parsed lines to a queue.
+    - Uses a semaphore to cap concurrent requests.
+    - Creates tasks to forward each queued payload.
+    - Gracefully shuts down on EOF or signals.
+
+    Args:
+        settings: Bridge configuration settings.
+
+    Examples:
+        >>> # Smoke-test structure only; no network or stdin in doctest.
+        >>> settings = Settings("http://x/mcp", None)
+        >>> async def _run_once():
+        ...     q = asyncio.Queue()
+        ...     # Immediately signal shutdown by marking the queue end:
+        ...     await q.put(None)
+        ...     _mark_shutdown()
+        ...     # Minimal run: create then cancel tasks cleanly.
+        ...     await asyncio.sleep(0)
+        >>> # Note: We avoid running main_async here due to stdin/network.
+        >>> True
+        True
+    """
+    queue: "asyncio.Queue[Union[dict, list, str, None]]" = asyncio.Queue()
+    reader_task = asyncio.create_task(stdin_reader(queue))
+
+    sem = asyncio.Semaphore(settings.concurrency)
+
+    httpx_timeout = httpx.Timeout(
+        connect=settings.connect_timeout,
+        read=settings.response_timeout,
+        write=settings.response_timeout,
+        pool=settings.response_timeout,
     )
 
-# Initialize logging service first
-logging_service = LoggingService()
-logger = logging_service.get_logger("mcpgateway.wrapper")
-logger.info(f"Starting MCP wrapper {__version__}: base_url={BASE_URL}, timeout={TOOL_CALL_TIMEOUT}")
-
-
-# -----------------------------------------------------------------------------
-# HTTP Helpers
-# -----------------------------------------------------------------------------
-async def fetch_url(url: str) -> httpx.Response:
-    """
-    Perform an asynchronous HTTP GET request and return the response.
-
-    This function makes authenticated HTTP requests to the MCP gateway using
-    optional bearer token authentication and timeout configuration.
-
-    Args:
-        url: The target URL to fetch.
-
-    Returns:
-        The successful ``httpx.Response`` object.
-
-    Raises:
-        httpx.RequestError:    If a network problem occurs while making the request.
-        httpx.HTTPStatusError: If the server returns a 4xx or 5xx response.
-
-    Examples:
-        Basic usage (requires running server):
-
-        >>> import asyncio
-        >>> # This example would require a real server running
-        >>> # async def example():
-        >>> #     response = await fetch_url("https://httpbin.org/get")
-        >>> #     return response.status_code
-        >>> # asyncio.run(example())  # Would return 200
-
-        Error handling:
-
-        >>> import asyncio
-        >>> async def test_invalid_url():
-        ...     try:
-        ...         await fetch_url("http://invalid-domain-that-does-not-exist.test")
-        ...     except Exception as e:
-        ...         return type(e).__name__
-        >>> # asyncio.run(test_invalid_url())  # Would return 'ConnectError' or similar
-    """
-    headers = {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
-    async with ResilientHttpClient(client_args={"timeout": TOOL_CALL_TIMEOUT}) as client:
-        try:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            return response
-        except httpx.RequestError as err:
-            logger.error(f"Network error while fetching {url}: {err}")
-            raise
-        except httpx.HTTPStatusError as err:
-            logger.error(f"HTTP {err.response.status_code} returned for {url}: {err}")
-            raise
-
-
-# -----------------------------------------------------------------------------
-# Metadata Helpers
-# -----------------------------------------------------------------------------
-async def get_tools_from_mcp_server(catalog_urls: List[str]) -> List[str]:
-    """
-    Retrieve associated tool IDs from the MCP gateway server catalogs.
-
-    This function extracts server IDs from catalog URLs, fetches the server
-    catalog from the gateway, and returns all tool IDs associated with the
-    specified servers.
-
-    Args:
-        catalog_urls (List[str]): List of catalog endpoint URLs.
-
-    Returns:
-        List[str]: A list of tool ID strings extracted from the server catalog.
-
-    Examples:
-        Basic usage:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     urls = ["https://gateway.example.com/servers/server-123"]
-        ...     # Would return tool IDs like ["tool1", "tool2"]
-        ...     return ["get_time", "calculate_sum"]
-        >>> asyncio.run(example())
-        ['get_time', 'calculate_sum']
-
-        Empty catalog handling:
-
-        >>> import asyncio
-        >>> async def empty_example():
-        ...     return []  # No tools found
-        >>> asyncio.run(empty_example())
-        []
-    """
-    server_ids = [url.split("/")[-1] for url in catalog_urls]
-    url = f"{BASE_URL}/servers/"
-    response = await fetch_url(url)
-    catalog = response.json()
-    tool_ids: List[str] = []
-    for entry in catalog:
-        if str(entry.get("id")) in server_ids:
-            tool_ids.extend(entry.get("associatedTools", []))
-    return tool_ids
-
-
-async def tools_metadata(tool_ids: List[str]) -> List[Dict[str, Any]]:
-    """
-    Fetch metadata for a list of MCP tools by their IDs.
-
-    Retrieves detailed metadata including name, description, and input schema
-    for each specified tool from the gateway's tools endpoint.
-
-    Args:
-        tool_ids (List[str]): List of tool ID strings.
-
-    Returns:
-        List[Dict[str, Any]]: A list of metadata dictionaries for each tool.
-
-    Examples:
-        Fetching specific tools:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     tool_ids = ["get_time", "calculate_sum"]
-        ...     # Would return metadata like:
-        ...     return [
-        ...         {"name": "get_time", "description": "Get current time", "inputSchema": {}},
-        ...         {"name": "calculate_sum", "description": "Add numbers", "inputSchema": {}}
-        ...     ]
-        >>> result = asyncio.run(example())
-        >>> len(result)
-        2
-
-        Empty list handling:
-
-        >>> import asyncio
-        >>> async def empty_tools():
-        ...     return []  # No tools to fetch
-        >>> asyncio.run(empty_tools())
-        []
-
-        Special "0" ID for all tools:
-
-        >>> # tool_ids = ["0"] returns all available tools
-        >>> # This is handled by the conditional logic in the function
-    """
-    if not tool_ids:
-        return []
-    url = f"{BASE_URL}/tools/"
-    response = await fetch_url(url)
-    data: List[Dict[str, Any]] = response.json()
-    if tool_ids == ["0"]:
-        return data
-
-    return [tool for tool in data if tool["name"] in tool_ids]
-
-
-async def get_prompts_from_mcp_server(catalog_urls: List[str]) -> List[str]:
-    """
-    Retrieve associated prompt IDs from the MCP gateway server catalogs.
-
-    Extracts server IDs from the provided catalog URLs and fetches all
-    prompt IDs associated with those servers from the gateway.
-
-    Args:
-        catalog_urls (List[str]): List of catalog endpoint URLs.
-
-    Returns:
-        List[str]: A list of prompt ID strings.
-
-    Examples:
-        Basic prompt retrieval:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     urls = ["https://gateway.example.com/servers/server-123"]
-        ...     # Would return prompt IDs like:
-        ...     return ["greeting_prompt", "error_handler"]
-        >>> asyncio.run(example())
-        ['greeting_prompt', 'error_handler']
-
-        No prompts available:
-
-        >>> import asyncio
-        >>> async def no_prompts():
-        ...     return []  # Server has no prompts
-        >>> asyncio.run(no_prompts())
-        []
-    """
-    server_ids = [url.split("/")[-1] for url in catalog_urls]
-    url = f"{BASE_URL}/servers/"
-    response = await fetch_url(url)
-    catalog = response.json()
-    prompt_ids: List[str] = []
-    for entry in catalog:
-        if str(entry.get("id")) in server_ids:
-            prompt_ids.extend(entry.get("associatedPrompts", []))
-    return prompt_ids
-
-
-async def prompts_metadata(prompt_ids: List[str]) -> List[Dict[str, Any]]:
-    """
-    Fetch metadata for a list of MCP prompts by their IDs.
-
-    Retrieves detailed metadata including name, description, and arguments
-    for each specified prompt from the gateway's prompts endpoint.
-
-    Args:
-        prompt_ids (List[str]): List of prompt ID strings.
-
-    Returns:
-        List[Dict[str, Any]]: A list of metadata dictionaries for each prompt.
-
-    Examples:
-        Fetching specific prompts:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     prompt_ids = ["greeting", "farewell"]
-        ...     # Would return metadata like:
-        ...     return [
-        ...         {"name": "greeting", "description": "Welcome message", "arguments": []},
-        ...         {"name": "farewell", "description": "Goodbye message", "arguments": []}
-        ...     ]
-        >>> result = asyncio.run(example())
-        >>> len(result)
-        2
-
-        Empty prompt list:
-
-        >>> import asyncio
-        >>> async def no_prompts():
-        ...     return []
-        >>> asyncio.run(no_prompts())
-        []
-
-        All prompts with special ID:
-
-        >>> # prompt_ids = ["0"] returns all available prompts
-        >>> # This triggers the special case in the function
-    """
-    if not prompt_ids:
-        return []
-    url = f"{BASE_URL}/prompts/"
-    response = await fetch_url(url)
-    data: List[Dict[str, Any]] = response.json()
-    if prompt_ids == ["0"]:
-        return data
-    return [pr for pr in data if str(pr.get("id")) in prompt_ids]
-
-
-async def get_resources_from_mcp_server(catalog_urls: List[str]) -> List[str]:
-    """
-    Retrieve associated resource IDs from the MCP gateway server catalogs.
-
-    Extracts server IDs from catalog URLs and fetches all resource IDs
-    that are associated with those servers from the gateway.
-
-    Args:
-        catalog_urls (List[str]): List of catalog endpoint URLs.
-
-    Returns:
-        List[str]: A list of resource ID strings.
-
-    Examples:
-        Basic resource retrieval:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     urls = ["https://gateway.example.com/servers/server-123"]
-        ...     # Would return resource IDs like:
-        ...     return ["config.json", "readme.md", "schema.sql"]
-        >>> asyncio.run(example())
-        ['config.json', 'readme.md', 'schema.sql']
-
-        No resources found:
-
-        >>> import asyncio
-        >>> async def no_resources():
-        ...     return []  # Server has no resources
-        >>> asyncio.run(no_resources())
-        []
-    """
-    server_ids = [url.split("/")[-1] for url in catalog_urls]
-    url = f"{BASE_URL}/servers/"
-    response = await fetch_url(url)
-    catalog = response.json()
-    resource_ids: List[str] = []
-    for entry in catalog:
-        if str(entry.get("id")) in server_ids:
-            resource_ids.extend(entry.get("associatedResources", []))
-    return resource_ids
-
-
-async def resources_metadata(resource_ids: List[str]) -> List[Dict[str, Any]]:
-    """
-    Fetch metadata for a list of MCP resources by their IDs.
-
-    Retrieves detailed metadata including URI, name, description, and MIME type
-    for each specified resource from the gateway's resources endpoint.
-
-    Args:
-        resource_ids (List[str]): List of resource ID strings.
-
-    Returns:
-        List[Dict[str, Any]]: A list of metadata dictionaries for each resource.
-
-    Examples:
-        Fetching specific resources:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     resource_ids = ["config", "readme"]
-        ...     # Would return metadata like:
-        ...     return [
-        ...         {"id": "config", "uri": "file://config.json", "name": "Config", "mimeType": "application/json"},
-        ...         {"id": "readme", "uri": "file://readme.md", "name": "README", "mimeType": "text/markdown"}
-        ...     ]
-        >>> result = asyncio.run(example())
-        >>> len(result)
-        2
-
-        Empty resource list:
-
-        >>> import asyncio
-        >>> async def no_resources():
-        ...     return []
-        >>> asyncio.run(no_resources())
-        []
-
-        All resources with special ID:
-
-        >>> # resource_ids = ["0"] returns all available resources
-        >>> # This is handled by the conditional in the function
-    """
-    if not resource_ids:
-        return []
-    url = f"{BASE_URL}/resources/"
-    response = await fetch_url(url)
-    data: List[Dict[str, Any]] = response.json()
-    if resource_ids == ["0"]:
-        return data
-    return [res for res in data if str(res.get("id")) in resource_ids]
-
-
-# -----------------------------------------------------------------------------
-# Server Handlers
-# -----------------------------------------------------------------------------
-server: Server = Server("mcpgateway-wrapper")
-
-
-@server.list_tools()
-async def handle_list_tools() -> List[types.Tool]:
-    """
-    List all available MCP tools exposed by the gateway.
-
-    Queries the configured server catalogs to retrieve tool IDs and then
-    fetches metadata for each tool to construct a list of Tool objects.
-
-    Returns:
-        List[types.Tool]: A list of Tool instances including name, description, and input schema.
-
-    Raises:
-        RuntimeError: If an error occurs during fetching or processing.
-
-    Examples:
-        Successful tool listing:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server and MCP setup
-        >>> async def example():
-        ...     # Would return Tool objects like:
-        ...     from mcp import types
-        ...     return [
-        ...         types.Tool(name="get_time", description="Get current time", inputSchema={}),
-        ...         types.Tool(name="calculate", description="Perform calculation", inputSchema={})
-        ...     ]
-        >>> # result = asyncio.run(example())
-        >>> # len(result) would be 2
-
-        Error handling:
-
-        >>> # If gateway is unreachable, RuntimeError is raised
-        >>> # try: tools = await handle_list_tools()
-        >>> # except RuntimeError as e: print(f"Error: {e}")
-    """
+    client_args = {"timeout": httpx_timeout, "http2": True}
+    resilient = ResilientHttpClient(
+        max_retries=5,
+        base_backoff=0.25,
+        max_delay=8.0,
+        jitter_max=0.25,
+        client_args=client_args,
+    )
+
+    tasks: set[asyncio.Task[None]] = set()
     try:
-        tool_ids = ["0"] if SERVER_CATALOG_URLS[0] == BASE_URL else await get_tools_from_mcp_server(SERVER_CATALOG_URLS)
-        metadata = await tools_metadata(tool_ids)
-        tools = []
-        for tool in metadata:
-            tool_name = tool.get("name")
-            if tool_name:  # Only include tools with valid names
-                tools.append(
-                    types.Tool(
-                        name=str(tool_name),
-                        description=tool.get("description", ""),
-                        inputSchema=tool.get("inputSchema", {}),
-                        annotations=tool.get("annotations", {}),
-                    )
-                )
-        return tools
-    except Exception as exc:
-        logger.exception("Error listing tools")
-        raise RuntimeError(f"Error listing tools: {exc}")
+        while not shutting_down():
+            item = await queue.get()
+            if item is None:
+                break
+
+            async def _worker(payload=item):
+                """
+                Executes an asynchronous request with concurrency control.
+
+                Acquires a semaphore to limit the number of concurrent executions.
+                If the system is not shutting down, sends the given payload using `make_request`.
+
+                Args:
+                    payload (Any): The data to be sent in the request. Defaults to `item`.
+                """
+                async with sem:
+                    if not shutting_down():
+                        await make_request(resilient, settings, payload)
+
+            t = asyncio.create_task(_worker())
+            tasks.add(t)
+            t.add_done_callback(lambda fut, s=tasks: s.discard(fut))
+
+        _mark_shutdown()
+        for t in list(tasks):
+            t.cancel()
+        if tasks:
+            with suppress(asyncio.CancelledError):
+                await asyncio.gather(*tasks)
+    finally:
+        reader_task.cancel()
+        with suppress(Exception):
+            await reader_task
+        with suppress(Exception):
+            await resilient.aclose()
 
 
-@server.call_tool()
-async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None) -> List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]]:
-    """
-    Invoke a named MCP tool via the gateway's RPC endpoint.
+def parse_args() -> Settings:
+    """Parse CLI arguments and environment variables into Settings.
 
-    Sends a JSON-RPC request to the gateway to execute the specified tool
-    with the provided arguments and returns the result as content objects.
-
-    Args:
-        name (str): The name of the tool to invoke.
-        arguments (Optional[Dict[str, Any]]): The arguments to pass to the tool method.
+    Recognized flags:
+        --url / MCP_SERVER_URL
+        --auth / MCP_AUTH
+        --timeout / MCP_TOOL_CALL_TIMEOUT
+        --log-level / MCP_WRAPPER_LOG_LEVEL
 
     Returns:
-        List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]]:
-            A list of content objects returned by the tool.
-
-    Raises:
-        ValueError: If tool call fails.
-        RuntimeError: If the HTTP request fails or returns an error.
+        Settings: Parsed and normalized configuration.
 
     Examples:
-        Successful tool call:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     # Calling a time tool
-        ...     from mcp import types
-        ...     result = [types.TextContent(type="text", text="2024-01-15 10:30:00 UTC")]
-        ...     return result
-        >>> # result = asyncio.run(example())
-        >>> # result[0].text would contain the timestamp
-
-        Tool call with arguments:
-
-        >>> import asyncio
-        >>> async def calc_example():
-        ...     # Calling calculator tool with arguments
-        ...     from mcp import types
-        ...     result = [types.TextContent(type="text", text="42")]
-        ...     return result
-        >>> # result = await handle_call_tool("add", {"a": 20, "b": 22})
-
-        Error handling:
-
-        >>> # Tool returns error
-        >>> # try: await handle_call_tool("invalid_tool")
-        >>> # except ValueError as e: print(f"Tool error: {e}")
-        >>> # except RuntimeError as e: print(f"Network error: {e}")
+        >>> import sys, os
+        >>> _argv = sys.argv
+        >>> sys.argv = ["prog", "--url", "http://localhost:4444/servers/u"]
+        >>> try:
+        ...     s = parse_args()
+        ...     s.server_url.endswith("/mcp")
+        ... finally:
+        ...     sys.argv = _argv
+        True
     """
-    if arguments is None:
-        arguments = {}
+    parser = argparse.ArgumentParser(description="Stdio MCP Client <-> MCP HTTP Bridge")
+    parser.add_argument("--url", default=os.environ.get("MCP_SERVER_URL"), help="MCP server URL (env: MCP_SERVER_URL)")
+    parser.add_argument("--auth", default=os.environ.get("MCP_AUTH"), help="Authorization header value (env: MCP_AUTH)")
+    parser.add_argument("--timeout", default=os.environ.get("MCP_TOOL_CALL_TIMEOUT"), help="Response timeout in seconds")
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("MCP_WRAPPER_LOG_LEVEL", "INFO"),
+        help="Enable logging at this level (case-insensitive, default: disabled)",
+    )
+    args = parser.parse_args()
 
-    logger.info(f"Calling tool {name} with args {arguments}")
-    payload = {"jsonrpc": "2.0", "id": 2, "method": name, "params": arguments}
-    headers = {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
+    if not args.url:
+        print("Error: MCP server URL must be provided via --url or MCP_SERVER_URL", file=sys.stderr)
+        sys.exit(2)
+
+    server_url = convert_url(args.url)
+    response_timeout = float(args.timeout) if args.timeout else DEFAULT_RESPONSE_TIMEOUT
+
+    return Settings(
+        server_url=server_url,
+        auth_header=args.auth,
+        connect_timeout=DEFAULT_CONNECT_TIMEOUT,
+        response_timeout=response_timeout,
+        log_level=args.log_level,
+        concurrency=DEFAULT_CONCURRENCY,
+    )
+
+
+def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
+    """Install SIGINT/SIGTERM handlers that trigger graceful shutdown.
+
+    Args:
+        loop: The asyncio event loop to attach handlers to.
+
+    Examples:
+        >>> import asyncio
+        >>> loop = asyncio.new_event_loop()
+        >>> _install_signal_handlers(loop)  # doctest: +ELLIPSIS
+        >>> loop.close()
+    """
+    for sig in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None)):
+        if sig is None:
+            continue
+        with suppress(NotImplementedError):
+            loop.add_signal_handler(sig, _mark_shutdown)
+
+
+def main() -> None:
+    """Entry point for the MCP stdio wrapper.
+
+    - Parses args/env vars into Settings
+    - Configures logging
+    - Runs the async main loop with signal handling
+
+    Args:
+        None
+    """
+    settings = parse_args()
+    setup_logging(settings.log_level)
+    if not logger.disabled:
+        logger.info("Starting MCP stdio wrapper -> %s", settings.server_url)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    _install_signal_handlers(loop)
 
     try:
-        async with ResilientHttpClient(client_args={"timeout": TOOL_CALL_TIMEOUT}) as client:
-            resp = await client.post(f"{BASE_URL}/rpc/", json=payload, headers=headers)
-            resp.raise_for_status()
-            result = resp.json()
-
-            if "error" in result:
-                error_msg = result["error"].get("message", "Unknown error")
-                raise ValueError(f"Tool call failed: {error_msg}")
-
-            tool_result = result.get("result", result)
-            return [types.TextContent(type="text", text=str(tool_result))]
-
-    except httpx.TimeoutException as exc:
-        logger.error(f"Timeout calling tool {name}: {exc}")
-        raise RuntimeError(f"Tool call timeout: {exc}")
-    except Exception as exc:
-        logger.exception(f"Error calling tool {name}")
-        raise RuntimeError(f"Error calling tool: {exc}")
-
-
-@server.list_resources()
-async def handle_list_resources() -> List[types.Resource]:
-    """
-    List all available MCP resources exposed by the gateway.
-
-    Fetches resource IDs from the configured catalogs and retrieves
-    metadata to construct Resource instances.
-
-    Returns:
-        List[types.Resource]: A list of Resource objects including URI, name, description, and MIME type.
-
-    Raises:
-        RuntimeError: If an error occurs during fetching or processing.
-
-    Examples:
-        Successful resource listing:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     from mcp import types
-        ...     from pydantic import AnyUrl
-        ...     return [
-        ...         types.Resource(
-        ...             uri=AnyUrl("file://config.json"),
-        ...             name="Configuration",
-        ...             description="App config file",
-        ...             mimeType="application/json"
-        ...         )
-        ...     ]
-        >>> # result = asyncio.run(example())
-        >>> # result[0].name would be "Configuration"
-
-        Empty resource list:
-
-        >>> import asyncio
-        >>> async def no_resources():
-        ...     return []  # No resources available
-        >>> asyncio.run(no_resources())
-        []
-
-        Invalid URI handling:
-
-        >>> # Resources with invalid URIs are skipped with warnings
-        >>> # The function filters out resources missing required fields
-    """
-    try:
-        ids = ["0"] if SERVER_CATALOG_URLS[0] == BASE_URL else await get_resources_from_mcp_server(SERVER_CATALOG_URLS)
-        meta = await resources_metadata(ids)
-        resources = []
-        for r in meta:
-            uri = r.get("uri")
-            if not uri:
-                logger.warning(f"Resource missing URI, skipping: {r}")
-                continue
-            try:
-                resources.append(
-                    types.Resource(
-                        uri=AnyUrl(uri),
-                        name=r.get("name", ""),
-                        description=r.get("description", ""),
-                        mimeType=r.get("mimeType", "text/plain"),
-                    )
-                )
-            except Exception as e:
-                logger.warning(f"Invalid resource URI {uri}: {e}")
-                continue
-        return resources
-    except Exception as exc:
-        logger.exception("Error listing resources")
-        raise RuntimeError(f"Error listing resources: {exc}")
-
-
-@server.read_resource()
-async def handle_read_resource(uri: AnyUrl) -> str:
-    """
-    Read and return the content of a resource by its URI.
-
-    Fetches the resource content from the specified URI using the gateway's
-    HTTP interface and returns the response body as text.
-
-    Args:
-        uri (AnyUrl): The URI of the resource to read.
-
-    Returns:
-        str: The body text of the fetched resource.
-
-    Raises:
-        ValueError: If the resource cannot be fetched.
-
-    Examples:
-        Reading a text resource:
-
-        >>> import asyncio
-        >>> from pydantic import AnyUrl
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     # Would return file content
-        ...     return "{\\"version\\": \\"1.0\\", \\"name\\": \\"myapp\\"}"
-        >>> # content = await handle_read_resource(AnyUrl("file://config.json"))
-        >>> asyncio.run(example())
-        '{"version": "1.0", "name": "myapp"}'
-
-        Error handling:
-
-        >>> # Invalid or unreachable URI
-        >>> # try: content = await handle_read_resource(AnyUrl("file://missing.txt"))
-        >>> # except ValueError as e: print(f"Read error: {e}")
-    """
-    try:
-        response = await fetch_url(str(uri))
-        return response.text
-    except Exception as exc:
-        logger.exception(f"Error reading resource {uri}")
-        raise ValueError(f"Failed to read resource at {uri}: {exc}")
-
-
-@server.list_prompts()
-async def handle_list_prompts() -> List[types.Prompt]:
-    """
-    List all available MCP prompts exposed by the gateway.
-
-    Retrieves prompt IDs from the catalogs and fetches metadata
-    to create Prompt instances.
-
-    Returns:
-        List[types.Prompt]: A list of Prompt objects including name, description, and arguments.
-
-    Raises:
-        RuntimeError: If an error occurs during fetching or processing.
-
-    Examples:
-        Successful prompt listing:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     from mcp import types
-        ...     return [
-        ...         types.Prompt(
-        ...             name="greeting",
-        ...             description="Welcome message template",
-        ...             arguments=[{"name": "username", "description": "User's name"}]
-        ...         ),
-        ...         types.Prompt(
-        ...             name="error_msg",
-        ...             description="Error message template",
-        ...             arguments=[{"name": "error_code", "description": "Error code"}]
-        ...         )
-        ...     ]
-        >>> result = asyncio.run(example())
-        >>> len(result)
-        2
-
-        Empty prompt list:
-
-        >>> import asyncio
-        >>> async def no_prompts():
-        ...     return []
-        >>> asyncio.run(no_prompts())
-        []
-    """
-    try:
-        ids = ["0"] if SERVER_CATALOG_URLS[0] == BASE_URL else await get_prompts_from_mcp_server(SERVER_CATALOG_URLS)
-        meta = await prompts_metadata(ids)
-        prompts = []
-        for p in meta:
-            prompt_name = p.get("name")
-            if prompt_name:  # Only include prompts with valid names
-                prompts.append(
-                    types.Prompt(
-                        name=str(prompt_name),
-                        description=p.get("description", ""),
-                        arguments=p.get("arguments", []),
-                    )
-                )
-        return prompts
-    except Exception as exc:
-        logger.exception("Error listing prompts")
-        raise RuntimeError(f"Error listing prompts: {exc}")
-
-
-@server.get_prompt()
-async def handle_get_prompt(name: str, arguments: Optional[Dict[str, str]] = None) -> types.GetPromptResult:
-    """
-    Retrieve and format a single prompt template with provided arguments.
-
-    Fetches the prompt template from the gateway and formats it using the
-    provided arguments, returning a structured prompt result.
-
-    Args:
-        name (str): The unique name of the prompt to fetch.
-        arguments (Optional[Dict[str, str]]): A mapping of placeholder names to replacement values.
-
-    Returns:
-        types.GetPromptResult: Contains description and list of formatted PromptMessage instances.
-
-    Raises:
-        ValueError: If fetching or formatting fails.
-
-    Examples:
-        Basic prompt retrieval:
-
-        >>> import asyncio
-        >>> # Mock example - would require real server
-        >>> async def example():
-        ...     from mcp import types
-        ...     return types.GetPromptResult(
-        ...         description="Welcome message",
-        ...         messages=[
-        ...             types.PromptMessage(
-        ...                 role="user",
-        ...                 content=types.TextContent(type="text", text="Hello Alice!")
-        ...             )
-        ...         ]
-        ...     )
-        >>> # result = await handle_get_prompt("greeting", {"username": "Alice"})
-
-        Template formatting:
-
-        >>> # Prompt template: "Hello {username}!"
-        >>> # Arguments: {"username": "Bob"}
-        >>> # Result: "Hello Bob!"
-
-        Missing argument error:
-
-        >>> # Template requires {username} but no arguments provided
-        >>> # try: await handle_get_prompt("greeting")
-        >>> # except ValueError as e: print(f"Missing placeholder: {e}")
-
-        Prompt not found:
-
-        >>> # try: await handle_get_prompt("nonexistent")
-        >>> # except ValueError as e: print(f"Prompt error: {e}")
-    """
-    try:
-        url = f"{BASE_URL}/prompts/{name}"
-        response = await fetch_url(url)
-        prompt_data = response.json()
-
-        template = prompt_data.get("template", "")
-        try:
-            formatted = template.format(**(arguments or {}))
-        except KeyError as exc:
-            raise ValueError(f"Missing placeholder in arguments: {exc}")
-        except Exception as exc:
-            raise ValueError(f"Error formatting prompt: {exc}")
-
-        return types.GetPromptResult(
-            description=prompt_data.get("description", ""),
-            messages=[
-                types.PromptMessage(
-                    role="user",
-                    content=types.TextContent(type="text", text=formatted),
-                )
-            ],
-        )
-    except ValueError:
-        raise
-    except Exception as exc:
-        logger.exception(f"Error getting prompt {name}")
-        raise ValueError(f"Failed to fetch prompt '{name}': {exc}")
-
-
-async def main() -> None:
-    """
-    Main entry point to start the MCP stdio server.
-
-    Initializes the server over standard IO, registers capabilities,
-    and begins listening for JSON-RPC messages. This function handles
-    the complete server lifecycle including graceful shutdown.
-
-    This function should only be called in a script context.
-
-    Raises:
-        RuntimeError: If the server fails to start.
-
-    Examples:
-        Starting the server:
-
-        >>> import asyncio
-        >>> # In a real script context:
-        >>> # if __name__ == "__main__":
-        >>> #     asyncio.run(main())
-
-        Server initialization:
-
-        >>> # Server starts with stdio transport
-        >>> # Registers MCP capabilities for tools, prompts, resources
-        >>> # Begins processing JSON-RPC messages from stdin
-        >>> # Sends responses to stdout
-
-        Error handling:
-
-        >>> # Server startup failures raise RuntimeError
-        >>> # Keyboard interrupts are handled gracefully
-        >>> # All errors are logged appropriately
-    """
-    try:
-        async with mcp.server.stdio.stdio_server() as (reader, writer):
-            await server.run(
-                reader,
-                writer,
-                InitializationOptions(
-                    server_name="mcpgateway-wrapper",
-                    server_version=__version__,
-                    capabilities=server.get_capabilities(notification_options=NotificationOptions(), experimental_capabilities={}),
-                ),
-            )
-    except Exception as exc:
-        logger.exception("Server failed to start")
-        raise RuntimeError(f"Server startup failed: {exc}")
+        loop.run_until_complete(main_async(settings))
+    finally:
+        loop.run_until_complete(asyncio.sleep(0))
+        with suppress(Exception):
+            loop.close()
+        if not logger.disabled:
+            logger.info("Shutdown complete.")
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Server interrupted by user")
-    except Exception:
-        logger.exception("Server failed")
-        sys.exit(1)
-    finally:
-        logger.info("Wrapper shutdown complete")
+    main()

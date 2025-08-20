@@ -26,8 +26,8 @@ prompt and resource registered in your Gateway.
       "command": "python3",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-        "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>",
+        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
+        "MCP_AUTH": "<YOUR_JWT_TOKEN>",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
@@ -46,8 +46,8 @@ prompt and resource registered in your Gateway.
   "command": "docker",
   "args": [
     "run", "--rm", "--network=host", "-i",
-    "-e", "MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1",
-    "-e", "MCP_AUTH_TOKEN=<YOUR_JWT_TOKEN>",
+    "-e", "MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1",
+    "-e", "MCP_AUTH=<YOUR_JWT_TOKEN>",
     "ghcr.io/ibm/mcp-context-forge:0.5.0",
     "python3", "-m", "mcpgateway.wrapper"
   ]
@@ -67,8 +67,8 @@ If you installed the package globally:
   "command": "pipx",
   "args": ["run", "python3", "-m", "mcpgateway.wrapper"],
   "env": {
-    "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-    "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>"
+    "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
+    "MCP_AUTH": "<YOUR_JWT_TOKEN>"
   }
 }
 ```
@@ -94,8 +94,8 @@ If tools don't appear, open *File ▸ Settings ▸ Developer ▸ View Logs* to s
 
 | Var                       | Purpose                                           |
 | ------------------------- | ------------------------------------------------- |
-| `MCP_SERVER_CATALOG_URLS` | One or more `/servers/{id}` endpoints (comma-sep) |
-| `MCP_AUTH_TOKEN`          | JWT bearer for Gateway auth                       |
+| `MCP_SERVER_URL` | One or more `/servers/{id}` endpoints (comma-sep) |
+| `MCP_AUTH`          | JWT bearer for Gateway auth                       |
 | `MCP_TOOL_CALL_TIMEOUT`   | Per-tool timeout (seconds, optional)              |
 | `MCP_WRAPPER_LOG_LEVEL`   | `DEBUG`, `INFO`, `OFF` (optional)                 |
 

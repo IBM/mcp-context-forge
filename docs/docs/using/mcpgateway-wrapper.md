@@ -30,8 +30,8 @@ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
 Configure the wrapper via ENV variables:
 
 ```bash
-export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'  # select a virtual server
+export MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'  # select a virtual server
 export MCP_TOOL_CALL_TIMEOUT=120          # tool call timeout in seconds (optional - default 90)
 export MCP_WRAPPER_LOG_LEVEL=INFO         # DEBUG | INFO | OFF
 ```
@@ -51,8 +51,8 @@ Launching it in your terminal (ex: `python3 -m mcpgateway.wrapper`) is useful fo
 
     ```bash
     docker run -i --rm --network=host \
-      -e MCP_SERVER_CATALOG_URLS=$MCP_SERVER_CATALOG_URLS \
-      -e MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN \
+      -e MCP_SERVER_URL=$MCP_SERVER_URL \
+      -e MCP_AUTH=$MCP_AUTH \
       ghcr.io/ibm/mcp-context-forge:0.5.0 \
       python3 -m mcpgateway.wrapper
     ```
@@ -61,8 +61,8 @@ Launching it in your terminal (ex: `python3 -m mcpgateway.wrapper`) is useful fo
 
     ```bash
     pipx install --include-deps mcp-contextforge-gateway
-    MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN \
-    MCP_SERVER_CATALOG_URLS=$MCP_SERVER_CATALOG_URLS \
+    MCP_AUTH=$MCP_AUTH \
+    MCP_SERVER_URL=$MCP_SERVER_URL \
     python3 -m mcpgateway.wrapper
     ```
 
@@ -83,8 +83,8 @@ The wrapper now waits for JSON-RPC on **stdin** and emits replies on **stdout**.
 
 | Variable                  | Purpose                                      | Default |
 | ------------------------- | -------------------------------------------- | ------- |
-| `MCP_SERVER_CATALOG_URLS` | Comma-sep list of `/servers/{id}` endpoints  | -       |
-| `MCP_AUTH_TOKEN`          | Bearer token the wrapper forwards to Gateway | -       |
+| `MCP_SERVER_URL` | Comma-sep list of `/servers/{id}` endpoints  | -       |
+| `MCP_AUTH`          | Bearer token the wrapper forwards to Gateway | -       |
 | `MCP_TOOL_CALL_TIMEOUT`   | Per-tool timeout (seconds)                   | `90`    |
 | `MCP_WRAPPER_LOG_LEVEL`   | `OFF`, `INFO`, `DEBUG`, ...                    | `INFO`  |
 
@@ -94,7 +94,7 @@ The wrapper now waits for JSON-RPC on **stdin** and emits replies on **stdout**.
 
 You can run `mcpgateway.wrapper` from any MCP client, using either `python3`, `uv`, `uvx`, `uvx`, `pipx`, `docker`, or `podman` entrypoints.
 
-The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-gateway` module installed, able to call `mcpgateway.wrapper` and the right `env` settings exported (`MCP_SERVER_CATALOG_URLS` and `MCP_AUTH_TOKEN` at a minimum).
+The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-gateway` module installed, able to call `mcpgateway.wrapper` and the right `env` settings exported (`MCP_SERVER_URL` and `MCP_AUTH` at a minimum).
 
 === "Claude Desktop (venv)"
 
@@ -105,8 +105,8 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
           "command": "python3",
           "args": ["-m", "mcpgateway.wrapper"],
           "env": {
-            "MCP_AUTH_TOKEN": "<paste-token>",
-            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
+            "MCP_AUTH": "<paste-token>",
+            "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1"
           }
         }
       }
@@ -132,8 +132,8 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
             "mcpgateway.wrapper"
           ],
           "env": {
-            "MCP_AUTH_TOKEN": "<paste-token>",
-            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
+            "MCP_AUTH": "<paste-token>",
+            "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1"
           }
         }
       }
@@ -150,8 +150,8 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
         "command": "/path/to/python",
         "args": ["-m", "mcpgateway.wrapper"],
         "env": {
-          "MCP_AUTH_TOKEN": "<token>",
-          "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
+          "MCP_AUTH": "<token>",
+          "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1"
         }
       }
     }
@@ -177,8 +177,8 @@ The MCP Client calls the entrypoint, which needs to have the `mcp-contextforge-g
             "mcpgateway.wrapper"
           ],
           "env": {
-            "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-            "MCP_AUTH_TOKEN": "REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN",
+            "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
+            "MCP_AUTH": "REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN",
             "MCP_WRAPPER_LOG_LEVEL": "OFF"
           }
         }

@@ -5,8 +5,8 @@
 ```bash
 # Gateway & auth
 export MCP_GATEWAY_BASE_URL=http://localhost:4444
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1
-export MCP_AUTH_TOKEN="<your_bearer_token>"
+export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
+export MCP_AUTH="<your_bearer_token>"
 ```
 
 | Mode                                                        | Command                                                                      | Notes                                                                         |

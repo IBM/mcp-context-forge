@@ -62,5 +62,5 @@ MCP helpers
 ## Security & Configuration Tips
 - Copy `.env.example` → `.env`; verify with `make check-env`. Never commit secrets.
 - Auth: set `JWT_SECRET_KEY`; export `MCPGATEWAY_BEARER_TOKEN` using the token utility for API calls.
-- Wrapper: set `MCP_SERVER_CATALOG_URLS` and `MCP_AUTH_TOKEN` when using `mcpgateway.wrapper`.
+- Wrapper: set `MCP_SERVER_URL` and `MCP_AUTH` when using `mcpgateway.wrapper`.
 - TLS: `make certs` → `make serve-ssl`. Prefer environment variables for config; see `README.md`.

@@ -54,6 +54,7 @@ dependencies = [
     "filelock>=3.19.1",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
+    "httpx[http2]>=0.28.1",
     "jinja2>=3.1.6",
     "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",

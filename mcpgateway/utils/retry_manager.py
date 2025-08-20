@@ -149,9 +149,10 @@ Example Usage:
 
 # Standard
 import asyncio
+from contextlib import asynccontextmanager
 import logging
 import random
-from typing import Any, Dict, Optional
+from typing import Any, AsyncContextManager, Dict, Optional
 
 # Third-Party
 import httpx
@@ -532,6 +533,76 @@ class ResilientHttpClient:
             True
         """
         return await self.request("DELETE", url, **kwargs)
+
+    @asynccontextmanager
+    async def stream(self, method: str, url: str, **kwargs) -> AsyncContextManager[httpx.Response]:
+        """Open a resilient streaming HTTP request.
+
+        Args:
+            method: HTTP method to use (e.g. "GET", "POST")
+            url: URL to send the request to
+            **kwargs: Additional parameters to pass to the request
+
+        Yields:
+            HTTP response object with streaming capability
+
+        Raises:
+            Exception: If a non-retryable error occurs while opening the stream
+            RuntimeError: If the maximum number of retries is exceeded
+
+        Examples:
+            >>> client = ResilientHttpClient()
+            >>> import contextlib
+            >>> isinstance(client.stream("GET", "https://example.com"), contextlib.AbstractAsyncContextManager)
+            True
+            >>> async def fetch():
+            ...     async with client.stream("GET", "https://example.com") as response:
+            ...         async for chunk in response.aiter_bytes():
+            ...             print(chunk)
+        """
+        attempt = 0
+        last_exc: Optional[Exception] = None
+        while attempt < self.max_retries:
+            try:
+                logging.debug("Attempt %d (stream) %s %s", attempt + 1, method, url)
+                stream_cm = self.client.stream(method, url, **kwargs)
+                async with stream_cm as resp:
+                    if not (200 <= resp.status_code < 300 or resp.is_success):
+                        if resp.status_code == 429:
+                            ra = resp.headers.get("Retry-After")
+                            if ra:
+                                try:
+                                    wait = float(ra)
+                                except ValueError:
+                                    wait = None
+                                if wait:
+                                    logging.info("Rate-limited. Sleeping Retry-After=%s", wait)
+                                    await asyncio.sleep(wait)
+                                    attempt += 1
+                                    continue
+                        if not self._should_retry(None, resp):
+                            # give caller the error response once and return
+                            yield resp
+                            return
+                        logging.info("Stream response %s considered retryable; will retry opening.", resp.status_code)
+                    else:
+                        # good response -> yield it to caller
+                        yield resp
+                        return
+            except Exception as exc:
+                last_exc = exc
+                if not self._should_retry(exc, None):
+                    raise
+                logging.warning("Error opening stream (will retry): %s", exc)
+
+            backoff = min(self.base_backoff * (2**attempt), self.max_delay)
+            await self._sleep_with_jitter(backoff)
+            attempt += 1
+            logging.debug("Retrying stream open (attempt %d) after backoff %.2f", attempt + 1, backoff)
+
+        if last_exc:
+            raise RuntimeError(last_exc)
+        raise RuntimeError("Max retries reached opening stream")
 
     async def aclose(self):
         """Close the underlying HTTP client gracefully.
