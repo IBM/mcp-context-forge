@@ -3,6 +3,14 @@ import os
 from functools import lru_cache
 from typing import Optional, List
 
+# Load .env file if it exists
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv not available, skip
+    pass
+
 try:
     from .models import AgentConfig
 except ImportError:

@@ -23,8 +23,12 @@ except ImportError:
     ChatOllama = None
     ChatAnthropic = None
 
-from .mcp_client import MCPClient, ToolDef
-from .models import AgentConfig
+try:
+    from .mcp_client import MCPClient, ToolDef
+    from .models import AgentConfig
+except ImportError:
+    from mcp_client import MCPClient, ToolDef
+    from models import AgentConfig
 
 logger = logging.getLogger(__name__)
 

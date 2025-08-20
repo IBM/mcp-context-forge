@@ -112,3 +112,4 @@ class TestValidateEnvironment:
         with patch.dict(os.environ, env_vars, clear=True):
             result = validate_environment()
             assert len(result["warnings"]) >= 2
+
