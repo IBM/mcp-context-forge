@@ -42,16 +42,16 @@ logger = logging.getLogger(__name__)
 server = Server("mcp-eval-server")
 
 # Global variables for tools (initialized in main after .env loading)
-judge_tools = None
-prompt_tools = None
-agent_tools = None
-quality_tools = None
-workflow_tools = None
-calibration_tools = None
-evaluation_cache = None
-judge_cache = None
-benchmark_cache = None
-results_store = None
+JUDGE_TOOLS = None  # pylint: disable=invalid-name
+PROMPT_TOOLS = None  # pylint: disable=invalid-name
+AGENT_TOOLS = None  # pylint: disable=invalid-name
+QUALITY_TOOLS = None  # pylint: disable=invalid-name
+WORKFLOW_TOOLS = None  # pylint: disable=invalid-name
+CALIBRATION_TOOLS = None  # pylint: disable=invalid-name
+EVALUATION_CACHE = None  # pylint: disable=invalid-name
+JUDGE_CACHE = None  # pylint: disable=invalid-name
+BENCHMARK_CACHE = None  # pylint: disable=invalid-name
+RESULTS_STORE = None  # pylint: disable=invalid-name
 
 
 @server.list_tools()
@@ -400,65 +400,65 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
 
         # Judge tools
         if name == "judge.evaluate_response":
-            result = await judge_tools.evaluate_response(**arguments)
+            result = await JUDGE_TOOLS.evaluate_response(**arguments)
         elif name == "judge.pairwise_comparison":
-            result = await judge_tools.pairwise_comparison(**arguments)
+            result = await JUDGE_TOOLS.pairwise_comparison(**arguments)
         elif name == "judge.rank_responses":
-            result = await judge_tools.rank_responses(**arguments)
+            result = await JUDGE_TOOLS.rank_responses(**arguments)
         elif name == "judge.evaluate_with_reference":
-            result = await judge_tools.evaluate_with_reference(**arguments)
+            result = await JUDGE_TOOLS.evaluate_with_reference(**arguments)
 
         # Prompt tools
         elif name == "prompt.evaluate_clarity":
-            result = await prompt_tools.evaluate_clarity(**arguments)
+            result = await PROMPT_TOOLS.evaluate_clarity(**arguments)
         elif name == "prompt.test_consistency":
-            result = await prompt_tools.test_consistency(**arguments)
+            result = await PROMPT_TOOLS.test_consistency(**arguments)
         elif name == "prompt.measure_completeness":
-            result = await prompt_tools.measure_completeness(**arguments)
+            result = await PROMPT_TOOLS.measure_completeness(**arguments)
         elif name == "prompt.assess_relevance":
-            result = await prompt_tools.assess_relevance(**arguments)
+            result = await PROMPT_TOOLS.assess_relevance(**arguments)
 
         # Agent tools
         elif name == "agent.evaluate_tool_use":
-            result = await agent_tools.evaluate_tool_use(**arguments)
+            result = await AGENT_TOOLS.evaluate_tool_use(**arguments)
         elif name == "agent.measure_task_completion":
-            result = await agent_tools.measure_task_completion(**arguments)
+            result = await AGENT_TOOLS.measure_task_completion(**arguments)
         elif name == "agent.analyze_reasoning":
-            result = await agent_tools.analyze_reasoning(**arguments)
+            result = await AGENT_TOOLS.analyze_reasoning(**arguments)
         elif name == "agent.benchmark_performance":
-            result = await agent_tools.benchmark_performance(**arguments)
+            result = await AGENT_TOOLS.benchmark_performance(**arguments)
 
         # Quality tools
         elif name == "quality.evaluate_factuality":
-            result = await quality_tools.evaluate_factuality(**arguments)
+            result = await QUALITY_TOOLS.evaluate_factuality(**arguments)
         elif name == "quality.measure_coherence":
-            result = await quality_tools.measure_coherence(**arguments)
+            result = await QUALITY_TOOLS.measure_coherence(**arguments)
         elif name == "quality.assess_toxicity":
-            result = await quality_tools.assess_toxicity(**arguments)
+            result = await QUALITY_TOOLS.assess_toxicity(**arguments)
 
         # Workflow tools
         elif name == "workflow.create_evaluation_suite":
-            result = await workflow_tools.create_evaluation_suite(**arguments)
+            result = await WORKFLOW_TOOLS.create_evaluation_suite(**arguments)
         elif name == "workflow.run_evaluation":
-            result = await workflow_tools.run_evaluation(**arguments)
+            result = await WORKFLOW_TOOLS.run_evaluation(**arguments)
         elif name == "workflow.compare_evaluations":
-            result = await workflow_tools.compare_evaluations(**arguments)
+            result = await WORKFLOW_TOOLS.compare_evaluations(**arguments)
 
         # Calibration tools
         elif name == "calibration.test_judge_agreement":
-            result = await calibration_tools.test_judge_agreement(**arguments)
+            result = await CALIBRATION_TOOLS.test_judge_agreement(**arguments)
         elif name == "calibration.optimize_rubrics":
-            result = await calibration_tools.optimize_rubrics(**arguments)
+            result = await CALIBRATION_TOOLS.optimize_rubrics(**arguments)
 
         # Server utility tools
         elif name == "server.get_available_judges":
-            result = {"available_judges": judge_tools.get_available_judges()}
+            result = {"available_judges": JUDGE_TOOLS.get_available_judges()}
         elif name == "server.get_evaluation_suites":
-            result = {"suites": workflow_tools.list_evaluation_suites()}
+            result = {"suites": WORKFLOW_TOOLS.list_evaluation_suites()}
         elif name == "server.get_evaluation_results":
-            result = await results_store.list_evaluation_results(**arguments)
+            result = await RESULTS_STORE.list_evaluation_results(**arguments)
         elif name == "server.get_cache_stats":
-            result = {"evaluation_cache": evaluation_cache.get_stats(), "judge_cache": judge_cache.get_stats(), "benchmark_cache": benchmark_cache.get_stats()}
+            result = {"evaluation_cache": EVALUATION_CACHE.get_stats(), "judge_cache": JUDGE_CACHE.get_stats(), "benchmark_cache": BENCHMARK_CACHE.get_stats()}
         else:
             raise ValueError(f"Unknown tool: {name}")
 
@@ -476,8 +476,8 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
 
 async def main():
     """Main server entry point."""
-    global judge_tools, prompt_tools, agent_tools, quality_tools, workflow_tools, calibration_tools
-    global evaluation_cache, judge_cache, benchmark_cache, results_store
+    global JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS, WORKFLOW_TOOLS, CALIBRATION_TOOLS  # pylint: disable=global-statement
+    global EVALUATION_CACHE, JUDGE_CACHE, BENCHMARK_CACHE, RESULTS_STORE  # pylint: disable=global-statement
 
     logger.info("🚀 Starting MCP Evaluation Server...")
     logger.info("📡 Protocol: Model Context Protocol (MCP) via stdio")
@@ -491,18 +491,18 @@ async def main():
     if models_config_path:
         logger.info(f"📄 Using custom models config: {models_config_path}")
 
-    judge_tools = JudgeTools(config_path=models_config_path)
-    prompt_tools = PromptTools(judge_tools)
-    agent_tools = AgentTools(judge_tools)
-    quality_tools = QualityTools(judge_tools)
-    workflow_tools = WorkflowTools(judge_tools, prompt_tools, agent_tools, quality_tools)
-    calibration_tools = CalibrationTools(judge_tools)
+    JUDGE_TOOLS = JudgeTools(config_path=models_config_path)
+    PROMPT_TOOLS = PromptTools(JUDGE_TOOLS)
+    AGENT_TOOLS = AgentTools(JUDGE_TOOLS)
+    QUALITY_TOOLS = QualityTools(JUDGE_TOOLS)
+    WORKFLOW_TOOLS = WorkflowTools(JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS)
+    CALIBRATION_TOOLS = CalibrationTools(JUDGE_TOOLS)
 
     # Initialize caching and storage
-    evaluation_cache = EvaluationCache()
-    judge_cache = JudgeResponseCache()
-    benchmark_cache = BenchmarkCache()
-    results_store = ResultsStore()
+    EVALUATION_CACHE = EvaluationCache()
+    JUDGE_CACHE = JudgeResponseCache()
+    BENCHMARK_CACHE = BenchmarkCache()
+    RESULTS_STORE = ResultsStore()
 
     # Log environment configuration
     logger.info("🔧 Environment Configuration:")
@@ -527,17 +527,17 @@ async def main():
             logger.info(f"   {status} {var}: {'configured' if value else 'not set'}")
 
     # Log judge initialization and test connectivity
-    available_judges = judge_tools.get_available_judges()
+    available_judges = JUDGE_TOOLS.get_available_judges()
     logger.info(f"⚖️  Loaded {len(available_judges)} judge models: {available_judges}")
 
     # Test judge connectivity and log detailed status with endpoints
     for judge_name in available_judges:
-        info = judge_tools.get_judge_info(judge_name)
+        info = JUDGE_TOOLS.get_judge_info(judge_name)
         provider = info.get("provider", "unknown")
         model_name = info.get("model_name", "N/A")
 
         # Get detailed configuration for each judge
-        judge_instance = judge_tools.judges.get(judge_name)
+        judge_instance = JUDGE_TOOLS.judges.get(judge_name)
         endpoint_info = ""
 
         if provider == "openai" and hasattr(judge_instance, "client"):
@@ -554,18 +554,18 @@ async def main():
             # Test OLLAMA connectivity for status display
             try:
                 # Third-Party
-                import aiohttp
+                import aiohttp  # pylint: disable=import-outside-toplevel
 
-                async def test_ollama():
+                async def test_ollama(test_url, aiohttp_module):  # pylint: disable=redefined-outer-name
                     try:
-                        timeout = aiohttp.ClientTimeout(total=2)
-                        async with aiohttp.ClientSession(timeout=timeout) as session:
-                            async with session.get(f"{base_url}/api/tags") as response:
+                        timeout = aiohttp_module.ClientTimeout(total=2)
+                        async with aiohttp_module.ClientSession(timeout=timeout) as session:
+                            async with session.get(f"{test_url}/api/tags") as response:
                                 return response.status == 200
                     except Exception:
                         return False
 
-                is_connected = await test_ollama()
+                is_connected = await test_ollama(base_url, aiohttp)
                 status = "🟢 connected" if is_connected else "🔴 not reachable"
                 endpoint_info = f" → {base_url} ({status})"
             except Exception:
@@ -604,7 +604,7 @@ async def main():
             criteria = [{"name": "helpfulness", "description": "Response helpfulness", "scale": "1-5", "weight": 1.0}]
             rubric = {"criteria": [], "scale_description": {"1": "Poor", "5": "Excellent"}}
 
-            result = await judge_tools.evaluate_response(response="Hi, tell me about this model in one sentence.", criteria=criteria, rubric=rubric, judge_model=primary_judge)
+            result = await JUDGE_TOOLS.evaluate_response(response="Hi, tell me about this model in one sentence.", criteria=criteria, rubric=rubric, judge_model=primary_judge)
 
             logger.info(f"✅ Primary judge {primary_judge} inference test successful - Score: {result['overall_score']:.2f}")
 
@@ -624,7 +624,7 @@ async def main():
             criteria = [{"name": "helpfulness", "description": "Response helpfulness", "scale": "1-5", "weight": 1.0}]
             rubric = {"criteria": [], "scale_description": {"1": "Poor", "5": "Excellent"}}
 
-            result = await judge_tools.evaluate_response(response="Hi, tell me about this model in one sentence.", criteria=criteria, rubric=rubric, judge_model=fallback)
+            result = await JUDGE_TOOLS.evaluate_response(response="Hi, tell me about this model in one sentence.", criteria=criteria, rubric=rubric, judge_model=fallback)
 
             logger.info(f"✅ Fallback judge {fallback} test successful - Score: {result['overall_score']:.2f}")
 

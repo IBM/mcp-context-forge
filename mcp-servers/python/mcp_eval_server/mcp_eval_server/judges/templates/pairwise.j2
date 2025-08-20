@@ -1,0 +1,30 @@
+You are an expert evaluator. Compare the following two responses based on the given criteria.
+{% if context %}
+
+CONTEXT:
+{{ context }}
+{% endif %}
+
+RESPONSE A:
+{{ response_a }}
+
+RESPONSE B:
+{{ response_b }}
+
+EVALUATION CRITERIA:
+{{ criteria_text }}
+
+Please provide your comparison in the following JSON format:
+{
+    "winner": "A or B or tie",
+    "confidence_score": confidence_level_0_to_1,
+    "reasoning": "detailed comparison reasoning",
+    "criterion_scores": {
+        "criterion_name": "A or B or tie for each criterion",
+        ...
+    },
+    "margin": strength_of_preference_0_to_1
+}
+
+Consider each criterion carefully and provide specific reasoning for your decision.
+
