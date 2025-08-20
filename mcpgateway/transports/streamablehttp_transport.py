@@ -564,7 +564,7 @@ async def read_resource(uri: AnyUrl) -> Union[str, bytes]:
                 logger.warning(f"No content returned by resource: {uri}")
                 return []
 
-            return [types.TextContent(type=result.content[0].type, text=result.content[0].text)]
+            return result.content
     except Exception as e:
         logger.exception(f"Error reading resource '{uri}': {e}")
         return []
