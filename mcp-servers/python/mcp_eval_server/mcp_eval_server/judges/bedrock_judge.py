@@ -5,7 +5,6 @@
 import asyncio
 import json
 import os
-import secrets
 from typing import Any, Dict, List, Optional
 
 try:
@@ -177,51 +176,7 @@ class BedrockJudge(BaseJudge):
         Returns:
             Pairwise comparison result
         """
-
-        # Position bias mitigation: randomly swap A and B
-        original_order = True
-        if position_bias_mitigation and secrets.randbelow(2) == 0:
-            response_a, response_b = response_b, response_a
-            original_order = False
-
-        criteria_text = self._format_criteria(criteria)
-
-        prompt = self._render_template("pairwise", context=context, response_a=response_a, response_b=response_b, criteria_text=criteria_text)
-
-        messages = [{"role": "system", "content": "You are a professional evaluation expert. Provide fair, detailed comparisons."}, {"role": "user", "content": prompt}]
-
-        response_text = await self._make_api_call(messages)
-
-        try:
-            json_start = response_text.find("{")
-            json_end = response_text.rfind("}") + 1
-            json_text = response_text[json_start:json_end]
-            result_data = json.loads(json_text)
-
-            # Adjust winner if we swapped positions
-            winner = result_data["winner"]
-            if not original_order and winner in ["A", "B"]:
-                winner = "B" if winner == "A" else "A"
-
-            # Adjust criterion scores
-            criterion_scores = result_data.get("criterion_scores", {})
-            if not original_order:
-                for k, v in criterion_scores.items():
-                    if v == "A":
-                        criterion_scores[k] = "B"
-                    elif v == "B":
-                        criterion_scores[k] = "A"
-
-            return PairwiseResult(
-                winner=winner,
-                confidence_score=result_data.get("confidence_score", 0.8),
-                reasoning=result_data.get("reasoning", ""),
-                criterion_scores=criterion_scores,
-                margin=result_data.get("margin", 0.5),
-            )
-
-        except (json.JSONDecodeError, KeyError) as e:
-            return PairwiseResult(winner="tie", confidence_score=0.3, reasoning=f"Error parsing judge response: {str(e)}", criterion_scores={}, margin=0.0)
+        return await self._base_pairwise_comparison(response_a, response_b, criteria, context, position_bias_mitigation)
 
     async def rank_responses(
         self,
@@ -236,7 +191,7 @@ class BedrockJudge(BaseJudge):
             responses: List of response strings to rank
             criteria: List of evaluation criteria for ranking
             context: Optional context for evaluation
-            ranking_method: Method to use for ranking ("tournament", "scoring", "round_robin")
+            ranking_method: Method to use for ranking
 
         Returns:
             RankingResult containing ranked responses and consistency score
@@ -244,104 +199,7 @@ class BedrockJudge(BaseJudge):
         Raises:
             ValueError: If less than 2 responses provided or unknown ranking method
         """
-
-        if len(responses) < 2:
-            raise ValueError("Need at least 2 responses to rank")
-
-        if ranking_method == "scoring":
-            return await self._rank_by_scoring(responses, criteria, context)
-        if ranking_method == "tournament":
-            return await self._rank_by_tournament(responses, criteria, context)
-        if ranking_method == "round_robin":
-            return await self._rank_by_round_robin(responses, criteria, context)
-        raise ValueError(f"Unknown ranking method: {ranking_method}")
-
-    async def _rank_by_scoring(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank by scoring each response individually.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: Evaluation criteria to use for scoring
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult containing ranked responses with scores and reasoning
-        """
-        rubric = EvaluationRubric(criteria=criteria, scale_description={"1": "Poor", "2": "Below Average", "3": "Average", "4": "Good", "5": "Excellent"})
-
-        # Evaluate each response
-        evaluation_tasks = [self.evaluate_response(response, criteria, rubric, context) for response in responses]
-        evaluations = await asyncio.gather(*evaluation_tasks)
-
-        # Sort by overall score
-        ranked_results = []
-        for i, evaluation in enumerate(evaluations):
-            ranked_results.append({"response_index": i, "response": responses[i], "score": evaluation.overall_score, "reasoning": evaluation.reasoning})
-
-        ranked_results.sort(key=lambda x: x["score"], reverse=True)
-
-        return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")
-
-    async def _rank_by_tournament(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using tournament-style pairwise comparisons.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: Evaluation criteria to use for comparisons
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult containing ranked responses based on tournament wins
-        """
-        n = len(responses)
-        wins = [0] * n
-
-        # Perform all pairwise comparisons
-        comparison_tasks = []
-        pairs = []
-
-        for i in range(n):
-            for j in range(i + 1, n):
-                pairs.append((i, j))
-                comparison_tasks.append(self.pairwise_comparison(responses[i], responses[j], criteria, context))
-
-        comparisons = await asyncio.gather(*comparison_tasks)
-
-        # Count wins
-        for (i, j), comparison in zip(pairs, comparisons):
-            if comparison.winner == "A":
-                wins[i] += 1
-            elif comparison.winner == "B":
-                wins[j] += 1
-            else:  # tie
-                wins[i] += 0.5
-                wins[j] += 0.5
-
-        # Sort by wins
-        ranked_indices = sorted(range(n), key=lambda i: wins[i], reverse=True)
-
-        ranked_results = []
-        for rank, idx in enumerate(ranked_indices):
-            ranked_results.append({"response_index": idx, "response": responses[idx], "score": wins[idx] / (n - 1), "wins": wins[idx], "rank": rank + 1})
-
-        # Calculate consistency (simplified)
-        consistency = 1.0 - (sum(abs(wins[i] - wins[j]) for i in range(n) for j in range(i + 1, n)) / (n * (n - 1) / 2)) / n
-
-        return RankingResult(rankings=ranked_results, consistency_score=max(0.0, consistency), reasoning="Ranked by tournament-style pairwise comparisons")
-
-    async def _rank_by_round_robin(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using round-robin pairwise comparisons.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: Evaluation criteria to use for comparisons
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult containing ranked responses based on round-robin wins
-        """
-        # For now, implement same as tournament
-        return await self._rank_by_tournament(responses, criteria, context)
+        return await self._base_rank_responses(responses, criteria, context, ranking_method)
 
     async def evaluate_with_reference(
         self,
@@ -355,17 +213,10 @@ class BedrockJudge(BaseJudge):
         Args:
             response: Response text to evaluate
             reference: Reference text to compare against
-            evaluation_type: Type of evaluation ("factuality", "completeness", "style_match")
-            tolerance: Tolerance level for evaluation ("strict", "moderate", "lenient")
+            evaluation_type: Type of evaluation
+            tolerance: Tolerance level for evaluation
 
         Returns:
             ReferenceEvaluationResult containing score and analysis
         """
-
-        prompt = self._render_template("reference", response=response, reference=reference, evaluation_type=evaluation_type, tolerance=tolerance)
-
-        messages = [{"role": "system", "content": "You are a professional evaluation expert. Provide thorough, accurate assessments against reference standards."}, {"role": "user", "content": prompt}]
-
-        response_text = await self._make_api_call(messages)
-
-        return self._parse_reference_response(response_text)
+        return await self._base_reference_evaluation(response, reference, evaluation_type, tolerance)
