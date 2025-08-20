@@ -3,9 +3,12 @@
 
 # Standard
 import abc
+import json
+import os
 from typing import Any, Dict, List, Optional, Protocol, Union
 
 # Third-Party
+from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel, Field
 
 
@@ -78,6 +81,10 @@ class BaseJudge(abc.ABC):
         self.model_name = config.get("model_name", "unknown")
         self.temperature = config.get("default_temperature", 0.3)
         self.max_tokens = config.get("max_tokens", 2000)
+
+        # Set up Jinja2 template environment
+        template_dir = os.path.join(os.path.dirname(__file__), "templates")
+        self.jinja_env = Environment(loader=FileSystemLoader(template_dir), trim_blocks=True, lstrip_blocks=True)
 
     @abc.abstractmethod
     async def evaluate_response(
@@ -207,6 +214,108 @@ class BaseJudge(abc.ABC):
 
         weighted_sum = sum(scores.get(c.name, 0.0) * c.weight for c in criteria)
         return weighted_sum / total_weight
+
+    def _render_template(self, template_name: str, **kwargs) -> str:
+        """Render a Jinja2 template with the given variables.
+
+        Args:
+            template_name: Name of the template file (without .j2 extension)
+            **kwargs: Template variables
+
+        Returns:
+            Rendered template string
+        """
+        template = self.jinja_env.get_template(f"{template_name}.j2")
+        return template.render(**kwargs)
+
+    def _create_error_evaluation_result(self, criteria: List[EvaluationCriteria], error: str, raw_response: str = "") -> "EvaluationResult":
+        """Create fallback evaluation result when parsing fails.
+
+        Args:
+            criteria: List of evaluation criteria
+            error: Error message
+            raw_response: Raw response from the judge
+
+        Returns:
+            Fallback evaluation result
+        """
+        return EvaluationResult(
+            scores={c.name: 3.0 for c in criteria},  # Default middle scores
+            reasoning={c.name: "Error parsing judge response" for c in criteria},
+            overall_score=3.0,
+            confidence=0.3,
+            metadata={"model": self.model_name, "error": error, "raw_response": raw_response},
+        )
+
+    def _create_error_reference_result(self, error: str) -> "ReferenceEvaluationResult":
+        """Create fallback reference evaluation result when parsing fails.
+
+        Args:
+            error: Error message
+
+        Returns:
+            Fallback reference evaluation result
+        """
+        return ReferenceEvaluationResult(similarity_score=0.5, missing_elements=[], extra_elements=[], factual_errors=[], reasoning=f"Error parsing judge response: {error}")
+
+    def _parse_evaluation_response(self, response_text: str, criteria: List[EvaluationCriteria], **metadata) -> "EvaluationResult":
+        """Parse JSON response from judge for evaluation.
+
+        Args:
+            response_text: Raw response text from judge
+            criteria: List of evaluation criteria
+            **metadata: Additional metadata to include
+
+        Returns:
+            Parsed evaluation result
+        """
+        try:
+            # Extract JSON from response
+            json_start = response_text.find("{")
+            json_end = response_text.rfind("}") + 1
+            json_text = response_text[json_start:json_end]
+            result_data = json.loads(json_text)
+
+            # Calculate overall score
+            overall_score = self._calculate_overall_score(result_data["scores"], criteria)
+
+            return EvaluationResult(
+                scores=result_data["scores"],
+                reasoning=result_data["reasoning"],
+                overall_score=overall_score,
+                confidence=result_data.get("confidence", 0.8),
+                metadata={**metadata, "model": self.model_name},
+            )
+
+        except (json.JSONDecodeError, KeyError) as e:
+            return self._create_error_evaluation_result(criteria, str(e), response_text)
+
+    def _parse_reference_response(self, response_text: str) -> "ReferenceEvaluationResult":
+        """Parse JSON response from judge for reference evaluation.
+
+        Args:
+            response_text: Raw response text from judge
+
+        Returns:
+            Parsed reference evaluation result
+        """
+        try:
+            # Extract JSON from response
+            json_start = response_text.find("{")
+            json_end = response_text.rfind("}") + 1
+            json_text = response_text[json_start:json_end]
+            result_data = json.loads(json_text)
+
+            return ReferenceEvaluationResult(
+                similarity_score=result_data.get("similarity_score", 0.5),
+                missing_elements=result_data.get("missing_elements", []),
+                extra_elements=result_data.get("extra_elements", []),
+                factual_errors=result_data.get("factual_errors", []),
+                reasoning=result_data.get("reasoning", ""),
+            )
+
+        except (json.JSONDecodeError, KeyError) as e:
+            return self._create_error_reference_result(str(e))
 
 
 class JudgeCapabilities(BaseModel):

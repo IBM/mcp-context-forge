@@ -211,33 +211,7 @@ Ensure all scores are within the specified scale for each criterion."""
 
         response_text = await self._make_api_call(messages)
 
-        try:
-            # Extract JSON from response
-            json_start = response_text.find("{")
-            json_end = response_text.rfind("}") + 1
-            json_text = response_text[json_start:json_end]
-            result_data = json.loads(json_text)
-
-            # Calculate overall score
-            overall_score = self._calculate_overall_score(result_data["scores"], criteria)
-
-            return EvaluationResult(
-                scores=result_data["scores"],
-                reasoning=result_data["reasoning"],
-                overall_score=overall_score,
-                confidence=result_data.get("confidence", 0.8),
-                metadata={"model": self.model, "temperature": self.temperature, "use_cot": use_cot},
-            )
-
-        except (json.JSONDecodeError, KeyError) as e:
-            # Fallback parsing if JSON is malformed
-            return EvaluationResult(
-                scores={c.name: 3.0 for c in criteria},  # Default middle scores
-                reasoning={c.name: "Error parsing judge response" for c in criteria},
-                overall_score=3.0,
-                confidence=0.3,
-                metadata={"model": self.model, "error": str(e), "raw_response": response_text},
-            )
+        return self._parse_evaluation_response(response_text, criteria, model=self.model, temperature=self.temperature, use_cot=use_cot)
 
     async def pairwise_comparison(
         self,
@@ -506,19 +480,4 @@ Please provide your evaluation in the following JSON format:
 
         response_text = await self._make_api_call(messages)
 
-        try:
-            json_start = response_text.find("{")
-            json_end = response_text.rfind("}") + 1
-            json_text = response_text[json_start:json_end]
-            result_data = json.loads(json_text)
-
-            return ReferenceEvaluationResult(
-                similarity_score=result_data.get("similarity_score", 0.5),
-                missing_elements=result_data.get("missing_elements", []),
-                extra_elements=result_data.get("extra_elements", []),
-                factual_errors=result_data.get("factual_errors", []),
-                reasoning=result_data.get("reasoning", ""),
-            )
-
-        except (json.JSONDecodeError, KeyError) as e:
-            return ReferenceEvaluationResult(similarity_score=0.5, missing_elements=[], extra_elements=[], factual_errors=[], reasoning=f"Error parsing judge response: {str(e)}")
+        return self._parse_reference_response(response_text)
