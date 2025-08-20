@@ -48,6 +48,7 @@ def sample_tool():
         id="tool1",
         original_name="test_tool",
         name="test_tool",
+        custom_name="test_tool",
         url="https://api.example.com/tool",
         description="Test tool",
         integration_type="REST",
@@ -74,7 +75,7 @@ def sample_tool():
             last_execution_time=None
         ),
         gateway_slug="",
-        original_name_slug="test_tool",
+        custom_name_slug="test_tool",
         tags=["api", "test"]
     )
 
@@ -225,6 +226,7 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
 
     local_tool = ToolRead(
         id="tool1", original_name="local_tool", name="local_tool",
+        custom_name="local_tool",
         url="https://api.example.com", description="Local REST tool", integration_type="REST", request_type="GET",
         headers={}, input_schema={}, annotations={}, jsonpath_filter="",
         auth=None, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
@@ -233,11 +235,12 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
             total_executions=0, successful_executions=0, failed_executions=0,
             failure_rate=0.0, min_response_time=None, max_response_time=None,
             avg_response_time=None, last_execution_time=None
-        ), gateway_slug="", original_name_slug="local_tool", tags=[]
+        ), gateway_slug="", custom_name_slug="local_tool", tags=[]
     )
 
     mcp_tool = ToolRead(
         id="tool2", original_name="mcp_tool", name="gw1-mcp_tool",
+        custom_name="mcp_tool",
         url="https://gateway.example.com", description="MCP tool from gateway", integration_type="MCP", request_type="SSE",
         headers={}, input_schema={}, annotations={}, jsonpath_filter="",
         auth=None, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
@@ -246,7 +249,7 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
             total_executions=0, successful_executions=0, failed_executions=0,
             failure_rate=0.0, min_response_time=None, max_response_time=None,
             avg_response_time=None, last_execution_time=None
-        ), gateway_slug="gw1", original_name_slug="mcp_tool", tags=[]
+        ), gateway_slug="gw1", custom_name_slug="mcp_tool", tags=[]
     )
 
     export_service.tool_service.list_tools.return_value = [local_tool, mcp_tool]
@@ -360,6 +363,7 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
         id="tool1",
         original_name="test_tool",
         name="test_tool",
+        custom_name="test_tool",
         url="https://api.example.com/tool",
         description="Test tool",
         integration_type="REST",
@@ -389,7 +393,7 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
             last_execution_time=None
         ),
         gateway_slug="",
-        original_name_slug="test_tool",
+        custom_name_slug="test_tool",
         tags=[]
     )
 

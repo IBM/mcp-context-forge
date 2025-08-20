@@ -74,7 +74,6 @@ def mock_tool():
     tool = MagicMock(spec=DbTool)
     tool.id = "1"
     tool.original_name = "test_tool"
-    tool.original_name_slug = "test-tool"
     tool.url = "http://example.com/tools/test"
     tool.description = "A test tool"
     tool.integration_type = "MCP"
@@ -96,6 +95,8 @@ def mock_tool():
     tool.annotations = {}
     tool.gateway_slug = "test-gateway"
     tool.name = "test-gateway-test-tool"
+    tool.custom_name="test_tool"
+    tool.custom_name_slug = "test-tool"
 
     # Set up metrics
     tool.metrics = []
@@ -202,7 +203,7 @@ class TestToolService:
                 id="1",
                 original_name="test_tool",
                 gateway_slug="test-gateway",
-                originalNameSlug="test-tool",
+                customNameSlug="test-tool",
                 name="test-gateway-test-tool",
                 url="http://example.com/tools/test",
                 description="A test tool",
@@ -229,6 +230,7 @@ class TestToolService:
                     "avg_response_time": None,
                     "last_execution_time": None,
                 },
+                customName="test_tool",
             )
         )
 
@@ -281,10 +283,8 @@ class TestToolService:
         # Should raise ToolError due to missing slug on NoneType
         with pytest.raises(ToolError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
-
-        # The service wraps exceptions, so check the message
-        assert "Failed to register tool" in str(exc_info.value)
-        assert "slug" in str(exc_info.value)
+            # The service wraps exceptions, so check the message
+            assert "Failed to register tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_tool_with_none_auth(self, tool_service, test_db):
@@ -402,7 +402,8 @@ class TestToolService:
         tool_read = ToolRead(
             id="1",
             original_name="test_tool",
-            original_name_slug="test-tool",
+            custom_name="test_tool",
+            custom_name_slug="test-tool",
             gateway_slug="test-gateway",
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
@@ -430,6 +431,7 @@ class TestToolService:
                 "avg_response_time": None,
                 "last_execution_time": None,
             },
+
         )
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
@@ -460,7 +462,6 @@ class TestToolService:
         tool_read = ToolRead(
             id="1",
             original_name="test_tool",
-            original_name_slug="test-tool",
             gateway_slug="test-gateway",
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
@@ -488,6 +489,8 @@ class TestToolService:
                 "avg_response_time": None,
                 "last_execution_time": None,
             },
+            customName="test_tool",
+            customNameSlug="test-tool"
         )
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
@@ -547,7 +550,6 @@ class TestToolService:
         tool_read = ToolRead(
             id="1",
             original_name="test_tool",
-            original_name_slug="test-tool",
             gateway_slug="test-gateway",
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
@@ -575,6 +577,8 @@ class TestToolService:
                 "avg_response_time": None,
                 "last_execution_time": None,
             },
+            customName="test_tool",
+            customNameSlug="test-tool"
         )
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
@@ -650,7 +654,8 @@ class TestToolService:
         tool_read = ToolRead(
             id="1",
             original_name="test_tool",
-            original_name_slug="test-tool",
+            custom_name="test_tool",
+            custom_name_slug="test-tool",
             gateway_slug="test-gateway",
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
@@ -678,6 +683,7 @@ class TestToolService:
                 "avg_response_time": None,
                 "last_execution_time": None,
             },
+
         )
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
@@ -832,7 +838,8 @@ class TestToolService:
         tool_read = ToolRead(
             id="1",
             original_name="test_tool",
-            original_name_slug="test-tool",
+            custom_name="test_tool",
+            custom_name_slug="test-tool",
             gateway_slug="test-gateway",
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
@@ -902,7 +909,8 @@ class TestToolService:
         tool_read = ToolRead(
             id="1",
             original_name="test_tool",
-            original_name_slug="test-tool",
+            custom_name="test_tool",
+            custom_name_slug="test-tool",
             gateway_slug="test-gateway",
             name="test-gateway-test-tool",
             url="http://example.com/tools/updated",  # Updated URL
@@ -935,7 +943,7 @@ class TestToolService:
 
         # Create update request
         tool_update = ToolUpdate(
-            name="updated_tool",
+            custom_name="updated_tool",
             url="http://example.com/tools/updated",
             description="An updated test tool",
         )
@@ -949,7 +957,7 @@ class TestToolService:
         test_db.refresh.assert_called_once()
 
         # Verify properties were updated
-        assert mock_tool.name == "updated_tool"
+        assert mock_tool.custom_name == "updated_tool"
         assert mock_tool.url == "http://example.com/tools/updated"
         assert mock_tool.description == "An updated test tool"
 

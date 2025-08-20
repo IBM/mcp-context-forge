@@ -628,6 +628,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the tool")
+    custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Optional[Literal["REST", "MCP", "A2A"]] = Field(None, description="Tool integration type")
@@ -659,6 +660,19 @@ class ToolUpdate(BaseModelWithConfigDict):
     @classmethod
     def validate_name(cls, v: str) -> str:
         """Ensure tool names follow MCP naming conventions
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_tool_name(v)
+
+    @field_validator("custom_name")
+    @classmethod
+    def validate_custom_name(cls, v: str) -> str:
+        """Ensure custom tool names follow MCP naming conventions
 
         Args:
             v (str): Value to validate
@@ -864,7 +878,8 @@ class ToolRead(BaseModelWithConfigDict):
     metrics: ToolMetrics
     name: str
     gateway_slug: str
-    original_name_slug: str
+    custom_name: str
+    custom_name_slug: str
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the tool")
 
     # Comprehensive metadata for audit tracking

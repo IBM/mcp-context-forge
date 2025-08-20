@@ -65,6 +65,7 @@ MOCK_TOOL_READ = {
     "id": "1",
     "name": "test_tool",
     "originalName": "test_tool",
+    "customName": "test_tool",
     "url": "http://example.com/tools/test",
     "description": "A test tool",
     "requestType": "POST",
@@ -82,7 +83,7 @@ MOCK_TOOL_READ = {
     "executionCount": 5,
     "metrics": MOCK_METRICS,
     "gatewaySlug": "gateway-1",
-    "originalNameSlug": "test-tool",
+    "customNameSlug": "test-tool",
 }
 
 # camelCase → snake_case key map for the fields that differ

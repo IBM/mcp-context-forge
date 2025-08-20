@@ -283,8 +283,9 @@ class ToolService:
             tool_dict["auth"] = None
 
         tool_dict["name"] = tool.name
+        tool_dict["custom_name"] = tool.custom_name
         tool_dict["gateway_slug"] = tool.gateway_slug if tool.gateway_slug else ""
-        tool_dict["original_name_slug"] = tool.original_name_slug
+        tool_dict["custom_name_slug"] = tool.custom_name_slug
         tool_dict["tags"] = tool.tags or []
 
         return ToolRead.model_validate(tool_dict)
@@ -378,7 +379,8 @@ class ToolService:
 
             db_tool = DbTool(
                 original_name=tool.name,
-                original_name_slug=slugify(tool.name),
+                custom_name=tool.name,
+                custom_name_slug=slugify(tool.name),
                 url=str(tool.url),
                 description=tool.description,
                 integration_type=tool.integration_type,
@@ -1005,6 +1007,8 @@ class ToolService:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
             if tool_update.name is not None:
                 tool.name = tool_update.name
+            if tool_update.custom_name is not None:
+                tool.custom_name = tool_update.custom_name
             if tool_update.url is not None:
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:

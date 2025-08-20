@@ -89,7 +89,8 @@ MOCK_TOOL = ToolRead(
     execution_count=0,
     metrics=ToolMetrics(**MOCK_METRICS),
     gateway_slug="default",
-    original_name_slug="test-tool",
+    customName="test_tool",
+    customNameSlug="test-tool",
     tags=[],
 )
 
