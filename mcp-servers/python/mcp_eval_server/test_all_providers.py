@@ -19,7 +19,7 @@ except ImportError:
     load_dotenv = None
 
 # Third-Party
-from mcp_eval_server.tools.judge_tools import JudgeTools  # noqa: E402
+from mcp_eval_server.tools.judge_tools import JudgeTools  # noqa: E402  # pylint: disable=wrong-import-position,no-name-in-module
 
 # Load .env if available
 if load_dotenv:
@@ -91,8 +91,8 @@ async def test_all_providers():
         "OLLAMA": ["OLLAMA_BASE_URL"],
     }
 
-    for provider, vars in providers.items():
-        status = "✅" if all(os.getenv(var) for var in vars) else "❌"
+    for provider, variables in providers.items():
+        status = "✅" if all(os.getenv(var) for var in variables) else "❌"
         logger.info(f"   {status} {provider}: {'configured' if status == '✅' else 'missing vars'}")
 
     logger.info("")
@@ -149,7 +149,7 @@ async def test_all_providers():
 
                 # Show model reasoning (truncated)
                 if "reasoning" in result and result["reasoning"]:
-                    for criterion, reasoning in result["reasoning"].items():
+                    for _, reasoning in result["reasoning"].items():
                         truncated = reasoning[:100] + "..." if len(reasoning) > 100 else reasoning
                         logger.info(f"      💬 Reasoning: {truncated}")
 

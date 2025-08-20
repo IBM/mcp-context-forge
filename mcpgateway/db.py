@@ -1621,7 +1621,7 @@ def set_a2a_agent_slug(_mapper, _conn, target):
 
 @event.listens_for(Tool, "before_insert")
 @event.listens_for(Tool, "before_update")
-def set_custom_name_and_slug(mapper, connection, target):
+def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unused-argument
     """
     Event listener to set custom_name, custom_name_slug, and name for Tool before insert/update.
 

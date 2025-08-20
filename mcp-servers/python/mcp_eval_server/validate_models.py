@@ -13,7 +13,7 @@ from typing import Dict
 sys.path.insert(0, ".")
 
 # Third-Party
-from mcp_eval_server.tools.judge_tools import JudgeTools  # noqa: E402
+from mcp_eval_server.tools.judge_tools import JudgeTools  # noqa: E402  # pylint: disable=wrong-import-position,no-name-in-module
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S")
@@ -168,10 +168,10 @@ async def main():
 
     for judge_name in test_judges:
         logger.info(f"   Testing {judge_name}...")
-        success = await test_judge_functionality(judge_tools, judge_name)
-        test_results[judge_name] = success
-        status = "✅" if success else "❌"
-        logger.info(f"      {status} {'Passed' if success else 'Failed'}")
+        judge_success = await test_judge_functionality(judge_tools, judge_name)
+        test_results[judge_name] = judge_success
+        status = "✅" if judge_success else "❌"
+        logger.info(f"      {status} {'Passed' if judge_success else 'Failed'}")
 
     logger.info("")
 

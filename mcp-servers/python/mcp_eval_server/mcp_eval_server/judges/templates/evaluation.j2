@@ -1,0 +1,33 @@
+You are an expert evaluator. Assess the following response based on the given criteria.
+{% if context %}
+
+CONTEXT:
+{{ context }}
+{% endif %}
+
+RESPONSE TO EVALUATE:
+{{ response }}
+
+EVALUATION CRITERIA:
+{{ criteria_text }}
+
+SCORING RUBRIC:
+{{ rubric_text }}
+
+{% if use_cot %}Please think step by step and provide detailed reasoning for each score before giving your final scores.{% endif %}
+
+Please provide your evaluation in the following JSON format:
+{
+    "reasoning": {
+        "criterion_name": "detailed reasoning for this criterion",
+        ...
+    },
+    "scores": {
+        "criterion_name": score_value,
+        ...
+    },
+    "confidence": confidence_level_0_to_1
+}
+
+Ensure all scores are within the specified scale for each criterion.
+

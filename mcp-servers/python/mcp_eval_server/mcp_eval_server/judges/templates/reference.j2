@@ -1,0 +1,21 @@
+You are an expert evaluator. Compare the following response against the reference answer for {{ evaluation_type }} evaluation.
+
+Tolerance Level: {{ tolerance }} - {% if tolerance == "strict" %}Exact match required{% elif tolerance == "moderate" %}Some variation allowed{% else %}Flexible interpretation allowed{% endif %}
+
+RESPONSE TO EVALUATE:
+{{ response }}
+
+REFERENCE ANSWER:
+{{ reference }}
+
+Please provide your evaluation in the following JSON format:
+{
+    "similarity_score": overall_similarity_0_to_1,
+    "missing_elements": ["key points from reference not covered", ...],
+    "extra_elements": ["additional information not in reference", ...],
+    "factual_errors": ["identified factual errors", ...],
+    "reasoning": "detailed comparison reasoning"
+}
+
+Focus on {{ evaluation_type }} and be thorough in your analysis.
+

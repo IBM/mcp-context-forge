@@ -3,12 +3,12 @@
 
 # Third-Party
 from mcp_eval_server.mcp_eval_server.server import (
-    agent_tools,
-    calibration_tools,
-    judge_tools,
-    prompt_tools,
-    quality_tools,
-    workflow_tools,
+    AGENT_TOOLS,
+    CALIBRATION_TOOLS,
+    JUDGE_TOOLS,
+    PROMPT_TOOLS,
+    QUALITY_TOOLS,
+    WORKFLOW_TOOLS,
 )
 import pytest
 
@@ -18,35 +18,35 @@ class TestServerComponents:
 
     def test_judge_tools_initialization(self):
         """Test that judge tools initialize correctly."""
-        assert judge_tools is not None
-        available_judges = judge_tools.get_available_judges()
+        assert JUDGE_TOOLS is not None
+        available_judges = JUDGE_TOOLS.get_available_judges()
         assert isinstance(available_judges, list)
         assert "rule-based" in available_judges
 
     def test_prompt_tools_initialization(self):
         """Test that prompt tools initialize correctly."""
-        assert prompt_tools is not None
-        assert prompt_tools.judge_tools is not None
+        assert PROMPT_TOOLS is not None
+        assert PROMPT_TOOLS.judge_tools is not None
 
     def test_agent_tools_initialization(self):
         """Test that agent tools initialize correctly."""
-        assert agent_tools is not None
-        assert agent_tools.judge_tools is not None
+        assert AGENT_TOOLS is not None
+        assert AGENT_TOOLS.judge_tools is not None
 
     def test_quality_tools_initialization(self):
         """Test that quality tools initialize correctly."""
-        assert quality_tools is not None
-        assert quality_tools.judge_tools is not None
+        assert QUALITY_TOOLS is not None
+        assert QUALITY_TOOLS.judge_tools is not None
 
     def test_workflow_tools_initialization(self):
         """Test that workflow tools initialize correctly."""
-        assert workflow_tools is not None
-        assert workflow_tools.judge_tools is not None
+        assert WORKFLOW_TOOLS is not None
+        assert WORKFLOW_TOOLS.judge_tools is not None
 
     def test_calibration_tools_initialization(self):
         """Test that calibration tools initialize correctly."""
-        assert calibration_tools is not None
-        assert calibration_tools.judge_tools is not None
+        assert CALIBRATION_TOOLS is not None
+        assert CALIBRATION_TOOLS.judge_tools is not None
 
 
 class TestRuleBasedEvaluation:
@@ -60,7 +60,7 @@ class TestRuleBasedEvaluation:
 
         rubric = {"criteria": criteria, "scale_description": {"1": "Very poor", "5": "Excellent"}}
 
-        result = await judge_tools.evaluate_response(response="This is a test response with adequate length for evaluation.", criteria=criteria, rubric=rubric, judge_model="rule-based")
+        result = await JUDGE_TOOLS.evaluate_response(response="This is a test response with adequate length for evaluation.", criteria=criteria, rubric=rubric, judge_model="rule-based")
 
         assert "scores" in result
         assert "reasoning" in result
@@ -77,7 +77,7 @@ class TestRuleBasedEvaluation:
 
         criteria = [{"name": "quality", "description": "Overall response quality", "scale": "1-5", "weight": 1.0}]
 
-        result = await judge_tools.pairwise_comparison(
+        result = await JUDGE_TOOLS.pairwise_comparison(
             response_a="Short response.", response_b="This is a longer, more detailed response with better coverage.", criteria=criteria, judge_model="rule-based"
         )
 
@@ -96,7 +96,7 @@ class TestPromptEvaluation:
     async def test_evaluate_clarity(self):
         """Test prompt clarity evaluation."""
 
-        result = await prompt_tools.evaluate_clarity(prompt_text="Write a summary of the main points in this article.", target_model="gpt-4", judge_model="rule-based")
+        result = await PROMPT_TOOLS.evaluate_clarity(prompt_text="Write a summary of the main points in this article.", target_model="gpt-4", judge_model="rule-based")
 
         assert "clarity_score" in result
         assert "rule_based_metrics" in result
@@ -108,7 +108,7 @@ class TestPromptEvaluation:
     async def test_measure_completeness(self):
         """Test prompt completeness measurement."""
 
-        result = await prompt_tools.measure_completeness(
+        result = await PROMPT_TOOLS.measure_completeness(
             prompt="Analyze the climate data",
             expected_components=["temperature", "precipitation", "trends"],
             test_samples=["Temperature has increased over time", "Precipitation patterns show variation and temperature trends are rising", "Brief analysis"],
@@ -130,7 +130,7 @@ class TestAgentEvaluation:
 
         agent_trace = {"tool_calls": [{"tool_name": "search", "parameters": {"query": "test"}, "success": True}, {"tool_name": "analyzer", "parameters": {"data": "results"}, "success": True}]}
 
-        result = await agent_tools.evaluate_tool_use(agent_trace=agent_trace, expected_tools=["search", "analyzer"], tool_sequence_matters=True)
+        result = await AGENT_TOOLS.evaluate_tool_use(agent_trace=agent_trace, expected_tools=["search", "analyzer"], tool_sequence_matters=True)
 
         assert "tool_accuracy" in result
         assert "sequence_score" in result
@@ -147,7 +147,7 @@ class TestQualityEvaluation:
     async def test_assess_toxicity(self):
         """Test toxicity assessment."""
 
-        result = await quality_tools.assess_toxicity(content="This is a normal, safe piece of text for testing.", toxicity_categories=["profanity", "hate_speech"], judge_model="rule-based")
+        result = await QUALITY_TOOLS.assess_toxicity(content="This is a normal, safe piece of text for testing.", toxicity_categories=["profanity", "hate_speech"], judge_model="rule-based")
 
         assert "toxicity_scores" in result
         assert "safety_rating" in result
@@ -159,7 +159,7 @@ class TestQualityEvaluation:
     async def test_measure_coherence(self):
         """Test coherence measurement."""
 
-        result = await quality_tools.measure_coherence(
+        result = await QUALITY_TOOLS.measure_coherence(
             text="This is the first sentence. Furthermore, this connects to the previous idea. Therefore, the text flows logically.", judge_model="rule-based"
         )
 
@@ -177,7 +177,7 @@ class TestWorkflowManagement:
     async def test_create_evaluation_suite(self):
         """Test evaluation suite creation."""
 
-        result = await workflow_tools.create_evaluation_suite(
+        result = await WORKFLOW_TOOLS.create_evaluation_suite(
             suite_name="test_suite",
             evaluation_steps=[
                 {
@@ -204,19 +204,19 @@ class TestServerUtilities:
 
     def test_get_available_judges(self):
         """Test getting available judges."""
-        judges = judge_tools.get_available_judges()
+        judges = JUDGE_TOOLS.get_available_judges()
         assert isinstance(judges, list)
         assert len(judges) > 0
         assert "rule-based" in judges
 
     def test_list_evaluation_suites(self):
         """Test listing evaluation suites."""
-        suites = workflow_tools.list_evaluation_suites()
+        suites = WORKFLOW_TOOLS.list_evaluation_suites()
         assert isinstance(suites, list)
 
     def test_list_evaluation_results(self):
         """Test listing evaluation results."""
-        results = workflow_tools.list_evaluation_results()
+        results = WORKFLOW_TOOLS.list_evaluation_results()
         assert isinstance(results, list)
 
 
