@@ -165,9 +165,9 @@ def convert_url(url: str) -> str:
 
     Examples:
         >>> convert_url("http://localhost:4444/servers/uuid")
-        'http://localhost:4444/servers/uuid/mcp'
+        'http://localhost:4444/servers/uuid/mcp/'
         >>> convert_url("http://localhost:4444/servers/uuid/sse")
-        'http://localhost:4444/servers/uuid/mcp'
+        'http://localhost:4444/servers/uuid/mcp/'
         >>> convert_url("http://localhost:4444/servers/uuid/mcp")
         'http://localhost:4444/servers/uuid/mcp/'
     """
@@ -176,8 +176,8 @@ def convert_url(url: str) -> str:
             return url + "/"
         return url
     if url.endswith("/sse"):
-        return url.replace("/sse", "/mcp")
-    return url + "/mcp"
+        return url.replace("/sse", "/mcp/")
+    return url + "/mcp/"
 
 
 def send_to_stdout(obj: Union[dict, str]) -> None:
@@ -632,7 +632,7 @@ def parse_args() -> Settings:
         >>> sys.argv = ["prog", "--url", "http://localhost:4444/servers/u"]
         >>> try:
         ...     s = parse_args()
-        ...     s.server_url.endswith("/mcp")
+        ...     s.server_url.endswith("/mcp/")
         ... finally:
         ...     sys.argv = _argv
         True
