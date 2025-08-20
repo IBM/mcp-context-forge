@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
@@ -208,6 +209,7 @@ class ServerService:
         server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
+        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
         server_dict["tags"] = server.tags or []
         return ServerRead.model_validate(server_dict)
 
@@ -216,6 +218,7 @@ class ServerService:
         tools: Optional[List[str]],
         resources: Optional[List[str]],
         prompts: Optional[List[str]],
+        a2a_agents: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Assemble the associated items dictionary from the separate fields.
@@ -224,36 +227,38 @@ class ServerService:
             tools: List of tool IDs.
             resources: List of resource IDs.
             prompts: List of prompt IDs.
+            a2a_agents: List of A2A agent IDs.
 
         Returns:
-            A dictionary with keys "tools", "resources", and "prompts".
+            A dictionary with keys "tools", "resources", "prompts", and "a2a_agents".
 
         Examples:
             >>> service = ServerService()
             >>> # Test with all None values
             >>> result = service._assemble_associated_items(None, None, None)
             >>> result
-            {'tools': [], 'resources': [], 'prompts': []}
+            {'tools': [], 'resources': [], 'prompts': [], 'a2a_agents': []}
 
             >>> # Test with empty lists
             >>> result = service._assemble_associated_items([], [], [])
             >>> result
-            {'tools': [], 'resources': [], 'prompts': []}
+            {'tools': [], 'resources': [], 'prompts': [], 'a2a_agents': []}
 
             >>> # Test with actual values
             >>> result = service._assemble_associated_items(['tool1', 'tool2'], ['res1'], ['prompt1'])
             >>> result
-            {'tools': ['tool1', 'tool2'], 'resources': ['res1'], 'prompts': ['prompt1']}
+            {'tools': ['tool1', 'tool2'], 'resources': ['res1'], 'prompts': ['prompt1'], 'a2a_agents': []}
 
             >>> # Test with mixed None and values
             >>> result = service._assemble_associated_items(['tool1'], None, ['prompt1'])
             >>> result
-            {'tools': ['tool1'], 'resources': [], 'prompts': ['prompt1']}
+            {'tools': ['tool1'], 'resources': [], 'prompts': ['prompt1'], 'a2a_agents': []}
         """
         return {
             "tools": tools or [],
             "resources": resources or [],
             "prompts": prompts or [],
+            "a2a_agents": a2a_agents or [],
         }
 
     async def register_server(self, db: Session, server_in: ServerCreate) -> ServerRead:
@@ -341,11 +346,25 @@ class ServerService:
                         raise ServerError(f"Prompt with id {prompt_id} does not exist.")
                     db_server.prompts.append(prompt_obj)
 
+            # Associate A2A agents, verifying each exists and creating corresponding tools
+            if server_in.associated_a2a_agents:
+                for agent_id in server_in.associated_a2a_agents:
+                    if agent_id.strip() == "":
+                        continue
+                    agent_obj = db.get(DbA2AAgent, agent_id)
+                    if not agent_obj:
+                        raise ServerError(f"A2A Agent with id {agent_id} does not exist.")
+                    db_server.a2a_agents.append(agent_obj)
+
+                    # Note: Auto-tool creation for A2A agents should be handled
+                    # by a separate service or background task to avoid circular imports
+                    logger.info(f"A2A agent {agent_obj.name} associated with server {db_server.name}")
+
             # Commit the new record and refresh.
             db.commit()
             db.refresh(db_server)
             # Force load the relationship attributes.
-            _ = db_server.tools, db_server.resources, db_server.prompts
+            _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
 
             # Assemble response data with associated item IDs.
             server_data = {

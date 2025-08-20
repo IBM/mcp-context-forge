@@ -10,7 +10,7 @@ The MCP Context Forge Plugin Framework provides a comprehensive, production-grad
 ### Key Capabilities
 
 - **AI Safety Middleware** - Integration with LlamaGuard, OpenAI Moderation, custom ML models
-- **Content Security** - PII detection and masking, input validation, output sanitization  
+- **Content Security** - PII detection and masking, input validation, output sanitization
 - **Policy Enforcement** - Business rules, compliance checking, audit trails
 - **Performance Protection** - Timeout handling, resource limits, graceful degradation
 - **Operational Excellence** - Hot configuration reload, health monitoring, detailed metrics
@@ -27,7 +27,7 @@ The plugin framework implements a **hybrid architecture** supporting both self-c
 - **Use Cases:** PII filtering, regex transformations, input validation, simple business rules
 - **Examples:** `PIIFilterPlugin`, `SearchReplacePlugin`, `DenyListPlugin`
 
-### External Service Plugins  
+### External Service Plugins
 - **Microservice Integration:** Call external AI safety services via HTTP/gRPC/MCP
 - **Enterprise AI Support:** LlamaGuard, OpenAI Moderation, custom ML models
 - **Authentication Support:** Bearer tokens, API keys, mutual TLS, custom headers
@@ -747,7 +747,7 @@ plugins:
       detect_email: true
       mask_strategy: "partial"
       block_on_detection: false
-      
+
   # Step 2: External AI Safety Service (LlamaGuard)
   - name: "LlamaGuardSafety"
     kind: "external"
@@ -759,17 +759,17 @@ plugins:
       url: "https://ai-safety.internal.corp/llamaguard/v1"
     conditions:
       - server_ids: ["production-chat", "customer-support"]
-        
+
   # Step 3: OpenAI Moderation for Final Check
   - name: "OpenAIMod"
-    kind: "external" 
+    kind: "external"
     hooks: ["prompt_post_fetch", "tool_post_invoke"]
     mode: "permissive"  # Log violations but don't block
     priority: 30
     mcp:
       proto: STREAMABLEHTTP
       url: "https://api.openai.com/v1/moderations"
-      
+
   # Step 4: Audit Logging (Lowest Priority)
   - name: "AuditLogger"
     kind: "plugins.audit.audit_logger.AuditLoggerPlugin"
@@ -799,9 +799,9 @@ plugins:
       sql_injection_protection: true
       command_injection_protection: true
       file_system_restrictions: true
-      
+
   # Free tier gets basic content filtering
-  - name: "BasicContentFilter" 
+  - name: "BasicContentFilter"
     kind: "plugins.content.basic_filter.BasicFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     mode: "permissive"
@@ -833,7 +833,7 @@ plugins:
         - "555-555-5555"
         - "123-45-6789"  # Test SSN
 
-# Production Environment  
+# Production Environment
 plugins:
   - name: "ProdPIIFilter"
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
@@ -868,7 +868,7 @@ plugin_settings:
   plugin_timeout: 5000  # 5 second timeout for external services
   parallel_execution_within_band: true  # Enable when available
   fail_on_plugin_error: false  # Continue processing on plugin failures
-  
+
 plugins:
   - name: "CachedAIService"
     kind: "external"
@@ -893,7 +893,7 @@ mcpgateway_plugin_duration_seconds{plugin="PIIFilter",hook="prompt_pre_fetch"}
 mcpgateway_plugin_violations_total{plugin="PIIFilter",violation_code="PII_DETECTED"}
 mcpgateway_plugin_errors_total{plugin="LlamaGuard",error_type="timeout"}
 
-# Context and memory metrics  
+# Context and memory metrics
 mcpgateway_plugin_contexts_active
 mcpgateway_plugin_contexts_cleaned_total
 mcpgateway_plugin_memory_usage_bytes
@@ -922,7 +922,7 @@ plugins:
 
 - **Input Validation:** All plugin configurations validated against JSON schemas
 - **Timeout Protection:** Configurable timeouts prevent plugin hangs
-- **Resource Limits:** Memory and payload size limits prevent resource exhaustion  
+- **Resource Limits:** Memory and payload size limits prevent resource exhaustion
 - **Error Isolation:** Plugin failures don't affect gateway stability
 - **Audit Logging:** Complete audit trail of plugin executions and violations
 
@@ -954,7 +954,7 @@ plugins:
 
 - **Server Attestation Hooks:** `server_pre_register` with TPM/TEE support
 - **Authentication Hooks:** `auth_pre_check`/`auth_post_check` for custom auth
-- **Admin UI:** Visual plugin management and monitoring dashboard  
+- **Admin UI:** Visual plugin management and monitoring dashboard
 - **Hot Configuration Reload:** Update plugin configs without restart
 - **Advanced Caching:** Redis-backed caching for external service calls
 

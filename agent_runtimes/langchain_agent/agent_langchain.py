@@ -8,14 +8,126 @@ from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import Tool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import BaseTool
+from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
 
-from .mcp_client import MCPClient, ToolDef
-from .models import AgentConfig
+# LLM Provider imports
+from langchain_openai import ChatOpenAI, AzureChatOpenAI
+try:
+    from langchain_community.chat_models import BedrockChat, ChatOllama
+    from langchain_anthropic import ChatAnthropic
+except ImportError:
+    # Optional dependencies - will be checked at runtime
+    BedrockChat = None
+    ChatOllama = None
+    ChatAnthropic = None
+
+try:
+    from .mcp_client import MCPClient, ToolDef
+    from .models import AgentConfig
+except ImportError:
+    from mcp_client import MCPClient, ToolDef
+    from models import AgentConfig
 
 logger = logging.getLogger(__name__)
+
+
+def create_llm(config: AgentConfig) -> BaseChatModel:
+    """Create LLM instance based on provider configuration.
+
+    Args:
+        config: Agent configuration with LLM provider settings
+
+    Returns:
+        Configured LLM instance
+
+    Raises:
+        ValueError: If provider is unsupported or configuration is invalid
+        ImportError: If required dependencies are not installed
+    """
+    provider = config.llm_provider.lower()
+
+    # Common LLM arguments
+    common_args = {
+        "temperature": config.temperature,
+        "streaming": config.streaming_enabled,
+    }
+
+    if config.max_tokens:
+        common_args["max_tokens"] = config.max_tokens
+    if config.top_p:
+        common_args["top_p"] = config.top_p
+
+    if provider == "openai":
+        if not config.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required for OpenAI provider")
+
+        openai_args = {
+            "model": config.default_model,
+            "api_key": config.openai_api_key,
+            **common_args
+        }
+
+        if config.openai_base_url:
+            openai_args["base_url"] = config.openai_base_url
+        if config.openai_organization:
+            openai_args["organization"] = config.openai_organization
+
+        return ChatOpenAI(**openai_args)
+
+    elif provider == "azure":
+        if not all([config.azure_openai_api_key, config.azure_openai_endpoint, config.azure_deployment_name]):
+            raise ValueError("Azure OpenAI requires AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_DEPLOYMENT_NAME")
+
+        return AzureChatOpenAI(
+            api_key=config.azure_openai_api_key,
+            azure_endpoint=config.azure_openai_endpoint,
+            api_version=config.azure_openai_api_version,
+            azure_deployment=config.azure_deployment_name,
+            **common_args
+        )
+
+    elif provider == "bedrock":
+        if BedrockChat is None:
+            raise ImportError("langchain-aws is required for Bedrock support. Install with: pip install langchain-aws")
+        if not all([config.aws_access_key_id, config.aws_secret_access_key, config.bedrock_model_id]):
+            raise ValueError("AWS Bedrock requires AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and BEDROCK_MODEL_ID")
+
+        return BedrockChat(
+            model_id=config.bedrock_model_id,
+            region_name=config.aws_region,
+            credentials_profile_name=None,  # Use environment variables
+            **common_args
+        )
+
+    elif provider == "ollama":
+        if ChatOllama is None:
+            raise ImportError("langchain-community is required for OLLAMA support. Install with: pip install langchain-community")
+        if not config.ollama_model:
+            raise ValueError("OLLAMA_MODEL is required for OLLAMA provider")
+
+        return ChatOllama(
+            model=config.ollama_model,
+            base_url=config.ollama_base_url,
+            **common_args
+        )
+
+    elif provider == "anthropic":
+        if ChatAnthropic is None:
+            raise ImportError("langchain-anthropic is required for Anthropic support. Install with: pip install langchain-anthropic")
+        if not config.anthropic_api_key:
+            raise ValueError("ANTHROPIC_API_KEY is required for Anthropic provider")
+
+        return ChatAnthropic(
+            model=config.default_model,
+            api_key=config.anthropic_api_key,
+            **common_args
+        )
+
+    else:
+        raise ValueError(f"Unsupported LLM provider: {provider}. Supported: openai, azure, bedrock, ollama, anthropic")
+
 
 class MCPTool(BaseTool):
     """Langchain tool wrapper for MCP tools"""
@@ -48,14 +160,16 @@ class LangchainMCPAgent:
 
     def __init__(self, config: AgentConfig):
         self.config = config
-        self.mcp_client = MCPClient.from_env(config.mcp_gateway_url)
+        self.mcp_client = MCPClient(config.mcp_gateway_url, config.gateway_bearer_token)
         self.mcp_client.debug = config.debug_mode
 
-        self.llm = ChatOpenAI(
-            model=config.default_model,
-            temperature=config.temperature,
-            streaming=config.streaming_enabled
-        )
+        # Create LLM based on provider configuration
+        try:
+            self.llm = create_llm(config)
+            logger.info(f"Initialized {config.llm_provider} LLM with model: {config.default_model}")
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM provider {config.llm_provider}: {e}")
+            raise
 
         self.tools: List[MCPTool] = []
         self.agent_executor: Optional[AgentExecutor] = None

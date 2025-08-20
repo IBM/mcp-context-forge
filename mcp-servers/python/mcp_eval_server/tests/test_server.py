@@ -2,7 +2,7 @@
 """Tests for MCP Eval Server main functionality."""
 
 # Third-Party
-from mcp_eval_server.server import (
+from mcp_eval_server.mcp_eval_server.server import (
     agent_tools,
     calibration_tools,
     judge_tools,

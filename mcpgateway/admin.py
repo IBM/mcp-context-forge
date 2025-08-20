@@ -44,6 +44,7 @@ from mcpgateway.db import get_db, GlobalConfig
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
+    A2AAgentCreate,
     GatewayCreate,
     GatewayRead,
     GatewayTestRequest,
@@ -68,6 +69,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
@@ -122,6 +124,8 @@ resource_service: ResourceService = ResourceService()
 root_service: RootService = RootService()
 export_service: ExportService = ExportService()
 import_service: ImportService = ImportService()
+# Initialize A2A service only if A2A features are enabled
+a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
 
 # Set up basic authentication
 
@@ -1563,6 +1567,13 @@ async def admin_ui(
     gateways = [gateway.model_dump(by_alias=True) for gateway in gateways_raw]
 
     roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
+
+    # Load A2A agents if enabled
+    a2a_agents = []
+    if a2a_service and settings.mcpgateway_a2a_enabled:
+        a2a_agents_raw = await a2a_service.list_agents(db, include_inactive=include_inactive)
+        a2a_agents = [agent.model_dump(by_alias=True) for agent in a2a_agents_raw]
+
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
     response = request.app.state.templates.TemplateResponse(
@@ -1575,12 +1586,14 @@ async def admin_ui(
             "resources": resources,
             "prompts": prompts,
             "gateways": gateways,
+            "a2a_agents": a2a_agents,
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
+            "a2a_enabled": settings.mcpgateway_a2a_enabled,
         },
     )
 
@@ -5296,3 +5309,355 @@ async def admin_list_import_statuses(user: str = Depends(require_auth)):
 
     statuses = import_service.list_import_statuses()
     return JSONResponse(content=[status.to_dict() for status in statuses])
+
+
+# ============================================================================ #
+#                             A2A AGENT ADMIN ROUTES                          #
+# ============================================================================ #
+
+
+@admin_router.get("/a2a")
+async def admin_list_a2a_agents(
+    include_inactive: bool = False,
+    tags: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> HTMLResponse:
+    """List A2A agents for admin UI.
+
+    Args:
+        include_inactive: Whether to include inactive agents
+        tags: Comma-separated list of tags to filter by
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        HTML response with agents list
+
+    Raises:
+        HTTPException: If A2A features are disabled
+    """
+    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+        return HTMLResponse(content='<div class="text-center py-8"><p class="text-gray-500">A2A features are disabled. Set MCPGATEWAY_A2A_ENABLED=true to enable.</p></div>', status_code=200)
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
+    LOGGER.debug(f"Admin user {user} requested A2A agent list with tags={tags_list}")
+    agents = await a2a_service.list_agents(db, include_inactive=include_inactive, tags=tags_list)
+
+    # Convert to template format
+    agent_items = []
+    for agent in agents:
+        agent_items.append(
+            {
+                "id": agent.id,
+                "name": agent.name,
+                "description": agent.description or "",
+                "endpoint_url": agent.endpoint_url,
+                "agent_type": agent.agent_type,
+                "protocol_version": agent.protocol_version,
+                "auth_type": agent.auth_type or "None",
+                "enabled": agent.enabled,
+                "reachable": agent.reachable,
+                "tags": agent.tags,
+                "created_at": agent.created_at.isoformat(),
+                "last_interaction": agent.last_interaction.isoformat() if agent.last_interaction else None,
+                "execution_count": agent.metrics.total_executions,
+                "success_rate": f"{100 - agent.metrics.failure_rate:.1f}%" if agent.metrics.total_executions > 0 else "N/A",
+            }
+        )
+
+    # Generate HTML for agents list
+    html_content = ""
+    for agent in agent_items:
+        status_class = "bg-green-100 text-green-800" if agent["enabled"] else "bg-red-100 text-red-800"
+        reachable_class = "bg-green-100 text-green-800" if agent["reachable"] else "bg-yellow-100 text-yellow-800"
+        active_text = "Active" if agent["enabled"] else "Inactive"
+        reachable_text = "Reachable" if agent["reachable"] else "Unreachable"
+
+        # Generate tags HTML separately
+        tags_html = ""
+        if agent["tags"]:
+            tag_spans = []
+            for tag in agent["tags"]:
+                tag_spans.append(f'<span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">{tag}</span>')
+            tags_html = f'<div class="mt-2 flex flex-wrap gap-1">{" ".join(tag_spans)}</div>'
+
+        # Generate last interaction HTML
+        last_interaction_html = ""
+        if agent["last_interaction"]:
+            last_interaction_html = f"<div>Last Interaction: {agent['last_interaction'][:19]}</div>"
+
+        # Generate button classes
+        toggle_class = "text-green-700 bg-green-100 hover:bg-green-200" if not agent["enabled"] else "text-red-700 bg-red-100 hover:bg-red-200"
+        toggle_text = "Activate" if not agent["enabled"] else "Deactivate"
+        toggle_action = "true" if not agent["enabled"] else "false"
+
+        html_content += f"""
+        <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-3">
+          <div class="flex items-start justify-between">
+            <div class="flex-1">
+              <h4 class="text-lg font-medium text-gray-900 dark:text-gray-200">{agent['name']}</h4>
+              <p class="text-sm text-gray-600 dark:text-gray-400">{agent['description']}</p>
+              <div class="mt-2 flex flex-wrap gap-2">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {status_class}">
+                  {active_text}
+                </span>
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {reachable_class}">
+                  {reachable_text}
+                </span>
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                  {agent['agent_type']}
+                </span>
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                  Auth: {agent['auth_type']}
+                </span>
+              </div>
+              <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                <div>Endpoint: {agent['endpoint_url']}</div>
+                <div>Executions: {agent['execution_count']} | Success Rate: {agent['success_rate']}</div>
+                <div>Created: {agent['created_at'][:19]}</div>
+                {last_interaction_html}
+              </div>
+              {tags_html}
+            </div>
+            <div class="flex space-x-2">
+              <button
+                hx-post="{{ root_path }}/admin/a2a/{agent['id']}/toggle"
+                hx-vals='{{"activate": "{toggle_action}"}}'
+                hx-target="#a2a-agents-list"
+                hx-trigger="click"
+                class="px-3 py-1 text-sm font-medium {toggle_class} rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                {toggle_text}
+              </button>
+              <button
+                hx-post="{{ root_path }}/admin/a2a/{agent['id']}/delete"
+                hx-target="#a2a-agents-list"
+                hx-trigger="click"
+                hx-confirm="Are you sure you want to delete this A2A agent?"
+                class="px-3 py-1 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+        """
+
+    return HTMLResponse(content=html_content)
+
+
+@admin_router.post("/a2a")
+async def admin_add_a2a_agent(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> RedirectResponse:
+    """Add a new A2A agent via admin UI.
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        HTML response with success/error status
+
+    Raises:
+        HTTPException: If A2A features are disabled
+    """
+    LOGGER.info(f"A2A agent creation request from user {user}")
+
+    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+        LOGGER.warning("A2A agent creation attempted but A2A features are disabled")
+        return HTMLResponse(content='<div class="text-red-500">A2A features are disabled</div>', status_code=403)
+
+    try:
+        form = await request.form()
+        LOGGER.info(f"A2A agent creation form data: {dict(form)}")
+
+        # Process tags
+        tags_str = form.get("tags", "")
+        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+        agent_data = A2AAgentCreate(
+            name=form["name"],
+            description=form.get("description"),
+            endpoint_url=form["endpoint_url"],
+            agent_type=form.get("agent_type", "generic"),
+            auth_type=form.get("auth_type") if form.get("auth_type") else None,
+            auth_value=form.get("auth_value") if form.get("auth_value") else None,
+            tags=tags,
+        )
+
+        LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
+
+        # Extract metadata from request
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
+        await a2a_service.register_agent(
+            db,
+            agent_data,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            import_batch_id=metadata["import_batch_id"],
+            federation_source=metadata["federation_source"],
+        )
+
+        # Return redirect to admin page with A2A tab
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+
+    except A2AAgentNameConflictError as e:
+        LOGGER.error(f"A2A agent name conflict: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    except A2AAgentError as e:
+        LOGGER.error(f"A2A agent error: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    except ValidationError as e:
+        LOGGER.error(f"Validation error while creating A2A agent: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    except Exception as e:
+        LOGGER.error(f"Error creating A2A agent: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+
+
+@admin_router.post("/a2a/{agent_id}/toggle")
+async def admin_toggle_a2a_agent(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
+) -> RedirectResponse:
+    """Toggle A2A agent status via admin UI.
+
+    Args:
+        agent_id: Agent ID
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Redirect response to admin page with A2A tab
+
+    Raises:
+        HTTPException: If A2A features are disabled
+    """
+    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+
+    try:
+        form = await request.form()
+        activate = form.get("activate", "false").lower() == "true"
+
+        await a2a_service.toggle_agent_status(db, agent_id, activate)
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+
+    except A2AAgentNotFoundError as e:
+        LOGGER.error(f"A2A agent toggle failed - not found: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    except Exception as e:
+        LOGGER.error(f"Error toggling A2A agent: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+
+
+@admin_router.post("/a2a/{agent_id}/delete")
+async def admin_delete_a2a_agent(
+    agent_id: str,
+    request: Request,  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
+) -> RedirectResponse:
+    """Delete A2A agent via admin UI.
+
+    Args:
+        agent_id: Agent ID
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Redirect response to admin page with A2A tab
+
+    Raises:
+        HTTPException: If A2A features are disabled
+    """
+    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+
+    try:
+        await a2a_service.delete_agent(db, agent_id)
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+
+    except A2AAgentNotFoundError as e:
+        LOGGER.error(f"A2A agent delete failed - not found: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    except Exception as e:
+        LOGGER.error(f"Error deleting A2A agent: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+
+
+@admin_router.post("/a2a/{agent_id}/test")
+async def admin_test_a2a_agent(
+    agent_id: str,
+    request: Request,  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
+) -> JSONResponse:
+    """Test A2A agent via admin UI.
+
+    Args:
+        agent_id: Agent ID
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        JSON response with test results
+
+    Raises:
+        HTTPException: If A2A features are disabled
+    """
+    if not a2a_service or not settings.mcpgateway_a2a_enabled:
+        return JSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
+
+    try:
+        # Get the agent by ID
+        agent = await a2a_service.get_agent(db, agent_id)
+
+        # Prepare test parameters based on agent type and endpoint
+        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+            # JSONRPC format for agents that expect it
+            test_params = {
+                "method": "message/send",
+                "params": {"message": {"messageId": f"admin-test-{int(time.time())}", "role": "user", "parts": [{"type": "text", "text": "Hello from MCP Gateway Admin UI test!"}]}},
+            }
+        else:
+            # Generic test format
+            test_params = {"message": "Hello from MCP Gateway Admin UI test!", "test": True, "timestamp": int(time.time())}
+
+        # Invoke the agent
+        result = await a2a_service.invoke_agent(db, agent.name, test_params, "admin_test")
+
+        return JSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
+
+    except Exception as e:
+        LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
+        return JSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
