@@ -424,7 +424,16 @@ class BaseJudge(abc.ABC):
         return self._parse_reference_response(response_text)
 
     async def _rank_by_scoring(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> "RankingResult":
-        """Rank by scoring each response individually."""
+        """Rank by scoring each response individually.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: Evaluation criteria to use for scoring
+            context: Optional context for evaluation
+
+        Returns:
+            RankingResult containing ranked responses with scores and reasoning
+        """
         # Standard
         import asyncio  # pylint: disable=import-outside-toplevel
 
@@ -444,7 +453,16 @@ class BaseJudge(abc.ABC):
         return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")
 
     async def _rank_by_tournament(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> "RankingResult":
-        """Rank using tournament-style pairwise comparisons."""
+        """Rank using tournament-style pairwise comparisons.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: Evaluation criteria to use for comparisons
+            context: Optional context for evaluation
+
+        Returns:
+            RankingResult containing ranked responses based on tournament wins
+        """
         # Standard
         import asyncio  # pylint: disable=import-outside-toplevel
 
@@ -487,7 +505,16 @@ class BaseJudge(abc.ABC):
         return RankingResult(rankings=ranked_results, consistency_score=consistency, reasoning="Ranked by tournament-style pairwise comparisons")
 
     async def _rank_by_round_robin(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> "RankingResult":
-        """Rank using round-robin pairwise comparisons."""
+        """Rank using round-robin pairwise comparisons.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: Evaluation criteria to use for comparisons
+            context: Optional context for evaluation
+
+        Returns:
+            RankingResult containing ranked responses based on round-robin wins
+        """
         # For now, implement same as tournament
         return await self._rank_by_tournament(responses, criteria, context)
 
@@ -498,7 +525,20 @@ class BaseJudge(abc.ABC):
         context: Optional[str] = None,
         ranking_method: str = "tournament",
     ) -> "RankingResult":
-        """Base implementation for ranking multiple responses."""
+        """Base implementation for ranking multiple responses.
+
+        Args:
+            responses: List of response strings to rank
+            criteria: List of evaluation criteria for ranking
+            context: Optional context for evaluation
+            ranking_method: Method to use for ranking ("tournament", "scoring", "round_robin")
+
+        Returns:
+            RankingResult containing ranked responses and consistency score
+
+        Raises:
+            ValueError: If less than 2 responses provided or unknown ranking method
+        """
         if len(responses) < 2:
             raise ValueError("Need at least 2 responses to rank")
 
