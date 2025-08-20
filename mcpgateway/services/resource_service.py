@@ -421,7 +421,7 @@ class ResourceService:
             >>> from unittest.mock import MagicMock
             >>> service = ResourceService()
             >>> db = MagicMock()
-            >>> uri = 'resource_uri'
+            >>> uri = 'http://example.com/resource.txt'
             >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock(content='test')
             >>> import asyncio
             >>> result = asyncio.run(service.read_resource(db, uri))

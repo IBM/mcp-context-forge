@@ -1512,7 +1512,7 @@ async def admin_ui(
         >>> mock_tool = ToolRead(
         ...     id="t1", name="T1", original_name="T1", url="http://t1.com", description="d",
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        ...     enabled=True, reachable=True, gateway_slug="default", original_name_slug="t1",
+        ...     enabled=True, reachable=True, gateway_slug="default", custom_name_slug="t1",
         ...     request_type="GET", integration_type="MCP", headers={}, input_schema={},
         ...     annotations={}, jsonpath_filter=None, auth=None, execution_count=0,
         ...     metrics=ToolMetrics(
@@ -1521,6 +1521,7 @@ async def admin_ui(
         ...         avg_response_time=0.0, last_execution_time=None
         ...     ),
         ...     gateway_id=None,
+        ...     customName="T1",
         ...     tags=[]
         ... )
         >>> server_service.list_servers = AsyncMock(return_value=[mock_server])
@@ -1633,34 +1634,35 @@ async def admin_list_tools(
         >>> mock_user = "test_user"
         >>>
         >>> # Mock tool data
-        >>> mock_tool = ToolRead(
-        ...     id="tool-1",
-        ...     name="Test Tool",
-        ...     original_name="TestTool",
-        ...     url="http://test.com/tool",
-        ...     description="A test tool",
-        ...     request_type="HTTP",
-        ...     integration_type="MCP",
-        ...     headers={},
-        ...     input_schema={},
-        ...     annotations={},
-        ...     jsonpath_filter=None,
-        ...     auth=None,
-        ...     created_at=datetime.now(timezone.utc),
-        ...     updated_at=datetime.now(timezone.utc),
-        ...     enabled=True,
-        ...     reachable=True,
-        ...     gateway_id=None,
-        ...     execution_count=0,
-        ...     metrics=ToolMetrics(
-        ...         total_executions=5, successful_executions=5, failed_executions=0,
-        ...         failure_rate=0.0, min_response_time=0.1, max_response_time=0.5,
-        ...         avg_response_time=0.3, last_execution_time=datetime.now(timezone.utc)
-        ...     ),
-        ...     gateway_slug="default",
-        ...     original_name_slug="test-tool",
-        ...     tags=[]
-        ... )  #  Added gateway_id=None
+    >>> mock_tool = ToolRead(
+    ...     id="tool-1",
+    ...     name="Test Tool",
+    ...     original_name="TestTool",
+    ...     url="http://test.com/tool",
+    ...     description="A test tool",
+    ...     request_type="HTTP",
+    ...     integration_type="MCP",
+    ...     headers={},
+    ...     input_schema={},
+    ...     annotations={},
+    ...     jsonpath_filter=None,
+    ...     auth=None,
+    ...     created_at=datetime.now(timezone.utc),
+    ...     updated_at=datetime.now(timezone.utc),
+    ...     enabled=True,
+    ...     reachable=True,
+    ...     gateway_id=None,
+    ...     execution_count=0,
+    ...     metrics=ToolMetrics(
+    ...         total_executions=5, successful_executions=5, failed_executions=0,
+    ...         failure_rate=0.0, min_response_time=0.1, max_response_time=0.5,
+    ...         avg_response_time=0.3, last_execution_time=datetime.now(timezone.utc)
+    ...     ),
+    ...     gateway_slug="default",
+    ...     custom_name_slug="test-tool",
+    ...     customName="Test Tool",
+    ...     tags=[]
+    ... )  #  Added gateway_id=None
         >>>
         >>> # Mock the tool_service.list_tools method
         >>> original_list_tools = tool_service.list_tools
@@ -1686,7 +1688,8 @@ async def admin_list_tools(
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None
         ...     ),
-        ...     gateway_slug="default", original_name_slug="inactive-tool",
+        ...     gateway_slug="default", custom_name_slug="inactive-tool",
+        ...     customName="Inactive Tool",
         ...     tags=[]
         ... )
         >>> tool_service.list_tools = AsyncMock(return_value=[mock_tool, mock_inactive_tool])
@@ -1772,7 +1775,8 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str 
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0,
         ...         last_execution_time=None
         ...     ),
-        ...     gateway_slug="default", original_name_slug="get-tool",
+        ...     gateway_slug="default", custom_name_slug="get-tool",
+        ...     customName="Get Tool",
         ...     tags=[]
         ... )
         >>>
@@ -2088,6 +2092,7 @@ async def admin_edit_tool(
         >>> # Happy path: Edit tool successfully
         >>> form_data_success = FormData([
         ...     ("name", "Updated_Tool"),
+        ...     ("customName", "ValidToolName"),
         ...     ("url", "http://updated.com"),
         ...     ("requestType", "GET"),
         ...     ("integrationType", "REST"),
@@ -2110,6 +2115,7 @@ async def admin_edit_tool(
         >>> # Edge case: Edit tool with inactive checkbox checked
         >>> form_data_inactive = FormData([
         ...     ("name", "Inactive_Edit"),
+        ...     ("customName", "ValidToolName"),
         ...     ("url", "http://inactive.com"),
         ...     ("is_inactive_checked", "true"),
         ...     ("requestType", "GET"),
@@ -2128,6 +2134,7 @@ async def admin_edit_tool(
         >>> # Error path: Tool name conflict (simulated with IntegrityError)
         >>> form_data_conflict = FormData([
         ...     ("name", "Conflicting_Name"),
+        ...     ("customName", "Conflicting_Name"),
         ...     ("url", "http://conflict.com"),
         ...     ("requestType", "GET"),
         ...     ("integrationType", "REST")
@@ -2146,6 +2153,7 @@ async def admin_edit_tool(
         >>> # Error path: ToolError raised
         >>> form_data_tool_error = FormData([
         ...     ("name", "Tool_Error"),
+        ...     ("customName", "Tool_Error"),
         ...     ("url", "http://toolerror.com"),
         ...     ("requestType", "GET"),
         ...     ("integrationType", "REST")
@@ -2164,6 +2172,7 @@ async def admin_edit_tool(
         >>> # Error path: Pydantic Validation Error
         >>> form_data_validation_error = FormData([
         ...     ("name", "Bad_URL"),
+        ...     ("customName","Bad_Custom_Name"),
         ...     ("url", "not-a-valid-url"),
         ...     ("requestType", "GET"),
         ...     ("integrationType", "REST")
@@ -2181,6 +2190,7 @@ async def admin_edit_tool(
         >>> # Error path: Unexpected exception
         >>> form_data_unexpected = FormData([
         ...     ("name", "Crash_Tool"),
+        ...     ("customName", "Crash_Tool"),
         ...     ("url", "http://crash.com"),
         ...     ("requestType", "GET"),
         ...     ("integrationType", "REST")
@@ -2202,13 +2212,13 @@ async def admin_edit_tool(
     """
     LOGGER.debug(f"User {user} is editing tool ID {tool_id}")
     form = await request.form()
-
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
+        "custom_name": form.get("customName"),
         "url": form.get("url"),
         "description": form.get("description"),
         "headers": json.loads(form.get("headers") or "{}"),

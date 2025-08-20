@@ -369,7 +369,6 @@ class Tool(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     original_name: Mapped[str] = mapped_column(String, nullable=False)
-    original_name_slug: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=True)
     description: Mapped[Optional[str]]
     integration_type: Mapped[str] = mapped_column(default="MCP")
@@ -403,6 +402,10 @@ class Tool(Base):
     auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", or None
     auth_value: Mapped[Optional[str]] = mapped_column(default=None)
 
+    # custom_name,custom_name_slug
+    custom_name: Mapped[Optional[str]] = mapped_column(String, nullable=False)
+    custom_name_slug: Mapped[Optional[str]] = mapped_column(String, nullable=False)
+
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
     # gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
@@ -431,15 +434,15 @@ class Tool(Base):
         if self._computed_name:  # pylint: disable=no-member
             return self._computed_name  # orm column, resolved at runtime
 
-        original_slug = slugify(self.original_name)  # pylint: disable=no-member
+        custom_name_slug = slugify(self.custom_name_slug)  # pylint: disable=no-member
 
         # Gateway present → prepend its slug and the configured separator
         if self.gateway_id:  # pylint: disable=no-member
             gateway_slug = slugify(self.gateway.name)  # pylint: disable=no-member
-            return f"{gateway_slug}{settings.gateway_tool_name_separator}{original_slug}"
+            return f"{gateway_slug}{settings.gateway_tool_name_separator}{custom_name_slug}"
 
         # No gateway → only the original name slug
-        return original_slug
+        return custom_name_slug
 
     @name.setter
     def name(self, value):
@@ -1123,7 +1126,7 @@ class Server(Base):
             float: The failure rate as a value between 0 and 1.
 
         Examples:
-            >>> tool = Tool(original_name="test_tool", original_name_slug="test-tool", input_schema={})
+            >>> tool = Tool(custom_name="test_tool", custom_name_slug="test-tool", input_schema={})
             >>> tool.failure_rate  # No metrics yet
             0.0
             >>> tool.metrics = [
@@ -1285,7 +1288,7 @@ def update_tool_names_on_gateway_update(_mapper, connection, target):
     stmt = (
         tools_table.update()
         .where(tools_table.c.gateway_id == target.id)
-        .values(name=new_gateway_slug + separator + tools_table.c.original_name_slug)
+        .values(name=new_gateway_slug + separator + tools_table.c.custom_name_slug)
         .execution_options(synchronize_session=False)  # Important for bulk updates
     )
 
@@ -1617,18 +1620,29 @@ def set_a2a_agent_slug(_mapper, _conn, target):
 
 
 @event.listens_for(Tool, "before_insert")
-def set_tool_name(_mapper, _conn, target):
-    """Set the computed name for a Tool before insert.
+@event.listens_for(Tool, "before_update")
+def set_custom_name_and_slug(mapper, connection, target):
+    """
+    Event listener to set custom_name, custom_name_slug, and name for Tool before insert/update.
+
+    - Sets custom_name to original_name if not provided.
+    - Calculates custom_name_slug from custom_name using slugify.
+    - Updates name to gateway_slug + separator + custom_name_slug.
 
     Args:
-        _mapper: Mapper
-        _conn: Connection
-        target: Target Tool instance
+        mapper: SQLAlchemy mapper for the Tool model.
+        connection: Database connection.
+        target: The Tool instance being inserted or updated.
     """
-
-    sep = settings.gateway_tool_name_separator
-    gateway_slug = target.gateway.slug if target.gateway_id else ""
+    # Set custom_name to original_name if not provided
+    if not target.custom_name:
+        target.custom_name = target.original_name
+    # Always update custom_name_slug from custom_name
+    target.custom_name_slug = slugify(target.custom_name)
+    # Update name field
+    gateway_slug = slugify(target.gateway.name) if target.gateway else ""
     if gateway_slug:
-        target.name = f"{gateway_slug}{sep}{slugify(target.original_name)}"
+        sep = settings.gateway_tool_name_separator
+        target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"
     else:
-        target.name = slugify(target.original_name)
+        target.name = target.custom_name_slug
