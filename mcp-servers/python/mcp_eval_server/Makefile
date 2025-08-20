@@ -177,6 +177,38 @@ validate-models: ## Run comprehensive model validation and connectivity tests
 	@echo "🔍 Running model validation and connectivity tests..."
 	$(PYTHON) validate_models.py
 
+validate-config: ## Validate custom configuration files
+	@echo "🔍 Validating configuration files..."
+	@if [ -n "$$MCP_EVAL_MODELS_CONFIG" ]; then \
+		echo "📄 Validating custom models config: $$MCP_EVAL_MODELS_CONFIG"; \
+		$(PYTHON) -c "import yaml; yaml.safe_load(open('$$MCP_EVAL_MODELS_CONFIG')); print('✅ Configuration syntax valid')"; \
+	else \
+		echo "📄 Validating default models config"; \
+		$(PYTHON) -c "import yaml; yaml.safe_load(open('mcp_eval_server/config/models.yaml')); print('✅ Configuration syntax valid')"; \
+	fi
+
+copy-config: ## Copy default configuration for customization
+	@echo "📋 Copying default configuration files for customization..."
+	@mkdir -p ./custom-config
+	@cp mcp_eval_server/config/models.yaml ./custom-config/models.yaml
+	@cp mcp_eval_server/config/rubrics.yaml ./custom-config/rubrics.yaml
+	@cp mcp_eval_server/config/benchmarks.yaml ./custom-config/benchmarks.yaml
+	@cp mcp_eval_server/config/judge_prompts.yaml ./custom-config/judge_prompts.yaml
+	@echo "✅ Configuration files copied to ./custom-config/"
+	@echo "💡 To use custom config: export MCP_EVAL_MODELS_CONFIG='./custom-config/models.yaml'"
+
+show-config: ## Show current configuration status
+	@echo "🔧 Current Configuration Status:"
+	@echo "   Models config: $${MCP_EVAL_MODELS_CONFIG:-default (mcp_eval_server/config/models.yaml)}"
+	@echo "   Default judge: $${DEFAULT_JUDGE_MODEL:-gpt-4o-mini}"
+	@echo "   Config dir: $${MCP_EVAL_CONFIG_DIR:-default (mcp_eval_server/config/)}"
+	@echo ""
+	@echo "🔑 Environment Variables:"
+	@echo "   OPENAI_API_KEY: $${OPENAI_API_KEY:+✅ configured}$${OPENAI_API_KEY:-❌ not set}"
+	@echo "   AZURE_OPENAI_API_KEY: $${AZURE_OPENAI_API_KEY:+✅ configured}$${AZURE_OPENAI_API_KEY:-❌ not set}"
+	@echo "   ANTHROPIC_API_KEY: $${ANTHROPIC_API_KEY:+✅ configured}$${ANTHROPIC_API_KEY:-❌ not set}"
+	@echo "   OLLAMA_BASE_URL: $${OLLAMA_BASE_URL:-❌ not set}"
+
 mcp-info: ## Show MCP connection information
 	@echo "📡 MCP Evaluation Server Connection Guide"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -1,0 +1,256 @@
+# Judge Prompt Templates for MCP Eval Server
+# Customizable prompts for different types of evaluations
+
+judge_prompts:
+
+  # Standard evaluation prompt
+  standard_evaluation:
+    compatible_models: ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4-azure", "gpt-4-turbo-azure", "gpt-35-turbo-azure"]
+    temperature: 0.3
+    use_cot: true
+    prompt_template: |
+      You are an expert evaluator with extensive experience in assessing text quality and performance. Your task is to evaluate the following response based on the specified criteria.
+
+      {context_section}
+
+      RESPONSE TO EVALUATE:
+      {response}
+
+      EVALUATION CRITERIA:
+      {criteria}
+
+      SCORING RUBRIC:
+      {rubric}
+
+      {cot_instruction}
+
+      Please provide your evaluation in the following JSON format:
+      {{
+          "reasoning": {{
+              "criterion_name": "detailed step-by-step reasoning for this criterion",
+              ...
+          }},
+          "scores": {{
+              "criterion_name": score_value,
+              ...
+          }},
+          "confidence": confidence_level_0_to_1
+      }}
+
+      Important guidelines:
+      - Ensure all scores are within the specified scale for each criterion
+      - Provide specific, actionable reasoning for each score
+      - Be objective and consistent in your evaluation
+      - Consider both strengths and areas for improvement
+
+  # Fast evaluation for high-volume processing
+  fast_evaluation:
+    compatible_models: ["gpt-3.5-turbo", "gpt-35-turbo-azure"]
+    temperature: 0.2
+    use_cot: false
+    prompt_template: |
+      Rate this response on the given criteria. Be concise but accurate.
+
+      RESPONSE: {response}
+      CRITERIA: {criteria}
+      RUBRIC: {rubric}
+
+      Provide brief reasoning then scores (JSON format):
+      {{"reasoning": {{"criterion": "brief explanation"}}, "scores": {{"criterion": score}}, "confidence": 0.0-1.0}}
+
+  # Pairwise comparison prompt
+  pairwise_comparison:
+    compatible_models: ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4-azure", "gpt-4-turbo-azure"]
+    temperature: 0.3
+    use_cot: true
+    prompt_template: |
+      You are an expert judge comparing two responses. Analyze both responses carefully and determine which is better based on the given criteria.
+
+      {context_section}
+
+      RESPONSE A:
+      {response_a}
+
+      RESPONSE B:
+      {response_b}
+
+      COMPARISON CRITERIA:
+      {criteria}
+
+      Instructions:
+      1. Evaluate both responses against each criterion
+      2. Consider overall quality and effectiveness
+      3. Provide detailed reasoning for your decision
+      4. Determine the winner and confidence level
+
+      Respond in JSON format:
+      {{
+          "winner": "A" | "B" | "tie",
+          "confidence_score": 0.0-1.0,
+          "reasoning": "detailed comparison analysis explaining your decision",
+          "criterion_scores": {{
+              "criterion_name": "A" | "B" | "tie",
+              ...
+          }},
+          "margin": 0.0-1.0
+      }}
+
+  # Multi-response ranking prompt
+  ranking:
+    compatible_models: ["gpt-4", "gpt-4-turbo", "gpt-4-azure", "gpt-4-turbo-azure"]
+    temperature: 0.3
+    use_cot: true
+    prompt_template: |
+      You are an expert judge tasked with ranking multiple responses from best to worst based on the given criteria.
+
+      {context_section}
+
+      RESPONSES TO RANK:
+      {responses}
+
+      RANKING CRITERIA:
+      {criteria}
+
+      Instructions:
+      1. Evaluate each response against all criteria
+      2. Rank them from best (1st) to worst
+      3. Provide clear reasoning for the ranking
+      4. Assign relative scores
+
+      Respond in JSON format:
+      {{
+          "rankings": [
+              {{"response_index": 0, "rank": 1, "score": 0.9, "rationale": "why this ranks here"}},
+              ...
+          ],
+          "reasoning": "overall ranking rationale",
+          "consistency_notes": "any concerns about ranking consistency"
+      }}
+
+  # Reference-based evaluation prompt
+  reference_evaluation:
+    compatible_models: ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4-azure", "gpt-4-turbo-azure"]
+    temperature: 0.3
+    use_cot: true
+    prompt_template: |
+      You are an expert evaluator comparing a response against a gold standard reference. Assess how well the response matches the reference based on the evaluation type.
+
+      REFERENCE (Gold Standard):
+      {reference}
+
+      RESPONSE TO EVALUATE:
+      {response}
+
+      EVALUATION TYPE: {evaluation_type}
+      TOLERANCE LEVEL: {tolerance}
+
+      Evaluation Guidelines:
+      - Factuality: Focus on correctness of information and claims
+      - Completeness: Assess coverage of key points from reference
+      - Style Match: Evaluate tone, format, and writing style alignment
+
+      Provide evaluation in JSON format:
+      {{
+          "similarity_score": 0.0-1.0,
+          "missing_elements": ["element1", "element2", ...],
+          "extra_elements": ["element1", "element2", ...],
+          "factual_errors": ["error1", "error2", ...],
+          "reasoning": "detailed analysis of the comparison"
+      }}
+
+  # Specialized prompts for different domains
+
+  # Technical content evaluation
+  technical_evaluation:
+    compatible_models: ["gpt-4", "gpt-4-turbo", "gpt-4-azure", "gpt-4-turbo-azure"]
+    temperature: 0.2
+    use_cot: true
+    prompt_template: |
+      You are a technical expert evaluating technical content. Focus on accuracy, clarity, and practical value.
+
+      {context_section}
+
+      TECHNICAL CONTENT:
+      {response}
+
+      EVALUATION CRITERIA:
+      {criteria}
+
+      Additional Technical Considerations:
+      - Code accuracy and best practices
+      - Technical terminology usage
+      - Implementation feasibility
+      - Security considerations
+      - Performance implications
+
+      {rubric}
+
+      Provide detailed technical assessment in JSON format:
+      {{
+          "reasoning": {{"criterion": "technical analysis"}},
+          "scores": {{"criterion": score}},
+          "confidence": 0.0-1.0,
+          "technical_issues": ["issue1", "issue2"],
+          "recommendations": ["rec1", "rec2"]
+      }}
+
+  # Creative content evaluation
+  creative_evaluation:
+    compatible_models: ["gpt-4", "gpt-4-turbo", "gpt-4-azure", "gpt-4-turbo-azure"]
+    temperature: 0.4
+    use_cot: true
+    prompt_template: |
+      You are a creative writing expert evaluating creative content. Consider originality, engagement, and artistic merit.
+
+      {context_section}
+
+      CREATIVE CONTENT:
+      {response}
+
+      EVALUATION CRITERIA:
+      {criteria}
+
+      Creative Evaluation Dimensions:
+      - Originality and uniqueness
+      - Emotional impact and engagement
+      - Use of literary devices
+      - Voice and style consistency
+      - Audience appropriateness
+
+      {rubric}
+
+      Provide creative assessment in JSON format:
+      {{
+          "reasoning": {{"criterion": "creative analysis"}},
+          "scores": {{"criterion": score}},
+          "confidence": 0.0-1.0,
+          "creative_strengths": ["strength1", "strength2"],
+          "improvement_areas": ["area1", "area2"]
+      }}
+
+# Prompt customization settings
+customization:
+  context_formats:
+    with_context: "\n\nCONTEXT:\n{context}"
+    no_context: ""
+
+  cot_instructions:
+    detailed: "Please think step by step and provide detailed reasoning for each score before giving your final evaluation."
+    brief: "Provide brief reasoning for your scores."
+    none: ""
+
+  confidence_scales:
+    standard: "Rate your confidence from 0.0 (not confident) to 1.0 (completely confident)"
+    detailed: "Rate confidence: 0.0-0.3 (low), 0.4-0.6 (medium), 0.7-1.0 (high)"
+
+# Model-specific adjustments
+model_adjustments:
+  gpt-3.5-turbo:
+    simplify_prompts: true
+    reduce_context: true
+    shorter_examples: true
+
+  gpt-4:
+    detailed_reasoning: true
+    complex_criteria: true
+    nuanced_evaluation: true

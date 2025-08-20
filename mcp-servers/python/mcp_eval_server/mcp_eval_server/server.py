@@ -485,7 +485,13 @@ async def main():
 
     # Initialize tools and storage after environment variables are loaded
     logger.info("🔧 Initializing tools and storage...")
-    judge_tools = JudgeTools()
+
+    # Support custom configuration paths
+    models_config_path = os.getenv("MCP_EVAL_MODELS_CONFIG")
+    if models_config_path:
+        logger.info(f"📄 Using custom models config: {models_config_path}")
+
+    judge_tools = JudgeTools(config_path=models_config_path)
     prompt_tools = PromptTools(judge_tools)
     agent_tools = AgentTools(judge_tools)
     quality_tools = QualityTools(judge_tools)

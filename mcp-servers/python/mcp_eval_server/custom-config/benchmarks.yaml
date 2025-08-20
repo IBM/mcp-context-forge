@@ -1,0 +1,397 @@
+# Benchmark Configurations for MCP Eval Server
+# Predefined benchmark suites for agent and model evaluation
+
+benchmarks:
+
+  # Basic functionality benchmarks
+  basic_skills:
+    name: "Basic Skills Assessment"
+    description: "Fundamental capabilities evaluation for agents and models"
+    category: "basic"
+    tasks:
+      - name: "simple_qa"
+        description: "Answer simple factual questions"
+        type: "question_answering"
+        difficulty: "easy"
+        expected_tools: ["search", "knowledge_retrieval"]
+        success_criteria:
+          - type: "accuracy"
+            threshold: 0.8
+            weight: 0.6
+          - type: "response_time"
+            threshold: 5.0  # seconds
+            weight: 0.4
+        evaluation_metrics:
+          - "factual_accuracy"
+          - "response_completeness"
+          - "clarity"
+
+      - name: "basic_math"
+        description: "Perform simple arithmetic and calculations"
+        type: "mathematical_reasoning"
+        difficulty: "easy"
+        expected_tools: ["calculator", "math_processor"]
+        success_criteria:
+          - type: "accuracy"
+            threshold: 0.95
+            weight: 0.8
+          - type: "method_correctness"
+            threshold: 0.9
+            weight: 0.2
+        evaluation_metrics:
+          - "computational_accuracy"
+          - "mathematical_reasoning"
+          - "step_clarity"
+
+      - name: "text_summarization"
+        description: "Create concise summaries of given text"
+        type: "text_processing"
+        difficulty: "easy"
+        expected_tools: ["text_analyzer", "summarizer"]
+        success_criteria:
+          - type: "content_coverage"
+            threshold: 0.7
+            weight: 0.4
+          - type: "conciseness"
+            threshold: 0.8
+            weight: 0.3
+          - type: "coherence"
+            threshold: 0.7
+            weight: 0.3
+        evaluation_metrics:
+          - "information_retention"
+          - "conciseness"
+          - "readability"
+
+  # Intermediate complexity benchmarks
+  intermediate_skills:
+    name: "Intermediate Skills Assessment"
+    description: "Multi-step reasoning and tool coordination"
+    category: "intermediate"
+    tasks:
+      - name: "research_synthesis"
+        description: "Gather information from multiple sources and synthesize"
+        type: "research_and_analysis"
+        difficulty: "medium"
+        expected_tools: ["web_search", "source_analyzer", "synthesizer"]
+        success_criteria:
+          - type: "source_diversity"
+            threshold: 0.8
+            weight: 0.3
+          - type: "synthesis_quality"
+            threshold: 0.7
+            weight: 0.4
+          - type: "fact_accuracy"
+            threshold: 0.9
+            weight: 0.3
+        evaluation_metrics:
+          - "research_thoroughness"
+          - "synthesis_coherence"
+          - "source_credibility"
+
+      - name: "problem_decomposition"
+        description: "Break down complex problems into manageable parts"
+        type: "analytical_reasoning"
+        difficulty: "medium"
+        expected_tools: ["analyzer", "planner", "organizer"]
+        success_criteria:
+          - type: "decomposition_quality"
+            threshold: 0.8
+            weight: 0.5
+          - type: "logical_flow"
+            threshold: 0.7
+            weight: 0.3
+          - type: "completeness"
+            threshold: 0.8
+            weight: 0.2
+        evaluation_metrics:
+          - "logical_structure"
+          - "problem_understanding"
+          - "solution_feasibility"
+
+      - name: "multi_step_planning"
+        description: "Create and execute multi-step plans"
+        type: "planning_execution"
+        difficulty: "medium"
+        expected_tools: ["planner", "executor", "monitor"]
+        success_criteria:
+          - type: "plan_quality"
+            threshold: 0.7
+            weight: 0.4
+          - type: "execution_success"
+            threshold: 0.8
+            weight: 0.4
+          - type: "adaptation_ability"
+            threshold: 0.6
+            weight: 0.2
+        evaluation_metrics:
+          - "planning_effectiveness"
+          - "execution_accuracy"
+          - "error_recovery"
+
+  # Advanced capabilities benchmarks
+  advanced_skills:
+    name: "Advanced Skills Assessment"
+    description: "Complex reasoning, creativity, and adaptation"
+    category: "advanced"
+    tasks:
+      - name: "creative_problem_solving"
+        description: "Generate novel solutions to complex problems"
+        type: "creative_reasoning"
+        difficulty: "hard"
+        expected_tools: ["brainstormer", "evaluator", "refiner"]
+        success_criteria:
+          - type: "solution_novelty"
+            threshold: 0.7
+            weight: 0.4
+          - type: "solution_feasibility"
+            threshold: 0.8
+            weight: 0.3
+          - type: "implementation_quality"
+            threshold: 0.7
+            weight: 0.3
+        evaluation_metrics:
+          - "creativity_score"
+          - "practical_viability"
+          - "innovation_level"
+
+      - name: "adaptive_reasoning"
+        description: "Adapt reasoning approach based on changing context"
+        type: "adaptive_intelligence"
+        difficulty: "hard"
+        expected_tools: ["context_analyzer", "strategy_selector", "adapter"]
+        success_criteria:
+          - type: "adaptation_speed"
+            threshold: 0.7
+            weight: 0.3
+          - type: "strategy_effectiveness"
+            threshold: 0.8
+            weight: 0.4
+          - type: "context_understanding"
+            threshold: 0.8
+            weight: 0.3
+        evaluation_metrics:
+          - "adaptability"
+          - "contextual_awareness"
+          - "strategy_optimization"
+
+      - name: "ethical_reasoning"
+        description: "Navigate ethical dilemmas and considerations"
+        type: "ethical_analysis"
+        difficulty: "hard"
+        expected_tools: ["ethical_analyzer", "stakeholder_identifier", "impact_assessor"]
+        success_criteria:
+          - type: "ethical_awareness"
+            threshold: 0.8
+            weight: 0.4
+          - type: "stakeholder_consideration"
+            threshold: 0.7
+            weight: 0.3
+          - type: "reasoning_quality"
+            threshold: 0.8
+            weight: 0.3
+        evaluation_metrics:
+          - "ethical_sensitivity"
+          - "moral_reasoning"
+          - "consequence_analysis"
+
+  # Domain-specific benchmarks
+
+  # Technical domain benchmarks
+  technical_expertise:
+    name: "Technical Expertise Assessment"
+    description: "Evaluation of technical knowledge and coding abilities"
+    category: "domain_specific"
+    domain: "technology"
+    tasks:
+      - name: "code_generation"
+        description: "Generate functional code based on specifications"
+        type: "code_synthesis"
+        difficulty: "medium"
+        expected_tools: ["code_generator", "syntax_checker", "optimizer"]
+        success_criteria:
+          - type: "code_correctness"
+            threshold: 0.9
+            weight: 0.5
+          - type: "code_quality"
+            threshold: 0.8
+            weight: 0.3
+          - type: "efficiency"
+            threshold: 0.7
+            weight: 0.2
+        evaluation_metrics:
+          - "functional_correctness"
+          - "code_style"
+          - "performance_optimization"
+
+      - name: "debugging_assistance"
+        description: "Identify and fix bugs in existing code"
+        type: "debugging"
+        difficulty: "medium"
+        expected_tools: ["debugger", "code_analyzer", "fix_generator"]
+        success_criteria:
+          - type: "bug_identification"
+            threshold: 0.8
+            weight: 0.4
+          - type: "fix_accuracy"
+            threshold: 0.9
+            weight: 0.4
+          - type: "explanation_clarity"
+            threshold: 0.7
+            weight: 0.2
+        evaluation_metrics:
+          - "debugging_accuracy"
+          - "solution_effectiveness"
+          - "explanation_quality"
+
+  # Scientific domain benchmarks
+  scientific_reasoning:
+    name: "Scientific Reasoning Assessment"
+    description: "Scientific methodology and analytical thinking"
+    category: "domain_specific"
+    domain: "science"
+    tasks:
+      - name: "hypothesis_generation"
+        description: "Generate testable scientific hypotheses"
+        type: "scientific_method"
+        difficulty: "medium"
+        expected_tools: ["literature_reviewer", "hypothesis_generator", "experiment_designer"]
+        success_criteria:
+          - type: "hypothesis_quality"
+            threshold: 0.8
+            weight: 0.4
+          - type: "testability"
+            threshold: 0.9
+            weight: 0.3
+          - type: "scientific_validity"
+            threshold: 0.8
+            weight: 0.3
+        evaluation_metrics:
+          - "scientific_rigor"
+          - "hypothesis_specificity"
+          - "experimental_feasibility"
+
+      - name: "data_interpretation"
+        description: "Analyze and interpret scientific data"
+        type: "data_analysis"
+        difficulty: "medium"
+        expected_tools: ["statistical_analyzer", "visualization_tool", "interpreter"]
+        success_criteria:
+          - type: "analysis_accuracy"
+            threshold: 0.8
+            weight: 0.5
+          - type: "interpretation_quality"
+            threshold: 0.7
+            weight: 0.3
+          - type: "statistical_validity"
+            threshold: 0.9
+            weight: 0.2
+        evaluation_metrics:
+          - "statistical_correctness"
+          - "interpretation_depth"
+          - "conclusion_validity"
+
+  # Communication and language benchmarks
+  communication_skills:
+    name: "Communication Skills Assessment"
+    description: "Language proficiency and communication effectiveness"
+    category: "domain_specific"
+    domain: "communication"
+    tasks:
+      - name: "audience_adaptation"
+        description: "Adapt communication style for different audiences"
+        type: "adaptive_communication"
+        difficulty: "medium"
+        expected_tools: ["audience_analyzer", "style_adapter", "tone_adjuster"]
+        success_criteria:
+          - type: "audience_appropriateness"
+            threshold: 0.8
+            weight: 0.4
+          - type: "message_clarity"
+            threshold: 0.8
+            weight: 0.3
+          - type: "engagement_level"
+            threshold: 0.7
+            weight: 0.3
+        evaluation_metrics:
+          - "audience_awareness"
+          - "communication_effectiveness"
+          - "style_consistency"
+
+      - name: "persuasive_writing"
+        description: "Create persuasive and compelling content"
+        type: "persuasive_communication"
+        difficulty: "medium"
+        expected_tools: ["argument_builder", "evidence_gatherer", "rhetoric_optimizer"]
+        success_criteria:
+          - type: "persuasiveness"
+            threshold: 0.7
+            weight: 0.4
+          - type: "evidence_quality"
+            threshold: 0.8
+            weight: 0.3
+          - type: "logical_structure"
+            threshold: 0.8
+            weight: 0.3
+        evaluation_metrics:
+          - "argument_strength"
+          - "evidence_credibility"
+          - "rhetorical_effectiveness"
+
+# Benchmark execution parameters
+execution_parameters:
+  default_timeout: 300  # seconds
+  retry_attempts: 2
+  parallel_execution: true
+  max_concurrent_tasks: 5
+
+  # Scoring and evaluation settings
+  scoring:
+    passing_threshold: 0.7  # Overall score needed to "pass" benchmark
+    excellence_threshold: 0.9  # Score for "excellent" performance
+    weight_normalization: true  # Normalize criteria weights to sum to 1.0
+
+  # Reporting settings
+  reporting:
+    include_individual_scores: true
+    include_failure_analysis: true
+    include_improvement_suggestions: true
+    generate_comparison_charts: true
+
+# Benchmark suites (combinations of benchmarks)
+suites:
+  comprehensive_basic:
+    name: "Comprehensive Basic Assessment"
+    description: "Full evaluation of basic capabilities"
+    benchmarks: ["basic_skills"]
+    estimated_duration: 900  # seconds
+
+  full_intermediate:
+    name: "Complete Intermediate Assessment"
+    description: "Thorough evaluation of intermediate skills"
+    benchmarks: ["basic_skills", "intermediate_skills"]
+    estimated_duration: 1800
+
+  advanced_complete:
+    name: "Advanced Complete Assessment"
+    description: "Comprehensive evaluation including advanced capabilities"
+    benchmarks: ["basic_skills", "intermediate_skills", "advanced_skills"]
+    estimated_duration: 2700
+
+  domain_technical:
+    name: "Technical Domain Assessment"
+    description: "Focus on technical and coding abilities"
+    benchmarks: ["basic_skills", "technical_expertise"]
+    estimated_duration: 1500
+
+  domain_scientific:
+    name: "Scientific Reasoning Assessment"
+    description: "Focus on scientific thinking and analysis"
+    benchmarks: ["basic_skills", "scientific_reasoning"]
+    estimated_duration: 1500
+
+  communication_focused:
+    name: "Communication Skills Assessment"
+    description: "Focus on language and communication abilities"
+    benchmarks: ["basic_skills", "communication_skills"]
+    estimated_duration: 1200
