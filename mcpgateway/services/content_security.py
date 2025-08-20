@@ -30,6 +30,7 @@ class ContentSecurityService:
     """Service for validating content security for resources and prompts."""
 
     def __init__(self):
+        """ Initialize the content security service."""
         # Compile regex patterns for efficiency
         self.dangerous_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in settings.blocked_patterns]
         # Monitoring metrics
