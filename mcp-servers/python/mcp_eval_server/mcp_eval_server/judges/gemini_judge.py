@@ -108,7 +108,7 @@ class GeminiJudge(BaseJudge):
         try:
             # Run in thread pool since Google library is sync
             # Standard
-            import concurrent.futures
+            import concurrent.futures  # pylint: disable=import-outside-toplevel
 
             def make_request():
                 response = self.model.generate_content(prompt, generation_config=generation_config)

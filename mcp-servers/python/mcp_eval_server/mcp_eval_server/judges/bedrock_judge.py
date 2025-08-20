@@ -105,7 +105,7 @@ class BedrockJudge(BaseJudge):
         try:
             # Run in thread pool since boto3 is synchronous
             # Standard
-            import concurrent.futures
+            import concurrent.futures  # pylint: disable=import-outside-toplevel
 
             def make_request():
                 return self.client.invoke_model(
@@ -185,34 +185,8 @@ class BedrockJudge(BaseJudge):
             original_order = False
 
         criteria_text = self._format_criteria(criteria)
-        context_section = f"\n\nCONTEXT:\n{context}" if context else ""
 
-        prompt = f"""You are an expert evaluator. Compare the following two responses and determine which is better.
-
-{context_section}
-
-RESPONSE A:
-{response_a}
-
-RESPONSE B:
-{response_b}
-
-COMPARISON CRITERIA:
-{criteria_text}
-
-Please provide a detailed comparison and determine the winner. Consider each criterion carefully.
-
-Provide your evaluation in the following JSON format:
-{{
-    "winner": "A" | "B" | "tie",
-    "confidence_score": confidence_level_0_to_1,
-    "reasoning": "detailed comparison reasoning",
-    "criterion_scores": {{
-        "criterion_name": "A" | "B" | "tie",
-        ...
-    }},
-    "margin": strength_of_preference_0_to_1
-}}"""
+        prompt = self._render_template("pairwise", context=context, response_a=response_a, response_b=response_b, criteria_text=criteria_text)
 
         messages = [{"role": "system", "content": "You are a professional evaluation expert. Provide fair, detailed comparisons."}, {"role": "user", "content": prompt}]
 
@@ -388,37 +362,7 @@ Provide your evaluation in the following JSON format:
             ReferenceEvaluationResult containing score and analysis
         """
 
-        type_descriptions = {
-            "factuality": "Compare the factual accuracy and correctness of information",
-            "completeness": "Assess how completely the response covers the reference content",
-            "style_match": "Evaluate how well the writing style and tone match the reference",
-        }
-
-        tolerance_descriptions = {
-            "strict": "Require exact matches and perfect alignment",
-            "moderate": "Allow reasonable variations while maintaining core accuracy",
-            "loose": "Accept substantial variations as long as general meaning is preserved",
-        }
-
-        prompt = f"""You are an expert evaluator. Compare the following response against the reference and evaluate based on {evaluation_type}.
-
-REFERENCE (Gold Standard):
-{reference}
-
-RESPONSE TO EVALUATE:
-{response}
-
-EVALUATION TYPE: {type_descriptions.get(evaluation_type, evaluation_type)}
-TOLERANCE LEVEL: {tolerance_descriptions.get(tolerance, tolerance)}
-
-Please provide your evaluation in the following JSON format:
-{{
-    "similarity_score": overall_similarity_0_to_1,
-    "missing_elements": ["element1", "element2", ...],
-    "extra_elements": ["element1", "element2", ...],
-    "factual_errors": ["error1", "error2", ...],
-    "reasoning": "detailed comparison reasoning"
-}}"""
+        prompt = self._render_template("reference", response=response, reference=reference, evaluation_type=evaluation_type, tolerance=tolerance)
 
         messages = [{"role": "system", "content": "You are a professional evaluation expert. Provide thorough, accurate assessments against reference standards."}, {"role": "user", "content": prompt}]
 

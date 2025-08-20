@@ -142,9 +142,8 @@ class OllamaJudge(BaseJudge):
                 if response.status == 200:
                     result = await response.json()
                     return result.get("message", {}).get("content", "")
-                else:
-                    error_text = await response.text()
-                    raise Exception(f"OLLAMA API call failed with status {response.status}: {error_text}")
+                error_text = await response.text()
+                raise Exception(f"OLLAMA API call failed with status {response.status}: {error_text}")
 
         except aiohttp.ClientError as e:
             raise Exception(f"OLLAMA API call failed: {e}")
@@ -173,39 +172,7 @@ class OllamaJudge(BaseJudge):
         criteria_text = self._format_criteria(criteria)
         rubric_text = self._format_rubric(rubric)
 
-        context_section = f"\n\nCONTEXT:\n{context}" if context else ""
-
-        cot_instruction = "Please think step by step and provide detailed reasoning for each score before giving your final scores." if use_cot else ""
-
-        prompt = f"""You are an expert evaluator. Assess the following response based on the given criteria.
-
-{context_section}
-
-RESPONSE TO EVALUATE:
-{response}
-
-EVALUATION CRITERIA:
-{criteria_text}
-
-SCORING RUBRIC:
-{rubric_text}
-
-{cot_instruction}
-
-Please provide your evaluation in the following JSON format:
-{{
-    "reasoning": {{
-        "criterion_name": "detailed reasoning for this criterion",
-        ...
-    }},
-    "scores": {{
-        "criterion_name": score_value,
-        ...
-    }},
-    "confidence": confidence_level_0_to_1
-}}
-
-Ensure all scores are within the specified scale for each criterion."""
+        prompt = self._render_template("evaluation", context=context, response=response, criteria_text=criteria_text, rubric_text=rubric_text, use_cot=use_cot)
 
         messages = [{"role": "system", "content": "You are a professional evaluation expert. Provide thorough, unbiased assessments."}, {"role": "user", "content": prompt}]
 
@@ -241,34 +208,8 @@ Ensure all scores are within the specified scale for each criterion."""
             original_order = False
 
         criteria_text = self._format_criteria(criteria)
-        context_section = f"\n\nCONTEXT:\n{context}" if context else ""
 
-        prompt = f"""You are an expert evaluator. Compare the following two responses and determine which is better.
-
-{context_section}
-
-RESPONSE A:
-{response_a}
-
-RESPONSE B:
-{response_b}
-
-COMPARISON CRITERIA:
-{criteria_text}
-
-Please provide a detailed comparison and determine the winner. Consider each criterion carefully.
-
-Provide your evaluation in the following JSON format:
-{{
-    "winner": "A" | "B" | "tie",
-    "confidence_score": confidence_level_0_to_1,
-    "reasoning": "detailed comparison reasoning",
-    "criterion_scores": {{
-        "criterion_name": "A" | "B" | "tie",
-        ...
-    }},
-    "margin": strength_of_preference_0_to_1
-}}"""
+        prompt = self._render_template("pairwise", context=context, response_a=response_a, response_b=response_b, criteria_text=criteria_text)
 
         messages = [{"role": "system", "content": "You are a professional evaluation expert. Provide fair, detailed comparisons."}, {"role": "user", "content": prompt}]
 
@@ -444,37 +385,7 @@ Provide your evaluation in the following JSON format:
             ReferenceEvaluationResult containing score and analysis
         """
 
-        type_descriptions = {
-            "factuality": "Compare the factual accuracy and correctness of information",
-            "completeness": "Assess how completely the response covers the reference content",
-            "style_match": "Evaluate how well the writing style and tone match the reference",
-        }
-
-        tolerance_descriptions = {
-            "strict": "Require exact matches and perfect alignment",
-            "moderate": "Allow reasonable variations while maintaining core accuracy",
-            "loose": "Accept substantial variations as long as general meaning is preserved",
-        }
-
-        prompt = f"""You are an expert evaluator. Compare the following response against the reference and evaluate based on {evaluation_type}.
-
-REFERENCE (Gold Standard):
-{reference}
-
-RESPONSE TO EVALUATE:
-{response}
-
-EVALUATION TYPE: {type_descriptions.get(evaluation_type, evaluation_type)}
-TOLERANCE LEVEL: {tolerance_descriptions.get(tolerance, tolerance)}
-
-Please provide your evaluation in the following JSON format:
-{{
-    "similarity_score": overall_similarity_0_to_1,
-    "missing_elements": ["element1", "element2", ...],
-    "extra_elements": ["element1", "element2", ...],
-    "factual_errors": ["error1", "error2", ...],
-    "reasoning": "detailed comparison reasoning"
-}}"""
+        prompt = self._render_template("reference", response=response, reference=reference, evaluation_type=evaluation_type, tolerance=tolerance)
 
         messages = [{"role": "system", "content": "You are a professional evaluation expert. Provide thorough, accurate assessments against reference standards."}, {"role": "user", "content": prompt}]
 
