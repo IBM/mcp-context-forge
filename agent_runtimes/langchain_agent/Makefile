@@ -18,6 +18,22 @@ install-dev: ## Install development dependencies
 	pip install pre-commit
 	pre-commit install
 
+# LLM Provider Dependencies
+install-azure: ## Install Azure OpenAI dependencies
+	pip install -e ".[azure]"
+
+install-bedrock: ## Install AWS Bedrock dependencies
+	pip install -e ".[bedrock]"
+
+install-ollama: ## Install OLLAMA dependencies
+	pip install -e ".[ollama]"
+
+install-anthropic: ## Install Anthropic dependencies
+	pip install -e ".[anthropic]"
+
+install-all-providers: ## Install all LLM provider dependencies
+	pip install -e ".[all-providers]"
+
 setup-env: ## Setup environment from template
 	@if [ ! -f .env ]; then \
 		echo "Creating .env from template..."; \
@@ -128,6 +144,27 @@ start: run ## Alias for run command
 # Environment Management
 env-example: ## Show example environment configuration
 	@python3 -c "from config import get_example_env; print(get_example_env())"
+
+# Provider-specific environment setup
+setup-azure: ## Setup Azure OpenAI environment
+	@echo "Setting up Azure OpenAI environment..."
+	@cp examples/azure-openai.env .env
+	@echo "✅ Created .env for Azure OpenAI - please edit with your credentials"
+
+setup-bedrock: ## Setup AWS Bedrock environment
+	@echo "Setting up AWS Bedrock environment..."
+	@cp examples/aws-bedrock.env .env
+	@echo "✅ Created .env for AWS Bedrock - please edit with your credentials"
+
+setup-ollama: ## Setup OLLAMA environment
+	@echo "Setting up OLLAMA environment..."
+	@cp examples/ollama.env .env
+	@echo "✅ Created .env for OLLAMA - please edit with your model preferences"
+
+setup-anthropic: ## Setup Anthropic environment
+	@echo "Setting up Anthropic environment..."
+	@cp examples/anthropic.env .env
+	@echo "✅ Created .env for Anthropic - please edit with your API key"
 
 # Security
 security: ## Run security checks

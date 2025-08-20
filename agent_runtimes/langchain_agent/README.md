@@ -127,18 +127,91 @@ make status
 make health ready tools
 ```
 
-### Environment Configuration
+## 🤖 Multi-LLM Provider Support
 
-Set your environment variables in `.env`:
+The agent supports multiple LLM providers. Choose your preferred provider and configure accordingly:
+
+### OpenAI (Default)
 ```bash
-# Required
-OPENAI_API_KEY=your-openai-api-key-here
+# Setup and install
+make setup-env install-dev
+
+# Configure .env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your-openai-api-key
+DEFAULT_MODEL=gpt-4o-mini
+```
+
+### Azure OpenAI
+```bash
+# Setup Azure-specific environment
+make setup-azure install-azure
+
+# Configure .env
+LLM_PROVIDER=azure
+AZURE_OPENAI_API_KEY=your-azure-api-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_DEPLOYMENT_NAME=your-gpt-4-deployment
+DEFAULT_MODEL=your-gpt-4-deployment
+```
+
+### AWS Bedrock
+```bash
+# Setup Bedrock-specific environment
+make setup-bedrock install-bedrock
+
+# Configure .env
+LLM_PROVIDER=bedrock
+AWS_ACCESS_KEY_ID=your-access-key-id
+AWS_SECRET_ACCESS_KEY=your-secret-access-key
+BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+DEFAULT_MODEL=claude-3-sonnet
+```
+
+### OLLAMA (Local/Self-hosted)
+```bash
+# Setup OLLAMA environment
+make setup-ollama install-ollama
+
+# Start OLLAMA (if not running)
+ollama serve
+
+# Pull a model
+ollama pull llama2:7b
+
+# Configure .env
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=llama2:7b
+OLLAMA_BASE_URL=http://localhost:11434
+DEFAULT_MODEL=llama2:7b
+```
+
+### Anthropic Claude
+```bash
+# Setup Anthropic environment
+make setup-anthropic install-anthropic
+
+# Configure .env
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=your-anthropic-api-key
+DEFAULT_MODEL=claude-3-sonnet-20240229
+```
+
+### Common Configuration
+All providers support these settings:
+```bash
+# Gateway Settings (required)
+MCP_GATEWAY_URL=http://localhost:4444
 MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
 
-# Optional
-TOOLS=list-users,books-search  # Tool allowlist for production
-DEFAULT_MODEL=gpt-4o-mini
+# Agent Settings
 TEMPERATURE=0.7
+MAX_ITERATIONS=10
+STREAMING_ENABLED=true
+REQUEST_TIMEOUT=30
+
+# Tool Settings (optional)
+TOOLS=list-users,books-search  # Tool allowlist for production
 ```
 
 ## 🧪 Testing & Validation

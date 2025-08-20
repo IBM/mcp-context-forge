@@ -116,7 +116,7 @@
 
 #### Core Dependencies
 - FastAPI ≥0.104.0
-- LangChain ≥0.1.0  
+- LangChain ≥0.1.0
 - OpenAI ≥1.0.0
 - Pydantic ≥2.5.0
 

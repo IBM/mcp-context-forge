@@ -17,22 +17,22 @@ def test_env():
     """Set up test environment variables."""
     env_vars = {
         "OPENAI_API_KEY": "test-key",
-        "MCPGATEWAY_BEARER_TOKEN": "test-token", 
+        "MCPGATEWAY_BEARER_TOKEN": "test-token",
         "MCP_GATEWAY_URL": "http://localhost:4444",
         "DEFAULT_MODEL": "gpt-4o-mini",
         "TEMPERATURE": "0.7",
         "MAX_ITERATIONS": "5",
         "DEBUG_MODE": "true",
     }
-    
+
     # Store original values
     original_values = {}
     for key, value in env_vars.items():
         original_values[key] = os.environ.get(key)
         os.environ[key] = value
-    
+
     yield env_vars
-    
+
     # Restore original values
     for key, original_value in original_values.items():
         if original_value is None:
@@ -60,7 +60,7 @@ def mock_mcp_client():
     return client
 
 
-@pytest.fixture  
+@pytest.fixture
 def sample_tools():
     """Sample tools data for testing."""
     return [
@@ -76,7 +76,7 @@ def sample_tools():
             }
         },
         {
-            "id": "test-tool-2", 
+            "id": "test-tool-2",
             "name": "another_tool",
             "description": "Another test tool",
             "input_schema": {
@@ -110,7 +110,7 @@ def sample_a2a_request():
         "id": "test-id",
         "method": "invoke",
         "params": {
-            "tool": "test_tool", 
+            "tool": "test_tool",
             "args": {"param": "test_value"}
         }
     }

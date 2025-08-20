@@ -29,7 +29,7 @@ COPY README.md ./
 RUN pip install --upgrade pip && \
     pip install -e .
 
-# Production stage  
+# Production stage
 FROM python:3.11-slim as production
 
 # Set environment variables

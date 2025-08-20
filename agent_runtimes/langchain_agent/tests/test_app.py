@@ -26,7 +26,7 @@ class TestHealthEndpoints:
         assert "timestamp" in data
 
     def test_ready_endpoint(self, client):
-        """Test the readiness check endpoint.""" 
+        """Test the readiness check endpoint."""
         response = client.get("/ready")
         assert response.status_code == 200
         data = response.json()
@@ -62,13 +62,13 @@ class TestChatCompletions:
                 ]
             }
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "choices" in data
         assert len(data["choices"]) > 0
 
-    @patch("agent_runtimes.langchain_agent.app.agent")  
+    @patch("agent_runtimes.langchain_agent.app.agent")
     def test_chat_completions_with_tools(self, mock_agent, client):
         """Test chat completion with tool usage."""
         # Mock agent response with tool usage
@@ -80,7 +80,7 @@ class TestChatCompletions:
         }
 
         response = client.post(
-            "/v1/chat/completions", 
+            "/v1/chat/completions",
             json={
                 "model": "gpt-4o-mini",
                 "messages": [
@@ -88,7 +88,7 @@ class TestChatCompletions:
                 ]
             }
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "choices" in data
@@ -104,12 +104,12 @@ class TestA2AEndpoint:
             "/a2a",
             json={
                 "jsonrpc": "2.0",
-                "id": "1", 
+                "id": "1",
                 "method": "list_tools",
                 "params": {}
             }
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "jsonrpc" in data
@@ -127,14 +127,14 @@ class TestA2AEndpoint:
             json={
                 "jsonrpc": "2.0",
                 "id": "1",
-                "method": "invoke", 
+                "method": "invoke",
                 "params": {
                     "tool": "test_tool",
                     "args": {"param": "value"}
                 }
             }
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "result" in data
@@ -144,13 +144,13 @@ class TestA2AEndpoint:
         response = client.post(
             "/a2a",
             json={
-                "jsonrpc": "2.0", 
+                "jsonrpc": "2.0",
                 "id": "1",
                 "method": "invalid_method",
                 "params": {}
             }
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "error" in data

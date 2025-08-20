@@ -71,14 +71,49 @@ class ToolListResponse(BaseModel):
 
 # Agent Configuration Models
 class AgentConfig(BaseModel):
+    # MCP Gateway Configuration
     mcp_gateway_url: str = Field(..., description="MCP Gateway URL")
     gateway_bearer_token: Optional[str] = Field(None, description="Gateway authentication token")
     tools_allowlist: Optional[List[str]] = Field(None, description="List of allowed tool IDs")
+
+    # LLM Provider Configuration
+    llm_provider: str = Field("openai", description="LLM provider (openai, azure, bedrock, ollama, anthropic)")
     default_model: str = Field("gpt-4o-mini", description="Default model to use")
+
+    # OpenAI Configuration
+    openai_api_key: Optional[str] = Field(None, description="OpenAI API key")
+    openai_base_url: Optional[str] = Field(None, description="Custom OpenAI base URL")
+    openai_organization: Optional[str] = Field(None, description="OpenAI organization")
+
+    # Azure OpenAI Configuration
+    azure_openai_api_key: Optional[str] = Field(None, description="Azure OpenAI API key")
+    azure_openai_endpoint: Optional[str] = Field(None, description="Azure OpenAI endpoint")
+    azure_openai_api_version: str = Field("2024-02-15-preview", description="Azure OpenAI API version")
+    azure_deployment_name: Optional[str] = Field(None, description="Azure deployment name")
+
+    # AWS Bedrock Configuration
+    aws_access_key_id: Optional[str] = Field(None, description="AWS access key ID")
+    aws_secret_access_key: Optional[str] = Field(None, description="AWS secret access key")
+    aws_region: str = Field("us-east-1", description="AWS region")
+    bedrock_model_id: Optional[str] = Field(None, description="Bedrock model ID")
+
+    # OLLAMA Configuration
+    ollama_base_url: str = Field("http://localhost:11434", description="OLLAMA base URL")
+    ollama_model: Optional[str] = Field(None, description="OLLAMA model name")
+
+    # Anthropic Configuration
+    anthropic_api_key: Optional[str] = Field(None, description="Anthropic API key")
+
+    # Agent Configuration
     max_iterations: int = Field(10, description="Maximum agent iterations")
     temperature: float = Field(0.7, description="Default temperature")
     streaming_enabled: bool = Field(True, description="Enable streaming responses")
     debug_mode: bool = Field(False, description="Enable debug logging")
+
+    # Performance Configuration
+    request_timeout: int = Field(30, description="Request timeout in seconds")
+    max_tokens: Optional[int] = Field(None, description="Maximum tokens per response")
+    top_p: Optional[float] = Field(None, description="Top-p sampling parameter")
 
 # Tool Invocation Models
 class ToolInvocationRequest(BaseModel):

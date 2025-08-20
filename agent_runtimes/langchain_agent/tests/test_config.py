@@ -60,7 +60,7 @@ class TestGetSettings:
             "STREAMING_ENABLED": "false",
             "TOOLS": "tool1,tool2"
         }
-        
+
         with patch.dict(os.environ, env_vars, clear=True):
             settings = get_settings()
             assert settings.mcp_gateway_url == "http://example.com:5555"
@@ -80,7 +80,7 @@ class TestValidateEnvironment:
             "OPENAI_API_KEY": "test-key",
             "MCPGATEWAY_BEARER_TOKEN": "test-token"
         }
-        
+
         with patch.dict(os.environ, env_vars, clear=True):
             result = validate_environment()
             assert result["valid"] is True
@@ -96,7 +96,7 @@ class TestValidateEnvironment:
     def test_missing_gateway_token(self):
         """Test validation with missing gateway token."""
         env_vars = {"OPENAI_API_KEY": "test-key"}
-        
+
         with patch.dict(os.environ, env_vars, clear=True):
             result = validate_environment()
             assert any("MCPGATEWAY_BEARER_TOKEN" in warning for warning in result["warnings"])
@@ -108,7 +108,7 @@ class TestValidateEnvironment:
             "MAX_ITERATIONS": "invalid",
             "TEMPERATURE": "not-a-number"
         }
-        
+
         with patch.dict(os.environ, env_vars, clear=True):
             result = validate_environment()
             assert len(result["warnings"]) >= 2

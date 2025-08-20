@@ -52,7 +52,7 @@ A2A_RESPONSE=$(curl -s -X POST http://localhost:8000/a2a \
   -d '{
     "jsonrpc": "2.0",
     "id": "1",
-    "method": "list_tools", 
+    "method": "list_tools",
     "params": {}
   }' | jq -r '.result.tools | length // "error"')
 
