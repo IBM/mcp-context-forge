@@ -196,24 +196,6 @@ models:
         consistency_level: "high"
 
   bedrock:
-    claude-4-1-bedrock:
-      provider: "bedrock"
-      model_id: "anthropic.claude-3-5-sonnet-20241022-v2:0"
-      model_name: "claude-4.1"
-      aws_access_key_env: "AWS_ACCESS_KEY_ID"
-      aws_secret_key_env: "AWS_SECRET_ACCESS_KEY"
-      aws_region_env: "AWS_REGION"
-      default_temperature: 0.3
-      max_tokens: 4000
-      capabilities:
-        supports_cot: true
-        supports_pairwise: true
-        supports_ranking: true
-        supports_reference: true
-        max_context_length: 200000
-        optimal_temperature: 0.3
-        consistency_level: "very_high"
-
     claude-3-sonnet-bedrock:
       provider: "bedrock"
       model_id: "anthropic.claude-3-sonnet-20240229-v1:0"
@@ -299,124 +281,19 @@ models:
         optimal_temperature: 0.3
         consistency_level: "medium"
 
-  gemini:
-    gemini-1-5-pro:
-      provider: "gemini"
-      model_name: "gemini-1.5-pro-latest"
-      api_key_env: "GOOGLE_API_KEY"
-      default_temperature: 0.3
-      max_tokens: 4000
-      capabilities:
-        supports_cot: true
-        supports_pairwise: true
-        supports_ranking: true
-        supports_reference: true
-        max_context_length: 2000000
-        optimal_temperature: 0.3
-        consistency_level: "high"
-
-    gemini-1-5-flash:
-      provider: "gemini"
-      model_name: "gemini-1.5-flash-latest"
-      api_key_env: "GOOGLE_API_KEY"
-      default_temperature: 0.3
-      max_tokens: 3000
-      capabilities:
-        supports_cot: true
-        supports_pairwise: true
-        supports_ranking: true
-        supports_reference: true
-        max_context_length: 1000000
-        optimal_temperature: 0.3
-        consistency_level: "high"
-
-    gemini-pro:
-      provider: "gemini"
-      model_name: "gemini-pro"
-      api_key_env: "GOOGLE_API_KEY"
-      default_temperature: 0.3
-      max_tokens: 2000
-      capabilities:
-        supports_cot: true
-        supports_pairwise: true
-        supports_ranking: true
-        supports_reference: true
-        max_context_length: 30720
-        optimal_temperature: 0.3
-        consistency_level: "high"
-
-  watsonx:
-    llama-3-1-70b-watsonx:
-      provider: "watsonx"
-      model_id: "meta-llama/llama-3-1-70b-instruct"
-      model_name: "llama-3.1-70b"
-      api_key_env: "WATSONX_API_KEY"
-      project_id_env: "WATSONX_PROJECT_ID"
-      url_env: "WATSONX_URL"
-      default_temperature: 0.3
-      max_tokens: 2000
-      capabilities:
-        supports_cot: true
-        supports_pairwise: true
-        supports_ranking: true
-        supports_reference: true
-        max_context_length: 128000
-        optimal_temperature: 0.3
-        consistency_level: "high"
-
-    granite-3-0-8b-watsonx:
-      provider: "watsonx"
-      model_id: "ibm/granite-3-0-8b-instruct"
-      model_name: "granite-3.0-8b"
-      api_key_env: "WATSONX_API_KEY"
-      project_id_env: "WATSONX_PROJECT_ID"
-      url_env: "WATSONX_URL"
-      default_temperature: 0.3
-      max_tokens: 2000
-      capabilities:
-        supports_cot: true
-        supports_pairwise: true
-        supports_ranking: true
-        supports_reference: true
-        max_context_length: 8192
-        optimal_temperature: 0.3
-        consistency_level: "high"
-
-    mixtral-8x7b-watsonx:
-      provider: "watsonx"
-      model_id: "mistralai/mixtral-8x7b-instruct-v01"
-      model_name: "mixtral-8x7b"
-      api_key_env: "WATSONX_API_KEY"
-      project_id_env: "WATSONX_PROJECT_ID"
-      url_env: "WATSONX_URL"
-      default_temperature: 0.3
-      max_tokens: 2000
-      capabilities:
-        supports_cot: true
-        supports_pairwise: true
-        supports_ranking: true
-        supports_reference: true
-        max_context_length: 32768
-        optimal_temperature: 0.3
-        consistency_level: "high"
-
 # Default model selection preferences
 defaults:
-  primary_judge: "claude-4-1-bedrock"  # Latest Claude 4.1 on AWS Bedrock
-  fallback_judge: "gpt-4o-mini"
-  fast_judge: "gemini-1-5-flash"  # Fast Google model
-  consensus_judges: ["claude-4-1-bedrock", "gemini-1-5-pro", "gpt-4", "llama-3-1-70b-watsonx"]  # Multi-provider consensus
+  primary_judge: "gpt-4o-mini"  # Updated to match agent_runtimes default
+  fallback_judge: "gpt-3.5-turbo"
+  fast_judge: "gpt-4o-mini"  # Fast and efficient
+  consensus_judges: ["gpt-4", "claude-3-sonnet", "gpt-4-turbo"]  # Multi-provider consensus
 
 # Model usage recommendations
 recommendations:
-  high_stakes_evaluation: ["claude-4-1-bedrock", "gemini-1-5-pro", "gpt-4-turbo", "claude-3-opus"]
-  batch_processing: ["gemini-1-5-flash", "gpt-4o-mini", "claude-3-haiku", "granite-3-0-8b-watsonx"]
-  complex_reasoning: ["claude-4-1-bedrock", "gemini-1-5-pro", "llama-3-1-70b-watsonx", "claude-3-opus"]
-  cost_effective: ["gemini-1-5-flash", "gpt-4o-mini", "claude-3-haiku", "granite-3-0-8b-watsonx"]
-  multilingual: ["gemini-1-5-pro", "claude-4-1-bedrock", "gpt-4", "claude-3-sonnet"]
-  open_source: ["llama-3-1-70b-watsonx", "mixtral-8x7b-watsonx", "llama3-8b", "mistral-7b"]
-  cloud_agnostic: ["claude-4-1-bedrock", "gemini-1-5-pro", "llama-3-1-70b-watsonx", "gpt-4-azure"]
-  enterprise_grade: ["claude-4-1-bedrock", "llama-3-1-70b-watsonx", "granite-3-0-8b-watsonx", "gpt-4-azure"]
-  google_ecosystem: ["gemini-1-5-pro", "gemini-1-5-flash", "gemini-pro"]
-  ibm_ecosystem: ["llama-3-1-70b-watsonx", "granite-3-0-8b-watsonx", "mixtral-8x7b-watsonx"]
-  aws_ecosystem: ["claude-4-1-bedrock", "claude-3-sonnet-bedrock", "claude-3-haiku-bedrock"]
+  high_stakes_evaluation: ["gpt-4", "claude-3-opus", "gpt-4-turbo"]
+  batch_processing: ["gpt-4o-mini", "gpt-3.5-turbo", "claude-3-haiku"]
+  complex_reasoning: ["gpt-4-turbo", "claude-3-opus", "gpt-4"]
+  cost_effective: ["gpt-4o-mini", "claude-3-haiku", "llama3-8b"]
+  multilingual: ["gpt-4", "claude-3-sonnet", "gpt-4-turbo"]
+  open_source: ["llama3-8b", "mistral-7b", "llama2-7b"]
+  cloud_agnostic: ["claude-3-sonnet-bedrock", "gpt-4-azure"]

@@ -63,6 +63,30 @@ benchmark = [
     "memory-profiler>=0.61.0",
     "psutil>=5.9.0",
 ]
+anthropic = [
+    "anthropic>=0.18.0",
+]
+aws = [
+    "boto3>=1.26.0",
+    "botocore>=1.29.0",
+]
+ollama = [
+    "aiohttp>=3.8.0",
+]
+gemini = [
+    "google-generativeai>=0.3.0",
+]
+watsonx = [
+    "ibm-watsonx-ai>=1.0.0",
+]
+all = [
+    "anthropic>=0.18.0",
+    "boto3>=1.26.0",
+    "botocore>=1.29.0",
+    "aiohttp>=3.8.0",
+    "google-generativeai>=0.3.0",
+    "ibm-watsonx-ai>=1.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/contextforge/mcp-context-forge"

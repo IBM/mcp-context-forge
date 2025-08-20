@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""OpenAI judge implementation for LLM-as-a-judge evaluation."""
+"""IBM Watsonx.ai judge implementation for LLM-as-a-judge evaluation."""
 
 # Standard
 import asyncio
@@ -9,8 +9,17 @@ import os
 import secrets
 from typing import Any, Dict, List, Optional
 
+try:
+    # Third-Party
+    from ibm_watsonx_ai import Credentials
+    from ibm_watsonx_ai.foundation_models import Model
+    from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
+except ImportError:
+    Model = None
+    GenParams = None
+    Credentials = None
+
 # Third-Party
-from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Local
@@ -25,45 +34,55 @@ from .base_judge import (
 )
 
 
-class OpenAIJudge(BaseJudge):
-    """Judge implementation using OpenAI API."""
+class WatsonxJudge(BaseJudge):
+    """Judge implementation using IBM Watsonx.ai."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
-        """Initialize OpenAI judge.
+        """Initialize Watsonx.ai judge.
 
         Args:
-            config: Configuration dictionary with OpenAI settings
+            config: Configuration dictionary with Watsonx.ai settings
 
         Raises:
-            ValueError: If API key not found in environment
+            ValueError: If required environment variables not found or watsonx library not available
         """
         super().__init__(config)
         self.logger = logging.getLogger(__name__)
 
+        if Model is None:
+            raise ValueError("IBM Watsonx.ai library not installed. Please install with: pip install ibm-watsonx-ai")
+
+        # Get Watsonx.ai credentials
         api_key = os.getenv(config["api_key_env"])
+        project_id = os.getenv(config["project_id_env"])
+        url = os.getenv(config.get("url_env", "WATSONX_URL"), "https://us-south.ml.cloud.ibm.com")
+
         if not api_key:
             raise ValueError(f"API key not found in environment variable: {config['api_key_env']}")
+        if not project_id:
+            raise ValueError(f"Project ID not found in environment variable: {config['project_id_env']}")
 
-        # Support for organization (updated to match agent_runtimes)
-        organization = None
-        if config.get("organization_env"):
-            organization = os.getenv(config["organization_env"])
-        elif config.get("organization"):  # Fallback for old config
-            organization = config["organization"]
+        self.credentials = Credentials(
+            url=url,
+            api_key=api_key,
+        )
 
-        # Support for custom base URL
-        base_url = None
-        if config.get("base_url_env"):
-            base_url = os.getenv(config["base_url_env"])
-
-        self.client = AsyncOpenAI(api_key=api_key, organization=organization, base_url=base_url)
+        self.project_id = project_id
+        self.model_id = config["model_id"]
         self.model = config["model_name"]
 
-        self.logger.debug(f"🔧 Initialized OpenAI judge: {self.model}")
-        if base_url:
-            self.logger.debug(f"   Using custom base URL: {base_url}")
-        if organization:
-            self.logger.debug(f"   Using organization: {organization}")
+        # Initialize the Watsonx model
+        self.watsonx_model = Model(
+            model_id=self.model_id,
+            params={GenParams.DECODING_METHOD: "greedy", GenParams.MAX_NEW_TOKENS: self.max_tokens, GenParams.TEMPERATURE: self.temperature, GenParams.STOP_SEQUENCES: ["\n\n"]},
+            credentials=self.credentials,
+            project_id=self.project_id,
+        )
+
+        self.logger.debug(f"🔧 Initialized Watsonx.ai judge: {self.model}")
+        self.logger.debug(f"   Model ID: {self.model_id}")
+        self.logger.debug(f"   Project ID: {project_id}")
+        self.logger.debug(f"   URL: {url}")
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def _make_api_call(self, messages: List[Dict[str, str]], temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> str:
@@ -77,20 +96,52 @@ class OpenAIJudge(BaseJudge):
         Returns:
             Response content from the API
         """
-        self.logger.debug(f"🔗 Making OpenAI API call to {self.model}")
+        self.logger.debug(f"🔗 Making Watsonx.ai API call to {self.model}")
         self.logger.debug(f"   Messages: {len(messages)}, Temperature: {temperature or self.temperature}, Max tokens: {max_tokens or self.max_tokens}")
 
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=temperature or self.temperature,
-            max_tokens=max_tokens or self.max_tokens,
-        )
+        # Convert messages to single prompt for Watsonx.ai
+        prompt_parts = []
+        for msg in messages:
+            if msg["role"] == "system":
+                prompt_parts.append(f"System: {msg['content']}")
+            elif msg["role"] == "user":
+                prompt_parts.append(f"Human: {msg['content']}")
+            elif msg["role"] == "assistant":
+                prompt_parts.append(f"Assistant: {msg['content']}")
 
-        result = response.choices[0].message.content or ""
-        self.logger.debug(f"✅ OpenAI API response received - Length: {len(result)} chars")
+        prompt = "\n\n".join(prompt_parts) + "\n\nAssistant:"
 
-        return result
+        # Update parameters for this call
+        params = {
+            GenParams.DECODING_METHOD: "greedy",
+            GenParams.MAX_NEW_TOKENS: max_tokens or self.max_tokens,
+            GenParams.TEMPERATURE: temperature or self.temperature,
+            GenParams.STOP_SEQUENCES: ["\n\n", "Human:", "System:"],
+        }
+
+        try:
+            # Run in thread pool since Watsonx.ai library is sync
+            # Standard
+            import concurrent.futures
+
+            def make_request():
+                response = self.watsonx_model.generate_text(prompt=prompt, params=params)
+                return response if response else ""
+
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                result = await loop.run_in_executor(executor, make_request)
+
+            self.logger.debug(f"✅ Watsonx.ai API response received - Length: {len(result)} chars")
+
+            # Log the actual model response (truncated)
+            truncated_response = result[:200] + "..." if len(result) > 200 else result
+            self.logger.debug(f"   💬 Model response: {truncated_response}")
+
+            return result
+
+        except Exception as e:
+            raise Exception(f"Watsonx.ai API call failed: {e}")
 
     async def evaluate_response(
         self,
@@ -100,7 +151,7 @@ class OpenAIJudge(BaseJudge):
         context: Optional[str] = None,
         use_cot: bool = True,
     ) -> EvaluationResult:
-        """Evaluate a single response using OpenAI.
+        """Evaluate a single response using Watsonx.ai.
 
         Args:
             response: Text response to evaluate
@@ -169,7 +220,7 @@ Ensure all scores are within the specified scale for each criterion."""
                 reasoning=result_data["reasoning"],
                 overall_score=overall_score,
                 confidence=result_data.get("confidence", 0.8),
-                metadata={"model": self.model, "temperature": self.temperature, "use_cot": use_cot},
+                metadata={"model": self.model, "model_id": self.model_id, "temperature": self.temperature, "use_cot": use_cot},
             )
 
         except (json.JSONDecodeError, KeyError) as e:
@@ -190,7 +241,7 @@ Ensure all scores are within the specified scale for each criterion."""
         context: Optional[str] = None,
         position_bias_mitigation: bool = True,
     ) -> PairwiseResult:
-        """Compare two responses using OpenAI.
+        """Compare two responses using Watsonx.ai.
 
         Args:
             response_a: First response
@@ -281,7 +332,7 @@ Provide your evaluation in the following JSON format:
         context: Optional[str] = None,
         ranking_method: str = "tournament",
     ) -> RankingResult:
-        """Rank multiple responses using OpenAI.
+        """Rank multiple responses using Watsonx.ai.
 
         Args:
             responses: List of response strings to rank
@@ -308,23 +359,11 @@ Provide your evaluation in the following JSON format:
         raise ValueError(f"Unknown ranking method: {ranking_method}")
 
     async def _rank_by_scoring(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank by scoring each response individually.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: List of evaluation criteria for scoring
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult with responses ranked by individual scores
-        """
-
-        # Create a simple rubric for ranking
+        """Rank by scoring each response individually."""
         rubric = EvaluationRubric(criteria=criteria, scale_description={"1": "Poor", "2": "Below Average", "3": "Average", "4": "Good", "5": "Excellent"})
 
         # Evaluate each response
         evaluation_tasks = [self.evaluate_response(response, criteria, rubric, context) for response in responses]
-
         evaluations = await asyncio.gather(*evaluation_tasks)
 
         # Sort by overall score
@@ -334,20 +373,10 @@ Provide your evaluation in the following JSON format:
 
         ranked_results.sort(key=lambda x: x["score"], reverse=True)
 
-        return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")  # Single judge, perfectly consistent
+        return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")
 
     async def _rank_by_tournament(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using tournament-style pairwise comparisons.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: List of evaluation criteria for comparison
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult with responses ranked by tournament wins
-        """
-
+        """Rank using tournament-style pairwise comparisons."""
         n = len(responses)
         wins = [0] * n
 
@@ -377,7 +406,7 @@ Provide your evaluation in the following JSON format:
 
         ranked_results = []
         for rank, idx in enumerate(ranked_indices):
-            ranked_results.append({"response_index": idx, "response": responses[idx], "score": wins[idx] / (n - 1), "wins": wins[idx], "rank": rank + 1})  # Normalize to 0-1
+            ranked_results.append({"response_index": idx, "response": responses[idx], "score": wins[idx] / (n - 1), "wins": wins[idx], "rank": rank + 1})
 
         # Calculate consistency (simplified)
         consistency = 1.0 - (sum(abs(wins[i] - wins[j]) for i in range(n) for j in range(i + 1, n)) / (n * (n - 1) / 2)) / n
@@ -385,19 +414,8 @@ Provide your evaluation in the following JSON format:
         return RankingResult(rankings=ranked_results, consistency_score=max(0.0, consistency), reasoning="Ranked by tournament-style pairwise comparisons")
 
     async def _rank_by_round_robin(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using round-robin pairwise comparisons.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: List of evaluation criteria for comparison
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult with responses ranked by round-robin comparisons
-        """
-
+        """Rank using round-robin pairwise comparisons."""
         # For now, implement same as tournament
-        # In a full implementation, this could include multiple rounds
         return await self._rank_by_tournament(responses, criteria, context)
 
     async def evaluate_with_reference(
@@ -407,7 +425,7 @@ Provide your evaluation in the following JSON format:
         evaluation_type: str = "factuality",
         tolerance: str = "moderate",
     ) -> ReferenceEvaluationResult:
-        """Evaluate response against reference using OpenAI.
+        """Evaluate response against reference using Watsonx.ai.
 
         Args:
             response: Response text to evaluate

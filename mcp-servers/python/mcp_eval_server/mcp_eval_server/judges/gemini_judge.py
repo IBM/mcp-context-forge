@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""OpenAI judge implementation for LLM-as-a-judge evaluation."""
+"""Google Gemini judge implementation for LLM-as-a-judge evaluation."""
 
 # Standard
 import asyncio
@@ -9,8 +9,14 @@ import os
 import secrets
 from typing import Any, Dict, List, Optional
 
+try:
+    # Third-Party
+    import google.generativeai as genai
+    from google.generativeai.types import HarmBlockThreshold, HarmCategory
+except ImportError:
+    genai = None
+
 # Third-Party
-from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Local
@@ -25,45 +31,43 @@ from .base_judge import (
 )
 
 
-class OpenAIJudge(BaseJudge):
-    """Judge implementation using OpenAI API."""
+class GeminiJudge(BaseJudge):
+    """Judge implementation using Google Gemini API."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
-        """Initialize OpenAI judge.
+        """Initialize Gemini judge.
 
         Args:
-            config: Configuration dictionary with OpenAI settings
+            config: Configuration dictionary with Gemini settings
 
         Raises:
-            ValueError: If API key not found in environment
+            ValueError: If API key not found or Gemini library not available
         """
         super().__init__(config)
         self.logger = logging.getLogger(__name__)
+
+        if genai is None:
+            raise ValueError("Google Generative AI library not installed. Please install with: pip install google-generativeai")
 
         api_key = os.getenv(config["api_key_env"])
         if not api_key:
             raise ValueError(f"API key not found in environment variable: {config['api_key_env']}")
 
-        # Support for organization (updated to match agent_runtimes)
-        organization = None
-        if config.get("organization_env"):
-            organization = os.getenv(config["organization_env"])
-        elif config.get("organization"):  # Fallback for old config
-            organization = config["organization"]
+        genai.configure(api_key=api_key)
+        self.model_name = config["model_name"]
 
-        # Support for custom base URL
-        base_url = None
-        if config.get("base_url_env"):
-            base_url = os.getenv(config["base_url_env"])
+        # Initialize the model
+        self.model = genai.GenerativeModel(
+            model_name=self.model_name,
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+        )
 
-        self.client = AsyncOpenAI(api_key=api_key, organization=organization, base_url=base_url)
-        self.model = config["model_name"]
-
-        self.logger.debug(f"🔧 Initialized OpenAI judge: {self.model}")
-        if base_url:
-            self.logger.debug(f"   Using custom base URL: {base_url}")
-        if organization:
-            self.logger.debug(f"   Using organization: {organization}")
+        self.logger.debug(f"🔧 Initialized Gemini judge: {self.model_name}")
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def _make_api_call(self, messages: List[Dict[str, str]], temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> str:
@@ -77,20 +81,50 @@ class OpenAIJudge(BaseJudge):
         Returns:
             Response content from the API
         """
-        self.logger.debug(f"🔗 Making OpenAI API call to {self.model}")
+        self.logger.debug(f"🔗 Making Gemini API call to {self.model_name}")
         self.logger.debug(f"   Messages: {len(messages)}, Temperature: {temperature or self.temperature}, Max tokens: {max_tokens or self.max_tokens}")
 
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
+        # Convert messages to Gemini format
+        prompt_parts = []
+        for msg in messages:
+            if msg["role"] == "system":
+                prompt_parts.append(f"System: {msg['content']}")
+            elif msg["role"] == "user":
+                prompt_parts.append(f"User: {msg['content']}")
+            elif msg["role"] == "assistant":
+                prompt_parts.append(f"Assistant: {msg['content']}")
+
+        prompt = "\n\n".join(prompt_parts)
+
+        # Generation config
+        generation_config = genai.types.GenerationConfig(
             temperature=temperature or self.temperature,
-            max_tokens=max_tokens or self.max_tokens,
+            max_output_tokens=max_tokens or self.max_tokens,
         )
 
-        result = response.choices[0].message.content or ""
-        self.logger.debug(f"✅ OpenAI API response received - Length: {len(result)} chars")
+        try:
+            # Run in thread pool since Google library is sync
+            # Standard
+            import concurrent.futures
 
-        return result
+            def make_request():
+                response = self.model.generate_content(prompt, generation_config=generation_config)
+                return response.text if response.text else ""
+
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                result = await loop.run_in_executor(executor, make_request)
+
+            self.logger.debug(f"✅ Gemini API response received - Length: {len(result)} chars")
+
+            # Log the actual model response (truncated)
+            truncated_response = result[:200] + "..." if len(result) > 200 else result
+            self.logger.debug(f"   💬 Model response: {truncated_response}")
+
+            return result
+
+        except Exception as e:
+            raise Exception(f"Gemini API call failed: {e}")
 
     async def evaluate_response(
         self,
@@ -100,7 +134,7 @@ class OpenAIJudge(BaseJudge):
         context: Optional[str] = None,
         use_cot: bool = True,
     ) -> EvaluationResult:
-        """Evaluate a single response using OpenAI.
+        """Evaluate a single response using Gemini.
 
         Args:
             response: Text response to evaluate
@@ -169,7 +203,7 @@ Ensure all scores are within the specified scale for each criterion."""
                 reasoning=result_data["reasoning"],
                 overall_score=overall_score,
                 confidence=result_data.get("confidence", 0.8),
-                metadata={"model": self.model, "temperature": self.temperature, "use_cot": use_cot},
+                metadata={"model": self.model_name, "temperature": self.temperature, "use_cot": use_cot},
             )
 
         except (json.JSONDecodeError, KeyError) as e:
@@ -179,7 +213,7 @@ Ensure all scores are within the specified scale for each criterion."""
                 reasoning={c.name: "Error parsing judge response" for c in criteria},
                 overall_score=3.0,
                 confidence=0.3,
-                metadata={"model": self.model, "error": str(e), "raw_response": response_text},
+                metadata={"model": self.model_name, "error": str(e), "raw_response": response_text},
             )
 
     async def pairwise_comparison(
@@ -190,7 +224,7 @@ Ensure all scores are within the specified scale for each criterion."""
         context: Optional[str] = None,
         position_bias_mitigation: bool = True,
     ) -> PairwiseResult:
-        """Compare two responses using OpenAI.
+        """Compare two responses using Gemini.
 
         Args:
             response_a: First response
@@ -281,7 +315,7 @@ Provide your evaluation in the following JSON format:
         context: Optional[str] = None,
         ranking_method: str = "tournament",
     ) -> RankingResult:
-        """Rank multiple responses using OpenAI.
+        """Rank multiple responses using Gemini.
 
         Args:
             responses: List of response strings to rank
@@ -308,23 +342,11 @@ Provide your evaluation in the following JSON format:
         raise ValueError(f"Unknown ranking method: {ranking_method}")
 
     async def _rank_by_scoring(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank by scoring each response individually.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: List of evaluation criteria for scoring
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult with responses ranked by individual scores
-        """
-
-        # Create a simple rubric for ranking
+        """Rank by scoring each response individually."""
         rubric = EvaluationRubric(criteria=criteria, scale_description={"1": "Poor", "2": "Below Average", "3": "Average", "4": "Good", "5": "Excellent"})
 
         # Evaluate each response
         evaluation_tasks = [self.evaluate_response(response, criteria, rubric, context) for response in responses]
-
         evaluations = await asyncio.gather(*evaluation_tasks)
 
         # Sort by overall score
@@ -334,20 +356,10 @@ Provide your evaluation in the following JSON format:
 
         ranked_results.sort(key=lambda x: x["score"], reverse=True)
 
-        return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")  # Single judge, perfectly consistent
+        return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")
 
     async def _rank_by_tournament(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using tournament-style pairwise comparisons.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: List of evaluation criteria for comparison
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult with responses ranked by tournament wins
-        """
-
+        """Rank using tournament-style pairwise comparisons."""
         n = len(responses)
         wins = [0] * n
 
@@ -377,7 +389,7 @@ Provide your evaluation in the following JSON format:
 
         ranked_results = []
         for rank, idx in enumerate(ranked_indices):
-            ranked_results.append({"response_index": idx, "response": responses[idx], "score": wins[idx] / (n - 1), "wins": wins[idx], "rank": rank + 1})  # Normalize to 0-1
+            ranked_results.append({"response_index": idx, "response": responses[idx], "score": wins[idx] / (n - 1), "wins": wins[idx], "rank": rank + 1})
 
         # Calculate consistency (simplified)
         consistency = 1.0 - (sum(abs(wins[i] - wins[j]) for i in range(n) for j in range(i + 1, n)) / (n * (n - 1) / 2)) / n
@@ -385,19 +397,8 @@ Provide your evaluation in the following JSON format:
         return RankingResult(rankings=ranked_results, consistency_score=max(0.0, consistency), reasoning="Ranked by tournament-style pairwise comparisons")
 
     async def _rank_by_round_robin(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using round-robin pairwise comparisons.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: List of evaluation criteria for comparison
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult with responses ranked by round-robin comparisons
-        """
-
+        """Rank using round-robin pairwise comparisons."""
         # For now, implement same as tournament
-        # In a full implementation, this could include multiple rounds
         return await self._rank_by_tournament(responses, criteria, context)
 
     async def evaluate_with_reference(
@@ -407,7 +408,7 @@ Provide your evaluation in the following JSON format:
         evaluation_type: str = "factuality",
         tolerance: str = "moderate",
     ) -> ReferenceEvaluationResult:
-        """Evaluate response against reference using OpenAI.
+        """Evaluate response against reference using Gemini.
 
         Args:
             response: Response text to evaluate

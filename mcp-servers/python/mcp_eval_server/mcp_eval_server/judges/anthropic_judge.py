@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""OpenAI judge implementation for LLM-as-a-judge evaluation."""
+"""Anthropic judge implementation for LLM-as-a-judge evaluation."""
 
 # Standard
 import asyncio
@@ -9,8 +9,13 @@ import os
 import secrets
 from typing import Any, Dict, List, Optional
 
+try:
+    # Third-Party
+    from anthropic import AsyncAnthropic
+except ImportError:
+    AsyncAnthropic = None
+
 # Third-Party
-from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Local
@@ -25,45 +30,32 @@ from .base_judge import (
 )
 
 
-class OpenAIJudge(BaseJudge):
-    """Judge implementation using OpenAI API."""
+class AnthropicJudge(BaseJudge):
+    """Judge implementation using Anthropic API."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
-        """Initialize OpenAI judge.
+        """Initialize Anthropic judge.
 
         Args:
-            config: Configuration dictionary with OpenAI settings
+            config: Configuration dictionary with Anthropic settings
 
         Raises:
-            ValueError: If API key not found in environment
+            ValueError: If API key not found or Anthropic library not available
         """
         super().__init__(config)
         self.logger = logging.getLogger(__name__)
+
+        if AsyncAnthropic is None:
+            raise ValueError("Anthropic library not installed. Please install with: pip install anthropic")
 
         api_key = os.getenv(config["api_key_env"])
         if not api_key:
             raise ValueError(f"API key not found in environment variable: {config['api_key_env']}")
 
-        # Support for organization (updated to match agent_runtimes)
-        organization = None
-        if config.get("organization_env"):
-            organization = os.getenv(config["organization_env"])
-        elif config.get("organization"):  # Fallback for old config
-            organization = config["organization"]
-
-        # Support for custom base URL
-        base_url = None
-        if config.get("base_url_env"):
-            base_url = os.getenv(config["base_url_env"])
-
-        self.client = AsyncOpenAI(api_key=api_key, organization=organization, base_url=base_url)
+        self.client = AsyncAnthropic(api_key=api_key)
         self.model = config["model_name"]
 
-        self.logger.debug(f"🔧 Initialized OpenAI judge: {self.model}")
-        if base_url:
-            self.logger.debug(f"   Using custom base URL: {base_url}")
-        if organization:
-            self.logger.debug(f"   Using organization: {organization}")
+        self.logger.debug(f"🔧 Initialized Anthropic judge: {self.model}")
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def _make_api_call(self, messages: List[Dict[str, str]], temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> str:
@@ -77,20 +69,28 @@ class OpenAIJudge(BaseJudge):
         Returns:
             Response content from the API
         """
-        self.logger.debug(f"🔗 Making OpenAI API call to {self.model}")
-        self.logger.debug(f"   Messages: {len(messages)}, Temperature: {temperature or self.temperature}, Max tokens: {max_tokens or self.max_tokens}")
+        # Convert messages format for Anthropic
+        system_message = None
+        user_messages = []
 
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=temperature or self.temperature,
-            max_tokens=max_tokens or self.max_tokens,
-        )
+        for msg in messages:
+            if msg["role"] == "system":
+                system_message = msg["content"]
+            else:
+                user_messages.append({"role": msg["role"], "content": msg["content"]})
 
-        result = response.choices[0].message.content or ""
-        self.logger.debug(f"✅ OpenAI API response received - Length: {len(result)} chars")
+        kwargs = {
+            "model": self.model,
+            "max_tokens": max_tokens or self.max_tokens,
+            "temperature": temperature or self.temperature,
+            "messages": user_messages,
+        }
 
-        return result
+        if system_message:
+            kwargs["system"] = system_message
+
+        response = await self.client.messages.create(**kwargs)
+        return response.content[0].text if response.content else ""
 
     async def evaluate_response(
         self,
@@ -100,7 +100,7 @@ class OpenAIJudge(BaseJudge):
         context: Optional[str] = None,
         use_cot: bool = True,
     ) -> EvaluationResult:
-        """Evaluate a single response using OpenAI.
+        """Evaluate a single response using Anthropic.
 
         Args:
             response: Text response to evaluate
@@ -190,7 +190,7 @@ Ensure all scores are within the specified scale for each criterion."""
         context: Optional[str] = None,
         position_bias_mitigation: bool = True,
     ) -> PairwiseResult:
-        """Compare two responses using OpenAI.
+        """Compare two responses using Anthropic.
 
         Args:
             response_a: First response
@@ -281,7 +281,7 @@ Provide your evaluation in the following JSON format:
         context: Optional[str] = None,
         ranking_method: str = "tournament",
     ) -> RankingResult:
-        """Rank multiple responses using OpenAI.
+        """Rank multiple responses using Anthropic.
 
         Args:
             responses: List of response strings to rank
@@ -308,23 +308,11 @@ Provide your evaluation in the following JSON format:
         raise ValueError(f"Unknown ranking method: {ranking_method}")
 
     async def _rank_by_scoring(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank by scoring each response individually.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: List of evaluation criteria for scoring
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult with responses ranked by individual scores
-        """
-
-        # Create a simple rubric for ranking
+        """Rank by scoring each response individually."""
         rubric = EvaluationRubric(criteria=criteria, scale_description={"1": "Poor", "2": "Below Average", "3": "Average", "4": "Good", "5": "Excellent"})
 
         # Evaluate each response
         evaluation_tasks = [self.evaluate_response(response, criteria, rubric, context) for response in responses]
-
         evaluations = await asyncio.gather(*evaluation_tasks)
 
         # Sort by overall score
@@ -334,20 +322,10 @@ Provide your evaluation in the following JSON format:
 
         ranked_results.sort(key=lambda x: x["score"], reverse=True)
 
-        return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")  # Single judge, perfectly consistent
+        return RankingResult(rankings=ranked_results, consistency_score=1.0, reasoning="Ranked by individual scoring of each response")
 
     async def _rank_by_tournament(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using tournament-style pairwise comparisons.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: List of evaluation criteria for comparison
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult with responses ranked by tournament wins
-        """
-
+        """Rank using tournament-style pairwise comparisons."""
         n = len(responses)
         wins = [0] * n
 
@@ -377,7 +355,7 @@ Provide your evaluation in the following JSON format:
 
         ranked_results = []
         for rank, idx in enumerate(ranked_indices):
-            ranked_results.append({"response_index": idx, "response": responses[idx], "score": wins[idx] / (n - 1), "wins": wins[idx], "rank": rank + 1})  # Normalize to 0-1
+            ranked_results.append({"response_index": idx, "response": responses[idx], "score": wins[idx] / (n - 1), "wins": wins[idx], "rank": rank + 1})
 
         # Calculate consistency (simplified)
         consistency = 1.0 - (sum(abs(wins[i] - wins[j]) for i in range(n) for j in range(i + 1, n)) / (n * (n - 1) / 2)) / n
@@ -385,19 +363,8 @@ Provide your evaluation in the following JSON format:
         return RankingResult(rankings=ranked_results, consistency_score=max(0.0, consistency), reasoning="Ranked by tournament-style pairwise comparisons")
 
     async def _rank_by_round_robin(self, responses: List[str], criteria: List[EvaluationCriteria], context: Optional[str] = None) -> RankingResult:
-        """Rank using round-robin pairwise comparisons.
-
-        Args:
-            responses: List of response strings to rank
-            criteria: List of evaluation criteria for comparison
-            context: Optional context for evaluation
-
-        Returns:
-            RankingResult with responses ranked by round-robin comparisons
-        """
-
+        """Rank using round-robin pairwise comparisons."""
         # For now, implement same as tournament
-        # In a full implementation, this could include multiple rounds
         return await self._rank_by_tournament(responses, criteria, context)
 
     async def evaluate_with_reference(
@@ -407,7 +374,7 @@ Provide your evaluation in the following JSON format:
         evaluation_type: str = "factuality",
         tolerance: str = "moderate",
     ) -> ReferenceEvaluationResult:
-        """Evaluate response against reference using OpenAI.
+        """Evaluate response against reference using Anthropic.
 
         Args:
             response: Response text to evaluate
