@@ -3,7 +3,10 @@ import os
 from functools import lru_cache
 from typing import Optional, List
 
-from .models import AgentConfig
+try:
+    from .models import AgentConfig
+except ImportError:
+    from models import AgentConfig
 
 def _parse_tools_list(tools_str: str) -> Optional[List[str]]:
     """Parse comma-separated tools string into list"""
@@ -19,7 +22,7 @@ def get_settings() -> AgentConfig:
             "MCP_GATEWAY_URL",
             "http://localhost:4444"
         ),
-        gateway_bearer_token=os.getenv("GATEWAY_BEARER_TOKEN"),
+        gateway_bearer_token=os.getenv("MCPGATEWAY_BEARER_TOKEN"),
         tools_allowlist=_parse_tools_list(os.getenv("TOOLS", "")),
         default_model=os.getenv("DEFAULT_MODEL", "gpt-4o-mini"),
         max_iterations=int(os.getenv("MAX_ITERATIONS", "10")),
@@ -34,8 +37,8 @@ def validate_environment() -> dict:
     warnings = []
 
     # Check required environment variables
-    if not os.getenv("GATEWAY_BEARER_TOKEN"):
-        warnings.append("GATEWAY_BEARER_TOKEN not set - authentication may fail")
+    if not os.getenv("MCPGATEWAY_BEARER_TOKEN"):
+        warnings.append("MCPGATEWAY_BEARER_TOKEN not set - authentication may fail")
 
     # Check optional but recommended settings
     if not os.getenv("OPENAI_API_KEY"):
@@ -68,7 +71,7 @@ def get_example_env() -> str:
 
 # Gateway Configuration
 MCP_GATEWAY_URL=http://localhost:4444
-GATEWAY_BEARER_TOKEN=your-jwt-token-here
+MCPGATEWAY_BEARER_TOKEN=your-jwt-token-here
 
 # OpenAI Configuration (required for Langchain)
 OPENAI_API_KEY=your-openai-api-key
@@ -83,6 +86,6 @@ TEMPERATURE=0.7
 STREAMING_ENABLED=true
 DEBUG_MODE=false
 
-# Generate GATEWAY_BEARER_TOKEN with:
-# export GATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+# Generate MCPGATEWAY_BEARER_TOKEN with:
+# export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
 """
