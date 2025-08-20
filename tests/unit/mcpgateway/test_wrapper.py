@@ -30,10 +30,10 @@ def setup_function():
 # Utilities
 # -------------------
 def test_convert_url_variants():
-    assert wrapper.convert_url("http://x/servers/uuid") == "http://x/servers/uuid/mcp"
-    assert wrapper.convert_url("http://x/servers/uuid/") == "http://x/servers/uuid//mcp"
-    assert wrapper.convert_url("http://x/servers/uuid/mcp") == "http://x/servers/uuid/mcp"
-    assert wrapper.convert_url("http://x/servers/uuid/sse") == "http://x/servers/uuid/mcp"
+    assert wrapper.convert_url("http://x/servers/uuid") == "http://x/servers/uuid/mcp/"
+    assert wrapper.convert_url("http://x/servers/uuid/") == "http://x/servers/uuid//mcp/"
+    assert wrapper.convert_url("http://x/servers/uuid/mcp") == "http://x/servers/uuid/mcp/"
+    assert wrapper.convert_url("http://x/servers/uuid/sse") == "http://x/servers/uuid/mcp/"
 
 
 def test_make_error_defaults_and_data():
@@ -145,7 +145,7 @@ def test_parse_args_with_env(monkeypatch):
     sys.argv = ["prog"]
     try:
         s = wrapper.parse_args()
-        assert s.server_url.endswith("/mcp")
+        assert s.server_url.endswith("/mcp/")
         assert s.auth_header == "Bearer 123"
     finally:
         sys.argv = sys_argv
