@@ -122,7 +122,7 @@ MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin 
 
 **Popular OLLAMA Models:**
 - `llama2:7b`, `llama2:13b` - Meta's Llama 2
-- `llama3:8b`, `llama3:70b` - Meta's Llama 3  
+- `llama3:8b`, `llama3:70b` - Meta's Llama 3
 - `codellama:7b` - Code-specialized Llama
 - `mistral:7b` - Mistral AI model
 - `gemma:7b` - Google's Gemma
@@ -161,7 +161,7 @@ make install-dev
 
 # Add specific provider support
 make install-azure      # Azure OpenAI
-make install-bedrock     # AWS Bedrock  
+make install-bedrock     # AWS Bedrock
 make install-ollama      # OLLAMA
 make install-anthropic   # Anthropic
 

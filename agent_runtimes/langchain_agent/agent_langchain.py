@@ -160,7 +160,7 @@ class LangchainMCPAgent:
 
     def __init__(self, config: AgentConfig):
         self.config = config
-        self.mcp_client = MCPClient.from_env(config.mcp_gateway_url)
+        self.mcp_client = MCPClient(config.mcp_gateway_url, config.gateway_bearer_token)
         self.mcp_client.debug = config.debug_mode
 
         # Create LLM based on provider configuration
