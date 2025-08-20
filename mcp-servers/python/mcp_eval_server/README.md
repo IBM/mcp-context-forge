@@ -103,7 +103,7 @@ pip install -e ".[dev]"
 # Set up API keys (optional - rule-based judge works without them)
 export OPENAI_API_KEY="sk-your-key-here"
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_KEY="your-azure-key"
+export AZURE_OPENAI_API_KEY="your-azure-api-key"
 
 # Note: No heavy ML dependencies required!
 # Uses efficient TF-IDF + scikit-learn instead of transformers

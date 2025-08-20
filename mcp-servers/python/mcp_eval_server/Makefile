@@ -152,10 +152,10 @@ release: test lint build ## Run tests, lint, and build for release
 check-env: ## Check required environment variables
 	@echo "🔍 Checking environment configuration..."
 	@echo ""
-	@if [ -z "$$OPENAI_API_KEY" ] && [ -z "$$AZURE_OPENAI_KEY" ]; then \
+	@if [ -z "$$OPENAI_API_KEY" ] && [ -z "$$AZURE_OPENAI_API_KEY" ]; then \
 		echo "⚠️  WARNING: No API keys found for LLM judges"; \
 		echo "📝 To use OpenAI judges: export OPENAI_API_KEY='sk-...'"; \
-		echo "📝 To use Azure judges: export AZURE_OPENAI_KEY='...'"; \
+		echo "📝 To use Azure judges: export AZURE_OPENAI_API_KEY='...'"; \
 		echo ""; \
 		echo "✅ Rule-based judge available (no API key needed)"; \
 	else \
@@ -172,6 +172,10 @@ check-env: ## Check required environment variables
 	@echo "   • 9 Server tools (management, statistics, health)"
 	@echo ""
 	@echo "✅ Environment check complete"
+
+validate-models: ## Run comprehensive model validation and connectivity tests
+	@echo "🔍 Running model validation and connectivity tests..."
+	$(PYTHON) validate_models.py
 
 mcp-info: ## Show MCP connection information
 	@echo "📡 MCP Evaluation Server Connection Guide"
@@ -206,7 +210,7 @@ mcp-info: ## Show MCP connection information
 	@echo ""
 	@echo "🔑 Optional API Keys:"
 	@echo "   export OPENAI_API_KEY='sk-...'     # For GPT-4, GPT-3.5 judges"
-	@echo "   export AZURE_OPENAI_KEY='...'      # For Azure OpenAI judges"
+	@echo "   export AZURE_OPENAI_API_KEY='...'  # For Azure OpenAI judges"
 	@echo ""
 	@echo "⚡ Quick Test:"
 	@echo "   make example                       # Run evaluation example"
