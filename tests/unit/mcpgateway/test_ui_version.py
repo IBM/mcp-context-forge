@@ -12,7 +12,11 @@ from __future__ import annotations
 
 # Standard
 import base64
+import os
 from typing import Dict
+
+# Set environment before imports
+os.environ["MCPGATEWAY_A2A_ENABLED"] = "false"  # Disable A2A for UI tests
 
 # Third-Party
 import pytest

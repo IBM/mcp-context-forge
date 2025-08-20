@@ -46,7 +46,7 @@ class HookType(str, Enum):
     PROMPT_PRE_FETCH = "prompt_pre_fetch"     # Before prompt retrieval
     PROMPT_POST_FETCH = "prompt_post_fetch"   # After prompt rendering
     TOOL_PRE_INVOKE = "tool_pre_invoke"       # Before tool execution
-    TOOL_POST_INVOKE = "tool_post_invoke"     # After tool execution  
+    TOOL_POST_INVOKE = "tool_post_invoke"     # After tool execution
     RESOURCE_PRE_FETCH = "resource_pre_fetch" # Before resource fetch
     RESOURCE_POST_FETCH = "resource_post_fetch" # After resource fetch
 ```
@@ -68,7 +68,7 @@ class PluginExecutor:
             # Check conditions (server_ids, tools, tenants, etc.)
             if plugin.conditions and not matches_conditions(...):
                 continue
-            
+
             result = await execute_with_timeout(plugin, ...)
             if not result.continue_processing:
                 if plugin.mode == PluginMode.ENFORCE:
@@ -117,10 +117,10 @@ plugins:
 class PluginExecutor:
     async def _execute_with_timeout(self, plugin, ...):
         return await asyncio.wait_for(
-            plugin_execution, 
+            plugin_execution,
             timeout=self.timeout  # Default 30s
         )
-    
+
     def _validate_payload_size(self, payload):
         if payload_size > MAX_PAYLOAD_SIZE:  # 1MB limit
             raise PayloadSizeError(...)
@@ -140,13 +140,13 @@ class PluginExecutor:
 class PluginContext(GlobalContext):
     state: dict[str, Any] = {}      # Cross-plugin shared state
     metadata: dict[str, Any] = {}   # Plugin execution metadata
-    
+
 class PluginManager:
     _context_store: Dict[str, Tuple[PluginContextTable, float]] = {}
-    
+
     async def _cleanup_old_contexts(self):
         # Remove contexts older than CONTEXT_MAX_AGE (1 hour)
-        expired = [k for k, (_, ts) in self._context_store.items() 
+        expired = [k for k, (_, ts) in self._context_store.items()
                   if time.time() - ts > CONTEXT_MAX_AGE]
 ```
 
@@ -199,20 +199,20 @@ sequenceDiagram
     App->>PM: initialize()
     PM->>Plugin: __init__(config)
     PM->>Plugin: initialize()
-    
+
     App->>PM: prompt_pre_fetch(payload, context)
     PM->>Plugin: prompt_pre_fetch(payload, context)
-    
+
     alt Self-Contained Plugin
         Plugin->>Plugin: process_in_memory(payload)
     else External Service Plugin
         Plugin->>Service: HTTP POST /analyze
         Service-->>Plugin: analysis_result
     end
-    
+
     Plugin-->>PM: PluginResult(continue_processing, modified_payload)
     PM-->>App: result, updated_contexts
-    
+
     App->>PM: shutdown()
     PM->>Plugin: shutdown()
 ```
@@ -289,29 +289,29 @@ sequenceDiagram
 ## Consequences
 
 ### Positive
-✅ **Complete AI Safety Pipeline:** Framework supports end-to-end content filtering and safety  
-✅ **High Performance:** Self-contained plugins provide sub-millisecond latency  
-✅ **Operational Simplicity:** File-based configuration integrates with existing workflows  
-✅ **Future-Proof:** Architecture supports both current needs and roadmap expansion  
-✅ **Security-First:** Multiple layers of protection against malicious plugins and inputs  
+✅ **Complete AI Safety Pipeline:** Framework supports end-to-end content filtering and safety
+✅ **High Performance:** Self-contained plugins provide sub-millisecond latency
+✅ **Operational Simplicity:** File-based configuration integrates with existing workflows
+✅ **Future-Proof:** Architecture supports both current needs and roadmap expansion
+✅ **Security-First:** Multiple layers of protection against malicious plugins and inputs
 
 ### Negative
-❌ **Complexity:** Plugin framework adds significant codebase complexity  
-❌ **Learning Curve:** Plugin development requires understanding of hook lifecycle  
-❌ **Configuration Management:** Large plugin configurations can become complex to maintain  
-❌ **Debugging Challenges:** Sequential plugin chains can be difficult to troubleshoot  
+❌ **Complexity:** Plugin framework adds significant codebase complexity
+❌ **Learning Curve:** Plugin development requires understanding of hook lifecycle
+❌ **Configuration Management:** Large plugin configurations can become complex to maintain
+❌ **Debugging Challenges:** Sequential plugin chains can be difficult to troubleshoot
 
 ### Neutral
-🔄 **Hybrid Architecture:** Both self-contained and external services require different operational approaches  
-🔄 **Memory Usage:** Plugin contexts require careful management in high-traffic environments  
-🔄 **Performance Tuning:** Plugin timeouts and priorities need environment-specific tuning  
+🔄 **Hybrid Architecture:** Both self-contained and external services require different operational approaches
+🔄 **Memory Usage:** Plugin contexts require careful management in high-traffic environments
+🔄 **Performance Tuning:** Plugin timeouts and priorities need environment-specific tuning
 
 ## Alternatives Considered
 
 ### 1. **Microservice-Only Architecture**
 **Rejected:** Would have provided better isolation but significantly higher operational overhead and network latency for simple transformations.
 
-### 2. **Webhook-Based Plugin System**  
+### 2. **Webhook-Based Plugin System**
 **Rejected:** HTTP webhooks would have been simpler but lacked the sophistication needed for AI middleware integration and context management.
 
 ### 3. **Embedded JavaScript/Lua Engine**

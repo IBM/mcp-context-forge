@@ -10,18 +10,32 @@ from datetime import datetime
 import asyncio
 import logging
 
-from .models import (
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionChoice,
-    ChatMessage,
-    Usage,
-    HealthResponse,
-    ReadyResponse,
-    ToolListResponse
-)
-from .agent_langchain import LangchainMCPAgent
-from .config import get_settings
+try:
+    from .models import (
+        ChatCompletionRequest,
+        ChatCompletionResponse,
+        ChatCompletionChoice,
+        ChatMessage,
+        Usage,
+        HealthResponse,
+        ReadyResponse,
+        ToolListResponse
+    )
+    from .agent_langchain import LangchainMCPAgent
+    from .config import get_settings
+except ImportError:
+    from models import (
+        ChatCompletionRequest,
+        ChatCompletionResponse,
+        ChatCompletionChoice,
+        ChatMessage,
+        Usage,
+        HealthResponse,
+        ReadyResponse,
+        ToolListResponse
+    )
+    from agent_langchain import LangchainMCPAgent
+    from config import get_settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

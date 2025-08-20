@@ -254,6 +254,31 @@ class PromptMetrics(BaseModelWithConfigDict):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent invocation")
 
 
+class A2AAgentMetrics(BaseModelWithConfigDict):
+    """
+    Represents the performance and execution statistics for an A2A agent.
+
+    Attributes:
+        total_executions (int): Total number of agent interactions.
+        successful_executions (int): Number of successful agent interactions.
+        failed_executions (int): Number of failed agent interactions.
+        failure_rate (float): Failure rate (failed interactions / total interactions).
+        min_response_time (Optional[float]): Minimum response time in seconds.
+        max_response_time (Optional[float]): Maximum response time in seconds.
+        avg_response_time (Optional[float]): Average response time in seconds.
+        last_execution_time (Optional[datetime]): Timestamp of the most recent interaction.
+    """
+
+    total_executions: int = Field(..., description="Total number of agent interactions")
+    successful_executions: int = Field(..., description="Number of successful agent interactions")
+    failed_executions: int = Field(..., description="Number of failed agent interactions")
+    failure_rate: float = Field(..., description="Failure rate (failed interactions / total interactions)")
+    min_response_time: Optional[float] = Field(None, description="Minimum response time in seconds")
+    max_response_time: Optional[float] = Field(None, description="Maximum response time in seconds")
+    avg_response_time: Optional[float] = Field(None, description="Average response time in seconds")
+    last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent interaction")
+
+
 # --- JSON Path API modifier Schema
 
 
@@ -309,7 +334,7 @@ class ToolCreate(BaseModel):
     name: str = Field(..., description="Unique name for the tool")
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Literal["REST", "MCP"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools")
+    integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
@@ -591,6 +616,8 @@ class ToolCreate(BaseModel):
         integration_type = values.get("integration_type")
         if integration_type == "MCP":
             raise ValueError("Cannot manually create MCP tools. Add MCP servers via the Gateways interface - tools will be auto-discovered and registered with integration_type='MCP'.")
+        if integration_type == "A2A":
+            raise ValueError("Cannot manually create A2A tools. Add A2A agents via the A2A interface - tools will be auto-created when agents are associated with servers.")
         return values
 
 
@@ -603,7 +630,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Optional[Literal["REST", "MCP"]] = Field(None, description="Tool integration type")
+    integration_type: Optional[Literal["REST", "MCP", "A2A"]] = Field(None, description="Tool integration type")
     request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
@@ -721,6 +748,8 @@ class ToolUpdate(BaseModelWithConfigDict):
             allowed = ["GET", "POST", "PUT", "DELETE", "PATCH"]
         elif integration_type == "MCP":
             allowed = ["SSE", "STDIO", "STREAMABLEHTTP"]
+        elif integration_type == "A2A":
+            allowed = ["POST"]  # A2A agents typically use POST
         else:
             raise ValueError(f"Unknown integration type: {integration_type}")
 
@@ -796,6 +825,8 @@ class ToolUpdate(BaseModelWithConfigDict):
         integration_type = values.get("integration_type")
         if integration_type == "MCP":
             raise ValueError("Cannot update tools to MCP integration type. MCP tools are managed by the gateway service.")
+        if integration_type == "A2A":
+            raise ValueError("Cannot update tools to A2A integration type. A2A tools are managed by the A2A service.")
         return values
 
 
@@ -2752,6 +2783,7 @@ class ServerCreate(BaseModel):
     associated_tools: Optional[List[str]] = Field(None, description="Comma-separated tool IDs")
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
+    associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
 
     @field_validator("name")
     @classmethod
@@ -2801,7 +2833,7 @@ class ServerCreate(BaseModel):
             return v
         return SecurityValidator.validate_url(v, "Icon URL")
 
-    @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
     def split_comma_separated(cls, v):
         """
@@ -2847,6 +2879,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_tools: Optional[List[str]] = Field(None, description="Comma-separated tool IDs")
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
+    associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
 
     @field_validator("name")
     @classmethod
@@ -2896,7 +2929,7 @@ class ServerUpdate(BaseModelWithConfigDict):
             return v
         return SecurityValidator.validate_url(v, "Icon URL")
 
-    @field_validator("associated_tools", "associated_resources", "associated_prompts", mode="before")
+    @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
     def split_comma_separated(cls, v):
         """
@@ -2934,6 +2967,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_tools: List[str] = []
     associated_resources: List[int] = []
     associated_prompts: List[int] = []
+    associated_a2a_agents: List[str] = []
     metrics: ServerMetrics
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the server")
 
@@ -2981,6 +3015,8 @@ class ServerRead(BaseModelWithConfigDict):
             values["associated_resources"] = [res.id if hasattr(res, "id") else res for res in values["associated_resources"]]
         if "associated_prompts" in values and values["associated_prompts"]:
             values["associated_prompts"] = [prompt.id if hasattr(prompt, "id") else prompt for prompt in values["associated_prompts"]]
+        if "associated_a2a_agents" in values and values["associated_a2a_agents"]:
+            values["associated_a2a_agents"] = [agent.id if hasattr(agent, "id") else agent for agent in values["associated_a2a_agents"]]
         return values
 
 
@@ -3060,3 +3096,296 @@ class TopPerformer(BaseModelWithConfigDict):
     avg_response_time: Optional[float] = Field(None, description="Average response time in seconds")
     success_rate: Optional[float] = Field(None, description="Success rate percentage")
     last_execution: Optional[datetime] = Field(None, description="Timestamp of last execution")
+
+
+# --- A2A Agent Schemas ---
+
+
+class A2AAgentCreate(BaseModel):
+    """
+    Schema for creating a new A2A (Agent-to-Agent) compatible agent.
+
+    Attributes:
+        model_config (ConfigDict): Configuration for the model.
+        name (str): Unique name for the agent.
+        description (Optional[str]): Optional description of the agent.
+        endpoint_url (str): URL endpoint for the agent.
+        agent_type (str): Type of agent (e.g., "openai", "anthropic", "custom").
+        protocol_version (str): A2A protocol version supported.
+        capabilities (Dict[str, Any]): Agent capabilities and features.
+        config (Dict[str, Any]): Agent-specific configuration parameters.
+        auth_type (Optional[str]): Type of authentication ("api_key", "oauth", "bearer", etc.).
+        auth_value (Optional[str]): Authentication credentials (will be encrypted).
+        tags (List[str]): Tags for categorizing the agent.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(..., description="Unique name for the agent")
+    description: Optional[str] = Field(None, description="Agent description")
+    endpoint_url: str = Field(..., description="URL endpoint for the agent")
+    agent_type: str = Field(default="generic", description="Type of agent (e.g., 'openai', 'anthropic', 'custom')")
+    protocol_version: str = Field(default="1.0", description="A2A protocol version supported")
+    capabilities: Dict[str, Any] = Field(default_factory=dict, description="Agent capabilities and features")
+    config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
+    auth_type: Optional[str] = Field(None, description="Type of authentication")
+    auth_value: Optional[str] = Field(None, description="Authentication credentials")
+    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings
+        """
+        return validate_tags_field(v)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate agent name
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_name(v, "A2A Agent name")
+
+    @field_validator("endpoint_url")
+    @classmethod
+    def validate_endpoint_url(cls, v: str) -> str:
+        """Validate agent endpoint URL
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure descriptions display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is unsafe
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("capabilities", "config")
+    @classmethod
+    def validate_json_fields(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate JSON structure depth
+
+        Args:
+            v (dict): Value to validate
+
+        Returns:
+            dict: Value if validated as safe
+        """
+        SecurityValidator.validate_json_depth(v)
+        return v
+
+
+class A2AAgentUpdate(BaseModelWithConfigDict):
+    """Schema for updating an existing A2A agent.
+
+    Similar to A2AAgentCreate but all fields are optional to allow partial updates.
+    """
+
+    name: Optional[str] = Field(None, description="Unique name for the agent")
+    description: Optional[str] = Field(None, description="Agent description")
+    endpoint_url: Optional[str] = Field(None, description="URL endpoint for the agent")
+    agent_type: Optional[str] = Field(None, description="Type of agent")
+    protocol_version: Optional[str] = Field(None, description="A2A protocol version supported")
+    capabilities: Optional[Dict[str, Any]] = Field(None, description="Agent capabilities and features")
+    config: Optional[Dict[str, Any]] = Field(None, description="Agent-specific configuration parameters")
+    auth_type: Optional[str] = Field(None, description="Type of authentication")
+    auth_value: Optional[str] = Field(None, description="Authentication credentials")
+    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the agent")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate and normalize tags.
+
+        Args:
+            v: Optional list of tag strings to validate
+
+        Returns:
+            List of validated tag strings or None if input is None
+        """
+        if v is None:
+            return None
+        return validate_tags_field(v)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate agent name
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_name(v, "A2A Agent name")
+
+    @field_validator("endpoint_url")
+    @classmethod
+    def validate_endpoint_url(cls, v: str) -> str:
+        """Validate agent endpoint URL
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_url(v, "Agent endpoint URL")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure descriptions display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is unsafe
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("capabilities", "config")
+    @classmethod
+    def validate_json_fields(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate JSON structure depth
+
+        Args:
+            v (dict): Value to validate
+
+        Returns:
+            dict: Value if validated as safe
+        """
+        if v is None:
+            return v
+        SecurityValidator.validate_json_depth(v)
+        return v
+
+
+class A2AAgentRead(BaseModelWithConfigDict):
+    """Schema for reading A2A agent information.
+
+    Includes all agent fields plus:
+    - Database ID
+    - Slug
+    - Creation/update timestamps
+    - Enabled/reachable status
+    - Metrics
+    - Audit metadata
+    """
+
+    id: str
+    name: str
+    slug: str
+    description: Optional[str]
+    endpoint_url: str
+    agent_type: str
+    protocol_version: str
+    capabilities: Dict[str, Any]
+    config: Dict[str, Any]
+    auth_type: Optional[str]
+    enabled: bool
+    reachable: bool
+    created_at: datetime
+    updated_at: datetime
+    last_interaction: Optional[datetime]
+    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
+    metrics: A2AAgentMetrics
+
+    # Comprehensive metadata for audit tracking
+    created_by: Optional[str] = Field(None, description="Username who created this entity")
+    created_from_ip: Optional[str] = Field(None, description="IP address of creator")
+    created_via: Optional[str] = Field(None, description="Creation method: ui|api|import|federation")
+    created_user_agent: Optional[str] = Field(None, description="User agent of creation request")
+
+    modified_by: Optional[str] = Field(None, description="Username who last modified this entity")
+    modified_from_ip: Optional[str] = Field(None, description="IP address of last modifier")
+    modified_via: Optional[str] = Field(None, description="Modification method")
+    modified_user_agent: Optional[str] = Field(None, description="User agent of modification request")
+
+    import_batch_id: Optional[str] = Field(None, description="UUID of bulk import batch")
+    federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
+    version: Optional[int] = Field(1, description="Entity version for change tracking")
+
+
+class A2AAgentInvocation(BaseModelWithConfigDict):
+    """Schema for A2A agent invocation requests.
+
+    Contains:
+    - Agent name or ID to invoke
+    - Parameters for the agent interaction
+    - Interaction type (query, execute, etc.)
+    """
+
+    agent_name: str = Field(..., description="Name of the A2A agent to invoke")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters for agent interaction")
+    interaction_type: str = Field(default="query", description="Type of interaction (query, execute, etc.)")
+
+    @field_validator("agent_name")
+    @classmethod
+    def validate_agent_name(cls, v: str) -> str:
+        """Ensure agent names follow naming conventions
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_name(v, "Agent name")
+
+    @field_validator("parameters")
+    @classmethod
+    def validate_parameters(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate parameters structure depth to prevent DoS attacks.
+
+        Args:
+            v (dict): Parameters dictionary to validate
+
+        Returns:
+            dict: The validated parameters if within depth limits
+
+        Raises:
+            ValueError: If the parameters exceed the maximum allowed depth
+        """
+        SecurityValidator.validate_json_depth(v)
+        return v

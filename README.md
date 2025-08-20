@@ -123,6 +123,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 It currently supports:
 
 * Federation across multiple MCP and REST services
+* **A2A (Agent-to-Agent) integration** for external AI agents (OpenAI, Anthropic, custom)
 * Virtualization of legacy APIs as MCP-compliant tools and servers
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
 * An Admin UI for real-time management, configuration, and log monitoring
@@ -1048,6 +1049,25 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 > 🖥️ Set both UI and Admin API to `false` to disable management UI and APIs in production.
 > 📥 The bulk import endpoint allows importing up to 200 tools in a single request via `/admin/tools/import`.
 
+### A2A (Agent-to-Agent) Features
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `MCPGATEWAY_A2A_ENABLED`       | Enable A2A agent features             | `true`  | bool    |
+| `MCPGATEWAY_A2A_MAX_AGENTS`    | Maximum number of A2A agents allowed  | `100`   | int     |
+| `MCPGATEWAY_A2A_DEFAULT_TIMEOUT` | Default timeout for A2A HTTP requests (seconds) | `30` | int |
+| `MCPGATEWAY_A2A_MAX_RETRIES`   | Maximum retry attempts for A2A calls  | `3`     | int     |
+| `MCPGATEWAY_A2A_METRICS_ENABLED` | Enable A2A agent metrics collection | `true`  | bool    |
+
+> 🤖 **A2A Integration**: Register external AI agents (OpenAI, Anthropic, custom) and expose them as MCP tools
+> 📊 **Metrics**: Track agent performance, success rates, and response times
+> 🔒 **Security**: Encrypted credential storage and configurable authentication
+> 🎛️ **Admin UI**: Dedicated tab for agent management with test functionality
+
+**A2A Configuration Effects:**
+- `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
+- `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
+
 ### Security
 
 | Setting                   | Description                    | Default                                        | Options    |
@@ -1566,6 +1586,82 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 # Delete tool
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1
 ```
+
+</details>
+
+---
+
+<details>
+<summary><strong>🤖 A2A Agent Management /a2a</strong></summary>
+
+```bash
+# Register a new A2A agent
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "name":"hello_world_agent",
+           "endpoint_url":"http://localhost:9999/",
+           "agent_type":"jsonrpc",
+           "description":"External AI agent for hello world functionality",
+           "auth_type":"api_key",
+           "auth_value":"your-api-key",
+           "tags":["ai", "hello-world"]
+         }' \
+     http://localhost:4444/a2a
+
+# List A2A agents
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/a2a
+
+# Get agent by ID
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/a2a/agent-id
+
+# Update agent
+curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{ "description":"Updated description" }' \
+     http://localhost:4444/a2a/agent-id
+
+# Test agent (direct invocation)
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "parameters": {
+             "method": "message/send",
+             "params": {
+               "message": {
+                 "messageId": "test-123",
+                 "role": "user",
+                 "parts": [{"type": "text", "text": "Hello!"}]
+               }
+             }
+           },
+           "interaction_type": "test"
+         }' \
+     http://localhost:4444/a2a/agent-name/invoke
+
+# Toggle agent status
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:4444/a2a/agent-id/toggle?activate=false
+
+# Delete agent
+curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:4444/a2a/agent-id
+
+# Associate agent with virtual server (agents become available as MCP tools)
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "name":"AI Assistant Server",
+           "description":"Virtual server with AI agents",
+           "associated_a2a_agents":["agent-id"]
+         }' \
+     http://localhost:4444/servers
+```
+
+> 🤖 **A2A Integration**: A2A agents are external AI agents that can be registered and exposed as MCP tools
+> 🔄 **Protocol Detection**: Gateway automatically detects JSONRPC vs custom A2A protocols
+> 📊 **Testing**: Built-in test functionality via Admin UI or `/a2a/{agent_id}/test` endpoint
+> 🎛️ **Virtual Servers**: Associate agents with servers to expose them as standard MCP tools
 
 </details>
 

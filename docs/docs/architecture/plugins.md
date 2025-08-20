@@ -35,36 +35,36 @@ mcpgateway/plugins/framework/
 ```python
 class Plugin:
     """Base plugin for self-contained, in-process plugins"""
-    
+
     def __init__(self, config: PluginConfig):
         self._config = config
-    
-    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, 
+
+    async def prompt_pre_fetch(self, payload: PromptPrehookPayload,
                               context: PluginContext) -> PromptPrehookResult:
         """Process prompts before template rendering"""
         raise NotImplementedError
-    
-    async def prompt_post_fetch(self, payload: PromptPosthookPayload, 
+
+    async def prompt_post_fetch(self, payload: PromptPosthookPayload,
                                context: PluginContext) -> PromptPosthookResult:
         """Process prompts after template rendering"""
         raise NotImplementedError
-    
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, 
+
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload,
                              context: PluginContext) -> ToolPreInvokeResult:
         """Process tool calls before execution"""
         raise NotImplementedError
-    
-    async def tool_post_invoke(self, payload: ToolPostInvokePayload, 
+
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload,
                               context: PluginContext) -> ToolPostInvokeResult:
         """Process tool results after execution"""
         raise NotImplementedError
-    
-    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, 
+
+    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload,
                                 context: PluginContext) -> ResourcePreFetchResult:
         """Process resource requests before fetching"""
         raise NotImplementedError
-    
-    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, 
+
+    async def resource_post_fetch(self, payload: ResourcePostFetchPayload,
                                  context: PluginContext) -> ResourcePostFetchResult:
         """Process resource content after fetching"""
         raise NotImplementedError
@@ -75,15 +75,15 @@ class Plugin:
 ```python
 class PluginRef:
     """Plugin reference with UUID tracking for lifecycle management"""
-    
+
     def __init__(self, plugin: Plugin):
         self._plugin = plugin
         self._uuid = uuid.uuid4()  # Unique instance identifier
-    
+
     @property
     def plugin(self) -> Plugin:
         return self._plugin
-    
+
     @property
     def uuid(self) -> str:
         return self._uuid.hex
@@ -123,7 +123,7 @@ sequenceDiagram
     Plugin->>Service: Call external AI service
     Service-->>Plugin: Analysis result
     Plugin-->>PM: PluginResult(continue_processing, modified_payload)
-    
+
     alt Continue Processing
         PM-->>Gateway: Modified payload
         Gateway->>Core: Execute core logic
@@ -146,32 +146,32 @@ sequenceDiagram
 ```python
 class PluginExecutor(Generic[T]):
     """Executes plugins in priority order with timeout protection"""
-    
-    async def execute(self, plugins: list[PluginRef], payload: T, 
+
+    async def execute(self, plugins: list[PluginRef], payload: T,
                      global_context: GlobalContext, ...) -> tuple[PluginResult[T], PluginContextTable]:
         for plugin in sorted_plugins_by_priority:
             # Check if plugin conditions match current context
             if plugin.conditions and not matches_conditions(payload, plugin.conditions, global_context):
                 continue
-                
+
             try:
                 # Execute with timeout protection
                 result = await asyncio.wait_for(
                     plugin_execution(plugin, payload, context),
                     timeout=self.timeout
                 )
-                
+
                 # Handle result based on plugin mode
                 if not result.continue_processing:
                     if plugin.mode == PluginMode.ENFORCE:
                         return block_request_with_violation(result)
                     elif plugin.mode == PluginMode.PERMISSIVE:
                         log_warning_and_continue(result)
-                
+
                 # Apply payload modifications for next plugin
                 if result.modified_payload:
                     payload = result.modified_payload
-                    
+
             except asyncio.TimeoutError:
                 handle_plugin_timeout(plugin)
             except Exception as e:
@@ -258,11 +258,11 @@ class PluginContext(GlobalContext):
     """Per-plugin context with state management"""
     state: dict[str, Any] = {}       # Cross-plugin shared state
     metadata: dict[str, Any] = {}    # Plugin execution metadata
-    
+
     def get_state(self, key: str, default: Any = None) -> Any:
         """Get value from shared state"""
         return self.state.get(key, default)
-    
+
     def set_state(self, key: str, value: Any) -> None:
         """Set value in shared state"""
         self.state[key] = value
@@ -275,20 +275,20 @@ class PluginManager:
     # Context cleanup tracking
     _context_store: Dict[str, Tuple[PluginContextTable, float]] = {}
     _last_cleanup: float = 0
-    
+
     async def _cleanup_old_contexts(self) -> None:
         """Remove contexts older than CONTEXT_MAX_AGE to prevent memory leaks"""
         current_time = time.time()
-        
+
         if current_time - self._last_cleanup < CONTEXT_CLEANUP_INTERVAL:
             return
-            
+
         # Find and remove expired contexts
         expired_keys = [
-            key for key, (_, timestamp) in self._context_store.items() 
+            key for key, (_, timestamp) in self._context_store.items()
             if current_time - timestamp > CONTEXT_MAX_AGE
         ]
-        
+
         for key in expired_keys:
             del self._context_store[key]
 ```
@@ -300,29 +300,29 @@ class PluginManager:
 ```python
 class PluginManager:
     """Singleton plugin manager for lifecycle management"""
-    
+
     __shared_state: dict[Any, Any] = {}  # Singleton state sharing
-    
+
     def __init__(self, config: str = "", timeout: int = DEFAULT_PLUGIN_TIMEOUT):
         self.__dict__ = self.__shared_state  # Share state across instances
-        
+
         if config:
             self._config = ConfigLoader.load_config(config)
-        
+
         # Initialize executors with timeout
         self._pre_prompt_executor = PluginExecutor[PromptPrehookPayload](timeout)
         self._post_prompt_executor = PluginExecutor[PromptPosthookPayload](timeout)
         # ... other executors
-    
+
     async def initialize(self) -> None:
         """Load and initialize all configured plugins"""
         plugins = self._config.plugins if self._config else []
-        
+
         for plugin_config in plugins:
             if plugin_config.mode != PluginMode.DISABLED:
                 plugin = await self._loader.load_and_instantiate_plugin(plugin_config)
                 self._registry.register(plugin)
-    
+
     async def shutdown(self) -> None:
         """Shutdown all plugins and cleanup resources"""
         await self._registry.shutdown()
@@ -340,23 +340,23 @@ async def prompt_pre_fetch(
     local_contexts: Optional[PluginContextTable] = None,
 ) -> tuple[PromptPrehookResult, PluginContextTable | None]:
     """Execute pre-fetch hooks before prompt retrieval"""
-    
+
     # Cleanup old contexts periodically
     await self._cleanup_old_contexts()
-    
+
     # Get plugins registered for this hook
     plugins = self._registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
-    
+
     # Execute plugins with timeout protection
     result = await self._pre_prompt_executor.execute(
-        plugins, payload, global_context, 
+        plugins, payload, global_context,
         pre_prompt_fetch, pre_prompt_matches, local_contexts
     )
-    
+
     # Store contexts for potential reuse in post-fetch
     if result[1]:
         self._context_store[global_context.request_id] = (result[1], time.time())
-    
+
     return result
 ```
 
@@ -366,12 +366,12 @@ async def prompt_pre_fetch(
 
 ```python
 class PluginExecutor:
-    async def _execute_with_timeout(self, plugin: PluginRef, 
-                                   plugin_run: Callable, payload: T, 
+    async def _execute_with_timeout(self, plugin: PluginRef,
+                                   plugin_run: Callable, payload: T,
                                    context: PluginContext) -> PluginResult[T]:
         """Execute plugin with timeout protection"""
         return await asyncio.wait_for(
-            plugin_run(plugin, payload, context), 
+            plugin_run(plugin, payload, context),
             timeout=self.timeout  # Default 30 seconds
         )
 ```
@@ -395,12 +395,12 @@ async def execute(self, plugins: list[PluginRef], ...) -> tuple[PluginResult[T],
         try:
             result = await self._execute_with_timeout(plugin, ...)
             # Process result...
-            
+
         except asyncio.TimeoutError:
             logger.error(f"Plugin {plugin.name} timed out after {self.timeout}s")
             if plugin.mode == PluginMode.ENFORCE:
                 return create_timeout_violation()
-                
+
         except Exception as e:
             logger.error(f"Plugin {plugin.name} failed: {str(e)}", exc_info=True)
             if plugin.mode == PluginMode.ENFORCE:
@@ -418,7 +418,7 @@ class MCPConfig(BaseModel):
     proto: TransportType                    # STDIO, SSE, or STREAMABLEHTTP
     url: Optional[str] = None              # Service URL for HTTP transports
     script: Optional[str] = None           # Script path for STDIO transport
-    
+
     @field_validator("url")
     @classmethod
     def validate_url(cls, url: str | None) -> str | None:
@@ -450,12 +450,12 @@ class ExternalServiceAuth(BaseModel):
 ```python
 class PIIFilterPlugin(Plugin):
     """Detects and masks Personally Identifiable Information"""
-    
-    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, 
+
+    async def prompt_pre_fetch(self, payload: PromptPrehookPayload,
                               context: PluginContext) -> PromptPrehookResult:
         pii_patterns = self._load_pii_patterns()
         violations = []
-        
+
         for arg_name, arg_value in payload.args.items():
             detected_pii = self._scan_for_pii(arg_value, pii_patterns)
             if detected_pii:
@@ -470,11 +470,11 @@ class PIIFilterPlugin(Plugin):
                         continue_processing=False,
                         violation=violation
                     )
-                
+
                 # Apply masking
                 masked_value = self._apply_masking(arg_value, detected_pii)
                 payload.args[arg_name] = masked_value
-        
+
         return PluginResult(
             continue_processing=True,
             modified_payload=payload,
@@ -487,11 +487,11 @@ class PIIFilterPlugin(Plugin):
 ```python
 class ResourceFilterPlugin(Plugin):
     """Validates and filters resource requests"""
-    
-    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, 
+
+    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload,
                                 context: PluginContext) -> ResourcePreFetchResult:
         uri_parts = urlparse(payload.uri)
-        
+
         # Protocol validation
         allowed_protocols = self.config.get("allowed_protocols", ["http", "https"])
         if uri_parts.scheme not in allowed_protocols:
@@ -504,7 +504,7 @@ class ResourceFilterPlugin(Plugin):
                     details={"protocol": uri_parts.scheme, "uri": payload.uri}
                 )
             )
-        
+
         # Domain validation
         blocked_domains = self.config.get("blocked_domains", [])
         if uri_parts.netloc in blocked_domains:
@@ -517,13 +517,13 @@ class ResourceFilterPlugin(Plugin):
                     details={"domain": uri_parts.netloc}
                 )
             )
-        
+
         return PluginResult(continue_processing=True)
-    
-    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, 
+
+    async def resource_post_fetch(self, payload: ResourcePostFetchPayload,
                                  context: PluginContext) -> ResourcePostFetchResult:
         content = payload.content
-        
+
         # Size validation
         max_size = self.config.get("max_content_size", 1048576)  # 1MB default
         if hasattr(content, 'text') and len(content.text) > max_size:
@@ -536,7 +536,7 @@ class ResourceFilterPlugin(Plugin):
                     details={"size": len(content.text), "limit": max_size}
                 )
             )
-        
+
         # Content filtering
         if hasattr(content, 'text'):
             filtered_text = self._apply_content_filters(content.text)
@@ -547,7 +547,7 @@ class ResourceFilterPlugin(Plugin):
                     modified_payload=payload,
                     metadata={"content_filtered": True}
                 )
-        
+
         return PluginResult(continue_processing=True)
 ```
 
@@ -599,16 +599,16 @@ class TestPIIFilterPlugin:
             hooks=[HookType.PROMPT_PRE_FETCH],
             config={"detect_ssn": True, "mask_strategy": "partial"}
         )
-        
+
         plugin = PIIFilterPlugin(config)
         payload = PromptPrehookPayload(
             name="test",
             args={"user_input": "My SSN is 123-45-6789"}
         )
         context = PluginContext(request_id="test-123")
-        
+
         result = await plugin.prompt_pre_fetch(payload, context)
-        
+
         assert result.continue_processing
         assert "XXX-XX-6789" in result.modified_payload.args["user_input"]
 ```
@@ -622,7 +622,7 @@ class TestPIIFilterPlugin:
 SERVER_PRE_REGISTER = "server_pre_register"    # Server attestation and validation
 SERVER_POST_REGISTER = "server_post_register"  # Post-registration processing
 
-# Authentication hooks  
+# Authentication hooks
 AUTH_PRE_CHECK = "auth_pre_check"              # Custom authentication logic
 AUTH_POST_CHECK = "auth_post_check"            # Post-authentication processing
 

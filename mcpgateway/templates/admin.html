@@ -134,6 +134,16 @@
             >
               Gateways/MCP Servers
             </a>
+            {% if a2a_enabled %}
+            <a
+              href="#a2a-agents"
+              id="tab-a2a-agents"
+              data-testid="a2a-agents-tab"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+              A2A Agents
+            </a>
+            {% endif %}
             <a
               href="#roots"
               id="tab-roots"
@@ -3235,6 +3245,274 @@
           </form>
         </div>
       </div>
+
+      <!-- A2A Agents Panel -->
+      {% if a2a_enabled %}
+      <div id="a2a-agents-panel" class="tab-panel hidden">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-2xl font-bold dark:text-gray-200">
+            A2A Agents Catalog
+          </h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Manage Agent-to-Agent compatible agents that can be integrated as tools
+          </p>
+          <div class="flex items-center">
+            <input
+              type="checkbox"
+              id="show-inactive-a2a-agents"
+              class="mr-2"
+              onchange="toggleInactiveItems('a2a-agents')"
+            />
+            <label
+              for="show-inactive-a2a-agents"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Show Inactive</label
+            >
+          </div>
+        </div>
+
+        <!-- A2A Agent Filter Section -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="flex flex-wrap gap-4 items-center">
+            <div class="flex-1 min-w-64">
+              <label
+                for="a2a-agent-tag-filter"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                >Filter by Tags:</label
+              >
+              <input
+                type="text"
+                id="a2a-agent-tag-filter"
+                placeholder="e.g., ai,assistant (comma-separated)"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                oninput="filterEntitiesByTags('a2a-agents', this.value)"
+              />
+            </div>
+            <div id="a2a-agent-available-tags" class="flex flex-wrap gap-2">
+              <!-- Available tags will be populated by JavaScript -->
+            </div>
+            <button
+              onclick="clearTagFilter('a2a-agents')"
+              class="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-600 dark:text-gray-300 dark:border-gray-500 dark:hover:bg-gray-500"
+            >
+              Clear Filter
+            </button>
+          </div>
+        </div>
+
+        <!-- A2A Agent Add Form -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
+            Add New A2A Agent
+          </h3>
+          <form
+            method="post"
+            action="{{ root_path }}/admin/a2a"
+            class="grid grid-cols-1 gap-4 sm:grid-cols-2"
+          >
+            <div>
+              <label
+                for="a2a-agent-name"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Agent Name</label
+              >
+              <input
+                type="text"
+                id="a2a-agent-name"
+                name="name"
+                required
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="my-assistant-agent"
+              />
+            </div>
+            <div>
+              <label
+                for="a2a-agent-endpoint-url"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Endpoint URL</label
+              >
+              <input
+                type="url"
+                id="a2a-agent-endpoint-url"
+                name="endpoint_url"
+                required
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="https://api.example.com/agent"
+              />
+            </div>
+            <div>
+              <label
+                for="a2a-agent-type"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Agent Type</label
+              >
+              <select
+                id="a2a-agent-type"
+                name="agent_type"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+              >
+                <option value="generic">Generic</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div>
+              <label
+                for="a2a-agent-auth-type"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Authentication Type</label
+              >
+              <select
+                id="a2a-agent-auth-type"
+                name="auth_type"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+              >
+                <option value="">None</option>
+                <option value="api_key">API Key</option>
+                <option value="bearer">Bearer Token</option>
+                <option value="oauth">OAuth</option>
+              </select>
+            </div>
+            <div class="sm:col-span-2">
+              <label
+                for="a2a-agent-description"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Description</label
+              >
+              <textarea
+                id="a2a-agent-description"
+                name="description"
+                rows="2"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="Description of the agent's capabilities"
+              ></textarea>
+            </div>
+            <div>
+              <label
+                for="a2a-agent-auth-value"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Authentication Value</label
+              >
+              <input
+                type="password"
+                id="a2a-agent-auth-value"
+                name="auth_value"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="API key, token, etc."
+              />
+            </div>
+            <div>
+              <label
+                for="a2a-agent-tags"
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >Tags</label
+              >
+              <input
+                type="text"
+                id="a2a-agent-tags"
+                name="tags"
+                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
+                placeholder="ai,assistant,production (comma-separated)"
+              />
+            </div>
+            <div class="sm:col-span-2">
+              <button
+                type="submit"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                Add A2A Agent
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- A2A Agents List -->
+        <div class="bg-white shadow rounded-lg dark:bg-gray-800">
+          <div class="p-6">
+            <h3
+              class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4"
+            >
+              Registered A2A Agents
+            </h3>
+            <div class="space-y-4">
+              {% if a2a_agents %}
+                {% for agent in a2a_agents %}
+                <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-3">
+                  <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                      <h4 class="text-lg font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</h4>
+                      <p class="text-sm text-gray-600 dark:text-gray-400">{{ agent.description or "" }}</p>
+                      <div class="mt-2 flex flex-wrap gap-2">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
+                          {% if agent.enabled %}Active{% else %}Inactive{% endif %}
+                        </span>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.reachable %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                          {% if agent.reachable %}Reachable{% else %}Unreachable{% endif %}
+                        </span>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          {{ agent.agentType }}
+                        </span>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          Auth: {{ agent.authType or "None" }}
+                        </span>
+                      </div>
+                      <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        <div>Endpoint: {{ agent.endpointUrl }}</div>
+                        <div>Executions: {{ agent.metrics.totalExecutions }} | Success Rate: {% if agent.metrics.totalExecutions %}{{ "%.1f"|format(100 - agent.metrics.failureRate) }}%{% else %}N/A{% endif %}</div>
+                        <div>Created: {{ agent.createdAt.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+                        {% if agent.lastInteraction %}
+                        <div>Last Interaction: {{ agent.lastInteraction.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+                        {% endif %}
+                      </div>
+                      {% if agent.tags %}
+                      <div class="mt-2 flex flex-wrap gap-1">
+                        {% for tag in agent.tags %}
+                        <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">{{ tag }}</span>
+                        {% endfor %}
+                      </div>
+                      {% endif %}
+                      <!-- Test result placeholder -->
+                      <div id="test-result-{{ agent.id }}" class="mt-2 p-2 rounded-md bg-gray-50 dark:bg-gray-700 hidden"></div>
+                    </div>
+                    <div class="flex space-x-2">
+                      <button
+                        onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
+                        class="px-3 py-1 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        Test
+                      </button>
+                      <form method="post" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="inline">
+                        <input type="hidden" name="activate" value="{% if agent.enabled %}false{% else %}true{% endif %}" />
+                        <button
+                          type="submit"
+                          class="px-3 py-1 text-sm font-medium {% if agent.enabled %}text-red-700 bg-red-100 hover:bg-red-200{% else %}text-green-700 bg-green-100 hover:bg-green-200{% endif %} rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        >
+                          {% if agent.enabled %}Deactivate{% else %}Activate{% endif %}
+                        </button>
+                      </form>
+                      <form method="post" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="inline" onsubmit="return confirm('Are you sure you want to delete this A2A agent?')">
+                        <button
+                          type="submit"
+                          class="px-3 py-1 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                        >
+                          Delete
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+                {% endfor %}
+              {% else %}
+                <div class="text-center py-8">
+                  <p class="text-gray-500 dark:text-gray-400">No A2A agents registered yet.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
 
       <!-- Roots Panel -->
       <div id="roots-panel" class="tab-panel hidden">

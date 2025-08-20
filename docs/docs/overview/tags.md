@@ -13,6 +13,7 @@ Tags are metadata labels that can be attached to any entity in MCP Gateway:
 - **Prompts** - Organize by purpose (e.g., `coding`, `analysis`, `creative`)
 - **Servers** - Tag by environment (e.g., `production`, `development`, `testing`)
 - **Gateways** - Label federated gateways (e.g., `cloud`, `on-premise`, `partner`)
+- **A2A Agents** - Classify AI agents (e.g., `openai`, `anthropic`, `assistant`, `custom`)
 
 !!! info "Tag Format"
     - Tags are automatically normalized to lowercase

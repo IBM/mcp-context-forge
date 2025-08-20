@@ -12,7 +12,10 @@ from pathlib import Path
 import uvicorn
 from dotenv import load_dotenv
 
-from .config import get_settings, validate_environment, get_example_env
+try:
+    from .config import get_settings, validate_environment, get_example_env
+except ImportError:
+    from config import get_settings, validate_environment, get_example_env
 
 # Configure logging
 logging.basicConfig(

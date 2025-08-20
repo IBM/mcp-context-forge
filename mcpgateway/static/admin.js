@@ -3462,6 +3462,15 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "a2a-agents") {
+                    // Load A2A agents list if not already loaded
+                    const agentsList = safeGetElement("a2a-agents-list");
+                    if (agentsList && agentsList.innerHTML.trim() === "") {
+                        // Trigger HTMX load manually
+                        window.htmx.trigger(agentsList, "load");
+                    }
+                }
+
                 if (tabName === "version-info") {
                     const versionPanel = safeGetElement("version-info-panel");
                     if (versionPanel && versionPanel.innerHTML.trim() === "") {
@@ -6506,6 +6515,7 @@ function setupTabNavigation() {
         "resources",
         "prompts",
         "gateways",
+        "a2a-agents",
         "roots",
         "metrics",
         "logs",
@@ -8618,3 +8628,129 @@ function getCookie(name) {
 
 // Expose functions used in dynamically generated HTML
 window.resetImportFile = resetImportFile;
+
+// ===================================================================
+// A2A AGENT TESTING FUNCTIONALITY
+// ===================================================================
+
+/**
+ * Test an A2A agent by making a direct invocation call
+ * @param {string} agentId - ID of the agent to test
+ * @param {string} agentName - Name of the agent for display
+ * @param {string} endpointUrl - Endpoint URL of the agent
+ */
+async function testA2AAgent(agentId, agentName, endpointUrl) {
+    try {
+        // Show loading state
+        const testResult = document.getElementById(`test-result-${agentId}`);
+        testResult.innerHTML =
+            '<div class="text-blue-600">🔄 Testing agent...</div>';
+        testResult.classList.remove("hidden");
+
+        // Get auth token from cookie or local storage
+        let token = getCookie("jwt_token");
+
+        // Try alternative cookie names if primary not found
+        if (!token) {
+            token = getCookie("access_token") || getCookie("auth_token");
+        }
+
+        // Try to get from localStorage as fallback
+        if (!token) {
+            token =
+                localStorage.getItem("jwt_token") ||
+                localStorage.getItem("auth_token");
+        }
+
+        // Debug logging
+        console.log("Available cookies:", document.cookie);
+        console.log(
+            "Found token:",
+            token ? "Yes (length: " + token.length + ")" : "No",
+        );
+
+        // Prepare headers
+        const headers = {
+            "Content-Type": "application/json",
+        };
+
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        } else {
+            // Fallback to basic auth if JWT not available
+            console.warn("JWT token not found, attempting basic auth fallback");
+            headers.Authorization = "Basic " + btoa("admin:changeme"); // Default admin credentials
+        }
+
+        // Test payload is now determined server-side based on agent configuration
+        const testPayload = {};
+
+        // Make test request to A2A agent via admin endpoint
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/a2a/${agentId}/test`,
+            {
+                method: "POST",
+                headers,
+                body: JSON.stringify(testPayload),
+            },
+            10000, // 10 second timeout
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+
+        // Display result
+        let resultHtml;
+        if (!result.success || result.error) {
+            resultHtml = `
+                <div class="text-red-600">
+                    <div>❌ Test Failed</div>
+                    <div class="text-xs mt-1">Error: ${escapeHtml(result.error || "Unknown error")}</div>
+                </div>`;
+        } else {
+            // Check if the agent result contains an error (agent-level error)
+            const agentResult = result.result;
+            if (agentResult && agentResult.error) {
+                resultHtml = `
+                    <div class="text-yellow-600">
+                        <div>⚠️ Agent Error</div>
+                        <div class="text-xs mt-1">Agent Response: ${escapeHtml(JSON.stringify(agentResult).substring(0, 150))}...</div>
+                    </div>`;
+            } else {
+                resultHtml = `
+                    <div class="text-green-600">
+                        <div>✅ Test Successful</div>
+                        <div class="text-xs mt-1">Response: ${escapeHtml(JSON.stringify(agentResult).substring(0, 150))}...</div>
+                    </div>`;
+            }
+        }
+
+        testResult.innerHTML = resultHtml;
+
+        // Auto-hide after 10 seconds
+        setTimeout(() => {
+            testResult.classList.add("hidden");
+        }, 10000);
+    } catch (error) {
+        console.error("A2A agent test failed:", error);
+
+        const testResult = document.getElementById(`test-result-${agentId}`);
+        testResult.innerHTML = `
+            <div class="text-red-600">
+                <div>❌ Test Failed</div>
+                <div class="text-xs mt-1">Error: ${escapeHtml(error.message)}</div>
+            </div>`;
+        testResult.classList.remove("hidden");
+
+        // Auto-hide after 10 seconds
+        setTimeout(() => {
+            testResult.classList.add("hidden");
+        }, 10000);
+    }
+}
+
+// Expose A2A test function to global scope
+window.testA2AAgent = testA2AAgent;
