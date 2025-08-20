@@ -512,11 +512,15 @@ async def main():
         "AZURE_OPENAI_ENDPOINT": os.getenv("AZURE_OPENAI_ENDPOINT", "not set"),
         "AZURE_DEPLOYMENT_NAME": os.getenv("AZURE_DEPLOYMENT_NAME", "not set"),
         "ANTHROPIC_API_KEY": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "AWS_ACCESS_KEY_ID": bool(os.getenv("AWS_ACCESS_KEY_ID")),
+        "GOOGLE_API_KEY": bool(os.getenv("GOOGLE_API_KEY")),
+        "WATSONX_API_KEY": bool(os.getenv("WATSONX_API_KEY")),
+        "WATSONX_PROJECT_ID": os.getenv("WATSONX_PROJECT_ID", "not set"),
         "OLLAMA_BASE_URL": os.getenv("OLLAMA_BASE_URL", "not set"),
         "DEFAULT_JUDGE_MODEL": os.getenv("DEFAULT_JUDGE_MODEL", "not set"),
     }
     for var, value in env_vars.items():
-        if var in ["AZURE_OPENAI_ENDPOINT", "AZURE_DEPLOYMENT_NAME", "OLLAMA_BASE_URL", "DEFAULT_JUDGE_MODEL"]:
+        if var in ["AZURE_OPENAI_ENDPOINT", "AZURE_DEPLOYMENT_NAME", "WATSONX_PROJECT_ID", "OLLAMA_BASE_URL", "DEFAULT_JUDGE_MODEL"]:
             logger.info(f"   📊 {var}: {value}")
         else:
             status = "✅" if value else "❌"
@@ -569,6 +573,12 @@ async def main():
         elif provider == "bedrock":
             region = os.getenv("AWS_REGION", "us-east-1")
             endpoint_info = f" → AWS Bedrock ({region})"
+        elif provider == "gemini":
+            endpoint_info = f" → Google AI Studio"
+        elif provider == "watsonx":
+            watsonx_url = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
+            project_id = os.getenv("WATSONX_PROJECT_ID", "not configured")
+            endpoint_info = f" → {watsonx_url} (project: {project_id})"
 
         logger.info(f"   📊 {judge_name} ({provider}): {model_name}{endpoint_info}")
 

@@ -531,6 +531,133 @@ models:
         compliance: "gdpr"
 ```
 
+### Google Gemini Configuration
+
+```yaml
+models:
+  gemini:
+    # High-performance Gemini Pro
+    gemini-1-5-pro-eval:
+      provider: "gemini"
+      model_name: "gemini-1.5-pro-latest"
+      api_key_env: "GOOGLE_API_KEY"
+      default_temperature: 0.1  # Conservative for evaluation
+      max_tokens: 4000
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 2000000  # 2M tokens!
+        optimal_temperature: 0.1
+        consistency_level: "very_high"
+      metadata:
+        provider: "google"
+        context_window: "2M_tokens"
+        
+    # Fast Gemini Flash
+    gemini-flash-eval:
+      provider: "gemini"
+      model_name: "gemini-1.5-flash-latest"
+      api_key_env: "GOOGLE_API_KEY"
+      default_temperature: 0.3
+      max_tokens: 3000
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 1000000  # 1M tokens
+        optimal_temperature: 0.3
+        consistency_level: "high"
+      metadata:
+        provider: "google"
+        optimized_for: "speed"
+```
+
+### IBM Watsonx.ai Configuration
+
+```yaml
+models:
+  watsonx:
+    # Llama 3.1 70B on Watsonx
+    llama-3-1-70b-enterprise:
+      provider: "watsonx"
+      model_id: "meta-llama/llama-3-1-70b-instruct"
+      model_name: "llama-3.1-70b-enterprise"
+      api_key_env: "WATSONX_API_KEY"
+      project_id_env: "WATSONX_PROJECT_ID"
+      url_env: "WATSONX_URL"
+      default_temperature: 0.2
+      max_tokens: 2000
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 128000
+        optimal_temperature: 0.2
+        consistency_level: "high"
+      metadata:
+        provider: "ibm"
+        model_family: "llama"
+        enterprise: true
+        
+    # IBM Granite models
+    granite-3-0-8b-enterprise:
+      provider: "watsonx"
+      model_id: "ibm/granite-3-0-8b-instruct"
+      model_name: "granite-3.0-8b-enterprise"
+      api_key_env: "WATSONX_API_KEY"
+      project_id_env: "WATSONX_PROJECT_ID"
+      url_env: "WATSONX_URL"
+      default_temperature: 0.3
+      max_tokens: 2000
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 8192
+        optimal_temperature: 0.3
+        consistency_level: "high"
+      metadata:
+        provider: "ibm"
+        model_family: "granite"
+        enterprise: true
+        optimized_for: "enterprise_use"
+```
+
+### AWS Bedrock with Claude 4.1
+
+```yaml
+models:
+  bedrock:
+    # Claude 4.1 on AWS Bedrock
+    claude-4-1-production:
+      provider: "bedrock"
+      model_id: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+      model_name: "claude-4.1-production"
+      aws_access_key_env: "AWS_ACCESS_KEY_ID"
+      aws_secret_key_env: "AWS_SECRET_ACCESS_KEY"
+      aws_region_env: "AWS_REGION"
+      default_temperature: 0.1  # Very conservative for production
+      max_tokens: 4000
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 200000
+        optimal_temperature: 0.1
+        consistency_level: "very_high"
+      metadata:
+        provider: "aws"
+        model_version: "4.1"
+        enterprise: true
+        compliance: "sox_gdpr"
+```
+
 ### Custom OLLAMA Fleet
 
 ```yaml

@@ -73,11 +73,19 @@ aws = [
 ollama = [
     "aiohttp>=3.8.0",
 ]
+gemini = [
+    "google-generativeai>=0.3.0",
+]
+watsonx = [
+    "ibm-watsonx-ai>=1.0.0",
+]
 all = [
     "anthropic>=0.18.0",
     "boto3>=1.26.0",
     "botocore>=1.29.0",
     "aiohttp>=3.8.0",
+    "google-generativeai>=0.3.0",
+    "ibm-watsonx-ai>=1.0.0",
 ]
 
 [project.urls]

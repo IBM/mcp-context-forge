@@ -177,6 +177,10 @@ validate-models: ## Run comprehensive model validation and connectivity tests
 	@echo "🔍 Running model validation and connectivity tests..."
 	$(PYTHON) validate_models.py
 
+test-all-providers: ## Test all LLM providers (OpenAI, Azure, Anthropic, Bedrock, Gemini, Watsonx, OLLAMA)
+	@echo "🧪 Testing all LLM provider implementations..."
+	$(PYTHON) test_all_providers.py
+
 validate-config: ## Validate custom configuration files
 	@echo "🔍 Validating configuration files..."
 	@if [ -n "$$MCP_EVAL_MODELS_CONFIG" ]; then \

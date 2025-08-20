@@ -42,6 +42,14 @@ def check_environment_variables() -> Dict[str, bool]:
     env_checks["AWS_SECRET_ACCESS_KEY"] = bool(os.getenv("AWS_SECRET_ACCESS_KEY"))
     env_checks["AWS_REGION"] = bool(os.getenv("AWS_REGION"))
 
+    # Google Gemini
+    env_checks["GOOGLE_API_KEY"] = bool(os.getenv("GOOGLE_API_KEY"))
+
+    # IBM Watsonx.ai
+    env_checks["WATSONX_API_KEY"] = bool(os.getenv("WATSONX_API_KEY"))
+    env_checks["WATSONX_PROJECT_ID"] = bool(os.getenv("WATSONX_PROJECT_ID"))
+    env_checks["WATSONX_URL"] = bool(os.getenv("WATSONX_URL"))
+
     # OLLAMA
     env_checks["OLLAMA_BASE_URL"] = bool(os.getenv("OLLAMA_BASE_URL"))
 
@@ -79,6 +87,8 @@ async def main():
         "Azure OpenAI": ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"],
         "Anthropic": ["ANTHROPIC_API_KEY"],
         "AWS Bedrock": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+        "Google Gemini": ["GOOGLE_API_KEY"],
+        "IBM Watsonx.ai": ["WATSONX_API_KEY", "WATSONX_PROJECT_ID"],
         "OLLAMA": ["OLLAMA_BASE_URL"],
     }
 

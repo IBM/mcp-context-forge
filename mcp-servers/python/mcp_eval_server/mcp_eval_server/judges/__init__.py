@@ -22,6 +22,16 @@ try:
 except ImportError:
     OllamaJudge = None
 
+try:
+    from .gemini_judge import GeminiJudge
+except ImportError:
+    GeminiJudge = None
+
+try:
+    from .watsonx_judge import WatsonxJudge
+except ImportError:
+    WatsonxJudge = None
+
 __all__ = [
     "BaseJudge",
     "EvaluationCriteria",
@@ -33,4 +43,6 @@ __all__ = [
     "AnthropicJudge",
     "BedrockJudge",
     "OllamaJudge",
+    "GeminiJudge",
+    "WatsonxJudge",
 ]

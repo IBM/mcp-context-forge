@@ -39,6 +39,18 @@ try:
 except ImportError:
     OllamaJudge = None
 
+try:
+    # Local
+    from ..judges.gemini_judge import GeminiJudge
+except ImportError:
+    GeminiJudge = None
+
+try:
+    # Local
+    from ..judges.watsonx_judge import WatsonxJudge
+except ImportError:
+    WatsonxJudge = None
+
 
 class JudgeTools:
     """Tools for LLM-as-a-judge evaluation."""
@@ -113,6 +125,37 @@ class JudgeTools:
                         print(f"Warning: Could not load OLLAMA judge {model_name}: {e}")
             else:
                 self.logger.debug("OLLAMA_BASE_URL not configured, skipping OLLAMA judges")
+
+        # Load Google Gemini models
+        if GeminiJudge:
+            google_api_key = os.getenv('GOOGLE_API_KEY')
+            if google_api_key:
+                self.logger.debug(f"Loading Google Gemini judges")
+                for model_name, model_config in config.get("models", {}).get("gemini", {}).items():
+                    try:
+                        self.judges[model_name] = GeminiJudge(model_config)
+                        self.logger.debug(f"✅ Loaded Gemini judge: {model_name}")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️  Could not load Gemini judge {model_name}: {e}")
+                        print(f"Warning: Could not load Gemini judge {model_name}: {e}")
+            else:
+                self.logger.debug("GOOGLE_API_KEY not configured, skipping Gemini judges")
+
+        # Load IBM Watsonx.ai models
+        if WatsonxJudge:
+            watsonx_api_key = os.getenv('WATSONX_API_KEY')
+            watsonx_project_id = os.getenv('WATSONX_PROJECT_ID')
+            if watsonx_api_key and watsonx_project_id:
+                self.logger.debug(f"Loading IBM Watsonx.ai judges")
+                for model_name, model_config in config.get("models", {}).get("watsonx", {}).items():
+                    try:
+                        self.judges[model_name] = WatsonxJudge(model_config)
+                        self.logger.debug(f"✅ Loaded Watsonx judge: {model_name}")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️  Could not load Watsonx judge {model_name}: {e}")
+                        print(f"Warning: Could not load Watsonx judge {model_name}: {e}")
+            else:
+                self.logger.debug("WATSONX_API_KEY or WATSONX_PROJECT_ID not configured, skipping Watsonx judges")
 
         # Always include rule-based judge
         self.judges["rule-based"] = RuleBasedJudge({"model_name": "rule-based"})
@@ -449,7 +492,7 @@ class JudgeTools:
             return self.judges[judge_model]
 
         # Try common fallbacks
-        fallbacks = ["gpt-4o-mini", "gpt-4", "claude-3-sonnet", "gpt-3.5-turbo", "rule-based"]
+        fallbacks = ["claude-4-1-bedrock", "gemini-1-5-pro", "gpt-4o-mini", "gpt-4", "claude-3-sonnet", "llama-3-1-70b-watsonx", "gpt-3.5-turbo", "rule-based"]
         for fallback in fallbacks:
             if fallback in self.judges:
                 print(f"Warning: Judge {judge_model} not available, using {fallback}")
