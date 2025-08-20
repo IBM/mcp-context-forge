@@ -9,13 +9,14 @@ import os
 import secrets
 from typing import Any, Dict, List, Optional
 
-# Third-Party
 try:
+    # Third-Party
     import google.generativeai as genai
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+    from google.generativeai.types import HarmBlockThreshold, HarmCategory
 except ImportError:
     genai = None
 
+# Third-Party
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Local
@@ -54,7 +55,7 @@ class GeminiJudge(BaseJudge):
 
         genai.configure(api_key=api_key)
         self.model_name = config["model_name"]
-        
+
         # Initialize the model
         self.model = genai.GenerativeModel(
             model_name=self.model_name,
@@ -63,9 +64,9 @@ class GeminiJudge(BaseJudge):
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            }
+            },
         )
-        
+
         self.logger.debug(f"🔧 Initialized Gemini judge: {self.model_name}")
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -92,7 +93,7 @@ class GeminiJudge(BaseJudge):
                 prompt_parts.append(f"User: {msg['content']}")
             elif msg["role"] == "assistant":
                 prompt_parts.append(f"Assistant: {msg['content']}")
-        
+
         prompt = "\n\n".join(prompt_parts)
 
         # Generation config
@@ -103,13 +104,11 @@ class GeminiJudge(BaseJudge):
 
         try:
             # Run in thread pool since Google library is sync
+            # Standard
             import concurrent.futures
-            
+
             def make_request():
-                response = self.model.generate_content(
-                    prompt,
-                    generation_config=generation_config
-                )
+                response = self.model.generate_content(prompt, generation_config=generation_config)
                 return response.text if response.text else ""
 
             loop = asyncio.get_event_loop()
@@ -117,11 +116,11 @@ class GeminiJudge(BaseJudge):
                 result = await loop.run_in_executor(executor, make_request)
 
             self.logger.debug(f"✅ Gemini API response received - Length: {len(result)} chars")
-            
+
             # Log the actual model response (truncated)
             truncated_response = result[:200] + "..." if len(result) > 200 else result
             self.logger.debug(f"   💬 Model response: {truncated_response}")
-            
+
             return result
 
         except Exception as e:

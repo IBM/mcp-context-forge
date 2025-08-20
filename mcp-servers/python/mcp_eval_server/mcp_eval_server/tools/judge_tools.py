@@ -128,7 +128,7 @@ class JudgeTools:
 
         # Load Google Gemini models
         if GeminiJudge:
-            google_api_key = os.getenv('GOOGLE_API_KEY')
+            google_api_key = os.getenv("GOOGLE_API_KEY")
             if google_api_key:
                 self.logger.debug(f"Loading Google Gemini judges")
                 for model_name, model_config in config.get("models", {}).get("gemini", {}).items():
@@ -143,8 +143,8 @@ class JudgeTools:
 
         # Load IBM Watsonx.ai models
         if WatsonxJudge:
-            watsonx_api_key = os.getenv('WATSONX_API_KEY')
-            watsonx_project_id = os.getenv('WATSONX_PROJECT_ID')
+            watsonx_api_key = os.getenv("WATSONX_API_KEY")
+            watsonx_project_id = os.getenv("WATSONX_PROJECT_ID")
             if watsonx_api_key and watsonx_project_id:
                 self.logger.debug(f"Loading IBM Watsonx.ai judges")
                 for model_name, model_config in config.get("models", {}).get("watsonx", {}).items():

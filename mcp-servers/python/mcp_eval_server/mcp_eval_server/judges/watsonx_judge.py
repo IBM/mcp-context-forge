@@ -9,16 +9,17 @@ import os
 import secrets
 from typing import Any, Dict, List, Optional
 
-# Third-Party
 try:
+    # Third-Party
+    from ibm_watsonx_ai import Credentials
     from ibm_watsonx_ai.foundation_models import Model
     from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
-    from ibm_watsonx_ai import Credentials
 except ImportError:
     Model = None
     GenParams = None
     Credentials = None
 
+# Third-Party
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Local
@@ -65,24 +66,19 @@ class WatsonxJudge(BaseJudge):
             url=url,
             api_key=api_key,
         )
-        
+
         self.project_id = project_id
         self.model_id = config["model_id"]
         self.model = config["model_name"]
-        
+
         # Initialize the Watsonx model
         self.watsonx_model = Model(
             model_id=self.model_id,
-            params={
-                GenParams.DECODING_METHOD: "greedy",
-                GenParams.MAX_NEW_TOKENS: self.max_tokens,
-                GenParams.TEMPERATURE: self.temperature,
-                GenParams.STOP_SEQUENCES: ["\n\n"]
-            },
+            params={GenParams.DECODING_METHOD: "greedy", GenParams.MAX_NEW_TOKENS: self.max_tokens, GenParams.TEMPERATURE: self.temperature, GenParams.STOP_SEQUENCES: ["\n\n"]},
             credentials=self.credentials,
-            project_id=self.project_id
+            project_id=self.project_id,
         )
-        
+
         self.logger.debug(f"🔧 Initialized Watsonx.ai judge: {self.model}")
         self.logger.debug(f"   Model ID: {self.model_id}")
         self.logger.debug(f"   Project ID: {project_id}")
@@ -112,7 +108,7 @@ class WatsonxJudge(BaseJudge):
                 prompt_parts.append(f"Human: {msg['content']}")
             elif msg["role"] == "assistant":
                 prompt_parts.append(f"Assistant: {msg['content']}")
-        
+
         prompt = "\n\n".join(prompt_parts) + "\n\nAssistant:"
 
         # Update parameters for this call
@@ -120,13 +116,14 @@ class WatsonxJudge(BaseJudge):
             GenParams.DECODING_METHOD: "greedy",
             GenParams.MAX_NEW_TOKENS: max_tokens or self.max_tokens,
             GenParams.TEMPERATURE: temperature or self.temperature,
-            GenParams.STOP_SEQUENCES: ["\n\n", "Human:", "System:"]
+            GenParams.STOP_SEQUENCES: ["\n\n", "Human:", "System:"],
         }
 
         try:
             # Run in thread pool since Watsonx.ai library is sync
+            # Standard
             import concurrent.futures
-            
+
             def make_request():
                 response = self.watsonx_model.generate_text(prompt=prompt, params=params)
                 return response if response else ""
@@ -136,11 +133,11 @@ class WatsonxJudge(BaseJudge):
                 result = await loop.run_in_executor(executor, make_request)
 
             self.logger.debug(f"✅ Watsonx.ai API response received - Length: {len(result)} chars")
-            
+
             # Log the actual model response (truncated)
             truncated_response = result[:200] + "..." if len(result) > 200 else result
             self.logger.debug(f"   💬 Model response: {truncated_response}")
-            
+
             return result
 
         except Exception as e:

@@ -10,7 +10,7 @@ The MCP Eval Server uses YAML configuration files for all customizable component
 mcp_eval_server/config/
 ├── models.yaml         # LLM judge model configurations
 ├── rubrics.yaml        # Evaluation rubrics and criteria
-├── benchmarks.yaml     # Performance benchmarks and test suites  
+├── benchmarks.yaml     # Performance benchmarks and test suites
 ├── judge_prompts.yaml  # Judge prompt templates
 └── __init__.py
 ```
@@ -76,7 +76,7 @@ models:
       deployment_name: "my-gpt4-deployment"
       model_name: "gpt-4"
       api_base_env: "MY_AZURE_ENDPOINT"
-      api_key_env: "MY_AZURE_KEY" 
+      api_key_env: "MY_AZURE_KEY"
       api_version_env: "MY_AZURE_VERSION"
       deployment_name_env: "MY_AZURE_DEPLOYMENT"
       default_temperature: 0.2
@@ -278,7 +278,7 @@ models:
         consistency_level: "medium"  # Lower due to high temperature
 
     analytical-gpt4:
-      provider: "openai" 
+      provider: "openai"
       model_name: "gpt-4"
       api_key_env: "OPENAI_API_KEY"
       default_temperature: 0.1  # Very analytical
@@ -314,7 +314,7 @@ models:
       metadata:
         region: "europe"
         language_focus: "multilingual"
-        
+
     asia-gpt4:
       provider: "azure"
       deployment_name: "asia-gpt4-deployment"
@@ -343,7 +343,7 @@ models:
       request_timeout: 90
       capabilities:
         supports_cot: true
-        supports_pairwise: true  
+        supports_pairwise: true
         supports_ranking: false  # May not be good at ranking
         supports_reference: true
         max_context_length: 4096
@@ -407,15 +407,15 @@ def validate_models_config(config_path):
     except Exception as e:
         print(f"❌ Failed to load config: {e}")
         return False
-        
+
     # Validate structure
     if 'models' not in config:
         print("❌ Missing 'models' section")
         return False
-        
+
     issues = []
     warnings = []
-    
+
     for provider, models in config['models'].items():
         for model_name, model_config in models.items():
             # Check required fields
@@ -423,22 +423,22 @@ def validate_models_config(config_path):
             for field in required_fields:
                 if field not in model_config:
                     issues.append(f"Model {model_name}: missing {field}")
-            
+
             # Check environment variables exist
             if 'api_key_env' in model_config:
                 if not os.getenv(model_config['api_key_env']):
                     warnings.append(f"Model {model_name}: {model_config['api_key_env']} not set")
-    
+
     # Report results
     print(f"✅ Configuration validation completed")
     print(f"   Issues: {len(issues)}")
     print(f"   Warnings: {len(warnings)}")
-    
+
     for issue in issues:
         print(f"   ❌ {issue}")
     for warning in warnings:
         print(f"   ⚠️  {warning}")
-        
+
     return len(issues) == 0
 
 if __name__ == "__main__":
@@ -474,7 +474,7 @@ models:
       metadata:
         cost_tier: "premium"
         use_case: "production_evaluation"
-        
+
     # Creative evaluation
     gpt4-creative:
       provider: "openai"
@@ -514,8 +514,8 @@ models:
       metadata:
         region: "us-east"
         latency: "low"
-        
-    # Europe region  
+
+    # Europe region
     azure-eu-gpt4:
       provider: "azure"
       deployment_name: "eu-gpt4-deployment"
@@ -554,7 +554,7 @@ models:
       metadata:
         provider: "google"
         context_window: "2M_tokens"
-        
+
     # Fast Gemini Flash
     gemini-flash-eval:
       provider: "gemini"
@@ -602,7 +602,7 @@ models:
         provider: "ibm"
         model_family: "llama"
         enterprise: true
-        
+
     # IBM Granite models
     granite-3-0-8b-enterprise:
       provider: "watsonx"
@@ -680,7 +680,7 @@ models:
         consistency_level: "high"
       metadata:
         specialization: "code_evaluation"
-        
+
     # General purpose evaluation
     llama3-general:
       provider: "ollama"
@@ -698,7 +698,7 @@ models:
         consistency_level: "high"
       metadata:
         specialization: "general_evaluation"
-        
+
     # Fast evaluation
     phi3-fast:
       provider: "ollama"
@@ -784,10 +784,10 @@ models:
   provider:
     # Use descriptive names indicating purpose
     prod-gpt4-strict:       # Production, strict evaluation
-    dev-claude-creative:    # Development, creative evaluation  
+    dev-claude-creative:    # Development, creative evaluation
     qa-gpt35-fast:         # QA, fast evaluation
     research-opus-deep:    # Research, deep analysis
-    
+
     # Include key characteristics
     gpt4-temp01-eval:      # Temperature 0.1 for evaluation
     claude-temp08-creative: # Temperature 0.8 for creativity
@@ -841,7 +841,7 @@ models:
    ```bash
    # Check configuration syntax
    python3 -c "import yaml; yaml.safe_load(open('my-models.yaml'))"
-   
+
    # Check environment variables
    make validate-models
    ```
@@ -857,7 +857,7 @@ models:
    ```bash
    # Verify keys are actually set
    env | grep -E "(OPENAI|AZURE|ANTHROPIC|AWS)_"
-   
+
    # Test with minimal config
    export MCP_EVAL_MODELS_CONFIG="./minimal-test.yaml"
    ```
@@ -923,7 +923,7 @@ models:
       model_name: "gpt-4"
       api_key_env: "OPENAI_API_KEY"
       # ... (copy from default)
-      
+
   # Add your custom models
   azure:
     my-custom-deployment:
@@ -947,7 +947,7 @@ models:
       max_tokens: 2000
       metadata:
         variant: "conservative"
-        
+
     eval-variant-b:
       provider: "openai"
       model_name: "gpt-4"
@@ -959,7 +959,7 @@ models:
 
 defaults:
   consensus_judges: ["eval-variant-a", "eval-variant-b"]
-  
+
 recommendations:
   ab_testing: ["eval-variant-a", "eval-variant-b"]
 ```
@@ -978,7 +978,7 @@ models:
       metadata:
         domain: "medical"
         compliance: "hipaa"
-        
+
     legal-claude:
       provider: "anthropic"
       model_name: "claude-3-opus-20240229"
@@ -1008,7 +1008,7 @@ export MCP_EVAL_MODELS_CONFIG="./config/staging-models.yaml"
 export DEFAULT_JUDGE_MODEL="staging-gpt4"
 
 # Production
-export MCP_EVAL_MODELS_CONFIG="./config/prod-models.yaml"  
+export MCP_EVAL_MODELS_CONFIG="./config/prod-models.yaml"
 export DEFAULT_JUDGE_MODEL="prod-azure-gpt4"
 ```
 
@@ -1109,7 +1109,7 @@ models:
       model_name: "gpt-3.5-turbo"
       default_temperature: 0.2
       max_tokens: 1000  # Shorter responses = faster
-      
+
     thorough-eval:
       model_name: "gpt-4-turbo-preview"
       default_temperature: 0.1
