@@ -99,13 +99,20 @@ class JudgeTools:
                 except Exception as e:
                     print(f"Warning: Could not load Bedrock judge {model_name}: {e}")
 
-        # Load OLLAMA models
+        # Load OLLAMA models (only if base URL is configured)
         if OllamaJudge:
-            for model_name, model_config in config.get("models", {}).get("ollama", {}).items():
-                try:
-                    self.judges[model_name] = OllamaJudge(model_config)
-                except Exception as e:
-                    print(f"Warning: Could not load OLLAMA judge {model_name}: {e}")
+            ollama_base_url = os.getenv("OLLAMA_BASE_URL")
+            if ollama_base_url:
+                self.logger.debug(f"Loading OLLAMA judges for {ollama_base_url}")
+                for model_name, model_config in config.get("models", {}).get("ollama", {}).items():
+                    try:
+                        self.judges[model_name] = OllamaJudge(model_config)
+                        self.logger.debug(f"✅ Loaded OLLAMA judge: {model_name} (connectivity will be tested during use)")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️  Could not load OLLAMA judge {model_name}: {e}")
+                        print(f"Warning: Could not load OLLAMA judge {model_name}: {e}")
+            else:
+                self.logger.debug("OLLAMA_BASE_URL not configured, skipping OLLAMA judges")
 
         # Always include rule-based judge
         self.judges["rule-based"] = RuleBasedJudge({"model_name": "rule-based"})
@@ -184,8 +191,14 @@ class JudgeTools:
         # Perform evaluation
         result = await judge.evaluate_response(response=response, criteria=criteria_objs, rubric=rubric_obj, context=context, use_cot=use_cot)
 
-        # Log the result
+        # Log the result with model response details
         self.logger.info(f"✅ Evaluation completed - Overall score: {result.overall_score:.2f}, Confidence: {result.confidence:.2f}")
+
+        # Log model reasoning (truncated for readability)
+        if result.reasoning:
+            for criterion, reasoning in result.reasoning.items():
+                truncated_reasoning = reasoning[:100] + "..." if len(reasoning) > 100 else reasoning
+                self.logger.debug(f"   🧠 {criterion}: {truncated_reasoning}")
 
         # Convert result to dict for MCP response
         return {"scores": result.scores, "reasoning": result.reasoning, "overall_score": result.overall_score, "confidence": result.confidence, "metadata": result.metadata, "judge_model": judge_model}

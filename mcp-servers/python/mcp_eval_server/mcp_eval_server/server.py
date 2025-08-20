@@ -541,7 +541,25 @@ async def main():
             endpoint_info = f" → https://api.anthropic.com"
         elif provider == "ollama":
             base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            endpoint_info = f" → {base_url}"
+            # Test OLLAMA connectivity for status display
+            try:
+                # Third-Party
+                import aiohttp
+
+                async def test_ollama():
+                    try:
+                        timeout = aiohttp.ClientTimeout(total=2)
+                        async with aiohttp.ClientSession(timeout=timeout) as session:
+                            async with session.get(f"{base_url}/api/tags") as response:
+                                return response.status == 200
+                    except:
+                        return False
+
+                is_connected = await test_ollama()
+                status = "🟢 connected" if is_connected else "🔴 not reachable"
+                endpoint_info = f" → {base_url} ({status})"
+            except:
+                endpoint_info = f" → {base_url} (🔴 not reachable)"
         elif provider == "bedrock":
             region = os.getenv("AWS_REGION", "us-east-1")
             endpoint_info = f" → AWS Bedrock ({region})"
@@ -573,6 +591,12 @@ async def main():
             result = await judge_tools.evaluate_response(response="Hi, tell me about this model in one sentence.", criteria=criteria, rubric=rubric, judge_model=primary_judge)
 
             logger.info(f"✅ Primary judge {primary_judge} inference test successful - Score: {result['overall_score']:.2f}")
+
+            # Log the model's actual response reasoning (truncated)
+            if "reasoning" in result and result["reasoning"]:
+                for criterion, reasoning in result["reasoning"].items():
+                    truncated = reasoning[:150] + "..." if len(reasoning) > 150 else reasoning
+                    logger.info(f"   💬 Model reasoning ({criterion}): {truncated}")
         except Exception as e:
             logger.warning(f"⚠️  Primary judge {primary_judge} test failed: {e}")
     elif available_judges:
@@ -587,6 +611,12 @@ async def main():
             result = await judge_tools.evaluate_response(response="Hi, tell me about this model in one sentence.", criteria=criteria, rubric=rubric, judge_model=fallback)
 
             logger.info(f"✅ Fallback judge {fallback} test successful - Score: {result['overall_score']:.2f}")
+
+            # Log the model's actual response reasoning (truncated)
+            if "reasoning" in result and result["reasoning"]:
+                for criterion, reasoning in result["reasoning"].items():
+                    truncated = reasoning[:150] + "..." if len(reasoning) > 150 else reasoning
+                    logger.info(f"   💬 Model reasoning ({criterion}): {truncated}")
         except Exception as e:
             logger.warning(f"⚠️  Fallback judge {fallback} test failed: {e}")
     else:
