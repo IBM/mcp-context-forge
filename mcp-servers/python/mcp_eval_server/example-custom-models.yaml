@@ -1,0 +1,54 @@
+# Example Custom Model Configuration
+# Copy and modify this file for your specific needs
+
+models:
+  # Custom Azure deployment
+  azure:
+    my-production-gpt4:
+      provider: "azure"
+      deployment_name: "production-gpt4"
+      model_name: "gpt-4"
+      api_base_env: "AZURE_OPENAI_ENDPOINT"
+      api_key_env: "AZURE_OPENAI_API_KEY"
+      api_version_env: "AZURE_OPENAI_API_VERSION"
+      deployment_name_env: "AZURE_DEPLOYMENT_NAME"
+      default_temperature: 0.1  # Very conservative for production
+      max_tokens: 3000
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: true
+        supports_reference: true
+        max_context_length: 8192
+        optimal_temperature: 0.1
+        consistency_level: "very_high"
+
+  # Custom OpenAI with specific settings
+  openai:
+    fast-gpt35:
+      provider: "openai"
+      model_name: "gpt-3.5-turbo"
+      api_key_env: "OPENAI_API_KEY"
+      organization_env: "OPENAI_ORGANIZATION"
+      default_temperature: 0.3
+      max_tokens: 1500  # Shorter for speed
+      capabilities:
+        supports_cot: true
+        supports_pairwise: true
+        supports_ranking: false
+        supports_reference: true
+        max_context_length: 16384
+        optimal_temperature: 0.3
+        consistency_level: "medium"
+
+# Custom defaults for your organization
+defaults:
+  primary_judge: "my-production-gpt4"
+  fallback_judge: "fast-gpt35"
+  fast_judge: "fast-gpt35"
+
+# Custom recommendations
+recommendations:
+  production_evaluation: ["my-production-gpt4"]
+  development_testing: ["fast-gpt35"]
+  cost_effective: ["fast-gpt35"]

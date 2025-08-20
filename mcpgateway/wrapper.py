@@ -154,7 +154,7 @@ def convert_url(url: str) -> str:
     """Normalize an MCP server URL.
 
     - If it ends with `/sse`, replace with `/mcp`.
-    - If it ends with `/mcp` already, leave unchanged.
+    - If it ends with `/mcp` already, leave it.
     - Otherwise, append `/mcp`.
 
     Args:

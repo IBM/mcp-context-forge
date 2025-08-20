@@ -4,6 +4,7 @@
 # Standard
 import asyncio
 import json
+import logging
 import os
 import secrets
 from typing import Any, Dict, List, Optional
@@ -37,13 +38,32 @@ class OpenAIJudge(BaseJudge):
             ValueError: If API key not found in environment
         """
         super().__init__(config)
+        self.logger = logging.getLogger(__name__)
 
         api_key = os.getenv(config["api_key_env"])
         if not api_key:
             raise ValueError(f"API key not found in environment variable: {config['api_key_env']}")
 
-        self.client = AsyncOpenAI(api_key=api_key, organization=config.get("organization"))
+        # Support for organization (updated to match agent_runtimes)
+        organization = None
+        if config.get("organization_env"):
+            organization = os.getenv(config["organization_env"])
+        elif config.get("organization"):  # Fallback for old config
+            organization = config["organization"]
+
+        # Support for custom base URL
+        base_url = None
+        if config.get("base_url_env"):
+            base_url = os.getenv(config["base_url_env"])
+
+        self.client = AsyncOpenAI(api_key=api_key, organization=organization, base_url=base_url)
         self.model = config["model_name"]
+
+        self.logger.debug(f"🔧 Initialized OpenAI judge: {self.model}")
+        if base_url:
+            self.logger.debug(f"   Using custom base URL: {base_url}")
+        if organization:
+            self.logger.debug(f"   Using organization: {organization}")
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def _make_api_call(self, messages: List[Dict[str, str]], temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> str:
@@ -57,13 +77,20 @@ class OpenAIJudge(BaseJudge):
         Returns:
             Response content from the API
         """
+        self.logger.debug(f"🔗 Making OpenAI API call to {self.model}")
+        self.logger.debug(f"   Messages: {len(messages)}, Temperature: {temperature or self.temperature}, Max tokens: {max_tokens or self.max_tokens}")
+
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             temperature=temperature or self.temperature,
             max_tokens=max_tokens or self.max_tokens,
         )
-        return response.choices[0].message.content or ""
+
+        result = response.choices[0].message.content or ""
+        self.logger.debug(f"✅ OpenAI API response received - Length: {len(result)} chars")
+
+        return result
 
     async def evaluate_response(
         self,

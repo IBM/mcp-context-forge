@@ -103,7 +103,7 @@ pip install -e ".[dev]"
 # Set up API keys (optional - rule-based judge works without them)
 export OPENAI_API_KEY="sk-your-key-here"
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_KEY="your-azure-key"
+export AZURE_OPENAI_API_KEY="your-azure-api-key"
 
 # Note: No heavy ML dependencies required!
 # Uses efficient TF-IDF + scikit-learn instead of transformers
@@ -280,24 +280,69 @@ results = await mcp_client.call_tool("workflow.run_evaluation", {
 
 ## 🎛️ **Advanced Configuration**
 
+### **Custom Model Configuration**
+
+The MCP Eval Server supports complete customization of judge models, allowing you to:
+- Configure custom API endpoints and deployments
+- Set provider-specific parameters and capabilities
+- Create domain-specific model configurations
+- Use custom environment variable names
+
+```bash
+# Use custom model configuration
+export MCP_EVAL_MODELS_CONFIG="./my-custom-models.yaml"
+export DEFAULT_JUDGE_MODEL="my-custom-judge"
+
+# Copy default config for customization
+make copy-config                    # Copies to ./custom-config/
+make show-config                    # Show current configuration status
+make validate-config                # Validate configuration syntax
+```
+
 ### **Model Configuration with Capabilities**
 ```yaml
 models:
-  openai:
-    gpt-4-turbo:
-      provider: "openai"
-      model_name: "gpt-4-turbo-preview"
-      api_key_env: "OPENAI_API_KEY"
-      default_temperature: 0.3
-      max_tokens: 4000
+  azure:
+    my-enterprise-gpt4:
+      provider: "azure"
+      deployment_name: "my-gpt4-deployment"
+      model_name: "gpt-4"
+      api_base_env: "AZURE_OPENAI_ENDPOINT"
+      api_key_env: "AZURE_OPENAI_API_KEY"
+      api_version_env: "AZURE_OPENAI_API_VERSION"
+      deployment_name_env: "AZURE_DEPLOYMENT_NAME"
+      default_temperature: 0.1  # Custom temperature
+      max_tokens: 3000           # Custom token limit
       capabilities:
         supports_cot: true
         supports_pairwise: true
         supports_ranking: true
         supports_reference: true
-        max_context_length: 128000
-        optimal_temperature: 0.3
-        consistency_level: "high"
+        max_context_length: 8192
+        optimal_temperature: 0.1
+        consistency_level: "very_high"
+      metadata:
+        purpose: "production_evaluation"
+        cost_tier: "premium"
+
+  ollama:
+    my-local-llama:
+      provider: "ollama"
+      model_name: "llama3:70b"
+      base_url_env: "OLLAMA_BASE_URL"
+      default_temperature: 0.3
+      max_tokens: 2000
+      request_timeout: 120  # Longer timeout for large models
+
+# Custom defaults
+defaults:
+  primary_judge: "my-enterprise-gpt4"
+  fallback_judge: "my-local-llama"
+
+# Custom recommendations
+recommendations:
+  production: ["my-enterprise-gpt4"]
+  development: ["my-local-llama"]
 ```
 
 ### **Advanced Evaluation Rubrics**

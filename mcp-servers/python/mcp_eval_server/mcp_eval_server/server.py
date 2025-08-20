@@ -5,7 +5,18 @@
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Dict, List
+
+# Load .env file if it exists
+try:
+    # Third-Party
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    # python-dotenv not available, skip
+    pass
 
 # Third-Party
 from mcp.server import Server
@@ -24,25 +35,23 @@ from .tools.quality_tools import QualityTools
 from .tools.workflow_tools import WorkflowTools
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger(__name__)
 
 # Initialize server
 server = Server("mcp-eval-server")
 
-# Initialize tools and storage
-judge_tools = JudgeTools()
-prompt_tools = PromptTools(judge_tools)
-agent_tools = AgentTools(judge_tools)
-quality_tools = QualityTools(judge_tools)
-workflow_tools = WorkflowTools(judge_tools, prompt_tools, agent_tools, quality_tools)
-calibration_tools = CalibrationTools(judge_tools)
-
-# Initialize caching and storage
-evaluation_cache = EvaluationCache()
-judge_cache = JudgeResponseCache()
-benchmark_cache = BenchmarkCache()
-results_store = ResultsStore()
+# Global variables for tools (initialized in main after .env loading)
+judge_tools = None
+prompt_tools = None
+agent_tools = None
+quality_tools = None
+workflow_tools = None
+calibration_tools = None
+evaluation_cache = None
+judge_cache = None
+benchmark_cache = None
+results_store = None
 
 
 @server.list_tools()
@@ -64,7 +73,7 @@ async def list_tools() -> List[Tool]:
                     "response": {"type": "string", "description": "Text response to evaluate"},
                     "criteria": {"type": "array", "items": {"type": "object"}, "description": "List of evaluation criteria"},
                     "rubric": {"type": "object", "description": "Scoring rubric"},
-                    "judge_model": {"type": "string", "default": "gpt-4", "description": "Judge model to use"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model to use"},
                     "context": {"type": "string", "description": "Optional context"},
                     "use_cot": {"type": "boolean", "default": True, "description": "Use chain-of-thought reasoning"},
                 },
@@ -80,7 +89,7 @@ async def list_tools() -> List[Tool]:
                     "response_a": {"type": "string", "description": "First response"},
                     "response_b": {"type": "string", "description": "Second response"},
                     "criteria": {"type": "array", "items": {"type": "object"}, "description": "Comparison criteria"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                     "context": {"type": "string", "description": "Optional context"},
                     "position_bias_mitigation": {"type": "boolean", "default": True},
                 },
@@ -95,7 +104,7 @@ async def list_tools() -> List[Tool]:
                 "properties": {
                     "responses": {"type": "array", "items": {"type": "string"}, "description": "List of responses to rank"},
                     "criteria": {"type": "array", "items": {"type": "object"}, "description": "Ranking criteria"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                     "context": {"type": "string", "description": "Optional context"},
                     "ranking_method": {"type": "string", "default": "tournament", "enum": ["tournament", "round_robin", "scoring"]},
                 },
@@ -110,7 +119,7 @@ async def list_tools() -> List[Tool]:
                 "properties": {
                     "response": {"type": "string", "description": "Generated response"},
                     "reference": {"type": "string", "description": "Gold standard reference"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                     "evaluation_type": {"type": "string", "default": "factuality", "enum": ["factuality", "completeness", "style_match"]},
                     "tolerance": {"type": "string", "default": "moderate", "enum": ["strict", "moderate", "loose"]},
                 },
@@ -127,7 +136,7 @@ async def list_tools() -> List[Tool]:
                     "prompt_text": {"type": "string", "description": "The prompt to evaluate"},
                     "target_model": {"type": "string", "default": "general", "description": "Model the prompt is designed for"},
                     "domain_context": {"type": "string", "description": "Optional domain-specific requirements"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["prompt_text"],
             },
@@ -142,7 +151,7 @@ async def list_tools() -> List[Tool]:
                     "test_inputs": {"type": "array", "items": {"type": "string"}, "description": "List of input variations"},
                     "num_runs": {"type": "integer", "default": 3, "description": "Repetitions per input"},
                     "temperature_range": {"type": "array", "items": {"type": "number"}, "default": [0.1, 0.5, 0.9], "description": "Test different temperatures"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["prompt", "test_inputs"],
             },
@@ -156,7 +165,7 @@ async def list_tools() -> List[Tool]:
                     "prompt": {"type": "string", "description": "The prompt text"},
                     "expected_components": {"type": "array", "items": {"type": "string"}, "description": "List of required elements"},
                     "test_samples": {"type": "array", "items": {"type": "string"}, "description": "Sample outputs to analyze"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["prompt", "expected_components"],
             },
@@ -171,7 +180,7 @@ async def list_tools() -> List[Tool]:
                     "outputs": {"type": "array", "items": {"type": "string"}, "description": "Generated responses"},
                     "embedding_model": {"type": "string", "default": "all-MiniLM-L6-v2", "description": "Model for semantic similarity"},
                     "relevance_threshold": {"type": "number", "default": 0.7, "description": "Minimum acceptable score"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["prompt", "outputs"],
             },
@@ -187,7 +196,7 @@ async def list_tools() -> List[Tool]:
                     "expected_tools": {"type": "array", "items": {"type": "string"}, "description": "Tools that should be used"},
                     "tool_sequence_matters": {"type": "boolean", "default": False, "description": "Whether order is important"},
                     "allow_extra_tools": {"type": "boolean", "default": True, "description": "Permit additional tool calls"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["agent_trace", "expected_tools"],
             },
@@ -202,7 +211,7 @@ async def list_tools() -> List[Tool]:
                     "success_criteria": {"type": "array", "items": {"type": "object"}, "description": "Measurable outcomes"},
                     "agent_trace": {"type": "object", "description": "Execution history"},
                     "final_state": {"type": "object", "description": "System state after execution"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["task_description", "success_criteria", "agent_trace"],
             },
@@ -217,7 +226,7 @@ async def list_tools() -> List[Tool]:
                     "decision_points": {"type": "array", "items": {"type": "object"}, "description": "Key choices made"},
                     "context": {"type": "object", "description": "Available information"},
                     "optimal_path": {"type": "array", "items": {"type": "string"}, "description": "Best possible approach"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["reasoning_trace", "decision_points", "context"],
             },
@@ -247,7 +256,7 @@ async def list_tools() -> List[Tool]:
                     "knowledge_base": {"type": "object", "description": "Reference sources"},
                     "fact_checking_model": {"type": "string", "default": "gpt-4", "description": "Model to use for fact checking"},
                     "confidence_threshold": {"type": "number", "default": 0.8, "description": "Minimum certainty"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["response"],
             },
@@ -261,7 +270,7 @@ async def list_tools() -> List[Tool]:
                     "text": {"type": "string", "description": "Response to analyze"},
                     "context": {"type": "string", "description": "Conversation history"},
                     "coherence_dimensions": {"type": "array", "items": {"type": "string"}, "default": ["logical_flow", "consistency", "topic_transitions"], "description": "What to check"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["text"],
             },
@@ -275,7 +284,7 @@ async def list_tools() -> List[Tool]:
                     "content": {"type": "string", "description": "Text to analyze"},
                     "toxicity_categories": {"type": "array", "items": {"type": "string"}, "default": ["profanity", "hate_speech", "threats", "discrimination"], "description": "Types to check"},
                     "sensitivity_level": {"type": "string", "default": "moderate", "enum": ["strict", "moderate", "loose"], "description": "Detection threshold"},
-                    "judge_model": {"type": "string", "default": "gpt-4"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini"},
                 },
                 "required": ["content"],
             },
@@ -467,8 +476,170 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
 
 async def main():
     """Main server entry point."""
-    logger.info("Starting MCP Evaluation Server...")
-    logger.info(f"Available judges: {judge_tools.get_available_judges()}")
+    global judge_tools, prompt_tools, agent_tools, quality_tools, workflow_tools, calibration_tools
+    global evaluation_cache, judge_cache, benchmark_cache, results_store
+
+    logger.info("🚀 Starting MCP Evaluation Server...")
+    logger.info("📡 Protocol: Model Context Protocol (MCP) via stdio")
+    logger.info("📋 Server: mcp-eval-server v0.1.0")
+
+    # Initialize tools and storage after environment variables are loaded
+    logger.info("🔧 Initializing tools and storage...")
+
+    # Support custom configuration paths
+    models_config_path = os.getenv("MCP_EVAL_MODELS_CONFIG")
+    if models_config_path:
+        logger.info(f"📄 Using custom models config: {models_config_path}")
+
+    judge_tools = JudgeTools(config_path=models_config_path)
+    prompt_tools = PromptTools(judge_tools)
+    agent_tools = AgentTools(judge_tools)
+    quality_tools = QualityTools(judge_tools)
+    workflow_tools = WorkflowTools(judge_tools, prompt_tools, agent_tools, quality_tools)
+    calibration_tools = CalibrationTools(judge_tools)
+
+    # Initialize caching and storage
+    evaluation_cache = EvaluationCache()
+    judge_cache = JudgeResponseCache()
+    benchmark_cache = BenchmarkCache()
+    results_store = ResultsStore()
+
+    # Log environment configuration
+    logger.info("🔧 Environment Configuration:")
+    env_vars = {
+        "OPENAI_API_KEY": bool(os.getenv("OPENAI_API_KEY")),
+        "AZURE_OPENAI_API_KEY": bool(os.getenv("AZURE_OPENAI_API_KEY")),
+        "AZURE_OPENAI_ENDPOINT": os.getenv("AZURE_OPENAI_ENDPOINT", "not set"),
+        "AZURE_DEPLOYMENT_NAME": os.getenv("AZURE_DEPLOYMENT_NAME", "not set"),
+        "ANTHROPIC_API_KEY": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "AWS_ACCESS_KEY_ID": bool(os.getenv("AWS_ACCESS_KEY_ID")),
+        "GOOGLE_API_KEY": bool(os.getenv("GOOGLE_API_KEY")),
+        "WATSONX_API_KEY": bool(os.getenv("WATSONX_API_KEY")),
+        "WATSONX_PROJECT_ID": os.getenv("WATSONX_PROJECT_ID", "not set"),
+        "OLLAMA_BASE_URL": os.getenv("OLLAMA_BASE_URL", "not set"),
+        "DEFAULT_JUDGE_MODEL": os.getenv("DEFAULT_JUDGE_MODEL", "not set"),
+    }
+    for var, value in env_vars.items():
+        if var in ["AZURE_OPENAI_ENDPOINT", "AZURE_DEPLOYMENT_NAME", "WATSONX_PROJECT_ID", "OLLAMA_BASE_URL", "DEFAULT_JUDGE_MODEL"]:
+            logger.info(f"   📊 {var}: {value}")
+        else:
+            status = "✅" if value else "❌"
+            logger.info(f"   {status} {var}: {'configured' if value else 'not set'}")
+
+    # Log judge initialization and test connectivity
+    available_judges = judge_tools.get_available_judges()
+    logger.info(f"⚖️  Loaded {len(available_judges)} judge models: {available_judges}")
+
+    # Test judge connectivity and log detailed status with endpoints
+    for judge_name in available_judges:
+        info = judge_tools.get_judge_info(judge_name)
+        provider = info.get("provider", "unknown")
+        model_name = info.get("model_name", "N/A")
+
+        # Get detailed configuration for each judge
+        judge_instance = judge_tools.judges.get(judge_name)
+        endpoint_info = ""
+
+        if provider == "openai" and hasattr(judge_instance, "client"):
+            base_url = str(judge_instance.client.base_url) if judge_instance.client.base_url else "https://api.openai.com/v1"
+            endpoint_info = f" → {base_url}"
+        elif provider == "azure":
+            endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "not configured")
+            deployment = os.getenv("AZURE_DEPLOYMENT_NAME", "not configured")
+            endpoint_info = f" → {endpoint} (deployment: {deployment})"
+        elif provider == "anthropic":
+            endpoint_info = f" → https://api.anthropic.com"
+        elif provider == "ollama":
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            # Test OLLAMA connectivity for status display
+            try:
+                # Third-Party
+                import aiohttp
+
+                async def test_ollama():
+                    try:
+                        timeout = aiohttp.ClientTimeout(total=2)
+                        async with aiohttp.ClientSession(timeout=timeout) as session:
+                            async with session.get(f"{base_url}/api/tags") as response:
+                                return response.status == 200
+                    except:
+                        return False
+
+                is_connected = await test_ollama()
+                status = "🟢 connected" if is_connected else "🔴 not reachable"
+                endpoint_info = f" → {base_url} ({status})"
+            except:
+                endpoint_info = f" → {base_url} (🔴 not reachable)"
+        elif provider == "bedrock":
+            region = os.getenv("AWS_REGION", "us-east-1")
+            endpoint_info = f" → AWS Bedrock ({region})"
+        elif provider == "gemini":
+            endpoint_info = f" → Google AI Studio"
+        elif provider == "watsonx":
+            watsonx_url = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
+            project_id = os.getenv("WATSONX_PROJECT_ID", "not configured")
+            endpoint_info = f" → {watsonx_url} (project: {project_id})"
+
+        logger.info(f"   📊 {judge_name} ({provider}): {model_name}{endpoint_info}")
+
+    # Log tool categories
+    logger.info("🛠️  Tool categories:")
+    logger.info("   • 4 Judge tools (evaluate, compare, rank, reference)")
+    logger.info("   • 4 Prompt tools (clarity, consistency, completeness, relevance)")
+    logger.info("   • 4 Agent tools (tool usage, task completion, reasoning, benchmarks)")
+    logger.info("   • 3 Quality tools (factuality, coherence, toxicity)")
+    logger.info("   • 3 Workflow tools (suites, execution, comparison)")
+    logger.info("   • 2 Calibration tools (agreement, optimization)")
+    logger.info("   • 9 Server tools (management, statistics, health)")
+
+    # Test primary judge with a simple evaluation if available
+    primary_judge = os.getenv("DEFAULT_JUDGE_MODEL", "gpt-4o-mini")
+    logger.info(f"🎯 Primary judge selection: {primary_judge}")
+
+    if primary_judge in available_judges:
+        try:
+            logger.info(f"🧪 Testing primary judge: {primary_judge}")
+
+            # Perform actual inference test
+            criteria = [{"name": "helpfulness", "description": "Response helpfulness", "scale": "1-5", "weight": 1.0}]
+            rubric = {"criteria": [], "scale_description": {"1": "Poor", "5": "Excellent"}}
+
+            result = await judge_tools.evaluate_response(response="Hi, tell me about this model in one sentence.", criteria=criteria, rubric=rubric, judge_model=primary_judge)
+
+            logger.info(f"✅ Primary judge {primary_judge} inference test successful - Score: {result['overall_score']:.2f}")
+
+            # Log the model's actual response reasoning (truncated)
+            if "reasoning" in result and result["reasoning"]:
+                for criterion, reasoning in result["reasoning"].items():
+                    truncated = reasoning[:150] + "..." if len(reasoning) > 150 else reasoning
+                    logger.info(f"   💬 Model reasoning ({criterion}): {truncated}")
+        except Exception as e:
+            logger.warning(f"⚠️  Primary judge {primary_judge} test failed: {e}")
+    elif available_judges:
+        fallback = available_judges[0]
+        logger.info(f"💡 Primary judge not available, using fallback: {fallback}")
+
+        # Test fallback judge
+        try:
+            criteria = [{"name": "helpfulness", "description": "Response helpfulness", "scale": "1-5", "weight": 1.0}]
+            rubric = {"criteria": [], "scale_description": {"1": "Poor", "5": "Excellent"}}
+
+            result = await judge_tools.evaluate_response(response="Hi, tell me about this model in one sentence.", criteria=criteria, rubric=rubric, judge_model=fallback)
+
+            logger.info(f"✅ Fallback judge {fallback} test successful - Score: {result['overall_score']:.2f}")
+
+            # Log the model's actual response reasoning (truncated)
+            if "reasoning" in result and result["reasoning"]:
+                for criterion, reasoning in result["reasoning"].items():
+                    truncated = reasoning[:150] + "..." if len(reasoning) > 150 else reasoning
+                    logger.info(f"   💬 Model reasoning ({criterion}): {truncated}")
+        except Exception as e:
+            logger.warning(f"⚠️  Fallback judge {fallback} test failed: {e}")
+    else:
+        logger.error("❌ No judges available!")
+
+    logger.info("🎯 Server ready for MCP client connections")
+    logger.info("💡 Connect via: python -m mcp_eval_server.server")
 
     # Initialize server with stdio transport
     async with stdio_server() as streams:

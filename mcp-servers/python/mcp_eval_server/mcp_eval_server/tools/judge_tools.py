@@ -3,6 +3,7 @@
 
 # Standard
 import asyncio
+import logging
 import os
 import statistics
 from typing import Any, Dict, List, Optional
@@ -19,6 +20,37 @@ from ..judges.base_judge import (
 from ..judges.openai_judge import OpenAIJudge
 from ..judges.rule_judge import RuleBasedJudge
 
+# Optional imports for additional providers
+try:
+    # Local
+    from ..judges.anthropic_judge import AnthropicJudge
+except ImportError:
+    AnthropicJudge = None
+
+try:
+    # Local
+    from ..judges.bedrock_judge import BedrockJudge
+except ImportError:
+    BedrockJudge = None
+
+try:
+    # Local
+    from ..judges.ollama_judge import OllamaJudge
+except ImportError:
+    OllamaJudge = None
+
+try:
+    # Local
+    from ..judges.gemini_judge import GeminiJudge
+except ImportError:
+    GeminiJudge = None
+
+try:
+    # Local
+    from ..judges.watsonx_judge import WatsonxJudge
+except ImportError:
+    WatsonxJudge = None
+
 
 class JudgeTools:
     """Tools for LLM-as-a-judge evaluation."""
@@ -29,6 +61,7 @@ class JudgeTools:
         Args:
             config_path: Path to models configuration file
         """
+        self.logger = logging.getLogger(__name__)
         self.judges = {}
         self.config_path = config_path or os.path.join(os.path.dirname(__file__), "..", "config", "models.yaml")
         self._load_judges()
@@ -50,7 +83,9 @@ class JudgeTools:
         for model_name, model_config in config.get("models", {}).get("openai", {}).items():
             try:
                 self.judges[model_name] = OpenAIJudge(model_config)
+                self.logger.debug(f"✅ Loaded OpenAI judge: {model_name}")
             except Exception as e:
+                self.logger.warning(f"⚠️  Could not load OpenAI judge {model_name}: {e}")
                 print(f"Warning: Could not load OpenAI judge {model_name}: {e}")
 
         # Load Azure OpenAI models
@@ -58,7 +93,69 @@ class JudgeTools:
             try:
                 self.judges[model_name] = AzureOpenAIJudge(model_config)
             except Exception as e:
-                print(f"Warning: Could not load Azure judge {model_name}: {e}")
+                self.logger.warning(f"⚠️  Could not load Azure judge {model_name}: {e}")
+
+        # Load Anthropic models
+        if AnthropicJudge:
+            for model_name, model_config in config.get("models", {}).get("anthropic", {}).items():
+                try:
+                    self.judges[model_name] = AnthropicJudge(model_config)
+                except Exception as e:
+                    print(f"Warning: Could not load Anthropic judge {model_name}: {e}")
+
+        # Load Bedrock models
+        if BedrockJudge:
+            for model_name, model_config in config.get("models", {}).get("bedrock", {}).items():
+                try:
+                    self.judges[model_name] = BedrockJudge(model_config)
+                except Exception as e:
+                    print(f"Warning: Could not load Bedrock judge {model_name}: {e}")
+
+        # Load OLLAMA models (only if base URL is configured)
+        if OllamaJudge:
+            ollama_base_url = os.getenv("OLLAMA_BASE_URL")
+            if ollama_base_url:
+                self.logger.debug(f"Loading OLLAMA judges for {ollama_base_url}")
+                for model_name, model_config in config.get("models", {}).get("ollama", {}).items():
+                    try:
+                        self.judges[model_name] = OllamaJudge(model_config)
+                        self.logger.debug(f"✅ Loaded OLLAMA judge: {model_name} (connectivity will be tested during use)")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️  Could not load OLLAMA judge {model_name}: {e}")
+                        print(f"Warning: Could not load OLLAMA judge {model_name}: {e}")
+            else:
+                self.logger.debug("OLLAMA_BASE_URL not configured, skipping OLLAMA judges")
+
+        # Load Google Gemini models
+        if GeminiJudge:
+            google_api_key = os.getenv("GOOGLE_API_KEY")
+            if google_api_key:
+                self.logger.debug(f"Loading Google Gemini judges")
+                for model_name, model_config in config.get("models", {}).get("gemini", {}).items():
+                    try:
+                        self.judges[model_name] = GeminiJudge(model_config)
+                        self.logger.debug(f"✅ Loaded Gemini judge: {model_name}")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️  Could not load Gemini judge {model_name}: {e}")
+                        print(f"Warning: Could not load Gemini judge {model_name}: {e}")
+            else:
+                self.logger.debug("GOOGLE_API_KEY not configured, skipping Gemini judges")
+
+        # Load IBM Watsonx.ai models
+        if WatsonxJudge:
+            watsonx_api_key = os.getenv("WATSONX_API_KEY")
+            watsonx_project_id = os.getenv("WATSONX_PROJECT_ID")
+            if watsonx_api_key and watsonx_project_id:
+                self.logger.debug(f"Loading IBM Watsonx.ai judges")
+                for model_name, model_config in config.get("models", {}).get("watsonx", {}).items():
+                    try:
+                        self.judges[model_name] = WatsonxJudge(model_config)
+                        self.logger.debug(f"✅ Loaded Watsonx judge: {model_name}")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️  Could not load Watsonx judge {model_name}: {e}")
+                        print(f"Warning: Could not load Watsonx judge {model_name}: {e}")
+            else:
+                self.logger.debug("WATSONX_API_KEY or WATSONX_PROJECT_ID not configured, skipping Watsonx judges")
 
         # Always include rule-based judge
         self.judges["rule-based"] = RuleBasedJudge({"model_name": "rule-based"})
@@ -104,7 +201,7 @@ class JudgeTools:
         response: str,
         criteria: List[Dict[str, Any]],
         rubric: Dict[str, Any],
-        judge_model: str = "gpt-4",
+        judge_model: str = "gpt-4o-mini",
         context: Optional[str] = None,
         use_cot: bool = True,
     ) -> Dict[str, Any]:
@@ -128,8 +225,23 @@ class JudgeTools:
         # Get judge, with fallback options
         judge = self._get_judge_with_fallback(judge_model)
 
+        # Log the evaluation call
+        self.logger.info(f"📊 Evaluating response with judge: {judge_model} (actual: {judge.model_name})")
+        self.logger.debug(f"   Response length: {len(response)} chars")
+        self.logger.debug(f"   Criteria: {[c.name for c in criteria_objs]}")
+        self.logger.debug(f"   Use CoT: {use_cot}")
+
         # Perform evaluation
         result = await judge.evaluate_response(response=response, criteria=criteria_objs, rubric=rubric_obj, context=context, use_cot=use_cot)
+
+        # Log the result with model response details
+        self.logger.info(f"✅ Evaluation completed - Overall score: {result.overall_score:.2f}, Confidence: {result.confidence:.2f}")
+
+        # Log model reasoning (truncated for readability)
+        if result.reasoning:
+            for criterion, reasoning in result.reasoning.items():
+                truncated_reasoning = reasoning[:100] + "..." if len(reasoning) > 100 else reasoning
+                self.logger.debug(f"   🧠 {criterion}: {truncated_reasoning}")
 
         # Convert result to dict for MCP response
         return {"scores": result.scores, "reasoning": result.reasoning, "overall_score": result.overall_score, "confidence": result.confidence, "metadata": result.metadata, "judge_model": judge_model}
@@ -139,7 +251,7 @@ class JudgeTools:
         response_a: str,
         response_b: str,
         criteria: List[Dict[str, Any]],
-        judge_model: str = "gpt-4",
+        judge_model: str = "gpt-4o-mini",
         context: Optional[str] = None,
         position_bias_mitigation: bool = True,
     ) -> Dict[str, Any]:
@@ -159,7 +271,16 @@ class JudgeTools:
         criteria_objs = [EvaluationCriteria(**c) for c in criteria]
         judge = self._get_judge_with_fallback(judge_model)
 
+        # Log the comparison call
+        self.logger.info(f"⚖️  Pairwise comparison with judge: {judge_model} (actual: {judge.model_name})")
+        self.logger.debug(f"   Response A length: {len(response_a)} chars")
+        self.logger.debug(f"   Response B length: {len(response_b)} chars")
+        self.logger.debug(f"   Position bias mitigation: {position_bias_mitigation}")
+
         result = await judge.pairwise_comparison(response_a=response_a, response_b=response_b, criteria=criteria_objs, context=context, position_bias_mitigation=position_bias_mitigation)
+
+        # Log the result
+        self.logger.info(f"✅ Comparison completed - Winner: {result.winner}, Confidence: {result.confidence_score:.2f}")
 
         return {
             "winner": result.winner,
@@ -174,7 +295,7 @@ class JudgeTools:
         self,
         responses: List[str],
         criteria: List[Dict[str, Any]],
-        judge_model: str = "gpt-4",
+        judge_model: str = "gpt-4o-mini",
         context: Optional[str] = None,
         ranking_method: str = "tournament",
     ) -> Dict[str, Any]:
@@ -214,7 +335,7 @@ class JudgeTools:
         self,
         response: str,
         reference: str,
-        judge_model: str = "gpt-4",
+        judge_model: str = "gpt-4o-mini",
         evaluation_type: str = "factuality",
         tolerance: str = "moderate",
     ) -> Dict[str, Any]:
@@ -250,7 +371,7 @@ class JudgeTools:
         responses: List[str],
         criteria: List[Dict[str, Any]],
         rubric: Dict[str, Any],
-        judge_model: str = "gpt-4",
+        judge_model: str = "gpt-4o-mini",
         context: Optional[str] = None,
         use_cot: bool = True,
         max_concurrent: int = 5,
@@ -371,7 +492,7 @@ class JudgeTools:
             return self.judges[judge_model]
 
         # Try common fallbacks
-        fallbacks = ["gpt-4", "gpt-3.5-turbo", "rule-based"]
+        fallbacks = ["claude-4-1-bedrock", "gemini-1-5-pro", "gpt-4o-mini", "gpt-4", "claude-3-sonnet", "llama-3-1-70b-watsonx", "gpt-3.5-turbo", "rule-based"]
         for fallback in fallbacks:
             if fallback in self.judges:
                 print(f"Warning: Judge {judge_model} not available, using {fallback}")
@@ -398,5 +519,12 @@ class JudgeTools:
             return {"error": f"Judge model {judge_model} not found"}
 
         judge = self.judges[judge_model]
+        provider = judge.config.get("provider", "unknown")
 
-        return {"model_name": judge.model_name, "temperature": judge.temperature, "max_tokens": judge.max_tokens, "provider": judge.config.get("provider", "unknown"), "available": True}
+        # For OLLAMA judges, check actual health
+        available = True
+        if provider == "ollama" and hasattr(judge, "is_healthy"):
+            # Note: This is synchronous for compatibility, real health check happens during evaluation
+            available = True  # Always return True here, health check happens during actual usage
+
+        return {"model_name": judge.model_name, "temperature": judge.temperature, "max_tokens": judge.max_tokens, "provider": provider, "available": available}
