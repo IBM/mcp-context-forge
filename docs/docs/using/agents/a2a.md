@@ -131,7 +131,7 @@ For agents that expect standard JSONRPC format:
 ### Anthropic-compatible Agents
 ```json
 {
-  "agent_type": "anthropic", 
+  "agent_type": "anthropic",
   "endpoint_url": "https://api.anthropic.com/v1/messages",
   "auth_type": "api_key",
   "auth_value": "your-anthropic-api-key"

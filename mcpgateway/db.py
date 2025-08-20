@@ -1408,6 +1408,16 @@ class A2AAgent(Base):
         return max(m.timestamp for m in self.metrics)
 
     def __repr__(self) -> str:
+        """Return a string representation of the A2AAgent instance.
+
+        Returns:
+            str: A formatted string containing the agent's ID, name, and type.
+
+        Examples:
+            >>> agent = A2AAgent(id='123', name='test-agent', agent_type='custom')
+            >>> repr(agent)
+            "<A2AAgent(id='123', name='test-agent', agent_type='custom')>"
+        """
         return f"<A2AAgent(id='{self.id}', name='{self.name}', agent_type='{self.agent_type}')>"
 
 
