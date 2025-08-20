@@ -169,9 +169,11 @@ def convert_url(url: str) -> str:
         >>> convert_url("http://localhost:4444/servers/uuid/sse")
         'http://localhost:4444/servers/uuid/mcp'
         >>> convert_url("http://localhost:4444/servers/uuid/mcp")
-        'http://localhost:4444/servers/uuid/mcp'
+        'http://localhost:4444/servers/uuid/mcp/'
     """
     if url.endswith("/mcp") or url.endswith("/mcp/"):
+        if url.endswith("/mcp"):
+            return url + "/"
         return url
     if url.endswith("/sse"):
         return url.replace("/sse", "/mcp")
