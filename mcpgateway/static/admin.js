@@ -7048,8 +7048,8 @@ function generateConfig(server, configType) {
                         command: "python",
                         args: ["-m", "mcpgateway.wrapper"],
                         env: {
-                            MCP_AUTH_TOKEN: "your-token-here",
-                            MCP_SERVER_CATALOG_URLS: `${baseUrl}/servers/${server.id}`,
+                            MCP_AUTH: "your-token-here",
+                            MCP_SERVER_URL: `${baseUrl}/servers/${server.id}/mcp`,
                             MCP_TOOL_CALL_TIMEOUT: "120",
                         },
                     },

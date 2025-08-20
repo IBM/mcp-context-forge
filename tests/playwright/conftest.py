@@ -16,7 +16,7 @@ import pytest
 
 # Get configuration from environment
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
-API_TOKEN = os.getenv("MCP_AUTH_TOKEN", "test-token")
+API_TOKEN = os.getenv("MCP_AUTH", "test-token")
 
 # Basic Auth credentials - these MUST be set in environment
 BASIC_AUTH_USER = os.getenv("BASIC_AUTH_USER", "admin")

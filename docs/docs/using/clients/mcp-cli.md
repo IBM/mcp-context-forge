@@ -80,8 +80,8 @@ Create a `server_config.json` file to define your MCP Context Forge Gateway conn
       "command": "/path/to/mcp-context-forge/.venv/bin/python",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_AUTH_TOKEN": "<YOUR_AUTH_TOKEN_HERE>",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444",
+        "MCP_AUTH": "<YOUR_AUTH_TOKEN_HERE>",
+        "MCP_SERVER_URL": "http://localhost:4444",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
@@ -101,9 +101,9 @@ Create a `server_config.json` file to define your MCP Context Forge Gateway conn
         "--rm",
         "-i",
         "-e",
-        "MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444",
+        "MCP_SERVER_URL=http://host.docker.internal:4444",
         "-e",
-        "MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}",
+        "MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}",
         "--entrypoint",
         "uv",
         "ghcr.io/ibm/mcp-context-forge:0.5.0",
@@ -130,7 +130,7 @@ python3 -m mcpgateway.utils.create_jwt_token -u admin --exp 10080 --secret my-te
 > **⚠️ Important Notes**
 > - Use the **full path** to your virtual environment's Python to avoid import errors
 > - Make sure your MCP Context Forge Gateway is running on the correct port (default: 4444)
-> - The wrapper requires `MCP_SERVER_CATALOG_URLS` environment variable
+> - The wrapper requires `MCP_SERVER_URL` environment variable
 
 ---
 
@@ -320,8 +320,8 @@ In interactive mode, use these commands:
 
 ```bash
 # MCP Context Forge Gateway connection
-export MCP_AUTH_TOKEN="your-jwt-token"
-export MCP_SERVER_CATALOG_URLS="http://localhost:4444"
+export MCP_AUTH="your-jwt-token"
+export MCP_SERVER_URL="http://localhost:4444"
 
 # LLM Provider API keys
 export OPENAI_API_KEY="sk-your-openai-key"
@@ -350,7 +350,7 @@ export LLM_MODEL="mistral-nemo:latest"
 }
 ```
 
-#### "MCP_SERVER_CATALOG_URLS environment variable is required"
+#### "MCP_SERVER_URL environment variable is required"
 
 **Solution:** Ensure your `server_config.json` includes the required environment variables in the `env` section.
 
@@ -461,8 +461,8 @@ The mcp-cli integrates with MCP Context Forge Gateway through multiple connectio
          "command": "/path/to/mcp-context-forge/.venv/bin/python",
          "args": ["-m", "mcpgateway.wrapper"],
          "env": {
-           "MCP_AUTH_TOKEN": "your-jwt-token",
-           "MCP_SERVER_CATALOG_URLS": "http://localhost:4444"
+           "MCP_AUTH": "your-jwt-token",
+           "MCP_SERVER_URL": "http://localhost:4444"
          }
        }
      }

@@ -165,7 +165,7 @@ graph TB
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
 | Install Package | `pip install mcp-contextforge-gateway` | Install for wrapper | Package installed | ☐ | If not already done |
-| Set Environment | `export MCP_SERVER_CATALOG_URLS="$GW_URL/servers/$TIME_SERVER_UUID" && export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN` | Configure wrapper | Environment set | ☐ | Point to virtual server |
+| Set Environment | `export MCP_SERVER_URL="$GW_URL/servers/$TIME_SERVER_UUID" && export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN` | Configure wrapper | Environment set | ☐ | Point to virtual server |
 | Test Wrapper Init | `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | Initialize via stdio | Returns capabilities with tools | ☐ | Stdio to HTTP bridge |
 | List Tools via Wrapper | `echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | List tools via stdio | Returns tool list | ☐ | Wrapper functionality |
 
@@ -183,8 +183,8 @@ graph TB
       "command": "python",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_SERVER_CATALOG_URLS": "$GW_URL/servers/$TIME_SERVER_UUID",
-        "MCP_AUTH_TOKEN": "$MCPGATEWAY_BEARER_TOKEN"
+        "MCP_SERVER_URL": "$GW_URL/servers/$TIME_SERVER_UUID",
+        "MCP_AUTH": "$MCPGATEWAY_BEARER_TOKEN"
       }
     }
   }
