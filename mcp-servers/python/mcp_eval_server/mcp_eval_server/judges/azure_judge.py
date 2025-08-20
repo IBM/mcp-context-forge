@@ -7,6 +7,7 @@ import os
 from typing import Any, Dict
 
 # Third-Party
+from jinja2 import Environment, FileSystemLoader
 from openai import AsyncAzureOpenAI
 
 # Local
@@ -31,6 +32,10 @@ class AzureOpenAIJudge(OpenAIJudge):
         self.temperature = config.get("default_temperature", 0.3)
         self.max_tokens = config.get("max_tokens", 2000)
         self.logger = logging.getLogger(__name__)
+
+        # Set up Jinja2 template environment (from BaseJudge)
+        template_dir = os.path.join(os.path.dirname(__file__), "templates")
+        self.jinja_env = Environment(loader=FileSystemLoader(template_dir), trim_blocks=True, lstrip_blocks=True)
 
         # Azure-specific client setup
         api_key = os.getenv(config["api_key_env"])
