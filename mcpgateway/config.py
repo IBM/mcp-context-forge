@@ -440,7 +440,6 @@ Disallow: /
 
     # Cache control for well-known files (seconds)
     well_known_cache_max_age: int = 3600  # 1 hour default
-
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
