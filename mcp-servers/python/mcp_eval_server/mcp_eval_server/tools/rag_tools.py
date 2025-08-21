@@ -542,7 +542,16 @@ class RAGTools:
 
     # Helper methods for semantic similarity
     async def _calculate_semantic_similarity(self, query: str, documents: List[str], embedding_model: str) -> List[float]:
-        """Calculate semantic similarity between query and documents."""
+        """Calculate semantic similarity between query and documents.
+
+        Args:
+            query: Search query
+            documents: List of documents to compare
+            embedding_model: Model for embeddings
+
+        Returns:
+            List of similarity scores
+        """
         try:
             # Try to use API-based embedding model first
             if embedding_model.startswith("text-embedding"):
@@ -555,13 +564,30 @@ class RAGTools:
             return self._tfidf_similarity(query, documents)
 
     async def _api_embedding_similarity(self, query: str, documents: List[str], model: str) -> List[float]:
-        """Calculate similarity using API-based embeddings."""
+        """Calculate similarity using API-based embeddings.
+
+        Args:
+            query: Search query
+            documents: List of documents to compare
+            model: API embedding model name
+
+        Returns:
+            List of similarity scores
+        """
         # This would integrate with OpenAI or other embedding APIs
         # For now, fall back to local similarity
         return self._local_similarity(query, documents)
 
     def _local_similarity(self, query: str, documents: List[str]) -> List[float]:
-        """Calculate similarity using local models."""
+        """Calculate similarity using local models.
+
+        Args:
+            query: Search query
+            documents: List of documents to compare
+
+        Returns:
+            List of similarity scores
+        """
         try:
             # Try to use sentence-transformers if available
             # Third-Party
@@ -579,7 +605,15 @@ class RAGTools:
             return self._tfidf_similarity(query, documents)
 
     def _tfidf_similarity(self, query: str, documents: List[str]) -> List[float]:
-        """Calculate similarity using TF-IDF vectors."""
+        """Calculate similarity using TF-IDF vectors.
+
+        Args:
+            query: Search query
+            documents: List of documents to compare
+
+        Returns:
+            List of similarity scores
+        """
         if self._tfidf_vectorizer is None:
             self._tfidf_vectorizer = TfidfVectorizer(stop_words="english", max_features=1000)
 
@@ -596,7 +630,16 @@ class RAGTools:
 
     # LLM Judge helper methods
     async def _judge_document_relevance(self, query: str, document: str, judge_model: str) -> float:
-        """Use LLM judge to assess document relevance."""
+        """Use LLM judge to assess document relevance.
+
+        Args:
+            query: Search query
+            document: Document to assess
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Relevance score (0-1)
+        """
         criteria = [
             {
                 "name": "relevance",
@@ -631,7 +674,17 @@ class RAGTools:
         return (result["overall_score"] - 1) / 4
 
     async def _judge_context_utilization(self, query: str, context: str, answer: str, judge_model: str) -> Dict[str, Any]:
-        """Use LLM judge to assess context utilization."""
+        """Use LLM judge to assess context utilization.
+
+        Args:
+            query: Original query
+            context: Retrieved context
+            answer: Generated answer
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Context utilization assessment
+        """
         criteria = [
             {
                 "name": "utilization",
@@ -670,7 +723,14 @@ class RAGTools:
 
     # Content extraction helper methods
     def _extract_claims(self, text: str) -> List[str]:
-        """Extract factual claims from text."""
+        """Extract factual claims from text.
+
+        Args:
+            text: Text to extract claims from
+
+        Returns:
+            List of extracted claims
+        """
         # Simple claim extraction using sentence boundaries and patterns
         sentences = re.split(r"[.!?]+", text)
         claims = []
@@ -693,7 +753,14 @@ class RAGTools:
         return claims
 
     def _extract_factual_statements(self, text: str) -> List[str]:
-        """Extract factual statements that can be verified."""
+        """Extract factual statements that can be verified.
+
+        Args:
+            text: Text to extract statements from
+
+        Returns:
+            List of factual statements
+        """
         # Similar to _extract_claims but more focused on verifiable facts
         sentences = re.split(r"[.!?]+", text)
         factual_statements = []
@@ -718,7 +785,15 @@ class RAGTools:
         return factual_statements
 
     def _extract_citations(self, text: str, citation_format: str) -> List[Dict[str, Any]]:
-        """Extract citations from text."""
+        """Extract citations from text.
+
+        Args:
+            text: Text to extract citations from
+            citation_format: Expected citation format
+
+        Returns:
+            List of extracted citations
+        """
         citations = []
 
         if citation_format == "auto":
@@ -755,7 +830,17 @@ class RAGTools:
     # (Implementation of remaining helper methods would follow similar patterns)
 
     async def _verify_claim_against_context(self, claim: str, context: str, judge_model: str, strictness: str) -> Dict[str, Any]:
-        """Verify if a claim is supported by the context."""
+        """Verify if a claim is supported by the context.
+
+        Args:
+            claim: Claim to verify
+            context: Supporting context
+            judge_model: Judge model for verification
+            strictness: Verification strictness level
+
+        Returns:
+            Claim verification results
+        """
         # Placeholder implementation - would use LLM judge
         return {
             "supported": True,  # Simplified
@@ -764,7 +849,18 @@ class RAGTools:
         }
 
     async def _judge_overall_groundedness(self, question: str, answer: str, context: str, judge_model: str, strictness: str) -> Dict[str, Any]:
-        """Overall groundedness assessment using LLM judge."""
+        """Overall groundedness assessment using LLM judge.
+
+        Args:
+            question: Original question
+            answer: Generated answer
+            context: Supporting context
+            judge_model: Judge model for assessment
+            strictness: Assessment strictness level
+
+        Returns:
+            Overall groundedness assessment
+        """
         # Placeholder implementation
         return {
             "score": 0.8,
@@ -773,7 +869,16 @@ class RAGTools:
         }
 
     def _generate_retrieval_recommendations(self, scores: List[float], threshold: float, documents: List[Dict[str, Any]]) -> List[str]:
-        """Generate recommendations for improving retrieval."""
+        """Generate recommendations for improving retrieval.
+
+        Args:
+            scores: Relevance scores
+            threshold: Relevance threshold
+            documents: Retrieved documents
+
+        Returns:
+            List of recommendations
+        """
         recommendations = []
 
         avg_score = statistics.mean(scores) if scores else 0.0
@@ -787,7 +892,16 @@ class RAGTools:
         return recommendations
 
     def _generate_utilization_recommendations(self, overall: float, word_overlap: float, sentence_util: float) -> List[str]:
-        """Generate recommendations for improving context utilization."""
+        """Generate recommendations for improving context utilization.
+
+        Args:
+            overall: Overall utilization score
+            word_overlap: Word overlap score
+            sentence_util: Sentence utilization score
+
+        Returns:
+            List of recommendations
+        """
         recommendations = []
 
         if overall < 0.6:
@@ -800,7 +914,16 @@ class RAGTools:
         return recommendations
 
     def _generate_groundedness_recommendations(self, score: float, num_hallucinations: int, assessment: Dict[str, Any]) -> List[str]:
-        """Generate recommendations for improving groundedness."""
+        """Generate recommendations for improving groundedness.
+
+        Args:
+            score: Groundedness score
+            num_hallucinations: Number of hallucinations detected
+            assessment: Overall assessment results
+
+        Returns:
+            List of recommendations
+        """
         recommendations = []
 
         if score < 0.7:
@@ -811,7 +934,16 @@ class RAGTools:
         return recommendations
 
     def _generate_hallucination_recommendations(self, rate: float, num_contradictions: int, assessment: Dict[str, Any]) -> List[str]:
-        """Generate recommendations for reducing hallucinations."""
+        """Generate recommendations for reducing hallucinations.
+
+        Args:
+            rate: Hallucination rate
+            num_contradictions: Number of contradictions found
+            assessment: Overall assessment results
+
+        Returns:
+            List of recommendations
+        """
         recommendations = []
 
         if rate > 0.2:
@@ -822,7 +954,16 @@ class RAGTools:
         return recommendations
 
     def _generate_coverage_recommendations(self, score: float, missing_topics: List[str], irrelevance: Dict[str, Any]) -> List[str]:
-        """Generate recommendations for improving coverage."""
+        """Generate recommendations for improving coverage.
+
+        Args:
+            score: Coverage score
+            missing_topics: List of missing topics
+            irrelevance: Irrelevance assessment
+
+        Returns:
+            List of recommendations
+        """
         recommendations = []
 
         if score < 0.8:
@@ -833,7 +974,16 @@ class RAGTools:
         return recommendations
 
     def _generate_citation_recommendations(self, accuracy: float, uncited_claims: int, quality: Dict[str, Any]) -> List[str]:
-        """Generate recommendations for improving citations."""
+        """Generate recommendations for improving citations.
+
+        Args:
+            accuracy: Citation accuracy score
+            uncited_claims: Number of uncited claims
+            quality: Citation quality assessment
+
+        Returns:
+            List of recommendations
+        """
         recommendations = []
 
         if accuracy < 0.8:
@@ -844,7 +994,16 @@ class RAGTools:
         return recommendations
 
     def _generate_chunk_recommendations(self, scores: List[float], threshold: float, rankings: List[Tuple[int, float]]) -> List[str]:
-        """Generate recommendations for chunk relevance."""
+        """Generate recommendations for chunk relevance.
+
+        Args:
+            scores: Chunk relevance scores
+            threshold: Relevance threshold
+            rankings: Chunk rankings by relevance
+
+        Returns:
+            List of recommendations
+        """
         recommendations = []
 
         avg_score = statistics.mean(scores) if scores else 0.0
@@ -854,7 +1013,15 @@ class RAGTools:
         return recommendations
 
     def _generate_benchmark_recommendations(self, results: Dict[str, Any], comparison: Dict[str, Any]) -> List[str]:
-        """Generate recommendations based on benchmark results."""
+        """Generate recommendations based on benchmark results.
+
+        Args:
+            results: Benchmark results for all systems
+            comparison: System comparison analysis
+
+        Returns:
+            List of recommendations
+        """
         recommendations = []
 
         best_system = comparison.get("best_overall")
@@ -865,11 +1032,27 @@ class RAGTools:
 
     # Placeholder methods for complex operations that would need full implementation
     def _identify_underutilized_context(self, context: str, answer: str) -> List[str]:
-        """Identify parts of context that weren't used."""
+        """Identify parts of context that weren't used.
+
+        Args:
+            context: Retrieved context
+            answer: Generated answer
+
+        Returns:
+            List of underutilized context parts
+        """
         return []  # Simplified implementation
 
     def _classify_hallucination_severity(self, rate: float, contradictions: List[Dict]) -> str:
-        """Classify hallucination severity."""
+        """Classify hallucination severity.
+
+        Args:
+            rate: Hallucination rate
+            contradictions: List of contradictions found
+
+        Returns:
+            Severity level ('high', 'medium', 'low')
+        """
         if rate > 0.3:
             return "high"
         elif rate > 0.1:
@@ -878,47 +1061,147 @@ class RAGTools:
             return "low"
 
     async def _check_statement_contradiction(self, statement: str, context: str, judge_model: str) -> Dict[str, Any]:
-        """Check if statement contradicts context."""
+        """Check if statement contradicts context.
+
+        Args:
+            statement: Statement to check
+            context: Context to check against
+            judge_model: Judge model for analysis
+
+        Returns:
+            Contradiction analysis results
+        """
         return {"contradicts": False, "confidence": 0.9, "explanation": "No contradiction found"}
 
     async def _assess_overall_hallucination(self, text: str, context: str, judge_model: str) -> Dict[str, Any]:
-        """Overall hallucination assessment."""
+        """Overall hallucination assessment.
+
+        Args:
+            text: Generated text to assess
+            context: Source context
+            judge_model: Judge model for assessment
+
+        Returns:
+            Overall hallucination assessment
+        """
         return {"score": 0.1, "severity": "low", "reasoning": "No significant hallucinations"}
 
     async def _assess_topic_coverage(self, topic: str, content: str, judge_model: str) -> Dict[str, Any]:
-        """Assess if topic is covered in content."""
+        """Assess if topic is covered in content.
+
+        Args:
+            topic: Topic to check coverage for
+            content: Content to analyze
+            judge_model: Judge model for assessment
+
+        Returns:
+            Topic coverage assessment
+        """
         return {"covered": True, "confidence": 0.8, "evidence": "Topic found in content"}
 
     async def _assess_retrieval_irrelevance(self, query: str, topics: List[str], content: str, judge_model: str) -> Dict[str, Any]:
-        """Assess amount of irrelevant content."""
+        """Assess amount of irrelevant content.
+
+        Args:
+            query: Original query
+            topics: Expected topics
+            content: Retrieved content
+            judge_model: Judge model for assessment
+
+        Returns:
+            Irrelevance assessment results
+        """
         return {"irrelevance_score": 0.2, "irrelevant_sections": []}
 
     async def _verify_citation(self, citation: Dict[str, Any], sources: List[Dict[str, Any]], judge_model: str) -> Dict[str, Any]:
-        """Verify citation accuracy."""
+        """Verify citation accuracy.
+
+        Args:
+            citation: Citation to verify
+            sources: Available source documents
+            judge_model: Judge model for verification
+
+        Returns:
+            Citation verification results
+        """
         return {"accurate": True, "confidence": 0.9, "supporting_source": sources[0] if sources else None}
 
     async def _find_uncited_claims(self, text: str, sources: List[Dict[str, Any]], judge_model: str) -> List[str]:
-        """Find claims that should be cited."""
+        """Find claims that should be cited.
+
+        Args:
+            text: Text to analyze
+            sources: Available source documents
+            judge_model: Judge model for analysis
+
+        Returns:
+            List of uncited claims
+        """
         return []  # Simplified implementation
 
     async def _assess_citation_quality(self, text: str, sources: List[Dict[str, Any]], judge_model: str) -> Dict[str, Any]:
-        """Overall citation quality assessment."""
+        """Overall citation quality assessment.
+
+        Args:
+            text: Text with citations to assess
+            sources: Available source documents
+            judge_model: Judge model for assessment
+
+        Returns:
+            Citation quality assessment
+        """
         return {"score": 0.8, "issues": []}
 
     async def _judge_chunk_relevance(self, query: str, chunk: str, judge_model: str) -> float:
-        """Judge chunk relevance using LLM."""
+        """Judge chunk relevance using LLM.
+
+        Args:
+            query: Search query
+            chunk: Text chunk to assess
+            judge_model: Judge model for assessment
+
+        Returns:
+            Relevance score (0-1)
+        """
         return 0.7  # Simplified implementation
 
     async def _simulate_retrieval(self, query: str, system: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Simulate retrieval system (placeholder)."""
+        """Simulate retrieval system (placeholder).
+
+        Args:
+            query: Search query
+            system: Retrieval system configuration
+
+        Returns:
+            List of retrieved documents
+        """
         return [{"content": f"Retrieved document for {query}", "score": 0.8}]
 
     async def _evaluate_query_retrieval(self, query: str, retrieved: List[Dict], expected: List[Dict], metrics: List[str], judge_model: str) -> Dict[str, Any]:
-        """Evaluate retrieval for single query."""
+        """Evaluate retrieval for single query.
+
+        Args:
+            query: Search query
+            retrieved: Retrieved documents
+            expected: Expected documents
+            metrics: Evaluation metrics to compute
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Query evaluation results
+        """
         return {"precision": 0.8, "recall": 0.7, "mrr": 0.75, "ndcg": 0.8}
 
     def _aggregate_system_performance(self, results: List[Dict[str, Any]], metrics: List[str]) -> Dict[str, Any]:
-        """Aggregate performance across queries."""
+        """Aggregate performance across queries.
+
+        Args:
+            results: Individual query results
+            metrics: Metrics to aggregate
+
+        Returns:
+            Aggregated system performance
+        """
         aggregated = {}
         for metric in metrics:
             scores = [r.get(metric, 0.0) for r in results]
@@ -931,7 +1214,15 @@ class RAGTools:
         return aggregated
 
     def _compare_retrieval_systems(self, results: Dict[str, Any], metrics: List[str]) -> Dict[str, Any]:
-        """Compare multiple retrieval systems."""
+        """Compare multiple retrieval systems.
+
+        Args:
+            results: Results for all systems
+            metrics: Metrics to compare
+
+        Returns:
+            System comparison analysis
+        """
         if not results:
             return {"best_overall": None}
 

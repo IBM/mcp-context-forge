@@ -397,7 +397,15 @@ class RobustnessTools:
     # Helper methods for robustness testing
 
     def _generate_adversarial_inputs(self, base_prompt: str, attack_types: List[str]) -> List[str]:
-        """Generate adversarial inputs based on attack types."""
+        """Generate adversarial inputs based on attack types.
+
+        Args:
+            base_prompt: Base prompt to create adversarial variations of
+            attack_types: Types of attacks to generate inputs for
+
+        Returns:
+            List of adversarial input strings
+        """
         adversarial_inputs = []
 
         for attack_type in attack_types:
@@ -416,7 +424,16 @@ class RobustnessTools:
         return adversarial_inputs[:50]  # Limit to manageable number
 
     async def _test_adversarial_input(self, base_prompt: str, adversarial_input: str, judge_model: str) -> Dict[str, Any]:
-        """Test a single adversarial input."""
+        """Test a single adversarial input.
+
+        Args:
+            base_prompt: Original base prompt
+            adversarial_input: Adversarial input to test
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Dictionary containing test results for the adversarial input
+        """
         # Simulate model response (in real implementation, would call actual model)
         # For now, use pattern matching to detect if attack would likely succeed
         attack_success = any(pattern.lower() in adversarial_input.lower() for patterns in self.adversarial_patterns.values() for pattern in patterns)
@@ -435,7 +452,14 @@ class RobustnessTools:
         }
 
     def _classify_attack(self, adversarial_input: str) -> str:
-        """Classify the type of adversarial attack."""
+        """Classify the type of adversarial attack.
+
+        Args:
+            adversarial_input: Adversarial input to classify
+
+        Returns:
+            Attack type classification string
+        """
         input_lower = adversarial_input.lower()
 
         for attack_type, patterns in self.adversarial_patterns.items():
@@ -445,7 +469,14 @@ class RobustnessTools:
         return "unknown"
 
     def _detect_attack_indicators(self, text: str) -> List[str]:
-        """Detect indicators of adversarial attacks."""
+        """Detect indicators of adversarial attacks.
+
+        Args:
+            text: Text to analyze for attack indicators
+
+        Returns:
+            List of detected attack indicator strings
+        """
         indicators = []
         text_lower = text.lower()
 
@@ -457,7 +488,16 @@ class RobustnessTools:
         return indicators
 
     def _generate_perturbations(self, text: str, perturbation_type: str, num_perturbations: int) -> List[str]:
-        """Generate perturbations of the input text."""
+        """Generate perturbations of the input text.
+
+        Args:
+            text: Original text to perturb
+            perturbation_type: Type of perturbation to apply
+            num_perturbations: Number of perturbations to generate
+
+        Returns:
+            List of perturbed text strings
+        """
         perturbations = []
 
         for _ in range(num_perturbations):
@@ -480,7 +520,14 @@ class RobustnessTools:
         return perturbations
 
     def _add_typos(self, text: str) -> str:
-        """Add random typos to text."""
+        """Add random typos to text.
+
+        Args:
+            text: Text to add typos to
+
+        Returns:
+            Text with added typos
+        """
         words = text.split()
         if not words:
             return text
@@ -499,7 +546,14 @@ class RobustnessTools:
         return " ".join(words)
 
     def _replace_synonyms(self, text: str) -> str:
-        """Replace words with synonyms."""
+        """Replace words with synonyms.
+
+        Args:
+            text: Text to replace synonyms in
+
+        Returns:
+            Text with synonym replacements
+        """
         # Simple synonym replacements
         synonyms = {"good": "excellent", "bad": "poor", "big": "large", "small": "tiny", "fast": "quick", "slow": "sluggish", "happy": "joyful", "sad": "sorrowful"}
 
@@ -512,7 +566,14 @@ class RobustnessTools:
         return " ".join(words)
 
     def _reorder_words(self, text: str) -> str:
-        """Reorder words in text."""
+        """Reorder words in text.
+
+        Args:
+            text: Text to reorder words in
+
+        Returns:
+            Text with reordered words
+        """
         words = text.split()
         if len(words) > 3:
             # Swap two adjacent words
@@ -522,7 +583,14 @@ class RobustnessTools:
         return " ".join(words)
 
     def _paraphrase(self, text: str) -> str:
-        """Simple paraphrasing of text."""
+        """Simple paraphrasing of text.
+
+        Args:
+            text: Text to paraphrase
+
+        Returns:
+            Paraphrased text
+        """
         # Basic paraphrasing patterns
         if "is" in text:
             return text.replace("is", "can be")
@@ -532,7 +600,14 @@ class RobustnessTools:
             return f"In other words, {text}"
 
     def _change_capitalization(self, text: str) -> str:
-        """Change capitalization pattern."""
+        """Change capitalization pattern.
+
+        Args:
+            text: Text to change capitalization for
+
+        Returns:
+            Text with modified capitalization
+        """
         change_type = secrets.SystemRandom().choice(["upper", "lower", "title", "random"])
 
         if change_type == "upper":
@@ -545,7 +620,17 @@ class RobustnessTools:
             return "".join(c.upper() if secrets.SystemRandom().random() > 0.5 else c.lower() for c in text)
 
     async def _measure_response_sensitivity(self, original: str, perturbed: str, threshold: float, judge_model: str) -> Dict[str, Any]:
-        """Measure sensitivity between original and perturbed responses."""
+        """Measure sensitivity between original and perturbed responses.
+
+        Args:
+            original: Original input text
+            perturbed: Perturbed input text
+            threshold: Sensitivity threshold for analysis
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Dictionary containing response sensitivity measurements
+        """
         # Simulate response generation and comparison
         # In real implementation, would generate actual responses and compare
 
@@ -561,7 +646,15 @@ class RobustnessTools:
         }
 
     def _calculate_text_similarity(self, text1: str, text2: str) -> float:
-        """Calculate similarity between two texts."""
+        """Calculate similarity between two texts.
+
+        Args:
+            text1: First text to compare
+            text2: Second text to compare
+
+        Returns:
+            Similarity score between 0 and 1
+        """
         words1 = set(text1.lower().split())
         words2 = set(text2.lower().split())
 
@@ -577,7 +670,15 @@ class RobustnessTools:
     # (Implementing remaining helper methods following similar patterns)
 
     def _generate_adversarial_recommendations(self, robustness_score: float, attack_rates: Dict) -> List[str]:
-        """Generate recommendations for improving adversarial robustness."""
+        """Generate recommendations for improving adversarial robustness.
+
+        Args:
+            robustness_score: Overall robustness score
+            attack_rates: Success rates by attack type
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if robustness_score < 0.7:
@@ -590,7 +691,15 @@ class RobustnessTools:
         return recommendations
 
     def _generate_sensitivity_recommendations(self, sensitivity: float, type_sensitivities: Dict) -> List[str]:
-        """Generate recommendations for reducing input sensitivity."""
+        """Generate recommendations for reducing input sensitivity.
+
+        Args:
+            sensitivity: Overall sensitivity score
+            type_sensitivities: Sensitivity scores by perturbation type
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if sensitivity > 0.3:
@@ -603,7 +712,15 @@ class RobustnessTools:
         return recommendations
 
     def _generate_injection_recommendations(self, resistance: float, strategy_resistance: Dict) -> List[str]:
-        """Generate recommendations for prompt injection resistance."""
+        """Generate recommendations for prompt injection resistance.
+
+        Args:
+            resistance: Overall injection resistance score
+            strategy_resistance: Resistance scores by injection strategy
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if resistance < 0.8:
@@ -616,7 +733,15 @@ class RobustnessTools:
         return recommendations
 
     def _generate_distribution_recommendations(self, robustness: float, degradation: Dict) -> List[str]:
-        """Generate recommendations for distribution shift robustness."""
+        """Generate recommendations for distribution shift robustness.
+
+        Args:
+            robustness: Overall distribution robustness score
+            degradation: Performance degradation by metric
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if robustness < 0.7:
@@ -629,7 +754,15 @@ class RobustnessTools:
         return recommendations
 
     def _generate_consistency_recommendations(self, consistency: float, metric_consistencies: Dict) -> List[str]:
-        """Generate recommendations for improving consistency."""
+        """Generate recommendations for improving consistency.
+
+        Args:
+            consistency: Overall consistency score
+            metric_consistencies: Consistency scores by metric
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if consistency < 0.8:
@@ -643,7 +776,14 @@ class RobustnessTools:
 
     # Placeholder implementations for complex methods
     def _generate_injection_attempts(self, strategies: List[str]) -> List[str]:
-        """Generate prompt injection attempts."""
+        """Generate prompt injection attempts.
+
+        Args:
+            strategies: List of injection strategies to generate attempts for
+
+        Returns:
+            List of injection attempt strings
+        """
         attempts = []
         for strategy in strategies:
             if strategy == "direct_override":
@@ -663,7 +803,16 @@ class RobustnessTools:
         return attempts
 
     async def _test_injection_attempt(self, system_prompt: str, attempt: str, judge_model: str) -> Dict[str, Any]:
-        """Test a single injection attempt."""
+        """Test a single injection attempt.
+
+        Args:
+            system_prompt: System prompt to test injection against
+            attempt: Injection attempt to test
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Dictionary containing injection test results
+        """
         # Simplified simulation
         injection_indicators = len(self._detect_attack_indicators(attempt))
         injection_successful = injection_indicators > 0 and secrets.SystemRandom().random() > 0.7
@@ -676,7 +825,16 @@ class RobustnessTools:
         }
 
     async def _evaluate_sample_performance(self, sample: str, metrics: List[str], judge_model: str) -> Dict[str, Any]:
-        """Evaluate performance on a single sample."""
+        """Evaluate performance on a single sample.
+
+        Args:
+            sample: Sample text to evaluate performance on
+            metrics: Performance metrics to evaluate
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Dictionary containing sample performance evaluation
+        """
         # Simulate performance evaluation
         performance_metrics = {}
         for metric in metrics:
@@ -690,12 +848,23 @@ class RobustnessTools:
         }
 
     async def _test_input_consistency(self, base_input: str, strength: float, metrics: List[str], trials: int, judge_model: str) -> Dict[str, Any]:
-        """Test consistency for a single input."""
+        """Test consistency for a single input.
+
+        Args:
+            base_input: Base input to test consistency for
+            strength: Perturbation strength to apply
+            metrics: Consistency metrics to evaluate
+            trials: Number of trials to run
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Dictionary containing input consistency test results
+        """
         consistency_scores = {metric: [] for metric in metrics}
 
         for _ in range(trials):
-            # Generate perturbed version
-            perturbed = self._add_typos(base_input)  # Simple perturbation
+            # Generate perturbed version (for simulation purposes)
+            _ = self._add_typos(base_input)  # Simple perturbation
 
             # Simulate consistency measurement
             for metric in metrics:

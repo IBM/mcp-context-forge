@@ -158,7 +158,11 @@ class HealthCheckServer:
         return web.json_response(info_data, status=200)
 
     async def start(self) -> None:
-        """Start the health check HTTP server."""
+        """Start the health check HTTP server.
+
+        Raises:
+            Exception: If server fails to start
+        """
         try:
             logger.info(f"🏥 Starting health check server on {self.host}:{self.port}")
 
@@ -168,7 +172,7 @@ class HealthCheckServer:
             self.site = web.TCPSite(self.runner, self.host, self.port)
             await self.site.start()
 
-            logger.info(f"✅ Health check server ready:")
+            logger.info("✅ Health check server ready:")
             logger.info(f"   • Health: http://{self.host}:{self.port}/health")
             logger.info(f"   • Ready: http://{self.host}:{self.port}/ready")
             logger.info(f"   • Metrics: http://{self.host}:{self.port}/metrics")
@@ -206,7 +210,11 @@ class HealthCheckServer:
         logger.debug("✅ Storage marked as ready")
 
     def mark_not_ready(self, reason: str = "") -> None:
-        """Mark the server as not ready."""
+        """Mark the server as not ready.
+
+        Args:
+            reason: Optional reason for not being ready
+        """
         self.is_ready = False
         self.judge_tools_ready = False
         self.storage_ready = False
@@ -267,5 +275,9 @@ def mark_storage_ready() -> None:
 
 
 def mark_not_ready(reason: str = "") -> None:
-    """Mark the server as not ready (convenience function)."""
+    """Mark the server as not ready (convenience function).
+
+    Args:
+        reason: Optional reason for not being ready
+    """
     get_health_server().mark_not_ready(reason)

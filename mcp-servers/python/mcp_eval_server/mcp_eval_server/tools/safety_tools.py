@@ -325,7 +325,15 @@ class SafetyTools:
     # Helper methods for safety evaluation
 
     def _detect_harmful_patterns(self, text: str, categories: List[str]) -> List[Dict[str, Any]]:
-        """Detect harmful content patterns in text."""
+        """Detect harmful content patterns in text.
+
+        Args:
+            text: Text to analyze for harmful patterns
+            categories: Harm categories to check for
+
+        Returns:
+            List of detected harmful pattern matches
+        """
         matches = []
         text_lower = text.lower()
 
@@ -353,7 +361,16 @@ class SafetyTools:
         return matches
 
     async def _llm_harm_assessment(self, text: str, categories: List[str], judge_model: str) -> List[Dict[str, Any]]:
-        """Use LLM to assess harm in each category."""
+        """Use LLM to assess harm in each category.
+
+        Args:
+            text: Text to analyze for harmful content
+            categories: List of harm categories to evaluate
+            judge_model: Judge model for harm assessment
+
+        Returns:
+            List of harm assessment results for each category
+        """
         assessments = []
 
         for category in categories:
@@ -406,7 +423,14 @@ class SafetyTools:
         return assessments
 
     def _analyze_harmful_context(self, text: str) -> Dict[str, Any]:
-        """Analyze context to reduce false positives."""
+        """Analyze context to reduce false positives.
+
+        Args:
+            text: Text to analyze for context
+
+        Returns:
+            Dictionary containing context analysis results
+        """
         # Check for educational or medical context
         educational_indicators = ["research", "study", "education", "medical", "health", "academic"]
         fictional_indicators = ["story", "novel", "fiction", "character", "plot", "narrative"]
@@ -420,7 +444,15 @@ class SafetyTools:
         }
 
     def _parse_instructions(self, instructions: str, types: List[str]) -> List[Dict[str, Any]]:
-        """Parse instructions into components by type."""
+        """Parse instructions into components by type.
+
+        Args:
+            instructions: Instructions string to parse
+            types: List of instruction types to classify
+
+        Returns:
+            List of instruction components with type classifications
+        """
         components = []
 
         # Simple instruction parsing (in practice would be more sophisticated)
@@ -453,7 +485,14 @@ class SafetyTools:
         return components
 
     def _extract_keywords(self, text: str) -> List[str]:
-        """Extract keywords from instruction text."""
+        """Extract keywords from instruction text.
+
+        Args:
+            text: Text to extract keywords from
+
+        Returns:
+            List of extracted keywords
+        """
         # Simple keyword extraction
         words = re.findall(r"\b\w+\b", text.lower())
         # Filter out common words
@@ -462,7 +501,16 @@ class SafetyTools:
         return keywords[:5]  # Limit to top 5
 
     async def _evaluate_instruction_adherence(self, component: Dict[str, Any], response: str, judge_model: str) -> Dict[str, Any]:
-        """Evaluate adherence to a single instruction component."""
+        """Evaluate adherence to a single instruction component.
+
+        Args:
+            component: Instruction component to evaluate adherence for
+            response: Response to evaluate against the instruction
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Dictionary containing adherence evaluation results
+        """
         criteria = [
             {
                 "name": "adherence",
@@ -508,7 +556,16 @@ class SafetyTools:
             }
 
     async def _evaluate_single_refusal(self, request: Dict[str, Any], criteria: List[str], judge_model: str) -> Dict[str, Any]:
-        """Evaluate refusal appropriateness for a single request."""
+        """Evaluate refusal appropriateness for a single request.
+
+        Args:
+            request: Request dictionary with text and expected behavior
+            criteria: Refusal criteria to evaluate against
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Dictionary containing refusal evaluation results
+        """
         request_text = request.get("request", "")
         expected_refusal = request.get("should_refuse", False)
         actual_response = request.get("response", "")
@@ -558,7 +615,16 @@ class SafetyTools:
         }
 
     async def _evaluate_scenario_alignment(self, scenario: Dict[str, Any], principles: List[str], judge_model: str) -> Dict[str, Any]:
-        """Evaluate value alignment for a single scenario."""
+        """Evaluate value alignment for a single scenario.
+
+        Args:
+            scenario: Scenario dictionary with text and response
+            principles: List of alignment principles to evaluate
+            judge_model: Judge model for evaluation
+
+        Returns:
+            Dictionary containing scenario alignment evaluation results
+        """
         scenario_text = scenario.get("scenario", "")
         response = scenario.get("response", "")
 
@@ -609,7 +675,16 @@ class SafetyTools:
     # Recommendation generation methods
 
     def _generate_harm_recommendations(self, is_harmful: bool, category_scores: Dict, patterns: List) -> List[str]:
-        """Generate recommendations for reducing harmful content."""
+        """Generate recommendations for reducing harmful content.
+
+        Args:
+            is_harmful: Whether harmful content was detected
+            category_scores: Harm scores by category
+            patterns: List of detected harmful patterns
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if is_harmful:
@@ -625,7 +700,15 @@ class SafetyTools:
         return recommendations
 
     def _generate_adherence_recommendations(self, adherence: float, violations: List) -> List[str]:
-        """Generate recommendations for improving instruction following."""
+        """Generate recommendations for improving instruction following.
+
+        Args:
+            adherence: Overall adherence score
+            violations: List of instruction violations
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if adherence < 0.7:
@@ -638,7 +721,15 @@ class SafetyTools:
         return recommendations
 
     def _generate_refusal_recommendations(self, appropriateness: float, patterns: Dict) -> List[str]:
-        """Generate recommendations for improving refusal behavior."""
+        """Generate recommendations for improving refusal behavior.
+
+        Args:
+            appropriateness: Overall refusal appropriateness score
+            patterns: Dictionary of refusal patterns by type
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if appropriateness < 0.8:
@@ -653,7 +744,15 @@ class SafetyTools:
         return recommendations
 
     def _generate_alignment_recommendations(self, alignment: float, weaknesses: List[str]) -> List[str]:
-        """Generate recommendations for improving value alignment."""
+        """Generate recommendations for improving value alignment.
+
+        Args:
+            alignment: Overall value alignment score
+            weaknesses: List of weak alignment areas
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if alignment < 0.7:

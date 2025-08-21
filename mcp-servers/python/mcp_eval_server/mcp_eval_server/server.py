@@ -34,6 +34,7 @@ from .tools.calibration_tools import CalibrationTools
 from .tools.judge_tools import JudgeTools
 from .tools.multilingual_tools import MultilingualTools
 from .tools.performance_tools import PerformanceTools
+from .tools.privacy_tools import PrivacyTools
 from .tools.prompt_tools import PromptTools
 from .tools.quality_tools import QualityTools
 from .tools.rag_tools import RAGTools
@@ -59,6 +60,7 @@ ROBUSTNESS_TOOLS = None  # pylint: disable=invalid-name
 SAFETY_TOOLS = None  # pylint: disable=invalid-name
 MULTILINGUAL_TOOLS = None  # pylint: disable=invalid-name
 PERFORMANCE_TOOLS = None  # pylint: disable=invalid-name
+PRIVACY_TOOLS = None  # pylint: disable=invalid-name
 WORKFLOW_TOOLS = None  # pylint: disable=invalid-name
 CALIBRATION_TOOLS = None  # pylint: disable=invalid-name
 EVALUATION_CACHE = None  # pylint: disable=invalid-name
@@ -849,6 +851,152 @@ async def list_tools() -> List[Tool]:
                 },
             },
         ),
+        # Privacy tools
+        Tool(
+            name="privacy.detect_pii_exposure",
+            description="Detect personally identifiable information in text with configurable sensitivity",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to analyze for PII exposure"},
+                    "pii_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["email", "phone", "ssn", "credit_card", "ip_address", "address", "name"],
+                        "description": "Specific types of PII to detect",
+                    },
+                    "sensitivity_level": {"type": "string", "default": "high", "enum": ["low", "medium", "high"], "description": "Detection sensitivity"},
+                    "include_context": {"type": "boolean", "default": True, "description": "Whether to include surrounding context"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for PII assessment"},
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="privacy.assess_data_minimization",
+            description="Evaluate if data collection follows minimization principles",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "collected_data": {"type": "object", "description": "Data being collected or processed"},
+                    "stated_purpose": {"type": "string", "description": "Stated purpose for data collection"},
+                    "data_categories": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["personal_identifiers", "financial", "medical", "behavioral", "sensitive_attributes"],
+                        "description": "Categories of data to evaluate",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for minimization assessment"},
+                },
+                "required": ["collected_data", "stated_purpose"],
+            },
+        ),
+        Tool(
+            name="privacy.evaluate_consent_compliance",
+            description="Assess consent mechanisms and compliance with privacy regulations",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "consent_text": {"type": "string", "description": "Consent notice or privacy policy text"},
+                    "data_practices": {"type": "object", "description": "Actual data collection and processing practices"},
+                    "compliance_standards": {"type": "array", "items": {"type": "string"}, "default": ["gdpr", "ccpa", "coppa", "hipaa"], "description": "Standards to check compliance against"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for compliance assessment"},
+                },
+                "required": ["consent_text", "data_practices"],
+            },
+        ),
+        Tool(
+            name="privacy.measure_anonymization_effectiveness",
+            description="Evaluate effectiveness of data anonymization techniques",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "original_data": {"type": "string", "description": "Original data before anonymization"},
+                    "anonymized_data": {"type": "string", "description": "Data after anonymization"},
+                    "anonymization_method": {"type": "string", "default": "unknown", "description": "Method used for anonymization"},
+                    "reidentification_risk_threshold": {"type": "number", "default": 0.1, "description": "Acceptable re-identification risk level"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for anonymization assessment"},
+                },
+                "required": ["original_data", "anonymized_data"],
+            },
+        ),
+        Tool(
+            name="privacy.detect_data_leakage",
+            description="Identify unintended data exposure or leakage in outputs",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "input_data": {"type": "string", "description": "Input data provided to system"},
+                    "output_data": {"type": "string", "description": "Output data generated by system"},
+                    "expected_data_flow": {"type": "object", "description": "Expected data transformation rules"},
+                    "leakage_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["direct_exposure", "inference_leakage", "aggregation_leakage", "temporal_leakage"],
+                        "description": "Types of data leakage to check for",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for leakage assessment"},
+                },
+                "required": ["input_data", "output_data"],
+            },
+        ),
+        Tool(
+            name="privacy.assess_consent_clarity",
+            description="Evaluate clarity and comprehensibility of consent notices",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "consent_text": {"type": "string", "description": "Consent notice or privacy policy text"},
+                    "target_audience": {"type": "string", "default": "general_public", "description": "Target audience for the consent notice"},
+                    "clarity_dimensions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["readability", "completeness", "specificity", "accessibility", "actionability"],
+                        "description": "Aspects of clarity to evaluate",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for clarity assessment"},
+                },
+                "required": ["consent_text"],
+            },
+        ),
+        Tool(
+            name="privacy.evaluate_data_retention_compliance",
+            description="Assess data retention policy compliance and effectiveness",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "retention_policies": {"type": "object", "description": "Stated data retention policies"},
+                    "actual_practices": {"type": "object", "description": "Actual data retention practices"},
+                    "regulatory_requirements": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["gdpr_erasure", "ccpa_deletion", "coppa_retention", "sector_specific"],
+                        "description": "Regulatory standards to check against",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for compliance assessment"},
+                },
+                "required": ["retention_policies", "actual_practices"],
+            },
+        ),
+        Tool(
+            name="privacy.assess_privacy_by_design",
+            description="Evaluate privacy-by-design implementation in systems",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "system_description": {"type": "string", "description": "Description of the system or process"},
+                    "privacy_controls": {"type": "array", "items": {"type": "object"}, "description": "List of implemented privacy controls"},
+                    "design_principles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["proactive", "privacy_default", "privacy_embedded", "full_functionality", "end_to_end_security", "visibility_transparency", "user_privacy"],
+                        "description": "Privacy-by-design principles to evaluate",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for privacy assessment"},
+                },
+                "required": ["system_description", "privacy_controls"],
+            },
+        ),
         # Workflow tools
         Tool(
             name="workflow.create_evaluation_suite",
@@ -1070,6 +1218,24 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         elif name == "performance.monitor_memory_usage":
             result = await PERFORMANCE_TOOLS.monitor_memory_usage(**arguments)
 
+        # Privacy tools
+        elif name == "privacy.detect_pii_exposure":
+            result = await PRIVACY_TOOLS.detect_pii_exposure(**arguments)
+        elif name == "privacy.assess_data_minimization":
+            result = await PRIVACY_TOOLS.assess_data_minimization(**arguments)
+        elif name == "privacy.evaluate_consent_compliance":
+            result = await PRIVACY_TOOLS.evaluate_consent_compliance(**arguments)
+        elif name == "privacy.measure_anonymization_effectiveness":
+            result = await PRIVACY_TOOLS.measure_anonymization_effectiveness(**arguments)
+        elif name == "privacy.detect_data_leakage":
+            result = await PRIVACY_TOOLS.detect_data_leakage(**arguments)
+        elif name == "privacy.assess_consent_clarity":
+            result = await PRIVACY_TOOLS.assess_consent_clarity(**arguments)
+        elif name == "privacy.evaluate_data_retention_compliance":
+            result = await PRIVACY_TOOLS.evaluate_data_retention_compliance(**arguments)
+        elif name == "privacy.assess_privacy_by_design":
+            result = await PRIVACY_TOOLS.assess_privacy_by_design(**arguments)
+
         # Workflow tools
         elif name == "workflow.create_evaluation_suite":
             result = await WORKFLOW_TOOLS.create_evaluation_suite(**arguments)
@@ -1110,7 +1276,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
 
 async def main():
     """Main server entry point."""
-    global JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS, RAG_TOOLS, BIAS_TOOLS, ROBUSTNESS_TOOLS, SAFETY_TOOLS, MULTILINGUAL_TOOLS, PERFORMANCE_TOOLS, WORKFLOW_TOOLS, CALIBRATION_TOOLS  # pylint: disable=global-statement
+    global JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS, RAG_TOOLS, BIAS_TOOLS, ROBUSTNESS_TOOLS, SAFETY_TOOLS, MULTILINGUAL_TOOLS, PERFORMANCE_TOOLS, PRIVACY_TOOLS, WORKFLOW_TOOLS, CALIBRATION_TOOLS  # pylint: disable=global-statement
     global EVALUATION_CACHE, JUDGE_CACHE, BENCHMARK_CACHE, RESULTS_STORE  # pylint: disable=global-statement
 
     logger.info("🚀 Starting MCP Evaluation Server...")
@@ -1135,6 +1301,7 @@ async def main():
     SAFETY_TOOLS = SafetyTools(JUDGE_TOOLS)
     MULTILINGUAL_TOOLS = MultilingualTools(JUDGE_TOOLS)
     PERFORMANCE_TOOLS = PerformanceTools(JUDGE_TOOLS)
+    PRIVACY_TOOLS = PrivacyTools(JUDGE_TOOLS)
     WORKFLOW_TOOLS = WorkflowTools(JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS)
     CALIBRATION_TOOLS = CalibrationTools(JUDGE_TOOLS)
 
@@ -1237,6 +1404,7 @@ async def main():
     logger.info("   • 4 Safety & Alignment tools (harmful content, instruction following, refusal, value alignment)")
     logger.info("   • 4 Multilingual tools (translation quality, cross-lingual consistency, cultural adaptation, language mixing)")
     logger.info("   • 4 Performance tools (latency, efficiency, throughput, memory)")
+    logger.info("   • 8 Privacy tools (PII detection, data minimization, consent compliance, anonymization, leakage detection)")
     logger.info("   • 3 Workflow tools (suites, execution, comparison)")
     logger.info("   • 2 Calibration tools (agreement, optimization)")
     logger.info("   • 4 Server tools (management, statistics, health)")

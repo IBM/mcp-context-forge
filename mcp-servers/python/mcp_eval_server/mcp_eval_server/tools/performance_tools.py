@@ -75,7 +75,7 @@ class PerformanceTools:
                     input_latencies.append(float("inf"))  # Mark as error
 
             # Calculate statistics for this input
-            valid_latencies = [l for l in input_latencies if l != float("inf") and l < timeout_seconds]
+            valid_latencies = [latency for latency in input_latencies if latency != float("inf") and latency < timeout_seconds]
 
             if valid_latencies:
                 latency_stats = {
@@ -88,7 +88,7 @@ class PerformanceTools:
                     "p95_latency": self._calculate_percentile(valid_latencies, 95),
                     "p99_latency": self._calculate_percentile(valid_latencies, 99),
                     "success_rate": len(valid_latencies) / measurement_runs,
-                    "timeout_rate": sum(1 for l in input_latencies if l >= timeout_seconds) / measurement_runs,
+                    "timeout_rate": sum(1 for latency in input_latencies if latency >= timeout_seconds) / measurement_runs,
                 }
             else:
                 latency_stats = {
@@ -350,14 +350,29 @@ class PerformanceTools:
     # Helper methods for performance monitoring
 
     async def _simulate_response_generation(self, input_text: str) -> str:
-        """Simulate response generation for testing."""
+        """Simulate response generation for testing.
+
+        Args:
+            input_text: Input text to simulate processing for
+
+        Returns:
+            Simulated response string
+        """
         # Simulate processing time based on input length
         processing_time = len(input_text) * 0.001 + 0.05  # Base time + length factor
         await asyncio.sleep(processing_time)
         return f"Simulated response for: {input_text[:50]}..."
 
     def _calculate_percentile(self, values: List[float], percentile: int) -> float:
-        """Calculate percentile of values."""
+        """Calculate percentile of values.
+
+        Args:
+            values: List of numerical values
+            percentile: Percentile to calculate (0-100)
+
+        Returns:
+            Percentile value
+        """
         if not values:
             return 0.0
 
@@ -367,8 +382,18 @@ class PerformanceTools:
         return sorted_values[index]
 
     async def _measure_workload_efficiency(self, workload: Dict[str, Any], baseline_cpu: float, baseline_memory: int, interval: float) -> Dict[str, Any]:
-        """Measure efficiency for a specific workload."""
-        workload.get("name", "unnamed")
+        """Measure efficiency for a specific workload.
+
+        Args:
+            workload: Workload configuration to measure
+            baseline_cpu: Baseline CPU usage percentage
+            baseline_memory: Baseline memory usage in bytes
+            interval: Monitoring interval in seconds
+
+        Returns:
+            Dictionary containing workload efficiency metrics
+        """
+        _ = workload.get("name", "unnamed")  # Workload name for potential future use
         workload_input = workload.get("input", "test input")
 
         # Monitor resources during workload execution
@@ -406,7 +431,17 @@ class PerformanceTools:
         }
 
     async def _test_concurrency_level(self, request: str, concurrency: int, total_requests: int, target_function: Callable) -> Dict[str, Any]:
-        """Test throughput at a specific concurrency level."""
+        """Test throughput at a specific concurrency level.
+
+        Args:
+            request: Request string to test with
+            concurrency: Number of concurrent requests
+            total_requests: Total number of requests to send
+            target_function: Function to test concurrency for
+
+        Returns:
+            Dictionary containing concurrency test results
+        """
         start_time = time.time()
 
         # Create tasks for concurrent execution
@@ -455,7 +490,14 @@ class PerformanceTools:
         }
 
     def _analyze_scaling_behavior(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Analyze scaling behavior from throughput test results."""
+        """Analyze scaling behavior from throughput test results.
+
+        Args:
+            results: List of throughput test results
+
+        Returns:
+            Dictionary containing scaling behavior analysis
+        """
         if not results:
             return {"scaling_efficiency": 0.0, "degradation_point": None}
 
@@ -492,7 +534,14 @@ class PerformanceTools:
         }
 
     def _detect_throughput_bottlenecks(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Detect throughput bottlenecks from scaling results."""
+        """Detect throughput bottlenecks from scaling results.
+
+        Args:
+            results: List of scaling test results
+
+        Returns:
+            List of detected bottlenecks with details
+        """
         bottlenecks = []
 
         for i, result in enumerate(results):
@@ -524,7 +573,15 @@ class PerformanceTools:
         return bottlenecks
 
     def _analyze_memory_patterns(self, samples: List[Dict[str, Any]], threshold: float) -> Dict[str, Any]:
-        """Analyze memory usage patterns."""
+        """Analyze memory usage patterns.
+
+        Args:
+            samples: List of memory usage samples
+            threshold: Memory threshold for analysis
+
+        Returns:
+            Dictionary containing memory pattern analysis
+        """
         if not samples:
             return {}
 
@@ -557,7 +614,15 @@ class PerformanceTools:
         }
 
     def _detect_memory_issues(self, samples: List[Dict[str, Any]], threshold: float) -> List[Dict[str, Any]]:
-        """Detect memory-related issues."""
+        """Detect memory-related issues.
+
+        Args:
+            samples: List of memory usage samples
+            threshold: Memory threshold for issue detection
+
+        Returns:
+            List of detected memory issues
+        """
         issues = []
 
         if not samples:
@@ -608,7 +673,14 @@ class PerformanceTools:
         return issues
 
     def _calculate_memory_growth_rate(self, samples: List[Dict[str, Any]]) -> float:
-        """Calculate memory growth rate over time."""
+        """Calculate memory growth rate over time.
+
+        Args:
+            samples: List of memory usage samples with timestamps
+
+        Returns:
+            Memory growth rate in MB per second
+        """
         if len(samples) < 2:
             return 0.0
 
@@ -629,7 +701,14 @@ class PerformanceTools:
             return 0.0
 
     def _calculate_memory_stability(self, memory_values: List[float]) -> float:
-        """Calculate memory usage stability."""
+        """Calculate memory usage stability.
+
+        Args:
+            memory_values: List of memory usage values
+
+        Returns:
+            Memory stability score (0-1)
+        """
         if len(memory_values) < 2:
             return 1.0
 
@@ -648,7 +727,15 @@ class PerformanceTools:
     # Recommendation generation methods
 
     def _generate_latency_recommendations(self, stats: Dict, results: List) -> List[str]:
-        """Generate recommendations for improving latency."""
+        """Generate recommendations for improving latency.
+
+        Args:
+            stats: Aggregate latency statistics
+            results: List of latency test results
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if stats.get("overall_mean_latency", 0) > 2.0:
@@ -665,7 +752,15 @@ class PerformanceTools:
         return recommendations
 
     def _generate_efficiency_recommendations(self, efficiency: float, metrics: Dict) -> List[str]:
-        """Generate recommendations for improving computational efficiency."""
+        """Generate recommendations for improving computational efficiency.
+
+        Args:
+            efficiency: Overall efficiency score
+            metrics: Efficiency metrics by type
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if efficiency < 0.7:
@@ -682,7 +777,15 @@ class PerformanceTools:
         return recommendations
 
     def _generate_throughput_recommendations(self, analysis: Dict, bottlenecks: List) -> List[str]:
-        """Generate recommendations for improving throughput."""
+        """Generate recommendations for improving throughput.
+
+        Args:
+            analysis: Throughput scaling analysis
+            bottlenecks: List of detected bottlenecks
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if analysis.get("scaling_efficiency", 1.0) < 0.7:
@@ -698,7 +801,15 @@ class PerformanceTools:
         return recommendations
 
     def _generate_memory_recommendations(self, metrics: Dict, issues: List) -> List[str]:
-        """Generate recommendations for memory optimization."""
+        """Generate recommendations for memory optimization.
+
+        Args:
+            metrics: Memory usage metrics
+            issues: List of detected memory issues
+
+        Returns:
+            List of recommendation strings
+        """
         recommendations = []
 
         if metrics.get("memory_stability", 1.0) < 0.8:
@@ -718,23 +829,76 @@ class PerformanceTools:
 
     # Additional placeholder methods for complex operations
     async def _compare_cross_lingual_texts(self, text1: str, text2: str, lang1: str, lang2: str, metrics: List[str], judge_model: str) -> Dict[str, Any]:
-        """Compare texts across languages."""
+        """Compare texts across languages.
+
+        Args:
+            text1: First text to compare
+            text2: Second text to compare
+            lang1: Language of first text
+            lang2: Language of second text
+            metrics: Comparison metrics to evaluate
+            judge_model: Judge model for assessment
+
+        Returns:
+            Dictionary containing cross-lingual comparison results
+        """
         consistency_scores = {metric: 0.8 for metric in metrics}  # Placeholder
         return {"consistency_scores": consistency_scores}
 
     async def _compare_translation_pair(self, text1: str, text2: str, lang1: str, lang2: str, metrics: List[str], judge_model: str) -> Dict[str, Any]:
-        """Compare pair of translations."""
+        """Compare pair of translations.
+
+        Args:
+            text1: First translation text
+            text2: Second translation text
+            lang1: Language of first text
+            lang2: Language of second text
+            metrics: Comparison metrics to evaluate
+            judge_model: Judge model for assessment
+
+        Returns:
+            Dictionary containing translation pair comparison
+        """
         consistency_scores = {metric: 0.75 for metric in metrics}  # Placeholder
         return {"consistency_scores": consistency_scores}
 
     async def _assess_cultural_dimension(self, text: str, culture: str, dimension: str, judge_model: str) -> float:
-        """Assess cultural adaptation dimension."""
+        """Assess cultural adaptation dimension.
+
+        Args:
+            text: Text to assess
+            culture: Target culture
+            dimension: Cultural dimension to evaluate
+            judge_model: Judge model for assessment
+
+        Returns:
+            Cultural adaptation score for the dimension
+        """
         return 0.7  # Placeholder
 
     async def _compare_cultural_adaptation(self, text: str, reference: str, culture: str, judge_model: str) -> Dict[str, Any]:
-        """Compare cultural adaptation with reference."""
+        """Compare cultural adaptation with reference.
+
+        Args:
+            text: Text to assess
+            reference: Reference text for comparison
+            culture: Target culture
+            judge_model: Judge model for assessment
+
+        Returns:
+            Dictionary containing cultural adaptation comparison
+        """
         return {"comparison_score": 0.8}  # Placeholder
 
     async def _llm_assess_language_mixing(self, text: str, expected_lang: str, judge_model: str) -> Dict[str, Any]:
-        """LLM assessment of language mixing."""
+        """LLM assessment of language mixing.
+
+        Args:
+            text: Text to assess
+            expected_lang: Expected primary language
+            judge_model: Judge model for assessment
+
+        Returns:
+            Dictionary containing language mixing assessment
+        """
         return {"appropriateness": 0.7}  # Placeholder
