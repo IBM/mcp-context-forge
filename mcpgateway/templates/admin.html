@@ -4718,6 +4718,7 @@
                         <option value="basic">Basic</option>
                         <option value="bearer">Bearer Token</option>
                         <option value="authheaders">Custom Headers</option>
+                        <option value="oauth">OAuth 2.0</option>
                       </select>
                     </div>
                     <div id="auth-basic-fields-gw-edit" style="display: none">
@@ -4794,6 +4795,120 @@
                           name="auth_headers"
                           id="auth-headers-json-gw-edit"
                         />
+                      </div>
+                    </div>
+
+                    <!-- OAuth Configuration Fields -->
+                    <div id="auth-oauth-fields-gw-edit" style="display: none">
+                      <div class="space-y-4">
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Grant Type
+                          </label>
+                          <select
+                            name="oauth_grant_type"
+                            id="oauth-grant-type-gw-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          >
+                            <option value="client_credentials">Client Credentials (Machine-to-Machine)</option>
+                            <option value="authorization_code">Authorization Code (User Delegation)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Client ID
+                          </label>
+                          <input
+                            type="text"
+                            name="oauth_client_id"
+                            id="oauth-client-id-gw-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="Your OAuth client ID"
+                          />
+                        </div>
+
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Client Secret
+                          </label>
+                          <input
+                            type="password"
+                            name="oauth_client_secret"
+                            id="oauth-client-secret-gw-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="Your OAuth client secret"
+                          />
+                          <p class="mt-1 text-sm text-gray-500">
+                            Leave blank to retain the current secret.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Token URL
+                          </label>
+                          <input
+                            type="url"
+                            name="oauth_token_url"
+                            id="oauth-token-url-gw-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="https://oauth.example.com/token"
+                          />
+                        </div>
+
+                        <div id="oauth-auth-code-fields-gw-edit" style="display: none">
+                          <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Authorization URL
+                            </label>
+                            <input
+                              type="url"
+                              name="oauth_authorization_url"
+                              id="oauth-authorization-url-gw-edit"
+                              class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="https://oauth.example.com/authorize"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                              The OAuth provider's authorization endpoint URL
+                            </p>
+                          </div>
+
+                          <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Redirect URI
+                            </label>
+                            <input
+                              type="url"
+                              name="oauth_redirect_uri"
+                              id="oauth-redirect-uri-gw-edit"
+                              class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="https://gateway.example.com/oauth/callback"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                              This must match the redirect URI configured in your OAuth application
+                            </p>
+                            <p class="mt-1 text-sm text-blue-600 font-medium">
+                              💡 Use: <code class="bg-blue-100 px-1 rounded">http://localhost:4444/oauth/callback</code>
+                            </p>
+                          </div>
+
+                          <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Scopes
+                            </label>
+                            <input
+                              type="text"
+                              name="oauth_scopes"
+                              id="oauth-scopes-gw-edit"
+                              class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="repo read:user (space-separated)"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                              Space-separated list of OAuth scopes (e.g., "repo read:user")
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <div>

@@ -3183,6 +3183,7 @@ async function editGateway(gatewayId) {
         const authHeadersSection = safeGetElement(
             "auth-headers-fields-gw-edit",
         );
+        const authOAuthSection = safeGetElement("auth-oauth-fields-gw-edit");
 
         // Individual fields
         const authUsernameField = safeGetElement(
@@ -3203,6 +3204,24 @@ async function editGateway(gatewayId) {
             "auth-headers-fields-gw-edit",
         )?.querySelector("input[name='auth_header_value']");
 
+        // OAuth fields
+        const oauthGrantTypeField = safeGetElement("oauth-grant-type-gw-edit");
+        const oauthClientIdField = safeGetElement("oauth-client-id-gw-edit");
+        const oauthClientSecretField = safeGetElement(
+            "oauth-client-secret-gw-edit",
+        );
+        const oauthTokenUrlField = safeGetElement("oauth-token-url-gw-edit");
+        const oauthAuthUrlField = safeGetElement(
+            "oauth-authorization-url-gw-edit",
+        );
+        const oauthRedirectUriField = safeGetElement(
+            "oauth-redirect-uri-gw-edit",
+        );
+        const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
+        const oauthAuthCodeFields = safeGetElement(
+            "oauth-auth-code-fields-gw-edit",
+        );
+
         // Hide all auth sections first
         if (authBasicSection) {
             authBasicSection.style.display = "none";
@@ -3212,6 +3231,9 @@ async function editGateway(gatewayId) {
         }
         if (authHeadersSection) {
             authHeadersSection.style.display = "none";
+        }
+        if (authOAuthSection) {
+            authOAuthSection.style.display = "none";
         }
 
         switch (gateway.authType) {
@@ -3242,6 +3264,47 @@ async function editGateway(gatewayId) {
                     }
                     if (authHeaderValueField) {
                         authHeaderValueField.value = "*****"; // mask header value
+                    }
+                }
+                break;
+            case "oauth":
+                if (authOAuthSection) {
+                    authOAuthSection.style.display = "block";
+                }
+                // Populate OAuth fields if available
+                if (gateway.oauthConfig) {
+                    const config = gateway.oauthConfig;
+                    if (oauthGrantTypeField && config.grant_type) {
+                        oauthGrantTypeField.value = config.grant_type;
+                        // Show/hide authorization code fields based on grant type
+                        if (oauthAuthCodeFields) {
+                            oauthAuthCodeFields.style.display =
+                                config.grant_type === "authorization_code"
+                                    ? "block"
+                                    : "none";
+                        }
+                    }
+                    if (oauthClientIdField && config.client_id) {
+                        oauthClientIdField.value = config.client_id;
+                    }
+                    if (oauthClientSecretField) {
+                        oauthClientSecretField.value = ""; // Don't populate secret for security
+                    }
+                    if (oauthTokenUrlField && config.token_url) {
+                        oauthTokenUrlField.value = config.token_url;
+                    }
+                    if (oauthAuthUrlField && config.authorization_url) {
+                        oauthAuthUrlField.value = config.authorization_url;
+                    }
+                    if (oauthRedirectUriField && config.redirect_uri) {
+                        oauthRedirectUriField.value = config.redirect_uri;
+                    }
+                    if (
+                        oauthScopesField &&
+                        config.scopes &&
+                        Array.isArray(config.scopes)
+                    ) {
+                        oauthScopesField.value = config.scopes.join(" ");
                     }
                 }
                 break;
@@ -3658,6 +3721,7 @@ function handleAuthTypeSelection(
     basicFields,
     bearerFields,
     headersFields,
+    oauthFields,
 ) {
     if (!basicFields || !bearerFields || !headersFields) {
         console.warn("Auth field elements not found");
@@ -3666,30 +3730,48 @@ function handleAuthTypeSelection(
 
     // Hide all fields first
     [basicFields, bearerFields, headersFields].forEach((field) => {
-        field.style.display = "none";
+        if (field) {
+            field.style.display = "none";
+        }
     });
+
+    // Hide OAuth fields if they exist
+    if (oauthFields) {
+        oauthFields.style.display = "none";
+    }
 
     // Show relevant field based on selection
     switch (value) {
         case "basic":
-            basicFields.style.display = "block";
+            if (basicFields) {
+                basicFields.style.display = "block";
+            }
             break;
         case "bearer":
-            bearerFields.style.display = "block";
+            if (bearerFields) {
+                bearerFields.style.display = "block";
+            }
             break;
         case "authheaders": {
-            headersFields.style.display = "block";
-            // Ensure at least one header row is present
-            const containerId =
-                headersFields.querySelector('[id$="-container"]')?.id;
-            if (containerId) {
-                const container = document.getElementById(containerId);
-                if (container && container.children.length === 0) {
-                    addAuthHeader(containerId);
+            if (headersFields) {
+                headersFields.style.display = "block";
+                // Ensure at least one header row is present
+                const containerId =
+                    headersFields.querySelector('[id$="-container"]')?.id;
+                if (containerId) {
+                    const container = document.getElementById(containerId);
+                    if (container && container.children.length === 0) {
+                        addAuthHeader(containerId);
+                    }
                 }
             }
             break;
         }
+        case "oauth":
+            if (oauthFields) {
+                oauthFields.style.display = "block";
+            }
+            break;
         default:
             // All fields already hidden
             break;
@@ -6080,6 +6162,42 @@ async function handleEditGatewayFormSubmit(e) {
             JSON.stringify(passthroughHeaders),
         );
 
+        // Handle OAuth configuration
+        const authType = formData.get("auth_type");
+        if (authType === "oauth") {
+            const oauthConfig = {
+                grant_type: formData.get("oauth_grant_type"),
+                client_id: formData.get("oauth_client_id"),
+                client_secret: formData.get("oauth_client_secret"),
+                token_url: formData.get("oauth_token_url"),
+                scopes: formData.get("oauth_scopes")
+                    ? formData
+                          .get("oauth_scopes")
+                          .split(" ")
+                          .filter((s) => s.trim())
+                    : [],
+            };
+
+            // Add authorization code specific fields
+            if (oauthConfig.grant_type === "authorization_code") {
+                oauthConfig.authorization_url = formData.get(
+                    "oauth_authorization_url",
+                );
+                oauthConfig.redirect_uri = formData.get("oauth_redirect_uri");
+            }
+
+            // Remove individual OAuth fields and add as oauth_config
+            formData.delete("oauth_grant_type");
+            formData.delete("oauth_client_id");
+            formData.delete("oauth_client_secret");
+            formData.delete("oauth_token_url");
+            formData.delete("oauth_scopes");
+            formData.delete("oauth_authorization_url");
+            formData.delete("oauth_redirect_uri");
+
+            formData.append("oauth_config", JSON.stringify(oauthConfig));
+        }
+
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
         // Submit via fetch
@@ -6697,6 +6815,7 @@ function setupAuthenticationToggles() {
             basicId: "auth-basic-fields-gw-edit",
             bearerId: "auth-bearer-fields-gw-edit",
             headersId: "auth-headers-fields-gw-edit",
+            oauthId: "auth-oauth-fields-gw-edit",
         },
         {
             id: "edit-auth-type",
@@ -6763,6 +6882,15 @@ function setupFormHandlers() {
                 refreshEditors();
             }
         });
+    }
+
+    // Add OAuth grant type change handler for Edit Gateway modal
+    const editOAuthGrantTypeField = safeGetElement("oauth-grant-type-gw-edit");
+    if (editOAuthGrantTypeField) {
+        editOAuthGrantTypeField.addEventListener(
+            "change",
+            handleEditOAuthGrantTypeChange,
+        );
     }
 
     const toolForm = safeGetElement("add-tool-form");
@@ -6878,6 +7006,38 @@ function handleAuthTypeChange() {
 function handleOAuthGrantTypeChange() {
     const grantType = this.value;
     const authCodeFields = safeGetElement("oauth-auth-code-fields-gw");
+
+    if (authCodeFields) {
+        if (grantType === "authorization_code") {
+            authCodeFields.style.display = "block";
+
+            // Make authorization code specific fields required
+            const requiredFields =
+                authCodeFields.querySelectorAll('input[type="url"]');
+            requiredFields.forEach((field) => {
+                field.required = true;
+            });
+
+            // Show additional validation for required fields
+            console.log(
+                "Authorization Code flow selected - additional fields are now required",
+            );
+        } else {
+            authCodeFields.style.display = "none";
+
+            // Remove required validation for hidden fields
+            const requiredFields =
+                authCodeFields.querySelectorAll('input[type="url"]');
+            requiredFields.forEach((field) => {
+                field.required = false;
+            });
+        }
+    }
+}
+
+function handleEditOAuthGrantTypeChange() {
+    const grantType = this.value;
+    const authCodeFields = safeGetElement("oauth-auth-code-fields-gw-edit");
 
     if (authCodeFields) {
         if (grantType === "authorization_code") {
