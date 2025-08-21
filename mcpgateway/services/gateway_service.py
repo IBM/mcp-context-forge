@@ -653,7 +653,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     try:
                         db_tool = DbTool(
                             original_name=tool.name,
-                            original_name_slug=slugify(tool.name),
+                            custom_name=tool.name,
+                            custom_name_slug=slugify(tool.name),
                             url=gateway.url.rstrip("/"),
                             description=tool.description,
                             integration_type="MCP",  # Gateway-discovered tools are MCP type

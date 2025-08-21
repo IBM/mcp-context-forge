@@ -98,6 +98,7 @@ _TOOL_KEY_MAP = {
     "gatewayId": "gateway_id",
     "gatewaySlug": "gateway_slug",
     "originalNameSlug": "original_name_slug",
+    "customNameSlug": "custom_name_slug",
 }
 
 
