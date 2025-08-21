@@ -1769,7 +1769,7 @@
                     <textarea
                       id="dropdown-json-textarea"
                       rows="6"
-                      placeholder='[{"name": "example_tool", "url": "https://api.example.com", "description": "Example tool"}]'
+                      placeholder="[{&quot;name&quot;: &quot;example_tool&quot;, &quot;url&quot;: &quot;https://api.example.com&quot;, &quot;description&quot;: &quot;Example tool&quot;}]"
                       oninput="validateDropdownJson()"
                       class="w-full text-xs border border-gray-300 dark:border-gray-600 rounded-md p-2 dark:bg-gray-700 dark:text-gray-300"
                     ></textarea>
@@ -3002,8 +3002,8 @@
                     <!-- OAuth Config: {{ gateway.oauth_config }} -->
                     <!-- Grant Type: {{ gateway.oauth_config.grant_type if gateway.oauth_config else 'None' }} -->
                     <script>
-                      console.log('Auth Type:', '{{ gateway.authType }}');
-                      console.log('OAuth Config:', '{{ gateway.oauthConfig }}');
+                      console.log("Auth Type:", "{{ gateway.authType }}");
+                      console.log("OAuth Config:", "{{ gateway.oauthConfig }}");
                     </script>
 
                     {% if gateway.authType == 'oauth' %}
@@ -3024,8 +3024,7 @@
                     >
                       🔧 Fetch Tools
                     </button>
-                    {% endif %}
-                    {% if gateway.enabled %}
+                    {% endif %} {% if gateway.enabled %}
                     <form
                       method="POST"
                       action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
@@ -3256,7 +3255,9 @@
               <div id="auth-oauth-fields-gw" style="display: none">
                 <div class="space-y-4">
                   <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
                       Grant Type
                     </label>
                     <select
@@ -3264,13 +3265,19 @@
                       id="oauth-grant-type-gw"
                       class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     >
-                      <option value="client_credentials">Client Credentials (Machine-to-Machine)</option>
-                      <option value="authorization_code">Authorization Code (User Delegation)</option>
+                      <option value="client_credentials">
+                        Client Credentials (Machine-to-Machine)
+                      </option>
+                      <option value="authorization_code">
+                        Authorization Code (User Delegation)
+                      </option>
                     </select>
                   </div>
 
                   <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
                       Client ID
                     </label>
                     <input
@@ -3282,7 +3289,9 @@
                   </div>
 
                   <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
                       Client Secret
                     </label>
                     <input
@@ -3294,7 +3303,9 @@
                   </div>
 
                   <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
                       Token URL
                     </label>
                     <input
@@ -3307,7 +3318,9 @@
 
                   <div id="oauth-auth-code-fields-gw" style="display: none">
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
                         Authorization URL
                       </label>
                       <input
@@ -3322,7 +3335,9 @@
                     </div>
 
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
                         Redirect URI
                       </label>
                       <input
@@ -3332,15 +3347,21 @@
                         placeholder="https://gateway.example.com/oauth/callback"
                       />
                       <p class="mt-1 text-sm text-gray-500">
-                        This must match the redirect URI configured in your OAuth application
+                        This must match the redirect URI configured in your
+                        OAuth application
                       </p>
                       <p class="mt-1 text-sm text-blue-600 font-medium">
-                        💡 Use: <code class="bg-blue-100 px-1 rounded">{{ request.base_url }}oauth/callback</code>
+                        💡 Use:
+                        <code class="bg-blue-100 px-1 rounded"
+                          >{{ request.base_url }}oauth/callback</code
+                        >
                       </p>
                     </div>
 
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
                         Token Management
                       </label>
                       <div class="mt-2 space-y-2">
@@ -3351,7 +3372,9 @@
                             checked
                             class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                           />
-                          <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                          <span
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-300"
+                          >
                             Store access tokens for reuse
                           </span>
                         </label>
@@ -3362,7 +3385,9 @@
                             checked
                             class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                           />
-                          <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                          <span
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-300"
+                          >
                             Automatically refresh expired tokens
                           </span>
                         </label>
@@ -3372,25 +3397,51 @@
                       </p>
                     </div>
 
-                    <div class="bg-blue-50 border border-blue-200 rounded-md p-4 dark:bg-blue-900/20 dark:border-blue-800">
+                    <div
+                      class="bg-blue-50 border border-blue-200 rounded-md p-4 dark:bg-blue-900/20 dark:border-blue-800"
+                    >
                       <div class="flex">
                         <div class="flex-shrink-0">
-                          <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                          <svg
+                            class="h-5 w-5 text-blue-400"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                          >
+                            <path
+                              fill-rule="evenodd"
+                              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                              clip-rule="evenodd"
+                            />
                           </svg>
                         </div>
                         <div class="ml-3">
-                          <h3 class="text-sm font-medium text-blue-800 dark:text-blue-200">
+                          <h3
+                            class="text-sm font-medium text-blue-800 dark:text-blue-200"
+                          >
                             Authorization Code Flow Setup
                           </h3>
-                          <div class="mt-2 text-sm text-blue-700 dark:text-blue-300">
+                          <div
+                            class="mt-2 text-sm text-blue-700 dark:text-blue-300"
+                          >
                             <p>After creating this gateway, you'll need to:</p>
                             <ol class="list-decimal list-inside mt-1 space-y-1">
-                              <li>Click the "🔐 Authorize" button in the gateway list</li>
-                              <li>Complete the OAuth consent flow with your provider</li>
-                              <li>Return to the admin panel to see authorization status</li>
+                              <li>
+                                Click the "🔐 Authorize" button in the gateway
+                                list
+                              </li>
+                              <li>
+                                Complete the OAuth consent flow with your
+                                provider
+                              </li>
+                              <li>
+                                Return to the admin panel to see authorization
+                                status
+                              </li>
                             </ol>
-                            <p class="mt-2 font-medium">Note: The gateway will be created but tools won't work until OAuth authorization is completed.</p>
+                            <p class="mt-2 font-medium">
+                              Note: The gateway will be created but tools won't
+                              work until OAuth authorization is completed.
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -3398,7 +3449,9 @@
                   </div>
 
                   <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
                       Scopes
                     </label>
                     <input
@@ -3408,7 +3461,8 @@
                       placeholder="repo read:user (space-separated)"
                     />
                     <p class="mt-1 text-sm text-gray-500">
-                      Space-separated list of OAuth scopes (e.g., "repo read:user")
+                      Space-separated list of OAuth scopes (e.g., "repo
+                      read:user")
                     </p>
                   </div>
                 </div>
@@ -3456,7 +3510,8 @@
             A2A Agents Catalog
           </h2>
           <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-            Manage Agent-to-Agent compatible agents that can be integrated as tools
+            Manage Agent-to-Agent compatible agents that can be integrated as
+            tools
           </p>
           <div class="flex items-center">
             <input
@@ -3638,77 +3693,126 @@
               Registered A2A Agents
             </h3>
             <div class="space-y-4">
-              {% if a2a_agents %}
-                {% for agent in a2a_agents %}
-                <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-3">
-                  <div class="flex items-start justify-between">
-                    <div class="flex-1">
-                      <h4 class="text-lg font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</h4>
-                      <p class="text-sm text-gray-600 dark:text-gray-400">{{ agent.description or "" }}</p>
-                      <div class="mt-2 flex flex-wrap gap-2">
-                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
-                          {% if agent.enabled %}Active{% else %}Inactive{% endif %}
-                        </span>
-                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.reachable %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
-                          {% if agent.reachable %}Reachable{% else %}Unreachable{% endif %}
-                        </span>
-                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          {{ agent.agentType }}
-                        </span>
-                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                          Auth: {{ agent.authType or "None" }}
-                        </span>
+              {% if a2a_agents %} {% for agent in a2a_agents %}
+              <div
+                class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-3"
+              >
+                <div class="flex items-start justify-between">
+                  <div class="flex-1">
+                    <h4
+                      class="text-lg font-medium text-gray-900 dark:text-gray-200"
+                    >
+                      {{ agent.name }}
+                    </h4>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">
+                      {{ agent.description or "" }}
+                    </p>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <span
+                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}"
+                      >
+                        {% if agent.enabled %}Active{% else %}Inactive{% endif
+                        %}
+                      </span>
+                      <span
+                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.reachable %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}"
+                      >
+                        {% if agent.reachable %}Reachable{% else %}Unreachable{%
+                        endif %}
+                      </span>
+                      <span
+                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                      >
+                        {{ agent.agentType }}
+                      </span>
+                      <span
+                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800"
+                      >
+                        Auth: {{ agent.authType or "None" }}
+                      </span>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      <div>Endpoint: {{ agent.endpointUrl }}</div>
+                      <div>
+                        Executions: {{ agent.metrics.totalExecutions }} |
+                        Success Rate: {% if agent.metrics.totalExecutions %}{{
+                        "%.1f"|format(100 - agent.metrics.failureRate) }}%{%
+                        else %}N/A{% endif %}
                       </div>
-                      <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                        <div>Endpoint: {{ agent.endpointUrl }}</div>
-                        <div>Executions: {{ agent.metrics.totalExecutions }} | Success Rate: {% if agent.metrics.totalExecutions %}{{ "%.1f"|format(100 - agent.metrics.failureRate) }}%{% else %}N/A{% endif %}</div>
-                        <div>Created: {{ agent.createdAt.strftime('%Y-%m-%d %H:%M:%S') }}</div>
-                        {% if agent.lastInteraction %}
-                        <div>Last Interaction: {{ agent.lastInteraction.strftime('%Y-%m-%d %H:%M:%S') }}</div>
-                        {% endif %}
+                      <div>
+                        Created: {{ agent.createdAt.strftime('%Y-%m-%d
+                        %H:%M:%S') }}
                       </div>
-                      {% if agent.tags %}
-                      <div class="mt-2 flex flex-wrap gap-1">
-                        {% for tag in agent.tags %}
-                        <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">{{ tag }}</span>
-                        {% endfor %}
+                      {% if agent.lastInteraction %}
+                      <div>
+                        Last Interaction: {{
+                        agent.lastInteraction.strftime('%Y-%m-%d %H:%M:%S') }}
                       </div>
                       {% endif %}
-                      <!-- Test result placeholder -->
-                      <div id="test-result-{{ agent.id }}" class="mt-2 p-2 rounded-md bg-gray-50 dark:bg-gray-700 hidden"></div>
                     </div>
-                    <div class="flex space-x-2">
-                      <button
-                        onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
-                        class="px-3 py-1 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    {% if agent.tags %}
+                    <div class="mt-2 flex flex-wrap gap-1">
+                      {% for tag in agent.tags %}
+                      <span
+                        class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                        >{{ tag }}</span
                       >
-                        Test
-                      </button>
-                      <form method="post" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="inline">
-                        <input type="hidden" name="activate" value="{% if agent.enabled %}false{% else %}true{% endif %}" />
-                        <button
-                          type="submit"
-                          class="px-3 py-1 text-sm font-medium {% if agent.enabled %}text-red-700 bg-red-100 hover:bg-red-200{% else %}text-green-700 bg-green-100 hover:bg-green-200{% endif %} rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        >
-                          {% if agent.enabled %}Deactivate{% else %}Activate{% endif %}
-                        </button>
-                      </form>
-                      <form method="post" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="inline" onsubmit="return confirm('Are you sure you want to delete this A2A agent?')">
-                        <button
-                          type="submit"
-                          class="px-3 py-1 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                        >
-                          Delete
-                        </button>
-                      </form>
+                      {% endfor %}
                     </div>
+                    {% endif %}
+                    <!-- Test result placeholder -->
+                    <div
+                      id="test-result-{{ agent.id }}"
+                      class="mt-2 p-2 rounded-md bg-gray-50 dark:bg-gray-700 hidden"
+                    ></div>
+                  </div>
+                  <div class="flex space-x-2">
+                    <button
+                      onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
+                      class="px-3 py-1 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    >
+                      Test
+                    </button>
+                    <form
+                      method="post"
+                      action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle"
+                      class="inline"
+                    >
+                      <input
+                        type="hidden"
+                        name="activate"
+                        value="{% if agent.enabled %}false{% else %}true{% endif %}"
+                      />
+                      <button
+                        type="submit"
+                        class="px-3 py-1 text-sm font-medium {% if agent.enabled %}text-red-700 bg-red-100 hover:bg-red-200{% else %}text-green-700 bg-green-100 hover:bg-green-200{% endif %} rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      >
+                        {% if agent.enabled %}Deactivate{% else %}Activate{%
+                        endif %}
+                      </button>
+                    </form>
+                    <form
+                      method="post"
+                      action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete"
+                      class="inline"
+                      onsubmit="return confirm('Are you sure you want to delete this A2A agent?')"
+                    >
+                      <button
+                        type="submit"
+                        class="px-3 py-1 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                      >
+                        Delete
+                      </button>
+                    </form>
                   </div>
                 </div>
-                {% endfor %}
-              {% else %}
-                <div class="text-center py-8">
-                  <p class="text-gray-500 dark:text-gray-400">No A2A agents registered yet.</p>
-                </div>
+              </div>
+              {% endfor %} {% else %}
+              <div class="text-center py-8">
+                <p class="text-gray-500 dark:text-gray-400">
+                  No A2A agents registered yet.
+                </p>
+              </div>
               {% endif %}
             </div>
           </div>
@@ -4095,11 +4199,7 @@
               <div class="mt-4">
                 <form id="edit-tool-form" method="POST">
                   <div class="grid grid-cols-1 gap-6">
-                    <input
-                      type="hidden"
-                      name="name"
-                      id="edit-tool-name"
-                    />
+                    <input type="hidden" name="name" id="edit-tool-name" />
 
                     <div>
                       <label
@@ -5003,7 +5103,9 @@
                     <div id="auth-oauth-fields-gw-edit" style="display: none">
                       <div class="space-y-4">
                         <div>
-                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
                             Grant Type
                           </label>
                           <select
@@ -5011,13 +5113,19 @@
                             id="oauth-grant-type-gw-edit"
                             class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                           >
-                            <option value="client_credentials">Client Credentials (Machine-to-Machine)</option>
-                            <option value="authorization_code">Authorization Code (User Delegation)</option>
+                            <option value="client_credentials">
+                              Client Credentials (Machine-to-Machine)
+                            </option>
+                            <option value="authorization_code">
+                              Authorization Code (User Delegation)
+                            </option>
                           </select>
                         </div>
 
                         <div>
-                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
                             Client ID
                           </label>
                           <input
@@ -5030,7 +5138,9 @@
                         </div>
 
                         <div>
-                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
                             Client Secret
                           </label>
                           <input
@@ -5046,7 +5156,9 @@
                         </div>
 
                         <div>
-                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
                             Token URL
                           </label>
                           <input
@@ -5058,9 +5170,14 @@
                           />
                         </div>
 
-                        <div id="oauth-auth-code-fields-gw-edit" style="display: none">
+                        <div
+                          id="oauth-auth-code-fields-gw-edit"
+                          style="display: none"
+                        >
                           <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            <label
+                              class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >
                               Authorization URL
                             </label>
                             <input
@@ -5076,7 +5193,9 @@
                           </div>
 
                           <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            <label
+                              class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >
                               Redirect URI
                             </label>
                             <input
@@ -5087,15 +5206,21 @@
                               placeholder="https://gateway.example.com/oauth/callback"
                             />
                             <p class="mt-1 text-sm text-gray-500">
-                              This must match the redirect URI configured in your OAuth application
+                              This must match the redirect URI configured in
+                              your OAuth application
                             </p>
                             <p class="mt-1 text-sm text-blue-600 font-medium">
-                              💡 Use: <code class="bg-blue-100 px-1 rounded">http://localhost:4444/oauth/callback</code>
+                              💡 Use:
+                              <code class="bg-blue-100 px-1 rounded"
+                                >http://localhost:4444/oauth/callback</code
+                              >
                             </p>
                           </div>
 
                           <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            <label
+                              class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >
                               Scopes
                             </label>
                             <input
@@ -5106,7 +5231,8 @@
                               placeholder="repo read:user (space-separated)"
                             />
                             <p class="mt-1 text-sm text-gray-500">
-                              Space-separated list of OAuth scopes (e.g., "repo read:user")
+                              Space-separated list of OAuth scopes (e.g., "repo
+                              read:user")
                             </p>
                           </div>
                         </div>
@@ -6887,7 +7013,7 @@
 
     <!-- Bulk Import Modal -->
     <div
-      id="bulk-import-modal"
+      id="bulk-import-modal-2"
       class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50"
     >
       <div
@@ -7162,23 +7288,7 @@
                 id="bulk-import-json"
                 name="bulk-import-json"
                 rows="12"
-                placeholder='[
-  {
-    "name": "Books Search",
-    "url": "https://www.googleapis.com/books/v1/volumes",
-    "description": "Search Google Books",
-    "integrationType": "REST",
-    "requestType": "GET",
-    "tags": ["api", "google", "books"]
-  },
-  {
-    "name": "JSON Placeholder Posts",
-    "url": "https://jsonplaceholder.typicode.com/posts",
-    "integrationType": "REST",
-    "requestType": "GET",
-    "headers": {"Accept": "application/json"}
-  }
-]'
+                placeholder="[&#10;  {&#10;    &quot;name&quot;: &quot;Books Search&quot;,&#10;    &quot;url&quot;: &quot;https://www.googleapis.com/books/v1/volumes&quot;,&#10;    &quot;description&quot;: &quot;Search Google Books&quot;,&#10;    &quot;integrationType&quot;: &quot;REST&quot;,&#10;    &quot;requestType&quot;: &quot;GET&quot;,&#10;    &quot;tags&quot;: [&quot;api&quot;, &quot;google&quot;, &quot;books&quot;]&#10;  },&#10;  {&#10;    &quot;name&quot;: &quot;JSON Placeholder Posts&quot;,&#10;    &quot;url&quot;: &quot;https://jsonplaceholder.typicode.com/posts&quot;,&#10;    &quot;integrationType&quot;: &quot;REST&quot;,&#10;    &quot;requestType&quot;: &quot;GET&quot;,&#10;    &quot;headers&quot;: {&quot;Accept&quot;: &quot;application/json&quot;}&#10;  }&#10;]"
                 class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 mt-1 block w-full sm:text-sm border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
               ></textarea>
               <div class="flex justify-between items-center">
