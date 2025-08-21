@@ -25,6 +25,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 # Local
+from .health import start_health_server, stop_health_server, mark_ready, mark_judge_tools_ready, mark_storage_ready
 from .storage.cache import BenchmarkCache, EvaluationCache, JudgeResponseCache
 from .storage.results_store import ResultsStore
 from .tools.agent_tools import AgentTools
@@ -32,6 +33,7 @@ from .tools.calibration_tools import CalibrationTools
 from .tools.judge_tools import JudgeTools
 from .tools.prompt_tools import PromptTools
 from .tools.quality_tools import QualityTools
+from .tools.rag_tools import RAGTools
 from .tools.workflow_tools import WorkflowTools
 
 # Set up logging
@@ -46,6 +48,7 @@ JUDGE_TOOLS = None  # pylint: disable=invalid-name
 PROMPT_TOOLS = None  # pylint: disable=invalid-name
 AGENT_TOOLS = None  # pylint: disable=invalid-name
 QUALITY_TOOLS = None  # pylint: disable=invalid-name
+RAG_TOOLS = None  # pylint: disable=invalid-name
 WORKFLOW_TOOLS = None  # pylint: disable=invalid-name
 CALIBRATION_TOOLS = None  # pylint: disable=invalid-name
 EVALUATION_CACHE = None  # pylint: disable=invalid-name
@@ -289,6 +292,124 @@ async def list_tools() -> List[Tool]:
                 "required": ["content"],
             },
         ),
+        # RAG evaluation tools
+        Tool(
+            name="rag.evaluate_retrieval_relevance",
+            description="Assess relevance of retrieved documents to the query using semantic similarity and LLM judges",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Original user query"},
+                    "retrieved_documents": {"type": "array", "items": {"type": "object"}, "description": "List of retrieved docs with 'content' and optional 'score'"},
+                    "relevance_threshold": {"type": "number", "default": 0.7, "description": "Minimum relevance score"},
+                    "embedding_model": {"type": "string", "default": "text-embedding-ada-002", "description": "Model for semantic similarity"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "LLM judge for relevance assessment"},
+                    "use_llm_judge": {"type": "boolean", "default": True, "description": "Whether to use LLM judge in addition to embeddings"},
+                },
+                "required": ["query", "retrieved_documents"],
+            },
+        ),
+        Tool(
+            name="rag.measure_context_utilization",
+            description="Check how well retrieved context is used in the generated answer",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Original query"},
+                    "retrieved_context": {"type": "string", "description": "Full retrieved context"},
+                    "generated_answer": {"type": "string", "description": "Model's generated response"},
+                    "context_chunks": {"type": "array", "items": {"type": "string"}, "description": "Optional list of individual context chunks"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for evaluation"},
+                },
+                "required": ["query", "retrieved_context", "generated_answer"],
+            },
+        ),
+        Tool(
+            name="rag.assess_answer_groundedness",
+            description="Verify answers are grounded in provided context by checking claim support",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "Original question"},
+                    "answer": {"type": "string", "description": "Generated answer to verify"},
+                    "supporting_context": {"type": "string", "description": "Context that should support the answer"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for evaluation"},
+                    "strictness": {"type": "string", "default": "moderate", "enum": ["strict", "moderate", "loose"], "description": "Grounding strictness"},
+                },
+                "required": ["question", "answer", "supporting_context"],
+            },
+        ),
+        Tool(
+            name="rag.detect_hallucination_vs_context",
+            description="Identify when responses contradict provided context using statement verification",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "generated_text": {"type": "string", "description": "Text to analyze for hallucinations"},
+                    "source_context": {"type": "string", "description": "Source context to check against"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for hallucination detection"},
+                    "detection_threshold": {"type": "number", "default": 0.8, "description": "Confidence threshold for hallucination detection"},
+                },
+                "required": ["generated_text", "source_context"],
+            },
+        ),
+        Tool(
+            name="rag.evaluate_retrieval_coverage",
+            description="Measure if key information was retrieved by checking topic coverage",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Original search query"},
+                    "expected_topics": {"type": "array", "items": {"type": "string"}, "description": "Topics that should be covered"},
+                    "retrieved_documents": {"type": "array", "items": {"type": "object"}, "description": "Retrieved document set"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for coverage assessment"},
+                },
+                "required": ["query", "expected_topics", "retrieved_documents"],
+            },
+        ),
+        Tool(
+            name="rag.assess_citation_accuracy",
+            description="Validate citation quality and accuracy against source documents",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "generated_text": {"type": "string", "description": "Text with citations to verify"},
+                    "source_documents": {"type": "array", "items": {"type": "object"}, "description": "Available source documents with 'content' and optional 'id'"},
+                    "citation_format": {"type": "string", "default": "auto", "enum": ["auto", "numeric", "bracket", "parenthetical"], "description": "Expected citation format"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for citation assessment"},
+                },
+                "required": ["generated_text", "source_documents"],
+            },
+        ),
+        Tool(
+            name="rag.measure_chunk_relevance",
+            description="Evaluate individual chunk relevance scores using semantic similarity and LLM assessment",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "context_chunks": {"type": "array", "items": {"type": "string"}, "description": "List of text chunks to evaluate"},
+                    "embedding_model": {"type": "string", "default": "text-embedding-ada-002", "description": "Model for semantic similarity"},
+                    "relevance_threshold": {"type": "number", "default": 0.6, "description": "Minimum relevance score"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for relevance assessment"},
+                },
+                "required": ["query", "context_chunks"],
+            },
+        ),
+        Tool(
+            name="rag.benchmark_retrieval_systems",
+            description="Compare different retrieval approaches using standard IR metrics",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "test_queries": {"type": "array", "items": {"type": "object"}, "description": "List of queries with expected results"},
+                    "retrieval_systems": {"type": "array", "items": {"type": "object"}, "description": "List of retrieval system configurations"},
+                    "evaluation_metrics": {"type": "array", "items": {"type": "string"}, "default": ["precision", "recall", "mrr", "ndcg"], "description": "Metrics to compute"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for evaluation"},
+                },
+                "required": ["test_queries", "retrieval_systems"],
+            },
+        ),
         # Workflow tools
         Tool(
             name="workflow.create_evaluation_suite",
@@ -436,6 +557,24 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         elif name == "quality.assess_toxicity":
             result = await QUALITY_TOOLS.assess_toxicity(**arguments)
 
+        # RAG tools
+        elif name == "rag.evaluate_retrieval_relevance":
+            result = await RAG_TOOLS.evaluate_retrieval_relevance(**arguments)
+        elif name == "rag.measure_context_utilization":
+            result = await RAG_TOOLS.measure_context_utilization(**arguments)
+        elif name == "rag.assess_answer_groundedness":
+            result = await RAG_TOOLS.assess_answer_groundedness(**arguments)
+        elif name == "rag.detect_hallucination_vs_context":
+            result = await RAG_TOOLS.detect_hallucination_vs_context(**arguments)
+        elif name == "rag.evaluate_retrieval_coverage":
+            result = await RAG_TOOLS.evaluate_retrieval_coverage(**arguments)
+        elif name == "rag.assess_citation_accuracy":
+            result = await RAG_TOOLS.assess_citation_accuracy(**arguments)
+        elif name == "rag.measure_chunk_relevance":
+            result = await RAG_TOOLS.measure_chunk_relevance(**arguments)
+        elif name == "rag.benchmark_retrieval_systems":
+            result = await RAG_TOOLS.benchmark_retrieval_systems(**arguments)
+
         # Workflow tools
         elif name == "workflow.create_evaluation_suite":
             result = await WORKFLOW_TOOLS.create_evaluation_suite(**arguments)
@@ -476,7 +615,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
 
 async def main():
     """Main server entry point."""
-    global JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS, WORKFLOW_TOOLS, CALIBRATION_TOOLS  # pylint: disable=global-statement
+    global JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS, RAG_TOOLS, WORKFLOW_TOOLS, CALIBRATION_TOOLS  # pylint: disable=global-statement
     global EVALUATION_CACHE, JUDGE_CACHE, BENCHMARK_CACHE, RESULTS_STORE  # pylint: disable=global-statement
 
     logger.info("🚀 Starting MCP Evaluation Server...")
@@ -495,6 +634,7 @@ async def main():
     PROMPT_TOOLS = PromptTools(JUDGE_TOOLS)
     AGENT_TOOLS = AgentTools(JUDGE_TOOLS)
     QUALITY_TOOLS = QualityTools(JUDGE_TOOLS)
+    RAG_TOOLS = RAGTools(JUDGE_TOOLS)
     WORKFLOW_TOOLS = WorkflowTools(JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS)
     CALIBRATION_TOOLS = CalibrationTools(JUDGE_TOOLS)
 
@@ -503,6 +643,9 @@ async def main():
     JUDGE_CACHE = JudgeResponseCache()
     BENCHMARK_CACHE = BenchmarkCache()
     RESULTS_STORE = ResultsStore()
+    
+    # Mark storage as ready
+    mark_storage_ready()
 
     # Log environment configuration
     logger.info("🔧 Environment Configuration:")
@@ -588,6 +731,7 @@ async def main():
     logger.info("   • 4 Prompt tools (clarity, consistency, completeness, relevance)")
     logger.info("   • 4 Agent tools (tool usage, task completion, reasoning, benchmarks)")
     logger.info("   • 3 Quality tools (factuality, coherence, toxicity)")
+    logger.info("   • 8 RAG tools (retrieval, context, grounding, hallucination, coverage, citations, chunks, benchmarks)")
     logger.info("   • 3 Workflow tools (suites, execution, comparison)")
     logger.info("   • 2 Calibration tools (agreement, optimization)")
     logger.info("   • 9 Server tools (management, statistics, health)")
@@ -613,8 +757,13 @@ async def main():
                 for criterion, reasoning in result["reasoning"].items():
                     truncated = reasoning[:150] + "..." if len(reasoning) > 150 else reasoning
                     logger.info(f"   💬 Model reasoning ({criterion}): {truncated}")
+            
+            # Mark judge tools as ready after successful primary judge test
+            mark_judge_tools_ready()
         except Exception as e:
             logger.warning(f"⚠️  Primary judge {primary_judge} test failed: {e}")
+            # Still mark as ready - server can function with fallback or rule-based judges
+            mark_judge_tools_ready()
     elif available_judges:
         fallback = available_judges[0]
         logger.info(f"💡 Primary judge not available, using fallback: {fallback}")
@@ -633,17 +782,39 @@ async def main():
                 for criterion, reasoning in result["reasoning"].items():
                     truncated = reasoning[:150] + "..." if len(reasoning) > 150 else reasoning
                     logger.info(f"   💬 Model reasoning ({criterion}): {truncated}")
+            
+            # Mark judge tools as ready after successful fallback judge test
+            mark_judge_tools_ready()
         except Exception as e:
             logger.warning(f"⚠️  Fallback judge {fallback} test failed: {e}")
+            # Still mark as ready - server can function with rule-based judges
+            mark_judge_tools_ready()
     else:
-        logger.error("❌ No judges available!")
+        logger.warning("⚠️  No judges available, but server can still function for non-LLM evaluations")
+        # Mark judge tools as ready (even if no LLM judges available, rule-based judges can work)
+        mark_judge_tools_ready()
+
+    # Start health check server
+    try:
+        health_server = await start_health_server()
+    except Exception as e:
+        logger.warning(f"⚠️  Could not start health check server: {e}")
+        health_server = None
+
+    # Mark server as fully ready
+    mark_ready()
 
     logger.info("🎯 Server ready for MCP client connections")
     logger.info("💡 Connect via: python -m mcp_eval_server.server")
 
-    # Initialize server with stdio transport
-    async with stdio_server() as streams:
-        await server.run(streams[0], streams[1], InitializationOptions(server_name="mcp-eval-server", server_version="0.1.0", capabilities={}))
+    try:
+        # Initialize server with stdio transport
+        async with stdio_server() as streams:
+            await server.run(streams[0], streams[1], InitializationOptions(server_name="mcp-eval-server", server_version="0.1.0", capabilities={}))
+    finally:
+        # Cleanup health server when main server stops
+        if health_server:
+            await stop_health_server()
 
 
 if __name__ == "__main__":

@@ -4,21 +4,23 @@
 > **Version**: 0.1.0
 > **Status**: 🚀 Production Ready
 > **Code Quality**: 🏆 Perfect 10/10 PyLint Score
-> **Coverage**: 29 Specialized Evaluation Tools
+> **Coverage**: 37 Specialized Evaluation Tools
 
 A **world-class MCP server** for comprehensive agent performance evaluation, prompt effectiveness testing, and LLM behavior analysis using state-of-the-art **LLM-as-a-judge techniques**.
 
 ## 🌟 Overview
 
-The **MCP Evaluation Server** is the most comprehensive evaluation platform in the MCP ecosystem, providing **29 specialized tools** for assessing AI systems. It combines cutting-edge LLM-as-a-judge methodologies with robust rule-based metrics to deliver unparalleled evaluation capabilities.
+The **MCP Evaluation Server** is the most comprehensive evaluation platform in the MCP ecosystem, providing **37 specialized tools** for assessing AI systems. It combines cutting-edge LLM-as-a-judge methodologies with robust rule-based metrics to deliver unparalleled evaluation capabilities.
 
 ### 🎯 **Revolutionary Capabilities**
 - 🤖 **Advanced LLM-as-a-Judge**: GPT-4, GPT-4-Turbo, GPT-3.5, Azure OpenAI with position bias mitigation
 - 📝 **Intelligent Prompt Assessment**: Multi-dimensional analysis with automated improvement suggestions
 - 🛠️ **Comprehensive Agent Evaluation**: Tool usage optimization, reasoning analysis, performance benchmarking
 - 🔍 **Deep Quality Analytics**: Factuality verification, coherence scoring, toxicity detection with bias analysis
+- 🔗 **RAG System Evaluation**: Retrieval relevance, context utilization, groundedness, hallucination detection
 - 🔄 **Advanced Workflow Management**: End-to-end evaluation suites with statistical comparison and trending
 - 📊 **Judge Calibration & Meta-Evaluation**: Bias detection, human alignment, and rubric optimization
+- 🏥 **Health & Monitoring**: Built-in health/readiness probes with component status tracking
 
 ## ✨ Features
 
@@ -45,6 +47,16 @@ The **MCP Evaluation Server** is the most comprehensive evaluation platform in t
 - **✅ Factuality Checking**: Claims verification against knowledge bases with confidence scoring and evidence tracking
 - **🧩 Coherence Analysis**: Logical flow assessment, contradiction detection, and structural analysis
 - **🛡️ Toxicity Detection**: Multi-category harmful content identification with bias pattern analysis
+
+### 🔗 **RAG Evaluation Tools** (8 Tools)
+- **📊 Retrieval Relevance**: Semantic similarity assessment with LLM judge validation and configurable thresholds
+- **🎯 Context Utilization**: Analysis of how well retrieved context is integrated into generated responses
+- **⚓ Answer Groundedness**: Claim verification against supporting context with strictness controls
+- **🚨 Hallucination Detection**: Contradiction identification between responses and source context
+- **🎯 Retrieval Coverage**: Topic completeness assessment and information gap analysis
+- **📝 Citation Accuracy**: Reference validation and citation quality scoring across multiple formats
+- **🧩 Chunk Relevance**: Individual document segment evaluation with ranking and scoring
+- **🏆 Retrieval Benchmarking**: Comparative analysis using standard IR metrics (precision, recall, MRR, NDCG)
 
 ### 🔄 **Workflow Management Tools** (3 Tools)
 - **🎛️ Evaluation Suites**: Customizable multi-step pipelines with weighted criteria and success thresholds
@@ -105,6 +117,10 @@ export OPENAI_API_KEY="sk-your-key-here"
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 export AZURE_OPENAI_API_KEY="your-azure-api-key"
 
+# Configure health check endpoints (optional)
+export HEALTH_CHECK_PORT=8080        # Default: 8080
+export HEALTH_CHECK_HOST=0.0.0.0     # Default: 0.0.0.0
+
 # Note: No heavy ML dependencies required!
 # Uses efficient TF-IDF + scikit-learn instead of transformers
 ```
@@ -120,7 +136,53 @@ export AZURE_OPENAI_API_KEY="your-azure-api-key"
 
 **Protocol**: stdio (Model Context Protocol)
 **Transport**: Standard input/output (no HTTP port needed)
-**Tools Available**: 29 specialized evaluation tools
+**Tools Available**: 37 specialized evaluation tools
+
+### **Health Check Endpoints**
+
+The server automatically starts health check HTTP endpoints for monitoring:
+
+```bash
+# Health endpoints (started automatically with the MCP server)
+curl http://localhost:8080/health    # Liveness probe
+curl http://localhost:8080/ready     # Readiness probe
+curl http://localhost:8080/metrics   # Basic metrics
+curl http://localhost:8080/          # Service info
+
+# Kubernetes-style endpoints
+curl http://localhost:8080/healthz   # Alternative health
+curl http://localhost:8080/readyz    # Alternative readiness
+```
+
+**Health Check Response Example:**
+```json
+{
+  "status": "healthy",
+  "timestamp": 1698765432.123,
+  "uptime_seconds": 45.67,
+  "service": "mcp-eval-server",
+  "version": "0.1.0",
+  "checks": {
+    "server_running": true,
+    "uptime_ok": true
+  }
+}
+```
+
+**Readiness Check Response Example:**
+```json
+{
+  "status": "ready",
+  "timestamp": 1698765432.123,
+  "service": "mcp-eval-server",
+  "version": "0.1.0",
+  "checks": {
+    "server_initialized": true,
+    "judge_tools_loaded": true,
+    "storage_initialized": true
+  }
+}
+```
 
 ### **Docker Deployment**
 ```bash
@@ -442,7 +504,7 @@ benchmarks:
 
 ## 📋 **Complete Tool Reference**
 
-### **Judge Tools (4/29)**
+### **Judge Tools (4/37)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `judge.evaluate_response` | Single response evaluation | Customizable criteria, weighted scoring, confidence metrics |
@@ -450,7 +512,7 @@ benchmarks:
 | `judge.rank_responses` | Multi-response ranking | Tournament/scoring algorithms, consistency measurement |
 | `judge.evaluate_with_reference` | Reference-based evaluation | Gold standard comparison, similarity scoring |
 
-### **Prompt Tools (4/29)**
+### **Prompt Tools (4/37)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `prompt.evaluate_clarity` | Clarity assessment | Rule-based + LLM analysis, ambiguity detection |
@@ -458,7 +520,7 @@ benchmarks:
 | `prompt.measure_completeness` | Completeness analysis | Component coverage, heatmap visualization |
 | `prompt.assess_relevance` | Relevance measurement | TF-IDF semantic alignment, drift analysis |
 
-### **Agent Tools (4/29)**
+### **Agent Tools (4/37)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `agent.evaluate_tool_use` | Tool usage analysis | Selection accuracy, sequence optimization |
@@ -466,27 +528,39 @@ benchmarks:
 | `agent.analyze_reasoning` | Reasoning quality assessment | Logic analysis, hallucination detection |
 | `agent.benchmark_performance` | Performance benchmarking | Multi-domain testing, baseline comparison |
 
-### **Quality Tools (3/29)**
+### **Quality Tools (3/37)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `quality.evaluate_factuality` | Factual accuracy checking | Claims verification, confidence scoring |
 | `quality.measure_coherence` | Logical flow analysis | Coherence scoring, contradiction detection |
 | `quality.assess_toxicity` | Harmful content detection | Multi-category analysis, bias detection |
 
-### **Workflow Tools (3/29)**
+### **RAG Tools (8/37)**
+| Tool | Description | Key Features |
+|------|-------------|--------------|
+| `rag.evaluate_retrieval_relevance` | Document relevance assessment | Semantic similarity, LLM validation |
+| `rag.measure_context_utilization` | Context usage analysis | Word overlap, sentence integration |
+| `rag.assess_answer_groundedness` | Claim verification | Context support, strictness control |
+| `rag.detect_hallucination_vs_context` | Contradiction detection | Statement verification, confidence scoring |
+| `rag.evaluate_retrieval_coverage` | Topic completeness check | Information gap analysis, coverage scoring |
+| `rag.assess_citation_accuracy` | Reference validation | Citation quality, format support |
+| `rag.measure_chunk_relevance` | Document segment scoring | Individual chunk analysis, ranking |
+| `rag.benchmark_retrieval_systems` | System comparison | IR metrics, performance analysis |
+
+### **Workflow Tools (3/37)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `workflow.create_evaluation_suite` | Evaluation pipeline creation | Multi-step workflows, weighted criteria |
 | `workflow.run_evaluation` | Suite execution | Parallel processing, progress tracking |
 | `workflow.compare_evaluations` | Results comparison | Statistical analysis, trend detection |
 
-### **Calibration Tools (2/29)**
+### **Calibration Tools (2/37)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `calibration.test_judge_agreement` | Judge agreement testing | Correlation analysis, bias detection |
 | `calibration.optimize_rubrics` | Rubric optimization | ML-powered tuning, human alignment |
 
-### **Server Tools (9/29)**
+### **Server Tools (9/37)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `server.get_available_judges` | List available judges | Model capabilities, status checking |
