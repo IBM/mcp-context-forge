@@ -65,6 +65,8 @@ from jsonpath_ng.jsonpath import JSONPath
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+
+
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
 if not logging.getLogger().handlers:
@@ -114,6 +116,7 @@ class Settings(BaseSettings):
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
     port: int = 4444
+    CONTENT_MAX_RESOURCE_SIZE: int = 102400  # 100KB
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
     templates_dir: Path = Path("mcpgateway/templates")
@@ -424,8 +427,13 @@ class Settings(BaseSettings):
     content_strip_null_bytes: bool = Field(default=True, env="CONTENT_STRIP_NULL_BYTES")  # Remove null bytes from content
 
     # Rate limiting for content creation
-    content_create_rate_limit_per_minute: int = Field(default=3, env="CONTENT_CREATE_RATE_LIMIT_PER_MINUTE")  # Max creates per minute per user
-    content_max_concurrent_operations: int = Field(default=2, env="CONTENT_MAX_CONCURRENT_OPERATIONS")  # Max concurrent operations per user
+    # content_create_rate_limit_per_minute: int = Field(default=3, env="CONTENT_CREATE_RATE_LIMIT_PER_MINUTE")  # Max creates per minute per user
+    # content_max_concurrent_operations: int = Field(default=2, env="CONTENT_MAX_CONCURRENT_OPERATIONS")  # Max concurrent operations per user
+    # content_rate_limiting_enabled: bool = Field(default=True, env="CONTENT_RATE_LIMITING_ENABLED")  # Enable/disable rate limiting
+    content_rate_limiting_enabled: bool = True
+    content_create_rate_limit_per_minute: int = 3
+    content_max_concurrent_operations: int = 10  # Set much higher than per-minute limit
+
 
     # Security patterns to block
     content_blocked_patterns: str = Field(default="<script,javascript:,vbscript:,onload=,onerror=,onclick=,<iframe,<embed,<object", env="CONTENT_BLOCKED_PATTERNS")
@@ -893,7 +901,7 @@ def extract_using_jq(data, jq_filter=""):
         return message
 
     return result
-
+settings = Settings()
 
 def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict[str, str]] = None) -> Union[List, Dict]:
     """

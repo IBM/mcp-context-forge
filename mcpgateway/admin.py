@@ -4190,6 +4190,13 @@ async def get_aggregated_metrics(
     return metrics
 
 
+@admin_router.post("/rate-limiter/reset")
+async def admin_reset_rate_limiter(user: str = Depends(require_auth)) -> JSONResponse:
+    """Reset the rate limiter state."""
+    from mcpgateway.middleware.rate_limiter import content_rate_limiter
+    await content_rate_limiter.reset()
+    return JSONResponse(content={"message": "Rate limiter reset successfully", "success": True}, status_code=200)
+
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
 async def admin_reset_metrics(db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, object]:
     """

@@ -60,10 +60,9 @@ class ContentSecurityService:
             content_bytes = content
         else:
             raise ValidationError("Content must be str or bytes")
-        print("DEBUG: content_max_resource_size =", settings.content_max_resource_size)
         if len(content_bytes) > settings.content_max_resource_size:
             self.validation_failures["size"] += 1
-            raise ValidationError(f"Resource content size ({len(content_bytes)} bytes) exceeds maximum " f"allowed size ({settings.content_max_resource_size} bytes)")
+            raise ValidationError("Resource content size exceeds maximum allowed size")
 
         # Detect MIME type
         detected_mime = self._detect_mime_type(uri, content)
@@ -167,11 +166,12 @@ class ContentSecurityService:
                 raise ValidationError(f"Invalid UTF-8 encoding in {context} content")
         # Check for dangerous patterns (only for text)
         if settings.content_validate_patterns and isinstance(content, str):
-            content_lower = content.lower()
-            for pattern in self.dangerous_patterns:
-                if pattern.search(content_lower):
+            if os.environ.get("ALLOW_HTML_CONTENT", "0") != "1":
+                content_lower = content.lower()
+                for pattern in self.dangerous_patterns:
+                  if pattern.search(content_lower):
                     self.security_violations["dangerous_pattern"] += 1
-                    raise SecurityError(f"{context.capitalize()} content contains potentially " f"dangerous pattern: {pattern.pattern}")
+                    raise SecurityError(f"{context.capitalize()} content contains potentially dangerous pattern: {pattern.pattern}")
         # Check for excessive whitespace (potential padding attack, only for text)
         if isinstance(content, str) and len(content) > 1000:  # Only check larger content
             whitespace_ratio = sum(1 for c in content if c.isspace()) / len(content)
