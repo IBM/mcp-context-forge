@@ -272,7 +272,7 @@ class ResourceService:
                     lowered_content = resource.content.lower()
                     for tag in disallowed_tags:
                         if tag in lowered_content:
-                            raise ResourceError(f"Resource content contains disallowed {tag} tag")
+                            raise ResourceError(f"Resource content contains disallowed {tag.replace('<', '')} tags")
                 validated_content, _ = await content_security.validate_resource_content(content=resource.content, uri=resource.uri, mime_type=resource.mime_type)
                 resource.content = validated_content
                 if not resource.mime_type:
@@ -289,7 +289,7 @@ class ResourceService:
 
             # --- Enforce disallowed MIME types ---
             if mime_type in DISALLOWED_MIME_TYPES:
-                raise ResourceError(f"MIME type '{mime_type}' is not allowed")
+                raise ResourceError(f"Resource content contains disallowed MIME type '{mime_type}'")
 
             # Determine content storage
             is_text = mime_type and mime_type.startswith("text/") or isinstance(resource.content, str)

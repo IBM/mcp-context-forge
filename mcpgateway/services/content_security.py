@@ -171,7 +171,13 @@ class ContentSecurityService:
                 for pattern in self.dangerous_patterns:
                     if pattern.search(content_lower):
                         self.security_violations["dangerous_pattern"] += 1
-                        raise SecurityError(f"{context.capitalize()} content contains potentially dangerous pattern: {pattern.pattern}")
+                        # Check for specific script tags
+                        if "<script" in content_lower:
+                            raise SecurityError("Resource content contains disallowed script tags")
+                        elif "<html" in content_lower:
+                            raise SecurityError("Resource content contains disallowed HTML tags")
+                        else:
+                            raise SecurityError(f"Resource content contains disallowed {pattern.pattern} pattern")
         # Check for excessive whitespace (potential padding attack, only for text)
         if isinstance(content, str) and len(content) > 1000:  # Only check larger content
             whitespace_ratio = sum(1 for c in content if c.isspace()) / len(content)

@@ -1111,11 +1111,12 @@ class ResourceCreate(BaseModel):
 
     @field_validator("content")
     @classmethod
-    def validate_content(cls, v: Optional[Union[str, bytes]]) -> Optional[Union[str, bytes]]:
+    def validate_content(cls, v: Optional[Union[str, bytes]], info: ValidationInfo) -> Optional[Union[str, bytes]]:
         """Validate content size and safety
 
         Args:
             v (Union[str, bytes]): Value to validate
+            info (ValidationInfo): Validation context containing other field values
 
         Returns:
             Union[str, bytes]: Value if validated as safe
@@ -1137,12 +1138,18 @@ class ResourceCreate(BaseModel):
         else:
             text = v
 
-        # Skip HTML validation in test environment
+        # Get MIME type from validation context
+        mime_type = (info.data.get("mime_type") or "").lower() if info.data else ""
+        
+        # Always block HTML content regardless of MIME type (except in tests)
         if not os.environ.get("PYTEST_CURRENT_TEST") and re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
-            raise ValueError("Content contains HTML tags that may cause display issues")
-
-        # if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
-        #     raise ValueError("Content contains HTML tags that may cause display issues")
+            # Check for specific dangerous tags
+            if "<script" in text.lower():
+                raise ValueError("Resource content contains disallowed script tags")
+            elif "<html" in text.lower():
+                raise ValueError("Resource content contains disallowed HTML tags")
+            else:
+                raise ValueError("Resource content contains disallowed HTML tags")
 
         return v
 
@@ -1225,11 +1232,12 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
     @field_validator("content")
     @classmethod
-    def validate_content(cls, v: Optional[Union[str, bytes]]) -> Optional[Union[str, bytes]]:
+    def validate_content(cls, v: Optional[Union[str, bytes]], info: ValidationInfo) -> Optional[Union[str, bytes]]:
         """Validate content size and safety
 
         Args:
             v (Union[str, bytes]): Value to validate
+            info (ValidationInfo): Validation context containing other field values
 
         Returns:
             Union[str, bytes]: Value if validated as safe
@@ -1250,9 +1258,19 @@ class ResourceUpdate(BaseModelWithConfigDict):
                 raise ValueError("Content must be UTF-8 decodable")
         else:
             text = v
-        # Skip HTML validation in test environment
+            
+        # Get MIME type from validation context
+        mime_type = (info.data.get("mime_type") or "").lower() if info.data else ""
+        
+        # Always block HTML content regardless of MIME type (except in tests)
         if not os.environ.get("PYTEST_CURRENT_TEST") and re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
-            raise ValueError("Content contains HTML tags that may cause display issues")
+            # Check for specific dangerous tags
+            if "<script" in text.lower():
+                raise ValueError("Resource content contains disallowed script tags")
+            elif "<html" in text.lower():
+                raise ValueError("Resource content contains disallowed HTML tags")
+            else:
+                raise ValueError("Resource content contains disallowed HTML tags")
 
         return v
 

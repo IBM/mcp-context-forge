@@ -287,50 +287,78 @@ app = FastAPI(
 
 
 # Global exceptions handlers
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(_request: Request, exc: RequestValidationError):
-    """Handle Pydantic validation errors globally.
-
-    Args:
-        _request: The FastAPI request object that triggered the validation error.
-        exc: The Pydantic ValidationError exception containing validation failure details.
-
-    Returns:
-        JSONResponse: A 422 Unprocessable Entity response with formatted validation error details.
-    """
-    return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
 
 # Register exception handler for custom ValidationError
 @app.exception_handler(ValidationError)
-async def content_validation_exception_handler(_request: Request, exc: ValidationError):
-    """Handle content security validation errors with a plain message and no traceback.
+async def content_validation_exception_handler(request: Request, exc: ValidationError):
+    """Handle content security validation errors with a clean message format.
 
     Args:
-        _request: The FastAPI request object that triggered validation error.
+        request: The FastAPI request object that triggered validation error.
         exc: The ValidationError exception containing failure details.
 
     Returns:
-        PlainTextResponse: Plain text error message with 400 status code.
+        JSONResponse: Clean error message with 400 status code.
     """
-    return PlainTextResponse(f"mcpgateway.services.content_security.ValidationError: {exc}", status_code=400)
+    # Determine the operation type from the request path
+    path = request.url.path
+    if "/resources" in path:
+        operation = "register resource"
+    elif "/prompts" in path:
+        operation = "create prompt"
+    elif "/tools" in path:
+        operation = "create tool"
+    else:
+        operation = "process request"
+    
+    # Extract the actual error message and clean it up
+    error_msg = str(exc)
+    if "Content contains HTML tags that may cause display issues" in error_msg:
+        error_msg = "Resource content contains disallowed HTML tags"
+    
+    return JSONResponse(
+        status_code=400,
+        content={"detail": f"Failed to {operation}: {error_msg}"}
+    )
 
 
 @app.exception_handler(RequestValidationError)
-async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle FastAPI request validation errors (automatic request parsing).
 
     This handles ValidationErrors that occur during FastAPI's automatic request
     parsing before the request reaches your endpoint.
 
     Args:
-        _request: The FastAPI request object that triggered validation error.
+        request: The FastAPI request object that triggered validation error.
         exc: The RequestValidationError exception containing failure details.
 
     Returns:
         JSONResponse: A 422 Unprocessable Entity response with error details.
     """
-    if _request.url.path.startswith("/tools"):
+    # Check if this is a resource creation request with content validation error
+    if request.url.path.startswith("/resources") and request.method == "POST":
+        for error in exc.errors():
+            msg = error.get("msg", "")
+            loc = error.get("loc", [])
+            # Debug logging
+            logger.debug(f"Validation error - loc: {loc}, msg: {msg}")
+            if len(loc) >= 2 and loc[-2:] == ["body", "content"] and "HTML tags" in msg:
+                # Provide user-friendly message for HTML content validation
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Failed to register resource: Resource content contains disallowed HTML tags"}
+                )
+            elif len(loc) >= 2 and loc[-2:] == ["body", "content"] and "Content contains" in msg:
+                # Extract the actual error message after "Value error, "
+                clean_msg = msg.replace("Value error, ", "") if "Value error, " in msg else msg
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"Failed to register resource: {clean_msg}"}
+                )
+    
+    if request.url.path.startswith("/tools"):
         error_details = []
 
         for error in exc.errors():
@@ -348,7 +376,7 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
 
         response_content = {"detail": error_details}
         return JSONResponse(status_code=422, content=response_content)
-    return await fastapi_default_validation_handler(_request, exc)
+    return await fastapi_default_validation_handler(request, exc)
 
 
 @app.exception_handler(IntegrityError)
@@ -1586,15 +1614,15 @@ async def create_resource(
         )
     except SecurityError as e:
         logger.warning(f"Security violation in resource creation by user {user}: {str(e)}")
-        raise HTTPException(status_code=400, detail="Content failed security validation")
+        raise HTTPException(status_code=400, detail=f"Failed to register resource: {str(e)}")
     except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Failed to register resource: {str(e)}")
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
         if "Rate limit" in str(e):
             raise HTTPException(status_code=429, detail=str(e))
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Failed to register resource: {str(e)}")
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
