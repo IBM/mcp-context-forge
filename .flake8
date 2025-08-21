@@ -1,5 +1,8 @@
 [flake8]
 max-line-length = 600
+extend-ignore =
+    E203,
+    W503
 per-file-ignores =
     mcpgateway/services/gateway_service.py: DAR401,DAR402
     mcpgateway/translate.py: DAR401
