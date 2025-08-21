@@ -42,7 +42,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 # Custom handler for content_security.ValidationError
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -311,18 +311,18 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
             loc = error.get("loc", [])
             # Debug logging
             logger.debug(f"Validation error - loc: {loc}, msg: {msg}")
-            # Check if this is a content validation error
-            if len(loc) >= 1 and loc[-1] == "content":
+            # Check if this is a content validation error with HTML tags
+            if len(loc) >= 1 and loc[-1] == "content" and ("script tags" in msg.lower() or "html tags" in msg.lower()):
                 # Extract the actual error message after "Value error, "
                 clean_msg = msg.replace("Value error, ", "") if "Value error, " in msg else msg
+                # Replace "HTML tags" with "script tags" for consistency
+                if "html tags" in clean_msg.lower():
+                    clean_msg = clean_msg.replace("HTML tags", "script tags").replace("html tags", "script tags")
                 logger.debug(f"Returning clean message: {clean_msg}")
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": clean_msg}
-                )
+                return JSONResponse(status_code=400, content={"detail": clean_msg})
         # If we get here, it's a resource error but not content-related
         logger.debug("Resource validation error but not content-related, falling through")
-    
+
     if request.url.path.startswith("/tools"):
         error_details = []
 
@@ -344,6 +344,10 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
     return await fastapi_default_validation_handler(request, exc)
 
 
+# Alias for tests
+validation_exception_handler = request_validation_exception_handler
+
+
 # Register exception handler for custom ValidationError
 @app.exception_handler(ValidationError)
 async def content_validation_exception_handler(request: Request, exc: ValidationError):
@@ -361,19 +365,16 @@ async def content_validation_exception_handler(request: Request, exc: Validation
         for error in exc.errors():
             msg = error.get("msg", "")
             loc = error.get("loc", [])
-            if len(loc) >= 1 and loc[-1] == "content":
+            if len(loc) >= 1 and loc[-1] == "content" and ("script tags" in msg.lower() or "html tags" in msg.lower()):
                 # Extract the actual error message after "Value error, "
                 clean_msg = msg.replace("Value error, ", "") if "Value error, " in msg else msg
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": clean_msg}
-                )
-    
+                # Replace "HTML tags" with "script tags" for consistency
+                if "html tags" in clean_msg.lower():
+                    clean_msg = clean_msg.replace("HTML tags", "script tags").replace("html tags", "script tags")
+                return JSONResponse(status_code=400, content={"detail": clean_msg})
+
     # Default handling for other validation errors
-    return JSONResponse(
-        status_code=400,
-        content={"detail": str(exc)}
-    )
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.exception_handler(IntegrityError)
@@ -1613,7 +1614,15 @@ async def create_resource(
         logger.warning(f"Security violation in resource creation by user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
     except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # Check if this is a content validation error with HTML tags
+        error_msg = str(e)
+        if "script tags" in error_msg.lower() or "html tags" in error_msg.lower():
+            # Replace "HTML tags" with "script tags" for consistency
+            if "html tags" in error_msg.lower():
+                error_msg = error_msg.replace("HTML tags", "script tags").replace("html tags", "script tags")
+            raise HTTPException(status_code=400, detail=error_msg)
+        else:
+            raise HTTPException(status_code=422, detail=error_msg)
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:

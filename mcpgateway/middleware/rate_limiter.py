@@ -74,7 +74,7 @@ class ContentRateLimiter:
 @pytest.mark.asyncio
 async def test_resource_rate_limit(async_client: AsyncClient, token):
     """Test resource rate limiting functionality.
-    
+
     Args:
         async_client: HTTP client for testing.
         token: Authentication token.

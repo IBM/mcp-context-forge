@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.middleware.rate_limiter import content_rate_limiter
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     GatewayCreate,
@@ -88,7 +89,6 @@ from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import set_auth_cookie
 from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
-from mcpgateway.middleware.rate_limiter import content_rate_limiter
 
 # Import the shared logging service from main
 # This will be set by main.py when it imports admin_router

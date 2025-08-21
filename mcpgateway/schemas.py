@@ -1139,8 +1139,8 @@ class ResourceCreate(BaseModel):
             text = v
 
         # Get MIME type from validation context
-        mime_type = (info.data.get("mime_type") or "").lower() if info.data else ""
-        
+        (info.data.get("mime_type") or "").lower() if info.data else ""
+
         # Always block HTML content regardless of MIME type (except in tests)
         if not os.environ.get("PYTEST_CURRENT_TEST") and re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
             # Check for specific dangerous tags
@@ -1258,10 +1258,10 @@ class ResourceUpdate(BaseModelWithConfigDict):
                 raise ValueError("Content must be UTF-8 decodable")
         else:
             text = v
-            
+
         # Get MIME type from validation context
-        mime_type = (info.data.get("mime_type") or "").lower() if info.data else ""
-        
+        (info.data.get("mime_type") or "").lower() if info.data else ""
+
         # Always block HTML content regardless of MIME type (except in tests)
         if not os.environ.get("PYTEST_CURRENT_TEST") and re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
             # Check for specific dangerous tags
