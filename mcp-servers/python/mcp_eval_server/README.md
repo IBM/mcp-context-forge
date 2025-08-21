@@ -4,13 +4,13 @@
 > **Version**: 0.1.0
 > **Status**: 🚀 Production Ready
 > **Code Quality**: 🏆 Perfect 10/10 PyLint Score
-> **Coverage**: 37 Specialized Evaluation Tools
+> **Coverage**: 55 Specialized Evaluation Tools
 
 A **world-class MCP server** for comprehensive agent performance evaluation, prompt effectiveness testing, and LLM behavior analysis using state-of-the-art **LLM-as-a-judge techniques**.
 
 ## 🌟 Overview
 
-The **MCP Evaluation Server** is the most comprehensive evaluation platform in the MCP ecosystem, providing **37 specialized tools** for assessing AI systems. It combines cutting-edge LLM-as-a-judge methodologies with robust rule-based metrics to deliver unparalleled evaluation capabilities.
+The **MCP Evaluation Server** is the most comprehensive evaluation platform in the MCP ecosystem, providing **55 specialized tools** for assessing AI systems. It combines cutting-edge LLM-as-a-judge methodologies with robust rule-based metrics to deliver unparalleled evaluation capabilities.
 
 ### 🎯 **Revolutionary Capabilities**
 - 🤖 **Advanced LLM-as-a-Judge**: GPT-4, GPT-4-Turbo, GPT-3.5, Azure OpenAI with position bias mitigation
@@ -18,6 +18,11 @@ The **MCP Evaluation Server** is the most comprehensive evaluation platform in t
 - 🛠️ **Comprehensive Agent Evaluation**: Tool usage optimization, reasoning analysis, performance benchmarking
 - 🔍 **Deep Quality Analytics**: Factuality verification, coherence scoring, toxicity detection with bias analysis
 - 🔗 **RAG System Evaluation**: Retrieval relevance, context utilization, groundedness, hallucination detection
+- ⚖️ **Bias & Fairness Testing**: Demographic bias, representation equity, intersectional fairness, cultural sensitivity
+- 🛡️ **Robustness & Security**: Adversarial testing, prompt injection resistance, distribution shift analysis
+- 🔒 **Safety & Alignment**: Harmful content detection, instruction adherence, value alignment assessment
+- 🌍 **Multilingual Evaluation**: Translation quality, cross-lingual consistency, cultural adaptation, language mixing
+- ⚡ **Performance Monitoring**: Latency tracking, efficiency metrics, throughput scaling, memory profiling
 - 🔄 **Advanced Workflow Management**: End-to-end evaluation suites with statistical comparison and trending
 - 📊 **Judge Calibration & Meta-Evaluation**: Bias detection, human alignment, and rubric optimization
 - 🏥 **Health & Monitoring**: Built-in health/readiness probes with component status tracking
@@ -57,6 +62,39 @@ The **MCP Evaluation Server** is the most comprehensive evaluation platform in t
 - **📝 Citation Accuracy**: Reference validation and citation quality scoring across multiple formats
 - **🧩 Chunk Relevance**: Individual document segment evaluation with ranking and scoring
 - **🏆 Retrieval Benchmarking**: Comparative analysis using standard IR metrics (precision, recall, MRR, NDCG)
+
+### ⚖️ **Bias & Fairness Tools** (6 Tools)
+- **🎯 Demographic Bias Detection**: Pattern matching and LLM assessment for protected group bias
+- **📊 Representation Fairness**: Balanced representation analysis across contexts and groups
+- **⚖️ Outcome Equity**: Disparate impact analysis across protected attributes
+- **🌍 Cultural Sensitivity**: Cross-cultural appropriateness and awareness evaluation
+- **🗣️ Linguistic Bias Detection**: Language-based discrimination and dialect bias identification
+- **🔗 Intersectional Fairness**: Compound bias effects across multiple identity dimensions
+
+### 🛡️ **Robustness Tools** (5 Tools)
+- **⚔️ Adversarial Testing**: Malicious prompt resistance and attack vector evaluation
+- **🔄 Input Sensitivity**: Response stability testing under input variations and perturbations
+- **🛡️ Prompt Injection Resistance**: Security defense evaluation against injection attacks
+- **📈 Distribution Shift**: Performance degradation analysis on out-of-domain data
+- **🎯 Consistency Under Perturbation**: Output stability measurement across input modifications
+
+### 🔒 **Safety & Alignment Tools** (4 Tools)
+- **⚠️ Harmful Content Detection**: Multi-category risk assessment across safety dimensions
+- **📋 Instruction Following**: Constraint adherence and safety instruction compliance
+- **🚫 Refusal Appropriateness**: Evaluation of appropriate system refusal behavior
+- **💎 Value Alignment**: Human values and ethical principles alignment assessment
+
+### 🌍 **Multilingual Tools** (4 Tools)
+- **🔄 Translation Quality**: Accuracy, fluency, and completeness assessment across languages
+- **🔗 Cross-Lingual Consistency**: Consistency evaluation across multiple language versions
+- **🎭 Cultural Adaptation**: Localization quality and cultural appropriateness evaluation
+- **🔀 Language Mixing Detection**: Inappropriate code-switching and language mixing identification
+
+### ⚡ **Performance Tools** (4 Tools)
+- **⏱️ Response Latency**: Generation speed tracking with statistical analysis and percentiles
+- **💻 Computational Efficiency**: Resource usage monitoring and efficiency metrics
+- **📈 Throughput Scaling**: Concurrent request handling and scaling behavior analysis
+- **💾 Memory Monitoring**: Memory consumption pattern tracking and leak detection
 
 ### 🔄 **Workflow Management Tools** (3 Tools)
 - **🎛️ Evaluation Suites**: Customizable multi-step pipelines with weighted criteria and success thresholds
@@ -136,7 +174,7 @@ export HEALTH_CHECK_HOST=0.0.0.0     # Default: 0.0.0.0
 
 **Protocol**: stdio (Model Context Protocol)
 **Transport**: Standard input/output (no HTTP port needed)
-**Tools Available**: 37 specialized evaluation tools
+**Tools Available**: 55 specialized evaluation tools
 
 ### **Health Check Endpoints**
 
@@ -504,7 +542,7 @@ benchmarks:
 
 ## 📋 **Complete Tool Reference**
 
-### **Judge Tools (4/37)**
+### **Judge Tools (4/55)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `judge.evaluate_response` | Single response evaluation | Customizable criteria, weighted scoring, confidence metrics |
@@ -512,7 +550,7 @@ benchmarks:
 | `judge.rank_responses` | Multi-response ranking | Tournament/scoring algorithms, consistency measurement |
 | `judge.evaluate_with_reference` | Reference-based evaluation | Gold standard comparison, similarity scoring |
 
-### **Prompt Tools (4/37)**
+### **Prompt Tools (4/55)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `prompt.evaluate_clarity` | Clarity assessment | Rule-based + LLM analysis, ambiguity detection |
@@ -520,7 +558,7 @@ benchmarks:
 | `prompt.measure_completeness` | Completeness analysis | Component coverage, heatmap visualization |
 | `prompt.assess_relevance` | Relevance measurement | TF-IDF semantic alignment, drift analysis |
 
-### **Agent Tools (4/37)**
+### **Agent Tools (4/55)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `agent.evaluate_tool_use` | Tool usage analysis | Selection accuracy, sequence optimization |
@@ -528,14 +566,14 @@ benchmarks:
 | `agent.analyze_reasoning` | Reasoning quality assessment | Logic analysis, hallucination detection |
 | `agent.benchmark_performance` | Performance benchmarking | Multi-domain testing, baseline comparison |
 
-### **Quality Tools (3/37)**
+### **Quality Tools (3/55)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `quality.evaluate_factuality` | Factual accuracy checking | Claims verification, confidence scoring |
 | `quality.measure_coherence` | Logical flow analysis | Coherence scoring, contradiction detection |
 | `quality.assess_toxicity` | Harmful content detection | Multi-category analysis, bias detection |
 
-### **RAG Tools (8/37)**
+### **RAG Tools (8/55)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `rag.evaluate_retrieval_relevance` | Document relevance assessment | Semantic similarity, LLM validation |
@@ -547,27 +585,69 @@ benchmarks:
 | `rag.measure_chunk_relevance` | Document segment scoring | Individual chunk analysis, ranking |
 | `rag.benchmark_retrieval_systems` | System comparison | IR metrics, performance analysis |
 
-### **Workflow Tools (3/37)**
+### **Bias & Fairness Tools (6/55)**
+| Tool | Description | Key Features |
+|------|-------------|--------------|
+| `bias.detect_demographic_bias` | Protected group bias detection | Pattern matching, LLM assessment, sensitivity control |
+| `bias.measure_representation_fairness` | Balanced representation analysis | Context evaluation, fairness metrics |
+| `bias.evaluate_outcome_equity` | Disparate impact assessment | Outcome analysis, equity scoring |
+| `bias.assess_cultural_sensitivity` | Cultural appropriateness evaluation | Cross-cultural awareness, sensitivity dimensions |
+| `bias.detect_linguistic_bias` | Language-based discrimination | Dialect bias, formality assessment |
+| `bias.measure_intersectional_fairness` | Multi-dimensional bias analysis | Compound effects, intersectional metrics |
+
+### **Robustness Tools (5/55)**
+| Tool | Description | Key Features |
+|------|-------------|--------------|
+| `robustness.test_adversarial_inputs` | Malicious prompt testing | Attack vectors, injection resistance |
+| `robustness.measure_input_sensitivity` | Perturbation stability testing | Input variations, sensitivity thresholds |
+| `robustness.evaluate_prompt_injection_resistance` | Security defense evaluation | Injection strategies, resistance scoring |
+| `robustness.assess_distribution_shift` | Out-of-domain performance | Domain adaptation, degradation analysis |
+| `robustness.measure_consistency_under_perturbation` | Output stability measurement | Perturbation consistency, variance analysis |
+
+### **Safety & Alignment Tools (4/55)**
+| Tool | Description | Key Features |
+|------|-------------|--------------|
+| `safety.detect_harmful_content` | Harmful content identification | Multi-category risk assessment, severity classification |
+| `safety.assess_instruction_following` | Constraint adherence evaluation | Instruction parsing, compliance scoring |
+| `safety.evaluate_refusal_appropriateness` | Refusal behavior assessment | Decision accuracy, precision/recall metrics |
+| `safety.measure_value_alignment` | Human values alignment | Ethical principles, weighted assessment |
+
+### **Multilingual Tools (4/55)**
+| Tool | Description | Key Features |
+|------|-------------|--------------|
+| `multilingual.evaluate_translation_quality` | Translation assessment | Accuracy, fluency, cultural adaptation |
+| `multilingual.measure_cross_lingual_consistency` | Multi-language consistency | Semantic preservation, factual alignment |
+| `multilingual.assess_cultural_adaptation` | Localization evaluation | Cultural dimensions, adaptation scoring |
+| `multilingual.detect_language_mixing` | Code-switching detection | Language purity, mixing appropriateness |
+
+### **Performance Tools (4/55)**
+| Tool | Description | Key Features |
+|------|-------------|--------------|
+| `performance.measure_response_latency` | Latency measurement | Statistical analysis, percentiles, timeout tracking |
+| `performance.assess_computational_efficiency` | Resource usage monitoring | CPU/memory efficiency, per-token metrics |
+| `performance.evaluate_throughput_scaling` | Scaling behavior analysis | Concurrency testing, bottleneck detection |
+| `performance.monitor_memory_usage` | Memory consumption tracking | Usage patterns, leak detection, threshold monitoring |
+
+### **Workflow Tools (3/55)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `workflow.create_evaluation_suite` | Evaluation pipeline creation | Multi-step workflows, weighted criteria |
 | `workflow.run_evaluation` | Suite execution | Parallel processing, progress tracking |
 | `workflow.compare_evaluations` | Results comparison | Statistical analysis, trend detection |
 
-### **Calibration Tools (2/37)**
+### **Calibration Tools (2/55)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `calibration.test_judge_agreement` | Judge agreement testing | Correlation analysis, bias detection |
 | `calibration.optimize_rubrics` | Rubric optimization | ML-powered tuning, human alignment |
 
-### **Server Tools (9/37)**
+### **Server Tools (4/55)**
 | Tool | Description | Key Features |
 |------|-------------|--------------|
 | `server.get_available_judges` | List available judges | Model capabilities, status checking |
 | `server.get_evaluation_suites` | List evaluation suites | Suite management, configuration viewing |
 | `server.get_evaluation_results` | Retrieve results | History browsing, filtering, pagination |
 | `server.get_cache_stats` | Cache statistics | Performance monitoring, optimization |
-| *...and 5 more server management tools* | | |
 
 ## 💡 **Innovation & Research Integration**
 

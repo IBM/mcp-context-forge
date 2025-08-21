@@ -25,15 +25,20 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 # Local
-from .health import start_health_server, stop_health_server, mark_ready, mark_judge_tools_ready, mark_storage_ready
+from .health import mark_judge_tools_ready, mark_ready, mark_storage_ready, start_health_server, stop_health_server
 from .storage.cache import BenchmarkCache, EvaluationCache, JudgeResponseCache
 from .storage.results_store import ResultsStore
 from .tools.agent_tools import AgentTools
+from .tools.bias_tools import BiasTools
 from .tools.calibration_tools import CalibrationTools
 from .tools.judge_tools import JudgeTools
+from .tools.multilingual_tools import MultilingualTools
+from .tools.performance_tools import PerformanceTools
 from .tools.prompt_tools import PromptTools
 from .tools.quality_tools import QualityTools
 from .tools.rag_tools import RAGTools
+from .tools.robustness_tools import RobustnessTools
+from .tools.safety_tools import SafetyTools
 from .tools.workflow_tools import WorkflowTools
 
 # Set up logging
@@ -49,6 +54,11 @@ PROMPT_TOOLS = None  # pylint: disable=invalid-name
 AGENT_TOOLS = None  # pylint: disable=invalid-name
 QUALITY_TOOLS = None  # pylint: disable=invalid-name
 RAG_TOOLS = None  # pylint: disable=invalid-name
+BIAS_TOOLS = None  # pylint: disable=invalid-name
+ROBUSTNESS_TOOLS = None  # pylint: disable=invalid-name
+SAFETY_TOOLS = None  # pylint: disable=invalid-name
+MULTILINGUAL_TOOLS = None  # pylint: disable=invalid-name
+PERFORMANCE_TOOLS = None  # pylint: disable=invalid-name
 WORKFLOW_TOOLS = None  # pylint: disable=invalid-name
 CALIBRATION_TOOLS = None  # pylint: disable=invalid-name
 EVALUATION_CACHE = None  # pylint: disable=invalid-name
@@ -410,6 +420,435 @@ async def list_tools() -> List[Tool]:
                 "required": ["test_queries", "retrieval_systems"],
             },
         ),
+        # Bias & Fairness tools
+        Tool(
+            name="bias.detect_demographic_bias",
+            description="Identify bias against protected groups using pattern matching and LLM assessment",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to analyze for demographic bias"},
+                    "protected_groups": {"type": "array", "items": {"type": "string"}, "description": "Specific groups to check (default: all)"},
+                    "bias_types": {"type": "array", "items": {"type": "string"}, "default": ["stereotyping", "exclusionary", "diminishing"], "description": "Types of bias to detect"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for bias assessment"},
+                    "sensitivity_threshold": {"type": "number", "default": 0.7, "description": "Threshold for bias detection sensitivity"},
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="bias.measure_representation_fairness",
+            description="Assess balanced representation across groups in different contexts",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to analyze for representation balance"},
+                    "target_groups": {"type": "array", "items": {"type": "string"}, "description": "Groups to check for fair representation"},
+                    "representation_contexts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["leadership", "expertise", "success", "achievement", "competence"],
+                        "description": "Contexts to analyze",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for representation assessment"},
+                },
+                "required": ["text", "target_groups"],
+            },
+        ),
+        Tool(
+            name="bias.evaluate_outcome_equity",
+            description="Check for disparate impacts across protected groups in outcomes",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "scenarios": {"type": "array", "items": {"type": "object"}, "description": "List of scenarios with attributes and outcomes"},
+                    "protected_attributes": {"type": "array", "items": {"type": "string"}, "description": "Attributes that should not influence outcomes"},
+                    "outcome_measures": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["success_rate", "quality_score", "approval_rate"],
+                        "description": "Specific outcomes to measure equity for",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for equity assessment"},
+                },
+                "required": ["scenarios", "protected_attributes"],
+            },
+        ),
+        Tool(
+            name="bias.assess_cultural_sensitivity",
+            description="Evaluate cross-cultural appropriateness and cultural awareness",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to assess for cultural sensitivity"},
+                    "cultural_contexts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["western", "eastern", "african", "latin", "middle_eastern", "indigenous"],
+                        "description": "Cultural contexts to consider",
+                    },
+                    "sensitivity_dimensions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["respect", "awareness", "inclusivity", "accuracy", "appropriateness"],
+                        "description": "Aspects of cultural sensitivity to evaluate",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for cultural assessment"},
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="bias.detect_linguistic_bias",
+            description="Identify language-based discrimination and dialect bias",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to analyze for linguistic bias"},
+                    "linguistic_dimensions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["formality", "complexity", "dialect", "accent", "grammar"],
+                        "description": "Aspects of language to check for bias",
+                    },
+                    "dialect_variants": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["aave", "southern", "urban", "rural", "formal", "informal"],
+                        "description": "Specific dialects or variants to consider",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for linguistic assessment"},
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="bias.measure_intersectional_fairness",
+            description="Evaluate compound bias effects across multiple identity dimensions",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to analyze for intersectional bias"},
+                    "intersectional_groups": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "description": "Lists of identity combinations to analyze"},
+                    "fairness_metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["representation", "sentiment", "agency", "competence"],
+                        "description": "Specific fairness measures to evaluate",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for intersectional assessment"},
+                },
+                "required": ["text", "intersectional_groups"],
+            },
+        ),
+        # Robustness tools
+        Tool(
+            name="robustness.test_adversarial_inputs",
+            description="Evaluate system response to malicious prompts and attack vectors",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "base_prompt": {"type": "string", "description": "Original prompt to test variations against"},
+                    "adversarial_inputs": {"type": "array", "items": {"type": "string"}, "description": "Custom adversarial inputs to test"},
+                    "attack_types": {"type": "array", "items": {"type": "string"}, "default": ["prompt_injection", "manipulation", "social_engineering"], "description": "Types of attacks to test"},
+                    "target_model": {"type": "string", "default": "test_model", "description": "Model being tested for robustness"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for evaluation"},
+                },
+                "required": ["base_prompt"],
+            },
+        ),
+        Tool(
+            name="robustness.measure_input_sensitivity",
+            description="Test response stability to input variations and perturbations",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "base_input": {"type": "string", "description": "Original input to create variations from"},
+                    "perturbation_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["typos", "synonyms", "reordering", "paraphrasing", "capitalization"],
+                        "description": "Types of perturbations to apply",
+                    },
+                    "num_perturbations": {"type": "integer", "default": 10, "description": "Number of perturbations per type"},
+                    "sensitivity_threshold": {"type": "number", "default": 0.1, "description": "Threshold for considering response changed"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for evaluation"},
+                },
+                "required": ["base_input"],
+            },
+        ),
+        Tool(
+            name="robustness.evaluate_prompt_injection_resistance",
+            description="Check prompt injection defenses and security measures",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "system_prompt": {"type": "string", "description": "System prompt to test for injection resistance"},
+                    "injection_attempts": {"type": "array", "items": {"type": "string"}, "description": "Specific injection attempts to test"},
+                    "injection_strategies": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["direct_override", "role_assumption", "context_switching", "encoding_bypass"],
+                        "description": "Types of injection strategies to use",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for evaluation"},
+                },
+                "required": ["system_prompt"],
+            },
+        ),
+        Tool(
+            name="robustness.assess_distribution_shift",
+            description="Test performance degradation on out-of-domain data",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "in_domain_samples": {"type": "array", "items": {"type": "string"}, "description": "Samples from the training/expected domain"},
+                    "out_of_domain_samples": {"type": "array", "items": {"type": "string"}, "description": "Samples from different domains"},
+                    "performance_metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["quality", "relevance", "coherence", "factuality"],
+                        "description": "Metrics to evaluate performance degradation",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for evaluation"},
+                },
+                "required": ["in_domain_samples", "out_of_domain_samples"],
+            },
+        ),
+        Tool(
+            name="robustness.measure_consistency_under_perturbation",
+            description="Check output stability under various input perturbations",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "base_inputs": {"type": "array", "items": {"type": "string"}, "description": "Original inputs to test consistency for"},
+                    "perturbation_strength": {"type": "number", "default": 0.1, "description": "Strength of perturbations to apply"},
+                    "consistency_metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["semantic_similarity", "factual_consistency", "response_length", "sentiment"],
+                        "description": "Metrics to measure consistency",
+                    },
+                    "num_trials": {"type": "integer", "default": 5, "description": "Number of trials per input"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for evaluation"},
+                },
+                "required": ["base_inputs"],
+            },
+        ),
+        # Safety & Alignment tools
+        Tool(
+            name="safety.detect_harmful_content",
+            description="Identify dangerous or harmful outputs across multiple risk categories",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to analyze for harmful content"},
+                    "harm_categories": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["violence", "illegal_activities", "self_harm", "explicit_content", "hate_speech", "misinformation"],
+                        "description": "Specific categories of harm to check",
+                    },
+                    "detection_threshold": {"type": "number", "default": 0.7, "description": "Threshold for harm detection"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for harm assessment"},
+                    "include_context": {"type": "boolean", "default": True, "description": "Whether to include context in analysis"},
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="safety.assess_instruction_following",
+            description="Measure adherence to constraints and safety instructions",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "instructions": {"type": "string", "description": "Original instructions or constraints"},
+                    "response": {"type": "string", "description": "Model response to evaluate"},
+                    "instruction_types": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["format", "content", "style", "constraints", "safety"],
+                        "description": "Types of instructions to check adherence for",
+                    },
+                    "adherence_threshold": {"type": "number", "default": 0.8, "description": "Threshold for considering instruction followed"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for adherence assessment"},
+                },
+                "required": ["instructions", "response"],
+            },
+        ),
+        Tool(
+            name="safety.evaluate_refusal_appropriateness",
+            description="Check when system appropriately refuses potentially harmful requests",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "requests": {"type": "array", "items": {"type": "object"}, "description": "List of requests with expected refusal behavior"},
+                    "refusal_criteria": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["harmful", "illegal", "unethical", "privacy_violating", "beyond_capability"],
+                        "description": "Criteria for when refusal is appropriate",
+                    },
+                    "appropriateness_threshold": {"type": "number", "default": 0.8, "description": "Threshold for appropriate refusal"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for refusal assessment"},
+                },
+                "required": ["requests"],
+            },
+        ),
+        Tool(
+            name="safety.measure_value_alignment",
+            description="Assess alignment with human values and ethical principles",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "scenarios": {"type": "array", "items": {"type": "object"}, "description": "List of scenarios to evaluate value alignment"},
+                    "alignment_principles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["helpfulness", "harmlessness", "honesty", "fairness", "privacy", "autonomy", "transparency", "accountability"],
+                        "description": "Specific principles to evaluate alignment against",
+                    },
+                    "weight_distribution": {"type": "object", "description": "Weights for different alignment principles"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for value alignment assessment"},
+                },
+                "required": ["scenarios"],
+            },
+        ),
+        # Multilingual tools
+        Tool(
+            name="multilingual.evaluate_translation_quality",
+            description="Assess translation accuracy and quality across languages",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_text": {"type": "string", "description": "Original text in source language"},
+                    "translated_text": {"type": "string", "description": "Translated text"},
+                    "source_language": {"type": "string", "description": "Source language code/name"},
+                    "target_language": {"type": "string", "description": "Target language code/name"},
+                    "quality_dimensions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["accuracy", "fluency", "completeness", "cultural_adaptation", "terminology"],
+                        "description": "Aspects of translation quality to evaluate",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for translation assessment"},
+                },
+                "required": ["source_text", "translated_text", "source_language", "target_language"],
+            },
+        ),
+        Tool(
+            name="multilingual.measure_cross_lingual_consistency",
+            description="Check consistency across multiple language versions",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "base_text": {"type": "string", "description": "Original text in base language"},
+                    "base_language": {"type": "string", "description": "Base language code/name"},
+                    "translated_versions": {"type": "object", "description": "Dictionary of language -> translated text"},
+                    "consistency_metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["semantic_consistency", "factual_consistency", "tone_consistency", "style_consistency"],
+                        "description": "Metrics to evaluate consistency",
+                    },
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for consistency assessment"},
+                },
+                "required": ["base_text", "base_language", "translated_versions"],
+            },
+        ),
+        Tool(
+            name="multilingual.assess_cultural_adaptation",
+            description="Evaluate cultural appropriateness and localization quality",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to assess for cultural adaptation"},
+                    "target_culture": {"type": "string", "description": "Target culture/region for adaptation"},
+                    "cultural_dimensions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["formality", "directness", "context_level", "hierarchy", "collectivism", "time_orientation"],
+                        "description": "Aspects of cultural adaptation to evaluate",
+                    },
+                    "reference_text": {"type": "string", "description": "Optional reference text for comparison"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for cultural assessment"},
+                },
+                "required": ["text", "target_culture"],
+            },
+        ),
+        Tool(
+            name="multilingual.detect_language_mixing",
+            description="Identify inappropriate code-switching or language mixing",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to analyze for language mixing"},
+                    "expected_language": {"type": "string", "description": "Expected primary language"},
+                    "mixing_tolerance": {"type": "number", "default": 0.05, "description": "Acceptable level of language mixing (0-1)"},
+                    "detection_method": {"type": "string", "default": "pattern_based", "enum": ["pattern_based", "llm_based"], "description": "Method for detecting language mixing"},
+                    "judge_model": {"type": "string", "default": "gpt-4o-mini", "description": "Judge model for language assessment"},
+                },
+                "required": ["text", "expected_language"],
+            },
+        ),
+        # Performance tools
+        Tool(
+            name="performance.measure_response_latency",
+            description="Track generation speed and response times with statistical analysis",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "test_inputs": {"type": "array", "items": {"type": "string"}, "description": "List of inputs to test latency for"},
+                    "warmup_runs": {"type": "integer", "default": 2, "description": "Number of warmup runs before measurement"},
+                    "measurement_runs": {"type": "integer", "default": 10, "description": "Number of measured runs per input"},
+                    "timeout_seconds": {"type": "number", "default": 30.0, "description": "Maximum time to wait for response"},
+                },
+                "required": ["test_inputs"],
+            },
+        ),
+        Tool(
+            name="performance.assess_computational_efficiency",
+            description="Measure resource usage and computational efficiency metrics",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "test_workloads": {"type": "array", "items": {"type": "object"}, "description": "List of workloads to test efficiency for"},
+                    "resource_monitoring_interval": {"type": "number", "default": 0.1, "description": "How often to sample resource usage (seconds)"},
+                    "efficiency_metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["cpu_usage", "memory_usage", "cpu_per_token", "memory_per_token"],
+                        "description": "Specific efficiency metrics to track",
+                    },
+                },
+                "required": ["test_workloads"],
+            },
+        ),
+        Tool(
+            name="performance.evaluate_throughput_scaling",
+            description="Test concurrent request handling and scaling behavior",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "test_request": {"type": "string", "description": "Request to use for throughput testing"},
+                    "concurrency_levels": {"type": "array", "items": {"type": "integer"}, "default": [1, 2, 5, 10, 20], "description": "List of concurrent request counts to test"},
+                    "requests_per_level": {"type": "integer", "default": 20, "description": "Number of requests to send at each concurrency level"},
+                },
+                "required": ["test_request"],
+            },
+        ),
+        Tool(
+            name="performance.monitor_memory_usage",
+            description="Track memory consumption patterns during execution",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "monitoring_duration": {"type": "number", "default": 60.0, "description": "How long to monitor (seconds)"},
+                    "sampling_interval": {"type": "number", "default": 1.0, "description": "How often to sample memory (seconds)"},
+                    "memory_threshold_mb": {"type": "number", "default": 1000.0, "description": "Memory usage threshold for alerts"},
+                },
+            },
+        ),
         # Workflow tools
         Tool(
             name="workflow.create_evaluation_suite",
@@ -575,6 +1014,62 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         elif name == "rag.benchmark_retrieval_systems":
             result = await RAG_TOOLS.benchmark_retrieval_systems(**arguments)
 
+        # Bias & Fairness tools
+        elif name == "bias.detect_demographic_bias":
+            result = await BIAS_TOOLS.detect_demographic_bias(**arguments)
+        elif name == "bias.measure_representation_fairness":
+            result = await BIAS_TOOLS.measure_representation_fairness(**arguments)
+        elif name == "bias.evaluate_outcome_equity":
+            result = await BIAS_TOOLS.evaluate_outcome_equity(**arguments)
+        elif name == "bias.assess_cultural_sensitivity":
+            result = await BIAS_TOOLS.assess_cultural_sensitivity(**arguments)
+        elif name == "bias.detect_linguistic_bias":
+            result = await BIAS_TOOLS.detect_linguistic_bias(**arguments)
+        elif name == "bias.measure_intersectional_fairness":
+            result = await BIAS_TOOLS.measure_intersectional_fairness(**arguments)
+
+        # Robustness tools
+        elif name == "robustness.test_adversarial_inputs":
+            result = await ROBUSTNESS_TOOLS.test_adversarial_inputs(**arguments)
+        elif name == "robustness.measure_input_sensitivity":
+            result = await ROBUSTNESS_TOOLS.measure_input_sensitivity(**arguments)
+        elif name == "robustness.evaluate_prompt_injection_resistance":
+            result = await ROBUSTNESS_TOOLS.evaluate_prompt_injection_resistance(**arguments)
+        elif name == "robustness.assess_distribution_shift":
+            result = await ROBUSTNESS_TOOLS.assess_distribution_shift(**arguments)
+        elif name == "robustness.measure_consistency_under_perturbation":
+            result = await ROBUSTNESS_TOOLS.measure_consistency_under_perturbation(**arguments)
+
+        # Safety & Alignment tools
+        elif name == "safety.detect_harmful_content":
+            result = await SAFETY_TOOLS.detect_harmful_content(**arguments)
+        elif name == "safety.assess_instruction_following":
+            result = await SAFETY_TOOLS.assess_instruction_following(**arguments)
+        elif name == "safety.evaluate_refusal_appropriateness":
+            result = await SAFETY_TOOLS.evaluate_refusal_appropriateness(**arguments)
+        elif name == "safety.measure_value_alignment":
+            result = await SAFETY_TOOLS.measure_value_alignment(**arguments)
+
+        # Multilingual tools
+        elif name == "multilingual.evaluate_translation_quality":
+            result = await MULTILINGUAL_TOOLS.evaluate_translation_quality(**arguments)
+        elif name == "multilingual.measure_cross_lingual_consistency":
+            result = await MULTILINGUAL_TOOLS.measure_cross_lingual_consistency(**arguments)
+        elif name == "multilingual.assess_cultural_adaptation":
+            result = await MULTILINGUAL_TOOLS.assess_cultural_adaptation(**arguments)
+        elif name == "multilingual.detect_language_mixing":
+            result = await MULTILINGUAL_TOOLS.detect_language_mixing(**arguments)
+
+        # Performance tools
+        elif name == "performance.measure_response_latency":
+            result = await PERFORMANCE_TOOLS.measure_response_latency(**arguments)
+        elif name == "performance.assess_computational_efficiency":
+            result = await PERFORMANCE_TOOLS.assess_computational_efficiency(**arguments)
+        elif name == "performance.evaluate_throughput_scaling":
+            result = await PERFORMANCE_TOOLS.evaluate_throughput_scaling(**arguments)
+        elif name == "performance.monitor_memory_usage":
+            result = await PERFORMANCE_TOOLS.monitor_memory_usage(**arguments)
+
         # Workflow tools
         elif name == "workflow.create_evaluation_suite":
             result = await WORKFLOW_TOOLS.create_evaluation_suite(**arguments)
@@ -615,7 +1110,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
 
 async def main():
     """Main server entry point."""
-    global JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS, RAG_TOOLS, WORKFLOW_TOOLS, CALIBRATION_TOOLS  # pylint: disable=global-statement
+    global JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS, RAG_TOOLS, BIAS_TOOLS, ROBUSTNESS_TOOLS, SAFETY_TOOLS, MULTILINGUAL_TOOLS, PERFORMANCE_TOOLS, WORKFLOW_TOOLS, CALIBRATION_TOOLS  # pylint: disable=global-statement
     global EVALUATION_CACHE, JUDGE_CACHE, BENCHMARK_CACHE, RESULTS_STORE  # pylint: disable=global-statement
 
     logger.info("🚀 Starting MCP Evaluation Server...")
@@ -635,6 +1130,11 @@ async def main():
     AGENT_TOOLS = AgentTools(JUDGE_TOOLS)
     QUALITY_TOOLS = QualityTools(JUDGE_TOOLS)
     RAG_TOOLS = RAGTools(JUDGE_TOOLS)
+    BIAS_TOOLS = BiasTools(JUDGE_TOOLS)
+    ROBUSTNESS_TOOLS = RobustnessTools(JUDGE_TOOLS)
+    SAFETY_TOOLS = SafetyTools(JUDGE_TOOLS)
+    MULTILINGUAL_TOOLS = MultilingualTools(JUDGE_TOOLS)
+    PERFORMANCE_TOOLS = PerformanceTools(JUDGE_TOOLS)
     WORKFLOW_TOOLS = WorkflowTools(JUDGE_TOOLS, PROMPT_TOOLS, AGENT_TOOLS, QUALITY_TOOLS)
     CALIBRATION_TOOLS = CalibrationTools(JUDGE_TOOLS)
 
@@ -643,7 +1143,7 @@ async def main():
     JUDGE_CACHE = JudgeResponseCache()
     BENCHMARK_CACHE = BenchmarkCache()
     RESULTS_STORE = ResultsStore()
-    
+
     # Mark storage as ready
     mark_storage_ready()
 
@@ -732,9 +1232,14 @@ async def main():
     logger.info("   • 4 Agent tools (tool usage, task completion, reasoning, benchmarks)")
     logger.info("   • 3 Quality tools (factuality, coherence, toxicity)")
     logger.info("   • 8 RAG tools (retrieval, context, grounding, hallucination, coverage, citations, chunks, benchmarks)")
+    logger.info("   • 6 Bias & Fairness tools (demographic, representation, equity, cultural, linguistic, intersectional)")
+    logger.info("   • 5 Robustness tools (adversarial, sensitivity, injection, distribution, consistency)")
+    logger.info("   • 4 Safety & Alignment tools (harmful content, instruction following, refusal, value alignment)")
+    logger.info("   • 4 Multilingual tools (translation quality, cross-lingual consistency, cultural adaptation, language mixing)")
+    logger.info("   • 4 Performance tools (latency, efficiency, throughput, memory)")
     logger.info("   • 3 Workflow tools (suites, execution, comparison)")
     logger.info("   • 2 Calibration tools (agreement, optimization)")
-    logger.info("   • 9 Server tools (management, statistics, health)")
+    logger.info("   • 4 Server tools (management, statistics, health)")
 
     # Test primary judge with a simple evaluation if available
     primary_judge = os.getenv("DEFAULT_JUDGE_MODEL", "gpt-4o-mini")
@@ -757,7 +1262,7 @@ async def main():
                 for criterion, reasoning in result["reasoning"].items():
                     truncated = reasoning[:150] + "..." if len(reasoning) > 150 else reasoning
                     logger.info(f"   💬 Model reasoning ({criterion}): {truncated}")
-            
+
             # Mark judge tools as ready after successful primary judge test
             mark_judge_tools_ready()
         except Exception as e:
@@ -782,7 +1287,7 @@ async def main():
                 for criterion, reasoning in result["reasoning"].items():
                     truncated = reasoning[:150] + "..." if len(reasoning) > 150 else reasoning
                     logger.info(f"   💬 Model reasoning ({criterion}): {truncated}")
-            
+
             # Mark judge tools as ready after successful fallback judge test
             mark_judge_tools_ready()
         except Exception as e:
