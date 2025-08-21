@@ -4605,7 +4605,6 @@ async def admin_import_tools(
 
         # Extract base metadata for bulk import
         base_metadata = MetadataCapture.extract_creation_metadata(request, user, import_batch_id=import_batch_id)
-
         for i, item in enumerate(payload):
             name = (item or {}).get("name")
             try:
@@ -5098,9 +5097,6 @@ async def admin_export_logs(
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
-
-
-# Configuration Export/Import Endpoints
 @admin_router.get("/export/configuration")
 async def admin_export_configuration(
     types: Optional[str] = None,
@@ -5686,3 +5682,5 @@ async def admin_test_a2a_agent(
     except Exception as e:
         LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
         return JSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
+=======
+>>>>>>> 3a876d7f (fix(ui/bulk-import): align UI with bulk import API)
