@@ -62,12 +62,17 @@ The **MCP Evaluation Server** represents the pinnacle of AI evaluation technolog
 
 ## 🚀 **Quick Start**
 
+### **📡 Multiple Server Modes**
+
+#### **🔌 MCP Server Mode (stdio)**
 ```bash
 # 🎯 One-command setup
 pip install -e ".[dev]"
 
-# 🔥 Launch the server (includes health endpoints!)
+# 🔥 Launch MCP server for Claude Desktop, MCP clients
 python -m mcp_eval_server.server
+# or
+make dev
 
 # 🏥 Health check (automatic on port 8080)
 curl http://localhost:8080/health   # ✅ Liveness probe
@@ -75,7 +80,33 @@ curl http://localhost:8080/ready    # 🎯 Readiness probe
 curl http://localhost:8080/metrics  # 📊 Performance metrics
 ```
 
-**🎉 That's it!** Your MCP client now has access to **63 specialized evaluation tools**!
+#### **🌐 REST API Server Mode (HTTP)**
+```bash
+# 🚀 Launch REST API server with FastAPI
+python -m mcp_eval_server.rest_server --port 8080 --host 0.0.0.0
+# or
+make serve-rest
+
+# 📚 Interactive API documentation
+open http://localhost:8080/docs
+
+# 🧪 Quick API test
+curl http://localhost:8080/health
+curl http://localhost:8080/tools/categories
+```
+
+#### **🔄 HTTP Bridge Mode (MCP over HTTP)**
+```bash
+# 🌍 MCP protocol over HTTP with Server-Sent Events
+make serve-http
+
+# 📡 Access via JSON-RPC over HTTP on port 9000
+curl -X POST -H 'Content-Type: application/json' \
+     -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}' \
+     http://localhost:9000/
+```
+
+**🎉 That's it!** Choose your preferred mode and get access to **63 specialized evaluation tools**!
 
 ## 🆕 **NEW TOOLS SPOTLIGHT**
 
@@ -332,9 +363,9 @@ make lint
 
 ## 🎮 **Usage Examples**
 
-### **🎯 Advanced Response Evaluation**
+### **🎯 MCP Client Integration**
 ```python
-# Multi-criteria evaluation with custom weights
+# Multi-criteria evaluation with MCP client
 result = await mcp_client.call_tool("judge.evaluate_response", {
     "response": "Detailed technical explanation...",
     "criteria": [
@@ -355,6 +386,58 @@ result = await mcp_client.call_tool("judge.evaluate_response", {
     "judge_model": "gpt-4",
     "use_cot": True
 })
+```
+
+### **🌐 REST API Integration**
+```bash
+# Evaluate response via REST API
+curl -X POST http://localhost:8080/judge/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "response": "Paris is the capital of France",
+    "criteria": [
+      {
+        "name": "accuracy",
+        "description": "Factual accuracy",
+        "scale": "1-5",
+        "weight": 1.0
+      }
+    ],
+    "rubric": {
+      "criteria": [],
+      "scale_description": {
+        "1": "Wrong",
+        "5": "Correct"
+      }
+    },
+    "judge_model": "gpt-4o-mini"
+  }'
+```
+
+```python
+# Python REST API client
+import httpx
+import asyncio
+
+async def evaluate_via_rest():
+    async with httpx.AsyncClient() as client:
+        response = await client.post("http://localhost:8080/judge/evaluate", json={
+            "response": "Technical explanation...",
+            "criteria": [
+                {"name": "quality", "description": "Overall quality", "scale": "1-5", "weight": 1.0}
+            ],
+            "rubric": {
+                "criteria": [],
+                "scale_description": {"1": "Poor", "5": "Excellent"}
+            },
+            "judge_model": "gpt-4o-mini"
+        })
+        result = response.json()
+        return result
+
+# Run evaluation
+result = asyncio.run(evaluate_via_rest())
+print(f"Overall score: {result['overall_score']}")
 ```
 
 ### **⚖️ Advanced Pairwise Comparison**
@@ -801,8 +884,10 @@ benchmarks:
 | Mode | Command | Protocol | Port | Auth | Use Case |
 |------|---------|----------|------|------|----------|
 | **MCP Server** | `make dev` | stdio | none | none | Claude Desktop, MCP clients |
-| **HTTP Local** | `make serve-http` | JSON-RPC/HTTP | 9000 | none | Local development, testing |
-| **HTTP Public** | `make serve-http-public` | JSON-RPC/HTTP | 9000 | none | Remote access, integration |
+| **REST API** | `make serve-rest` | HTTP REST | 8080 | none | Direct HTTP API integration |
+| **REST Public** | `make serve-rest-public` | HTTP REST | 8080 | none | Public REST API access |
+| **HTTP Bridge** | `make serve-http` | JSON-RPC/HTTP | 9000 | none | MCP over HTTP, local testing |
+| **HTTP Public** | `make serve-http-public` | JSON-RPC/HTTP | 9000 | none | MCP over HTTP, remote access |
 | **Container** | `make run` | HTTP | 8080 | none | Docker deployment |
 
 ### **Immediate Quick Start**
@@ -817,19 +902,35 @@ make example               # Run evaluation example
 make test-mcp             # Test MCP protocol
 ```
 
-#### **Option 2: HTTP Server (REST API)**
+#### **Option 2: REST API Server (FastAPI)**
 ```bash
-# 1. Run HTTP server with Bearer token auth
-make serve-http           # Starts on http://localhost:9000
+# 1. Run native REST API server
+make serve-rest          # Starts on http://localhost:8080
 
-# 2. Test HTTP endpoints
-make test-http           # Test all endpoints
+# 2. Test REST API endpoints
+make test-rest           # Test all REST endpoints
 
-# 3. Get connection info
-make http-info           # Show complete HTTP setup guide
+# 3. View interactive documentation
+open http://localhost:8080/docs    # Swagger UI
+open http://localhost:8080/redoc   # ReDoc
+
+# 4. Get connection info
+make rest-info           # Show complete REST API guide
 ```
 
-#### **Option 3: Docker Deployment**
+#### **Option 3: HTTP Bridge (MCP over HTTP)**
+```bash
+# 1. Run MCP protocol over HTTP
+make serve-http          # Starts on http://localhost:9000
+
+# 2. Test HTTP endpoints
+make test-http           # Test MCP JSON-RPC endpoints
+
+# 3. Get connection info
+make http-info           # Show complete HTTP bridge guide
+```
+
+#### **Option 4: Docker Deployment**
 ```bash
 # Build and deploy
 make build && make run
@@ -851,9 +952,41 @@ result = await client.call_tool("judge.evaluate_response", {
 })
 ```
 
-#### **HTTP API Integration**
+#### **REST API Integration**
 ```bash
-# Start HTTP server
+# Start REST API server
+make serve-rest
+
+# Check server health
+curl http://localhost:8080/health
+
+# List tool categories
+curl http://localhost:8080/tools/categories
+
+# Evaluate response directly via REST
+curl -X POST http://localhost:8080/judge/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "response": "Paris is the capital of France.",
+    "criteria": [
+      {
+        "name": "accuracy",
+        "description": "Factual accuracy",
+        "scale": "1-5",
+        "weight": 1.0
+      }
+    ],
+    "rubric": {
+      "criteria": [],
+      "scale_description": {"1": "Wrong", "5": "Correct"}
+    },
+    "judge_model": "rule-based"
+  }'
+```
+
+#### **HTTP Bridge Integration (MCP over HTTP)**
+```bash
+# Start HTTP bridge server
 make serve-http
 
 # List available tools (JSON-RPC)
@@ -862,7 +995,7 @@ curl -X POST \
      -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}' \
      http://localhost:9000/
 
-# Evaluate response via HTTP (JSON-RPC)
+# Evaluate response via HTTP bridge (JSON-RPC)
 curl -X POST \
      -H "Content-Type: application/json" \
      -d '{
@@ -882,12 +1015,60 @@ curl -X POST \
      http://localhost:9000/
 ```
 
-#### **Python HTTP Client Integration**
+#### **Python REST API Client Integration**
 ```python
 import httpx
 import asyncio
 
-async def evaluate_via_http():
+async def evaluate_via_rest_api():
+    """Example using native REST API endpoints."""
+    async with httpx.AsyncClient() as client:
+        base_url = "http://localhost:8080"
+
+        # Check health
+        health = await client.get(f"{base_url}/health")
+        print(f"Server status: {health.json()['status']}")
+
+        # List tool categories
+        categories = await client.get(f"{base_url}/tools/categories")
+        print(f"Available categories: {len(categories.json()['categories'])}")
+
+        # Evaluate response using REST endpoint
+        evaluation = await client.post(f"{base_url}/judge/evaluate", json={
+            "response": "Your AI response here",
+            "criteria": [
+                {"name": "quality", "description": "Overall quality", "scale": "1-5", "weight": 1.0}
+            ],
+            "rubric": {
+                "criteria": [],
+                "scale_description": {"1": "Poor", "5": "Excellent"}
+            },
+            "judge_model": "rule-based"
+        })
+        result = evaluation.json()
+        print(f"Evaluation score: {result['overall_score']}")
+
+        # Check content toxicity
+        toxicity = await client.post(f"{base_url}/quality/toxicity", json={
+            "content": "This is a test message",
+            "toxicity_categories": ["profanity", "hate_speech"],
+            "sensitivity_level": "moderate",
+            "judge_model": "rule-based"
+        })
+        result = toxicity.json()
+        print(f"Toxicity detected: {result['toxicity_detected']}")
+
+# Run evaluation
+asyncio.run(evaluate_via_rest_api())
+```
+
+#### **Python HTTP Bridge Client Integration**
+```python
+import httpx
+import asyncio
+
+async def evaluate_via_http_bridge():
+    """Example using MCP over HTTP bridge."""
     async with httpx.AsyncClient() as client:
         base_url = "http://localhost:9000"
 
@@ -925,7 +1106,7 @@ async def evaluate_via_http():
         print(f"Evaluation result: {result}")
 
 # Run evaluation
-asyncio.run(evaluate_via_http())
+asyncio.run(evaluate_via_http_bridge())
 ```
 
 ## 🎖️ **Quality Assurance**
