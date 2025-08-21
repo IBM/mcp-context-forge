@@ -536,6 +536,17 @@ function openModal(modalId) {
     }
 }
 
+// Global event handler for Escape key
+document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+        // Find any active modal
+        const activeModal = Array.from(AppState.activeModals)[0];
+        if (activeModal) {
+            closeModal(activeModal);
+        }
+    }
+});
+
 function closeModal(modalId, clearId = null) {
     try {
         const modal = safeGetElement(modalId);
