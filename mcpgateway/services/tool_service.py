@@ -1005,8 +1005,6 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-            if tool_update.name is not None:
-                tool.name = tool_update.name
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
             if tool_update.url is not None:
