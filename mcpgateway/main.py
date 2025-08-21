@@ -40,7 +40,9 @@ from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+
+# Custom handler for content_security.ValidationError
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -88,17 +90,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.content_security import SecurityError, ValidationError
-# Custom handler for content_security.ValidationError
-from fastapi.responses import PlainTextResponse
-
-# # Register exception handler for custom ValidationError
-# @app.exception_handler(ValidationError)
-# async def content_validation_exception_handler(_request: Request, exc: ValidationError):
-#     """Handle content security validation errors with a plain message and no traceback."""
-#     return PlainTextResponse(f"mcpgateway.services.content_security.ValidationError: {exc}", status_code=400)
-
-
+from mcpgateway.services.content_security import SecurityError
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -124,6 +116,13 @@ from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
+
+# # Register exception handler for custom ValidationError
+# @app.exception_handler(ValidationError)
+# async def content_validation_exception_handler(_request: Request, exc: ValidationError):
+#     """Handle content security validation errors with a plain message and no traceback."""
+#     return PlainTextResponse(f"mcpgateway.services.content_security.ValidationError: {exc}", status_code=400)
+
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -292,37 +291,12 @@ app = FastAPI(
 async def validation_exception_handler(_request: Request, exc: RequestValidationError):
     """Handle Pydantic validation errors globally.
 
-    Intercepts ValidationError exceptions raised anywhere in the application
-    and returns a properly formatted JSON error response with detailed
-    validation error information.
-
     Args:
         _request: The FastAPI request object that triggered the validation error.
-                  (Unused but required by FastAPI's exception handler interface)
-        exc: The Pydantic ValidationError exception containing validation
-             failure details.
+        exc: The Pydantic ValidationError exception containing validation failure details.
 
     Returns:
-        JSONResponse: A 422 Unprocessable Entity response with formatted
-                      validation error details.
-
-    Examples:
-        >>> from pydantic import ValidationError, BaseModel
-        >>> from fastapi import Request
-        >>> import asyncio
-        >>>
-        >>> class TestModel(BaseModel):
-        ...     name: str
-        ...     age: int
-        >>>
-        >>> # Create a validation error
-        >>> try:
-        ...     TestModel(name="", age="invalid")
-        ... except ValidationError as e:
-        ...     # Test our handler
-        ...     result = asyncio.run(validation_exception_handler(None, e))
-        ...     result.status_code
-        422
+        JSONResponse: A 422 Unprocessable Entity response with formatted validation error details.
     """
     return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
@@ -330,8 +304,17 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
 # Register exception handler for custom ValidationError
 @app.exception_handler(ValidationError)
 async def content_validation_exception_handler(_request: Request, exc: ValidationError):
-    """Handle content security validation errors with a plain message and no traceback."""
+    """Handle content security validation errors with a plain message and no traceback.
+
+    Args:
+        _request: The FastAPI request object that triggered validation error.
+        exc: The ValidationError exception containing failure details.
+
+    Returns:
+        PlainTextResponse: Plain text error message with 400 status code.
+    """
     return PlainTextResponse(f"mcpgateway.services.content_security.ValidationError: {exc}", status_code=400)
+
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):

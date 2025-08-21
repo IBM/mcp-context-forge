@@ -41,13 +41,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.middleware.rate_limiter import content_rate_limiter
-
-
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
@@ -56,8 +55,6 @@ from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, Re
 from mcpgateway.services.content_security import content_security
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
-
-from mcpgateway.config import settings
 
 # Define disallowed MIME types
 DISALLOWED_MIME_TYPES = {"text/html", "application/javascript", "text/javascript"}
@@ -222,11 +219,7 @@ class ResourceService:
         }
         resource_dict["tags"] = resource.tags or []
         return ResourceRead.model_validate(resource_dict)
-    
-   
 
-
-    
     async def register_resource(
         self,
         db: Session,
@@ -262,50 +255,41 @@ class ResourceService:
         """
         user_id = user if isinstance(user, str) else (user.get("username") if isinstance(user, dict) else created_by or "system")
         logger.info(f"Rate limiting check for user_id: {user_id}, rate limiting enabled: {settings.content_rate_limiting_enabled}")
-        
+
         # Rate limit check - only apply if rate limiting is enabled
         if settings.content_rate_limiting_enabled:
-            # Debug: Check current count before check
-            key = f"{user_id}:create"
-            current_count = len(content_rate_limiter.operation_counts[key])
-            logger.info(f"Current operation count for {user_id}: {current_count}")
-            
             allowed, retry_after = await content_rate_limiter.check_rate_limit(user_id, "create")
-            logger.info(f"Rate limit check result: allowed={allowed}, retry_after={retry_after}")
             if not allowed:
-                logger.warning(f"Rate limit exceeded for user {user_id}")
                 raise ResourceError(f"Rate limit exceeded. Please try again later. Retry after {retry_after} seconds.")
             await content_rate_limiter.record_operation(user_id, "create")
-            new_count = len(content_rate_limiter.operation_counts[key])
-            logger.info(f"Rate limit operation recorded for user {user_id}, new count: {new_count}")
-           
+
         try:
             # Content security validation
             if resource.content:
                 # --- Prevent disallowed tags like <script>, <html>, <iframe>, <body> ---
-                DISALLOWED_TAGS = ["<script", "<html", "<iframe", "<body"]
-                lowered_content = resource.content.lower()
-                for tag in DISALLOWED_TAGS:
-                    if tag in lowered_content:
-                        raise ResourceError(f"Resource content contains disallowed {tag} tag")
+                if settings.content_validate_patterns:
+                    disallowed_tags = ["<script", "<html", "<iframe", "<body"]
+                    lowered_content = resource.content.lower()
+                    for tag in disallowed_tags:
+                        if tag in lowered_content:
+                            raise ResourceError(f"Resource content contains disallowed {tag} tag")
                 validated_content, _ = await content_security.validate_resource_content(content=resource.content, uri=resource.uri, mime_type=resource.mime_type)
                 resource.content = validated_content
                 if not resource.mime_type:
                     resource.mime_type = self._detect_mime_type(resource.uri, resource.content)
-            
-                
+
             # --- Detect mime type if not provided ---
             mime_type = resource.mime_type or self._detect_mime_type(resource.uri, resource.content)
-            
+
             # --- Enforce content size limit ---
-            if resource.content and len(resource.content.encode("utf-8")) > settings.content_max_resource_size:
-                raise ResourceError(f"Resource exceeds max size of {settings.content_max_resource_size} bytes")
-            
+            if resource.content:
+                content_size = len(resource.content.encode("utf-8")) if isinstance(resource.content, str) else len(resource.content)
+                if content_size > settings.content_max_resource_size:
+                    raise ResourceError("Resource content size exceeds maximum allowed size")
+
             # --- Enforce disallowed MIME types ---
             if mime_type in DISALLOWED_MIME_TYPES:
-               raise ResourceError(f"MIME type '{mime_type}' is not allowed")
-
-            
+                raise ResourceError(f"MIME type '{mime_type}' is not allowed")
 
             # Determine content storage
             is_text = mime_type and mime_type.startswith("text/") or isinstance(resource.content, str)
@@ -334,7 +318,7 @@ class ResourceService:
             db.add(db_resource)
             db.commit()
             db.refresh(db_resource)
-        
+
             # Notify subscribers
             await self._notify_resource_added(db_resource)
 

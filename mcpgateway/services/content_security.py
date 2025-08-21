@@ -30,7 +30,7 @@ class ContentSecurityService:
     """Service for validating content security for resources and prompts."""
 
     def __init__(self):
-        """ Initialize the content security service."""
+        """Initialize the content security service."""
         # Compile regex patterns for efficiency
         self.dangerous_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in settings.blocked_patterns]
         # Monitoring metrics
@@ -82,7 +82,7 @@ class ContentSecurityService:
             raise ValidationError(f"Content type '{detected_mime}' not allowed for resources. " f"Allowed types: {', '.join(sorted(allowed_types))}")
 
         # Validate content
-        validated_content = await self._validate_content(content=content, mime_type=detected_mime, context="resource")
+        validated_content = await self._validate_content(content=content, _mime_type=detected_mime, context="resource")
 
         return validated_content, detected_mime
 
@@ -108,20 +108,20 @@ class ContentSecurityService:
             raise ValidationError(f"Prompt template size ({len(content_bytes)} bytes) exceeds maximum " f"allowed size ({settings.content_max_prompt_size} bytes)")
 
         # Prompts are always text
-        validated_content = await self._validate_content(content=template, mime_type="text/plain", context="prompt")
+        validated_content = await self._validate_content(content=template, _mime_type="text/plain", context="prompt")
 
         # Additional prompt-specific validation
         self._validate_prompt_template_syntax(validated_content, name)
 
         return validated_content
 
-    def _detect_mime_type(self, uri: str, content: str) -> str:
+    def _detect_mime_type(self, uri: str, _content: str) -> str:
         """
         Detect MIME type from URI and content.
 
         Args:
             uri (str): Resource URI.
-            content (str): Content to check.
+            _content (str): Content to check (unused but kept for interface).
 
         Returns:
             str: Detected MIME type (defaults to text/plain).
@@ -134,13 +134,13 @@ class ContentSecurityService:
         # For safety, default to text/plain
         return "text/plain"
 
-    async def _validate_content(self, content: str, mime_type: str, context: str) -> str:
+    async def _validate_content(self, content: str, _mime_type: str, context: str) -> str:
         """
         Validate and sanitize content.
 
         Args:
             content (str): Content to validate.
-            mime_type (str): MIME type of the content.
+            _mime_type (str): MIME type of the content (unused but kept for interface).
             context (str): Context string (e.g., 'resource', 'prompt').
 
         Returns:
@@ -169,9 +169,9 @@ class ContentSecurityService:
             if os.environ.get("ALLOW_HTML_CONTENT", "0") != "1":
                 content_lower = content.lower()
                 for pattern in self.dangerous_patterns:
-                  if pattern.search(content_lower):
-                    self.security_violations["dangerous_pattern"] += 1
-                    raise SecurityError(f"{context.capitalize()} content contains potentially dangerous pattern: {pattern.pattern}")
+                    if pattern.search(content_lower):
+                        self.security_violations["dangerous_pattern"] += 1
+                        raise SecurityError(f"{context.capitalize()} content contains potentially dangerous pattern: {pattern.pattern}")
         # Check for excessive whitespace (potential padding attack, only for text)
         if isinstance(content, str) and len(content) > 1000:  # Only check larger content
             whitespace_ratio = sum(1 for c in content if c.isspace()) / len(content)

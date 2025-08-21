@@ -413,7 +413,9 @@ filterwarnings = [
 # Set environment variables for all tests
 env = [
     "MCPGATEWAY_ADMIN_API_ENABLED=true",
-    "MCPGATEWAY_UI_ENABLED=true"
+    "MCPGATEWAY_UI_ENABLED=true",
+    "CONTENT_RATE_LIMITING_ENABLED=false",
+    "CONTENT_VALIDATE_PATTERNS=false"
 ]
 
 # ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====

@@ -65,8 +65,6 @@ from jsonpath_ng.jsonpath import JSONPath
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-
-
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
 if not logging.getLogger().handlers:
@@ -430,10 +428,9 @@ class Settings(BaseSettings):
     # content_create_rate_limit_per_minute: int = Field(default=3, env="CONTENT_CREATE_RATE_LIMIT_PER_MINUTE")  # Max creates per minute per user
     # content_max_concurrent_operations: int = Field(default=2, env="CONTENT_MAX_CONCURRENT_OPERATIONS")  # Max concurrent operations per user
     # content_rate_limiting_enabled: bool = Field(default=True, env="CONTENT_RATE_LIMITING_ENABLED")  # Enable/disable rate limiting
-    content_rate_limiting_enabled: bool = True
-    content_create_rate_limit_per_minute: int = 3
-    content_max_concurrent_operations: int = 10  # Set much higher than per-minute limit
-
+    content_rate_limiting_enabled: bool = Field(default=False, env="CONTENT_RATE_LIMITING_ENABLED")
+    content_create_rate_limit_per_minute: int = Field(default=100, env="CONTENT_CREATE_RATE_LIMIT_PER_MINUTE")
+    content_max_concurrent_operations: int = Field(default=50, env="CONTENT_MAX_CONCURRENT_OPERATIONS")
 
     # Security patterns to block
     content_blocked_patterns: str = Field(default="<script,javascript:,vbscript:,onload=,onerror=,onclick=,<iframe,<embed,<object", env="CONTENT_BLOCKED_PATTERNS")
@@ -732,7 +729,8 @@ Disallow: /
 
     # Validation patterns for safe display (configurable)
     validation_dangerous_html_pattern: str = (
-        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|"
+        r"</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
     )
 
     validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
@@ -901,7 +899,10 @@ def extract_using_jq(data, jq_filter=""):
         return message
 
     return result
+
+
 settings = Settings()
+
 
 def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict[str, str]] = None) -> Union[List, Dict]:
     """
