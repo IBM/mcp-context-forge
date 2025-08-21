@@ -805,6 +805,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.auth_value = ""
 
                     # if auth_type is not None and only then check auth_value
+                # Handle OAuth configuration updates
+                if gateway_update.oauth_config is not None:
+                    gateway.oauth_config = gateway_update.oauth_config
+
                 if getattr(gateway, "auth_value", "") != "":
                     token = gateway_update.auth_token
                     password = gateway_update.auth_password

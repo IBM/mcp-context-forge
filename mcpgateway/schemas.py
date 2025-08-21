@@ -2138,6 +2138,10 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the gateway")
 
     @field_validator("tags")

@@ -2914,6 +2914,20 @@ async def admin_edit_gateway(
         else:
             passthrough_headers = None
 
+        # Parse OAuth configuration if present
+        oauth_config_json = str(form.get("oauth_config"))
+        oauth_config: Optional[dict[str, Any]] = None
+        if oauth_config_json and oauth_config_json != "None":
+            try:
+                oauth_config = json.loads(oauth_config_json)
+                # Encrypt the client secret if present and not empty
+                if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
+                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
+            except (json.JSONDecodeError, ValueError) as e:
+                LOGGER.error(f"Failed to parse OAuth config: {e}")
+                oauth_config = None
+
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=str(form.get("name")),
             url=str(form["url"]),
@@ -2929,6 +2943,7 @@ async def admin_edit_gateway(
             auth_value=str(form.get("auth_value", "")),
             auth_headers=auth_headers if auth_headers else None,
             passthrough_headers=passthrough_headers,
+            oauth_config=oauth_config,
         )
         await gateway_service.update_gateway(db, gateway_id, gateway)
         return JSONResponse(
