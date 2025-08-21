@@ -62,7 +62,7 @@ class PerformanceTools:
                     continue
 
             # Measurement runs
-            for run in range(measurement_runs):
+            for _run in range(measurement_runs):
                 start_time = time.perf_counter()
                 try:
                     await asyncio.wait_for(target_function(test_input), timeout=timeout_seconds)
@@ -236,7 +236,7 @@ class PerformanceTools:
         scaling_analysis = self._analyze_scaling_behavior(scaling_results)
 
         # Calculate throughput metrics
-        max_throughput = max([r["throughput_rps"] for r in scaling_results])
+        max_throughput = max(r["throughput_rps"] for r in scaling_results)
         optimal_concurrency = max(scaling_results, key=lambda x: x["throughput_rps"])["concurrency"]
 
         # Detect throughput bottlenecks
@@ -381,14 +381,14 @@ class PerformanceTools:
         index = min(index, len(sorted_values) - 1)
         return sorted_values[index]
 
-    async def _measure_workload_efficiency(self, workload: Dict[str, Any], baseline_cpu: float, baseline_memory: int, interval: float) -> Dict[str, Any]:
+    async def _measure_workload_efficiency(self, workload: Dict[str, Any], baseline_cpu: float, _baseline_memory: int, _interval: float) -> Dict[str, Any]:
         """Measure efficiency for a specific workload.
 
         Args:
             workload: Workload configuration to measure
             baseline_cpu: Baseline CPU usage percentage
-            baseline_memory: Baseline memory usage in bytes
-            interval: Monitoring interval in seconds
+            _baseline_memory: Baseline memory usage in bytes
+            _interval: Monitoring interval in seconds
 
         Returns:
             Dictionary containing workload efficiency metrics
@@ -586,7 +586,7 @@ class PerformanceTools:
             return {}
 
         process_memory = [s["process_memory_mb"] for s in samples]
-        [s["system_memory_mb"] for s in samples]
+        # system_memory = [s["system_memory_mb"] for s in samples]  # Unused but may be needed later
 
         # Detect memory trends
         memory_trend = "stable"
@@ -697,8 +697,7 @@ class PerformanceTools:
         if n * sum_x2 - sum_x * sum_x != 0:
             slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
             return slope  # MB per second
-        else:
-            return 0.0
+        return 0.0
 
     def _calculate_memory_stability(self, memory_values: List[float]) -> float:
         """Calculate memory usage stability.
@@ -828,16 +827,16 @@ class PerformanceTools:
         return recommendations
 
     # Additional placeholder methods for complex operations
-    async def _compare_cross_lingual_texts(self, text1: str, text2: str, lang1: str, lang2: str, metrics: List[str], judge_model: str) -> Dict[str, Any]:
+    async def _compare_cross_lingual_texts(self, _text1: str, _text2: str, _lang1: str, _lang2: str, metrics: List[str], _judge_model: str) -> Dict[str, Any]:
         """Compare texts across languages.
 
         Args:
-            text1: First text to compare
-            text2: Second text to compare
-            lang1: Language of first text
-            lang2: Language of second text
+            _text1: First text to compare
+            _text2: Second text to compare
+            _lang1: Language of first text
+            _lang2: Language of second text
             metrics: Comparison metrics to evaluate
-            judge_model: Judge model for assessment
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing cross-lingual comparison results
@@ -845,16 +844,16 @@ class PerformanceTools:
         consistency_scores = {metric: 0.8 for metric in metrics}  # Placeholder
         return {"consistency_scores": consistency_scores}
 
-    async def _compare_translation_pair(self, text1: str, text2: str, lang1: str, lang2: str, metrics: List[str], judge_model: str) -> Dict[str, Any]:
+    async def _compare_translation_pair(self, _text1: str, _text2: str, _lang1: str, _lang2: str, metrics: List[str], _judge_model: str) -> Dict[str, Any]:
         """Compare pair of translations.
 
         Args:
-            text1: First translation text
-            text2: Second translation text
-            lang1: Language of first text
-            lang2: Language of second text
+            _text1: First translation text
+            _text2: Second translation text
+            _lang1: Language of first text
+            _lang2: Language of second text
             metrics: Comparison metrics to evaluate
-            judge_model: Judge model for assessment
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing translation pair comparison
@@ -862,41 +861,41 @@ class PerformanceTools:
         consistency_scores = {metric: 0.75 for metric in metrics}  # Placeholder
         return {"consistency_scores": consistency_scores}
 
-    async def _assess_cultural_dimension(self, text: str, culture: str, dimension: str, judge_model: str) -> float:
+    async def _assess_cultural_dimension(self, _text: str, _culture: str, _dimension: str, _judge_model: str) -> float:
         """Assess cultural adaptation dimension.
 
         Args:
-            text: Text to assess
-            culture: Target culture
-            dimension: Cultural dimension to evaluate
-            judge_model: Judge model for assessment
+            _text: Text to assess
+            _culture: Target culture
+            _dimension: Cultural dimension to evaluate
+            _judge_model: Judge model for assessment
 
         Returns:
             Cultural adaptation score for the dimension
         """
         return 0.7  # Placeholder
 
-    async def _compare_cultural_adaptation(self, text: str, reference: str, culture: str, judge_model: str) -> Dict[str, Any]:
+    async def _compare_cultural_adaptation(self, _text: str, _reference: str, _culture: str, _judge_model: str) -> Dict[str, Any]:
         """Compare cultural adaptation with reference.
 
         Args:
-            text: Text to assess
-            reference: Reference text for comparison
-            culture: Target culture
-            judge_model: Judge model for assessment
+            _text: Text to assess
+            _reference: Reference text for comparison
+            _culture: Target culture
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing cultural adaptation comparison
         """
         return {"comparison_score": 0.8}  # Placeholder
 
-    async def _llm_assess_language_mixing(self, text: str, expected_lang: str, judge_model: str) -> Dict[str, Any]:
+    async def _llm_assess_language_mixing(self, _text: str, _expected_lang: str, _judge_model: str) -> Dict[str, Any]:
         """LLM assessment of language mixing.
 
         Args:
-            text: Text to assess
-            expected_lang: Expected primary language
-            judge_model: Judge model for assessment
+            _text: Text to assess
+            _expected_lang: Expected primary language
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing language mixing assessment

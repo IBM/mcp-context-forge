@@ -319,14 +319,14 @@ class MultilingualTools:
 
     # Helper methods for multilingual evaluation
 
-    def _analyze_translation_linguistics(self, source_text: str, translated_text: str, source_lang: str, target_lang: str) -> Dict[str, Any]:
+    def _analyze_translation_linguistics(self, source_text: str, translated_text: str, _source_lang: str, _target_lang: str) -> Dict[str, Any]:
         """Analyze linguistic features of translation.
 
         Args:
             source_text: Original text in source language
             translated_text: Translated text
-            source_lang: Source language code/name
-            target_lang: Target language code/name
+            _source_lang: Source language code/name
+            _target_lang: Target language code/name
 
         Returns:
             Dictionary containing linguistic analysis metrics
@@ -404,14 +404,14 @@ class MultilingualTools:
         except Exception:
             return 0.5  # Default score if assessment fails
 
-    def _detect_translation_errors(self, source: str, translation: str, source_lang: str, target_lang: str) -> List[Dict[str, Any]]:
+    def _detect_translation_errors(self, source: str, translation: str, _source_lang: str, _target_lang: str) -> List[Dict[str, Any]]:
         """Detect common translation errors.
 
         Args:
             source: Original source text
             translation: Translated text
-            source_lang: Source language code/name
-            target_lang: Target language code/name
+            _source_lang: Source language code/name
+            _target_lang: Target language code/name
 
         Returns:
             List of detected translation errors with details
@@ -504,7 +504,7 @@ class MultilingualTools:
 
         for language, patterns in self.language_patterns.items():
             matches = 0
-            for pattern_type, pattern_words in patterns.items():
+            for _pattern_type, pattern_words in patterns.items():
                 for word in words:
                     if word in pattern_words:
                         matches += 1
@@ -514,8 +514,7 @@ class MultilingualTools:
         if detected:
             total_detected = sum(detected.values())
             return {lang: count / total_detected for lang, count in detected.items()}
-        else:
-            return {"unknown": 1.0}
+        return {"unknown": 1.0}
 
     def _analyze_code_switching(self, text: str, primary_language: str) -> List[Dict[str, Any]]:
         """Analyze code-switching patterns in text.
@@ -537,7 +536,7 @@ class MultilingualTools:
             word_lower = word.lower().strip(".,!?")
             detected_lang = self._detect_word_language(word_lower)
 
-            if detected_lang != current_lang and detected_lang != "unknown":
+            if detected_lang not in (current_lang, "unknown"):
                 switches.append(
                     {
                         "position": i,
@@ -566,12 +565,12 @@ class MultilingualTools:
                     return language
         return "unknown"
 
-    def _classify_language_mixing(self, switches: List[Dict], primary_lang: str) -> Dict[str, Any]:
+    def _classify_language_mixing(self, switches: List[Dict], _primary_lang: str) -> Dict[str, Any]:
         """Classify types of language mixing.
 
         Args:
             switches: List of code-switching instances
-            primary_lang: Primary language for classification
+            _primary_lang: Primary language for classification
 
         Returns:
             Dictionary containing mixing classification details
@@ -673,13 +672,13 @@ class MultilingualTools:
 
         return recommendations
 
-    def _generate_consistency_recommendations(self, consistency: float, metrics: Dict, comparisons: Dict) -> List[str]:
+    def _generate_consistency_recommendations(self, consistency: float, metrics: Dict, _comparisons: Dict) -> List[str]:
         """Generate recommendations for improving cross-lingual consistency.
 
         Args:
             consistency: Overall consistency score
             metrics: Consistency metrics by type
-            comparisons: Cross-lingual comparison results
+            _comparisons: Cross-lingual comparison results
 
         Returns:
             List of recommendation strings
@@ -745,16 +744,16 @@ class MultilingualTools:
         return recommendations
 
     # Additional placeholder methods for complex operations
-    async def _compare_cross_lingual_texts(self, base: str, target: str, base_lang: str, target_lang: str, metrics: List[str], judge_model: str) -> Dict[str, Any]:
+    async def _compare_cross_lingual_texts(self, _base: str, _target: str, base_lang: str, target_lang: str, metrics: List[str], _judge_model: str) -> Dict[str, Any]:
         """Compare texts across languages for consistency.
 
         Args:
-            base: Base text in base language
-            target: Target text in target language
+            _base: Base text in base language
+            _target: Target text in target language
             base_lang: Base language code/name
             target_lang: Target language code/name
             metrics: Consistency metrics to evaluate
-            judge_model: Judge model for assessment
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing cross-lingual comparison results
@@ -769,16 +768,16 @@ class MultilingualTools:
             "languages": f"{base_lang}-{target_lang}",
         }
 
-    async def _compare_translation_pair(self, text1: str, text2: str, lang1: str, lang2: str, metrics: List[str], judge_model: str) -> Dict[str, Any]:
+    async def _compare_translation_pair(self, _text1: str, _text2: str, _lang1: str, _lang2: str, metrics: List[str], _judge_model: str) -> Dict[str, Any]:
         """Compare a pair of translations for consistency.
 
         Args:
-            text1: First translation text
-            text2: Second translation text
-            lang1: Language of first text
-            lang2: Language of second text
+            _text1: First translation text
+            _text2: Second translation text
+            _lang1: Language of first text
+            _lang2: Language of second text
             metrics: Consistency metrics to evaluate
-            judge_model: Judge model for assessment
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing translation pair comparison results
@@ -789,41 +788,41 @@ class MultilingualTools:
 
         return {"consistency_scores": consistency_scores}
 
-    async def _assess_cultural_dimension(self, text: str, culture: str, dimension: str, judge_model: str) -> float:
+    async def _assess_cultural_dimension(self, _text: str, _culture: str, _dimension: str, _judge_model: str) -> float:
         """Assess cultural adaptation for specific dimension.
 
         Args:
-            text: Text to assess for cultural adaptation
-            culture: Target culture for adaptation
-            dimension: Cultural dimension to evaluate
-            judge_model: Judge model for assessment
+            _text: Text to assess for cultural adaptation
+            _culture: Target culture for adaptation
+            _dimension: Cultural dimension to evaluate
+            _judge_model: Judge model for assessment
 
         Returns:
             Cultural adaptation score for the dimension
         """
         return 0.7  # Placeholder
 
-    async def _compare_cultural_adaptation(self, text: str, reference: str, culture: str, judge_model: str) -> Dict[str, Any]:
+    async def _compare_cultural_adaptation(self, _text: str, _reference: str, _culture: str, _judge_model: str) -> Dict[str, Any]:
         """Compare cultural adaptation with reference.
 
         Args:
-            text: Text to assess for cultural adaptation
-            reference: Reference text for comparison
-            culture: Target culture for adaptation
-            judge_model: Judge model for assessment
+            _text: Text to assess for cultural adaptation
+            _reference: Reference text for comparison
+            _culture: Target culture for adaptation
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing cultural adaptation comparison
         """
         return {"comparison_score": 0.8, "differences": []}
 
-    async def _llm_assess_language_mixing(self, text: str, expected_lang: str, judge_model: str) -> Dict[str, Any]:
+    async def _llm_assess_language_mixing(self, _text: str, _expected_lang: str, _judge_model: str) -> Dict[str, Any]:
         """LLM assessment of language mixing appropriateness.
 
         Args:
-            text: Text to assess for language mixing
-            expected_lang: Expected primary language
-            judge_model: Judge model for assessment
+            _text: Text to assess for language mixing
+            _expected_lang: Expected primary language
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing language mixing assessment

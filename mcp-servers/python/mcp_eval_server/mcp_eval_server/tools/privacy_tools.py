@@ -578,10 +578,9 @@ class PrivacyTools:
 
         if pii_type in high_risk:
             return "high"
-        elif pii_type in medium_risk:
+        if pii_type in medium_risk:
             return "medium"
-        else:
-            return "low"
+        return "low"
 
     async def _llm_pii_assessment(self, text: str, pii_types: List[str], judge_model: str) -> Dict[str, Any]:
         """Use LLM to assess PII presence.
@@ -688,13 +687,13 @@ class PrivacyTools:
         }
 
     # Placeholder implementations for complex methods
-    async def _assess_data_necessity(self, data_cat: Dict, purpose: str, judge_model: str) -> List[Dict[str, Any]]:
+    async def _assess_data_necessity(self, data_cat: Dict, _purpose: str, _judge_model: str) -> List[Dict[str, Any]]:
         """Assess if collected data is necessary for stated purpose.
 
         Args:
             data_cat: Categorized data to assess
-            purpose: Stated purpose for data collection
-            judge_model: Judge model for assessment
+            _purpose: Stated purpose for data collection
+            _judge_model: Judge model for assessment
 
         Returns:
             List of necessity assessments for each data item
@@ -712,75 +711,75 @@ class PrivacyTools:
                 )
         return assessments
 
-    async def _analyze_purpose_alignment(self, data: Dict, purpose: str, judge_model: str) -> Dict[str, Any]:
+    async def _analyze_purpose_alignment(self, _data: Dict, _purpose: str, _judge_model: str) -> Dict[str, Any]:
         """Analyze alignment between data collection and stated purpose.
 
         Args:
-            data: Collected data to analyze
-            purpose: Stated purpose for data collection
-            judge_model: Judge model for analysis
+            _data: Collected data to analyze
+            _purpose: Stated purpose for data collection
+            _judge_model: Judge model for analysis
 
         Returns:
             Purpose alignment analysis results
         """
         return {"alignment_score": 0.8, "misaligned_fields": []}
 
-    async def _analyze_consent_clarity(self, consent_text: str, judge_model: str) -> Dict[str, Any]:
+    async def _analyze_consent_clarity(self, _consent_text: str, _judge_model: str) -> Dict[str, Any]:
         """Analyze consent notice clarity.
 
         Args:
-            consent_text: Consent notice text to analyze
-            judge_model: Judge model for clarity analysis
+            _consent_text: Consent notice text to analyze
+            _judge_model: Judge model for clarity analysis
 
         Returns:
             Consent clarity analysis results
         """
         return {"clarity_score": 0.7, "readability_grade": "college"}
 
-    async def _check_standard_compliance(self, consent: str, practices: Dict, standard: str, judge_model: str) -> Dict[str, Any]:
+    async def _check_standard_compliance(self, _consent: str, _practices: Dict, _standard: str, _judge_model: str) -> Dict[str, Any]:
         """Check compliance with specific privacy standard.
 
         Args:
-            consent: Consent text to check
-            practices: Actual data practices
-            standard: Privacy standard to check against
-            judge_model: Judge model for compliance assessment
+            _consent: Consent text to check
+            _practices: Actual data practices
+            _standard: Privacy standard to check against
+            _judge_model: Judge model for compliance assessment
 
         Returns:
             Compliance assessment results
         """
         return {"compliance_score": 0.8, "violations": [], "requirements_met": []}
 
-    def _identify_consent_gaps(self, consent_text: str, practices: Dict) -> List[Dict[str, Any]]:
+    def _identify_consent_gaps(self, _consent_text: str, _practices: Dict) -> List[Dict[str, Any]]:
         """Identify gaps between consent and actual practices.
 
         Args:
-            consent_text: Consent notice text
-            practices: Actual data practices
+            _consent_text: Consent notice text
+            _practices: Actual data practices
 
         Returns:
             List of identified gaps
         """
         return []  # Simplified
 
-    async def _assess_reidentification_risk(self, original: str, anonymized: str, judge_model: str) -> Dict[str, Any]:
+    async def _assess_reidentification_risk(self, _original: str, _anonymized: str, _judge_model: str) -> Dict[str, Any]:
         """Assess risk of re-identification.
 
         Args:
-            original: Original data before anonymization
-            anonymized: Anonymized data
-            judge_model: Judge model for risk assessment
+            _original: Original data before anonymization
+            _anonymized: Anonymized data
+            _judge_model: Judge model for risk assessment
 
         Returns:
             Re-identification risk assessment
         """
         return {"risk_score": 0.2, "risk_factors": [], "confidence": 0.8}
 
-    def _detect_quasi_identifiers(self, data: str) -> List[Dict[str, Any]]:
+    def _detect_quasi_identifiers(self, _data: str) -> List[Dict[str, Any]]:
         """Detect quasi-identifiers that could enable re-identification.
 
         Args:
-            data: Data to analyze for quasi-identifiers
+            _data: Data to analyze for quasi-identifiers
 
         Returns:
             List of detected quasi-identifiers
@@ -954,53 +953,78 @@ class PrivacyTools:
 
         return recommendations
 
+    def _generate_retention_recommendations(self, compliance: float, violations: List, regulatory_compliance: Dict) -> List[str]:
+        """Generate recommendations for data retention compliance.
+
+        Args:
+            compliance: Overall compliance score
+            violations: List of retention violations
+            regulatory_compliance: Regulatory compliance results
+
+        Returns:
+            List of recommendations
+        """
+        recommendations = []
+
+        if compliance < 0.8:
+            recommendations.append("Improve data retention policy compliance")
+
+        if violations:
+            recommendations.append("Address identified retention policy violations")
+
+        low_compliance = [standard for standard, data in regulatory_compliance.items() if data["compliance_score"] < 0.7]
+        if low_compliance:
+            recommendations.append(f"Focus on retention compliance with: {', '.join(low_compliance)}")
+
+        return recommendations
+
     # Additional placeholder methods for complex operations
-    def _detect_direct_leakage(self, input_data: str, output_data: str) -> List[Dict[str, Any]]:
+    def _detect_direct_leakage(self, _input_data: str, _output_data: str) -> List[Dict[str, Any]]:
         """Detect direct data leakage.
 
         Args:
-            input_data: Input data provided to system
-            output_data: Output data generated by system
+            _input_data: Input data provided to system
+            _output_data: Output data generated by system
 
         Returns:
             List of direct leakage instances
         """
         return []
 
-    async def _detect_inference_leakage(self, input_data: str, output_data: str, judge_model: str) -> List[Dict[str, Any]]:
+    async def _detect_inference_leakage(self, _input_data: str, _output_data: str, _judge_model: str) -> List[Dict[str, Any]]:
         """Detect inference-based leakage.
 
         Args:
-            input_data: Input data provided to system
-            output_data: Output data generated by system
-            judge_model: Judge model for inference analysis
+            _input_data: Input data provided to system
+            _output_data: Output data generated by system
+            _judge_model: Judge model for inference analysis
 
         Returns:
             List of inference leakage instances
         """
         return []
 
-    def _identify_unexpected_data(self, input_data: str, output_data: str, expected_flow: Optional[Dict]) -> List[Dict[str, Any]]:
+    def _identify_unexpected_data(self, _input_data: str, _output_data: str, _expected_flow: Optional[Dict]) -> List[Dict[str, Any]]:
         """Identify unexpected data in outputs.
 
         Args:
-            input_data: Input data provided to system
-            output_data: Output data generated by system
-            expected_flow: Expected data flow rules
+            _input_data: Input data provided to system
+            _output_data: Output data generated by system
+            _expected_flow: Expected data flow rules
 
         Returns:
             List of unexpected data instances
         """
         return []
 
-    async def _llm_assess_data_leakage(self, input_data: str, output_data: str, types: List[str], judge_model: str) -> Dict[str, Any]:
+    async def _llm_assess_data_leakage(self, _input_data: str, _output_data: str, _types: List[str], _judge_model: str) -> Dict[str, Any]:
         """LLM assessment of data leakage.
 
         Args:
-            input_data: Input data provided to system
-            output_data: Output data generated by system
-            types: Types of leakage to check for
-            judge_model: Judge model for leakage assessment
+            _input_data: Input data provided to system
+            _output_data: Output data generated by system
+            _types: Types of leakage to check for
+            _judge_model: Judge model for leakage assessment
 
         Returns:
             LLM-based leakage assessment results
@@ -1032,14 +1056,14 @@ class PrivacyTools:
             "accessibility_score": max(0.0, 1.0 - (grade_level - 8) / 8),  # Lower grade = more accessible
         }
 
-    async def _assess_clarity_dimension(self, text: str, dimension: str, audience: str, judge_model: str) -> float:
+    async def _assess_clarity_dimension(self, _text: str, _dimension: str, _audience: str, _judge_model: str) -> float:
         """Assess specific clarity dimension.
 
         Args:
-            text: Text to assess
-            dimension: Clarity dimension to evaluate
-            audience: Target audience
-            judge_model: Judge model for assessment
+            _text: Text to assess
+            _dimension: Clarity dimension to evaluate
+            _audience: Target audience
+            _judge_model: Judge model for assessment
 
         Returns:
             Clarity dimension score
@@ -1065,12 +1089,12 @@ class PrivacyTools:
 
         return elements
 
-    def _identify_clarity_issues(self, text: str, audience: str) -> List[Dict[str, Any]]:
+    def _identify_clarity_issues(self, text: str, _audience: str) -> List[Dict[str, Any]]:
         """Identify clarity issues in consent text.
 
         Args:
             text: Consent text to analyze
-            audience: Target audience
+            _audience: Target audience
 
         Returns:
             List of identified clarity issues
@@ -1091,38 +1115,38 @@ class PrivacyTools:
 
         return issues
 
-    def _compare_policies_practices(self, policies: Dict, practices: Dict) -> Dict[str, Any]:
+    def _compare_policies_practices(self, _policies: Dict, _practices: Dict) -> Dict[str, Any]:
         """Compare stated policies with actual practices.
 
         Args:
-            policies: Stated retention policies
-            practices: Actual retention practices
+            _policies: Stated retention policies
+            _practices: Actual retention practices
 
         Returns:
             Policy-practice alignment analysis
         """
         return {"alignment_score": 0.8, "discrepancies": []}
 
-    def _identify_retention_violations(self, policies: Dict, practices: Dict) -> List[Dict[str, Any]]:
+    def _identify_retention_violations(self, _policies: Dict, _practices: Dict) -> List[Dict[str, Any]]:
         """Identify retention policy violations.
 
         Args:
-            policies: Stated retention policies
-            practices: Actual retention practices
+            _policies: Stated retention policies
+            _practices: Actual retention practices
 
         Returns:
             List of identified violations
         """
         return []
 
-    async def _check_retention_compliance(self, policies: Dict, practices: Dict, requirement: str, judge_model: str) -> Dict[str, Any]:
+    async def _check_retention_compliance(self, _policies: Dict, _practices: Dict, _requirement: str, _judge_model: str) -> Dict[str, Any]:
         """Check retention compliance with specific requirement.
 
         Args:
-            policies: Stated retention policies
-            practices: Actual retention practices
-            requirement: Specific regulatory requirement
-            judge_model: Judge model for compliance assessment
+            _policies: Stated retention policies
+            _practices: Actual retention practices
+            _requirement: Specific regulatory requirement
+            _judge_model: Judge model for compliance assessment
 
         Returns:
             Compliance assessment results
@@ -1155,43 +1179,43 @@ class PrivacyTools:
             "control_scores": control_scores,
         }
 
-    async def _assess_design_principle(self, description: str, controls: List, principle: str, judge_model: str) -> Dict[str, Any]:
+    async def _assess_design_principle(self, _description: str, _controls: List, _principle: str, _judge_model: str) -> Dict[str, Any]:
         """Assess implementation of privacy-by-design principle.
 
         Args:
-            description: System description
-            controls: List of privacy controls
-            principle: Privacy-by-design principle to assess
-            judge_model: Judge model for assessment
+            _description: System description
+            _controls: List of privacy controls
+            _principle: Privacy-by-design principle to assess
+            _judge_model: Judge model for assessment
 
         Returns:
             Principle implementation assessment
         """
         return {"score": 0.7, "evidence": [], "gaps": []}
 
-    async def _identify_privacy_gaps(self, description: str, controls: List, judge_model: str) -> List[Dict[str, Any]]:
+    async def _identify_privacy_gaps(self, _description: str, _controls: List, _judge_model: str) -> List[Dict[str, Any]]:
         """Identify privacy implementation gaps.
 
         Args:
-            description: System description
-            controls: List of privacy controls
-            judge_model: Judge model for gap analysis
+            _description: System description
+            _controls: List of privacy controls
+            _judge_model: Judge model for gap analysis
 
         Returns:
             List of identified privacy gaps
         """
         return []
 
-    async def _evaluate_anonymization_quality(self, original: str, anonymized: str, method: str, judge_model: str) -> Dict[str, Any]:
+    async def _evaluate_anonymization_quality(self, _original: str, _anonymized: str, _method: str, _judge_model: str) -> Dict[str, Any]:
         """Evaluate quality of anonymization.
 
         Args:
-            original: Original data before anonymization
-            anonymized: Data after anonymization
-            method: Anonymization method used
-            judge_model: Judge model for quality assessment
+            _original: Original data before anonymization
+            _anonymized: Data after anonymization
+            _method: Anonymization method used
+            _judge_model: Judge model for quality assessment
 
         Returns:
             Anonymization quality assessment
         """
-        return {"quality_score": 0.8, "method_effectiveness": method}
+        return {"quality_score": 0.8, "method_effectiveness": _method}

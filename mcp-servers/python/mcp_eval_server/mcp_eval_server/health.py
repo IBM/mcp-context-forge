@@ -49,14 +49,14 @@ class HealthCheckServer:
         self.app.router.add_get("/metrics", self._metrics_handler)
         self.app.router.add_get("/", self._root_handler)
 
-    async def _health_handler(self, request: web_request.Request) -> web_response.Response:
+    async def _health_handler(self, _request: web_request.Request) -> web_response.Response:
         """Handle health check requests.
 
         Health checks indicate if the service is alive and can handle requests.
         This should return 200 if the service is running, regardless of dependencies.
 
         Args:
-            request: HTTP request object
+            _request: HTTP request object
 
         Returns:
             HTTP response with health status
@@ -83,14 +83,14 @@ class HealthCheckServer:
 
         return web.json_response(health_data, status=200)
 
-    async def _readiness_handler(self, request: web_request.Request) -> web_response.Response:
+    async def _readiness_handler(self, _request: web_request.Request) -> web_response.Response:
         """Handle readiness check requests.
 
         Readiness checks indicate if the service is ready to handle traffic.
         This should check dependencies and return 200 only when fully operational.
 
         Args:
-            request: HTTP request object
+            _request: HTTP request object
 
         Returns:
             HTTP response with readiness status
@@ -115,11 +115,11 @@ class HealthCheckServer:
         status_code = 200 if all_ready else 503
         return web.json_response(readiness_data, status=status_code)
 
-    async def _metrics_handler(self, request: web_request.Request) -> web_response.Response:
+    async def _metrics_handler(self, _request: web_request.Request) -> web_response.Response:
         """Handle metrics requests for monitoring.
 
         Args:
-            request: HTTP request object
+            _request: HTTP request object
 
         Returns:
             HTTP response with basic metrics
@@ -137,11 +137,11 @@ class HealthCheckServer:
 
         return web.json_response(metrics_data, status=200)
 
-    async def _root_handler(self, request: web_request.Request) -> web_response.Response:
+    async def _root_handler(self, _request: web_request.Request) -> web_response.Response:
         """Handle root requests - provide service info.
 
         Args:
-            request: HTTP request object
+            _request: HTTP request object
 
         Returns:
             HTTP response with service information
@@ -231,7 +231,7 @@ def get_health_server() -> HealthCheckServer:
     Returns:
         HealthCheckServer instance
     """
-    global _health_server
+    global _health_server  # pylint: disable=global-statement
     if _health_server is None:
         # Get port from environment variable or default to 8080
         port = int(os.getenv("HEALTH_CHECK_PORT", "8080"))
@@ -253,7 +253,7 @@ async def start_health_server() -> HealthCheckServer:
 
 async def stop_health_server() -> None:
     """Stop the health check server."""
-    global _health_server
+    global _health_server  # pylint: disable=global-statement
     if _health_server:
         await _health_server.stop()
         _health_server = None

@@ -594,11 +594,11 @@ class BiasTools:
 
         return assessments
 
-    def _analyze_group_sentiments(self, text: str, group_mentions: Dict[str, List[str]]) -> Dict[str, Any]:
+    def _analyze_group_sentiments(self, _text: str, group_mentions: Dict[str, List[str]]) -> Dict[str, Any]:
         """Analyze sentiment towards different groups.
 
         Args:
-            text: Text to analyze sentiment for
+            _text: Text to analyze sentiment for
             group_mentions: Dictionary mapping groups to their mentions in text
 
         Returns:
@@ -749,12 +749,12 @@ class BiasTools:
 
         return recommendations
 
-    def _generate_intersectional_recommendations(self, fairness: float, analyses: Dict) -> List[str]:
+    def _generate_intersectional_recommendations(self, fairness: float, _analyses: Dict) -> List[str]:
         """Generate recommendations for intersectional fairness.
 
         Args:
             fairness: Overall intersectional fairness score
-            analyses: Dictionary of intersectional group analyses
+            _analyses: Dictionary of intersectional group analyses
 
         Returns:
             List of recommendation strings
@@ -767,109 +767,109 @@ class BiasTools:
         return recommendations
 
     # Placeholder implementations for complex helper methods
-    async def _analyze_context_representation(self, text: str, groups: List[str], context: str, judge_model: str) -> Dict[str, Any]:
+    async def _analyze_context_representation(self, _text: str, _groups: List[str], context: str, _judge_model: str) -> Dict[str, Any]:
         """Analyze representation in specific contexts.
 
         Args:
-            text: Text to analyze for representation
-            groups: Groups to check representation for
+            _text: Text to analyze for representation
+            _groups: Groups to check representation for
             context: Specific context to analyze
-            judge_model: Judge model for assessment
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing context representation analysis
         """
         return {"context": context, "representation_score": 0.5}
 
-    async def _llm_equity_assessment(self, scenarios: List[Dict], attributes: List[str], judge_model: str) -> Dict[str, Any]:
+    async def _llm_equity_assessment(self, _scenarios: List[Dict], _attributes: List[str], _judge_model: str) -> Dict[str, Any]:
         """LLM assessment of outcome equity.
 
         Args:
-            scenarios: List of scenarios to assess for equity
-            attributes: Protected attributes to consider
-            judge_model: Judge model for assessment
+            _scenarios: List of scenarios to assess for equity
+            _attributes: Protected attributes to consider
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing equity assessment results
         """
         return {"equity_score": 0.5, "issues": []}
 
-    def _detect_cultural_references(self, text: str) -> List[Dict[str, Any]]:
+    def _detect_cultural_references(self, _text: str) -> List[Dict[str, Any]]:
         """Detect cultural references in text.
 
         Args:
-            text: Text to analyze for cultural references
+            _text: Text to analyze for cultural references
 
         Returns:
             List of detected cultural references with metadata
         """
         return []
 
-    def _detect_cultural_insensitivity(self, text: str) -> List[Dict[str, Any]]:
+    def _detect_cultural_insensitivity(self, _text: str) -> List[Dict[str, Any]]:
         """Detect cultural insensitivity patterns.
 
         Args:
-            text: Text to analyze for insensitivity patterns
+            _text: Text to analyze for insensitivity patterns
 
         Returns:
             List of detected insensitivity patterns with details
         """
         return []
 
-    async def _llm_cultural_assessment(self, text: str, contexts: List[str], dimensions: List[str], judge_model: str) -> Dict[str, Any]:
+    async def _llm_cultural_assessment(self, _text: str, _contexts: List[str], dimensions: List[str], _judge_model: str) -> Dict[str, Any]:
         """LLM assessment of cultural sensitivity.
 
         Args:
-            text: Text to assess for cultural sensitivity
-            contexts: Cultural contexts to consider
+            _text: Text to assess for cultural sensitivity
+            _contexts: Cultural contexts to consider
             dimensions: Sensitivity dimensions to evaluate
-            judge_model: Judge model for assessment
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing cultural assessment results
         """
         return {dim: {"score": 0.5} for dim in dimensions}
 
-    def _analyze_linguistic_features(self, text: str) -> Dict[str, Any]:
+    def _analyze_linguistic_features(self, _text: str) -> Dict[str, Any]:
         """Analyze linguistic features.
 
         Args:
-            text: Text to analyze for linguistic features
+            _text: Text to analyze for linguistic features
 
         Returns:
             Dictionary containing linguistic feature analysis
         """
         return {"formality": 0.5, "complexity": 0.5}
 
-    def _detect_linguistic_bias_patterns(self, text: str) -> List[Dict[str, Any]]:
+    def _detect_linguistic_bias_patterns(self, _text: str) -> List[Dict[str, Any]]:
         """Detect linguistic bias patterns.
 
         Args:
-            text: Text to analyze for linguistic bias patterns
+            _text: Text to analyze for linguistic bias patterns
 
         Returns:
             List of detected linguistic bias patterns
         """
         return []
 
-    async def _assess_linguistic_dimension_bias(self, text: str, dimension: str, judge_model: str) -> float:
+    async def _assess_linguistic_dimension_bias(self, _text: str, _dimension: str, _judge_model: str) -> float:
         """Assess bias in linguistic dimension.
 
         Args:
-            text: Text to assess for bias
-            dimension: Linguistic dimension to evaluate
-            judge_model: Judge model for assessment
+            _text: Text to assess for bias
+            _dimension: Linguistic dimension to evaluate
+            _judge_model: Judge model for assessment
 
         Returns:
             Bias score for the specified dimension
         """
         return 0.1
 
-    def _analyze_dialect_representation(self, text: str, variants: List[str]) -> Dict[str, Any]:
+    def _analyze_dialect_representation(self, _text: str, variants: List[str]) -> Dict[str, Any]:
         """Analyze dialect representation.
 
         Args:
-            text: Text to analyze for dialect representation
+            _text: Text to analyze for dialect representation
             variants: List of dialect variants to check
 
         Returns:
@@ -877,14 +877,14 @@ class BiasTools:
         """
         return {variant: {"score": 0.5} for variant in variants}
 
-    async def _analyze_intersectional_group(self, text: str, group: List[str], metrics: List[str], judge_model: str) -> Dict[str, Any]:
+    async def _analyze_intersectional_group(self, _text: str, _group: List[str], metrics: List[str], _judge_model: str) -> Dict[str, Any]:
         """Analyze intersectional group representation.
 
         Args:
-            text: Text to analyze for group representation
-            group: Intersectional group combination to analyze
+            _text: Text to analyze for group representation
+            _group: Intersectional group combination to analyze
             metrics: Fairness metrics to evaluate
-            judge_model: Judge model for assessment
+            _judge_model: Judge model for assessment
 
         Returns:
             Dictionary containing intersectional group analysis

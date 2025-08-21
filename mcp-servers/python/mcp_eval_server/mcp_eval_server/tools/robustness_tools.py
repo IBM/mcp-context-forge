@@ -60,7 +60,7 @@ class RobustnessTools:
         base_prompt: str,
         adversarial_inputs: List[str] = None,
         attack_types: List[str] = None,
-        target_model: str = "test_model",
+        _target_model: str = "test_model",
         judge_model: str = "gpt-4o-mini",
     ) -> Dict[str, Any]:
         """Evaluate system response to malicious prompts.
@@ -69,7 +69,7 @@ class RobustnessTools:
             base_prompt: Original prompt to test variations against
             adversarial_inputs: Custom adversarial inputs to test
             attack_types: Types of attacks to test ('prompt_injection', 'manipulation', 'social_engineering')
-            target_model: Model being tested for robustness
+            _target_model: Model being tested for robustness
             judge_model: Judge model for evaluation
 
         Returns:
@@ -423,13 +423,13 @@ class RobustnessTools:
 
         return adversarial_inputs[:50]  # Limit to manageable number
 
-    async def _test_adversarial_input(self, base_prompt: str, adversarial_input: str, judge_model: str) -> Dict[str, Any]:
+    async def _test_adversarial_input(self, _base_prompt: str, adversarial_input: str, _judge_model: str) -> Dict[str, Any]:
         """Test a single adversarial input.
 
         Args:
-            base_prompt: Original base prompt
+            _base_prompt: Original base prompt
             adversarial_input: Adversarial input to test
-            judge_model: Judge model for evaluation
+            _judge_model: Judge model for evaluation
 
         Returns:
             Dictionary containing test results for the adversarial input
@@ -594,10 +594,9 @@ class RobustnessTools:
         # Basic paraphrasing patterns
         if "is" in text:
             return text.replace("is", "can be")
-        elif "the" in text:
+        if "the" in text:
             return text.replace("the", "a")
-        else:
-            return f"In other words, {text}"
+        return f"In other words, {text}"
 
     def _change_capitalization(self, text: str) -> str:
         """Change capitalization pattern.
@@ -612,21 +611,21 @@ class RobustnessTools:
 
         if change_type == "upper":
             return text.upper()
-        elif change_type == "lower":
+        if change_type == "lower":
             return text.lower()
-        elif change_type == "title":
+        if change_type == "title":
             return text.title()
-        else:  # random
-            return "".join(c.upper() if secrets.SystemRandom().random() > 0.5 else c.lower() for c in text)
+        # random
+        return "".join(c.upper() if secrets.SystemRandom().random() > 0.5 else c.lower() for c in text)
 
-    async def _measure_response_sensitivity(self, original: str, perturbed: str, threshold: float, judge_model: str) -> Dict[str, Any]:
+    async def _measure_response_sensitivity(self, original: str, perturbed: str, threshold: float, _judge_model: str) -> Dict[str, Any]:
         """Measure sensitivity between original and perturbed responses.
 
         Args:
             original: Original input text
             perturbed: Perturbed input text
             threshold: Sensitivity threshold for analysis
-            judge_model: Judge model for evaluation
+            _judge_model: Judge model for evaluation
 
         Returns:
             Dictionary containing response sensitivity measurements
@@ -802,13 +801,13 @@ class RobustnessTools:
                 )
         return attempts
 
-    async def _test_injection_attempt(self, system_prompt: str, attempt: str, judge_model: str) -> Dict[str, Any]:
+    async def _test_injection_attempt(self, _system_prompt: str, attempt: str, _judge_model: str) -> Dict[str, Any]:
         """Test a single injection attempt.
 
         Args:
-            system_prompt: System prompt to test injection against
+            _system_prompt: System prompt to test injection against
             attempt: Injection attempt to test
-            judge_model: Judge model for evaluation
+            _judge_model: Judge model for evaluation
 
         Returns:
             Dictionary containing injection test results
@@ -824,13 +823,13 @@ class RobustnessTools:
             "indicators": injection_indicators,
         }
 
-    async def _evaluate_sample_performance(self, sample: str, metrics: List[str], judge_model: str) -> Dict[str, Any]:
+    async def _evaluate_sample_performance(self, sample: str, metrics: List[str], _judge_model: str) -> Dict[str, Any]:
         """Evaluate performance on a single sample.
 
         Args:
             sample: Sample text to evaluate performance on
             metrics: Performance metrics to evaluate
-            judge_model: Judge model for evaluation
+            _judge_model: Judge model for evaluation
 
         Returns:
             Dictionary containing sample performance evaluation
@@ -847,15 +846,15 @@ class RobustnessTools:
             "metrics": performance_metrics,
         }
 
-    async def _test_input_consistency(self, base_input: str, strength: float, metrics: List[str], trials: int, judge_model: str) -> Dict[str, Any]:
+    async def _test_input_consistency(self, base_input: str, _strength: float, metrics: List[str], trials: int, _judge_model: str) -> Dict[str, Any]:
         """Test consistency for a single input.
 
         Args:
             base_input: Base input to test consistency for
-            strength: Perturbation strength to apply
+            _strength: Perturbation strength to apply
             metrics: Consistency metrics to evaluate
             trials: Number of trials to run
-            judge_model: Judge model for evaluation
+            _judge_model: Judge model for evaluation
 
         Returns:
             Dictionary containing input consistency test results
