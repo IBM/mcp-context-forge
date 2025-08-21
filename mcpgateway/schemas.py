@@ -26,6 +26,7 @@ from enum import Enum
 import json
 import logging
 import re
+import os
 from typing import Any, Dict, List, Literal, Optional, Self, Union
 
 # Third-Party
@@ -1248,8 +1249,14 @@ class ResourceCreate(BaseModel):
                 raise ValueError("Content must be UTF-8 decodable")
         else:
             text = v
-        if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
+
+        # ALLOW HTML content if environment variable is set
+        allow_html = os.environ.get("ALLOW_HTML_CONTENT", "0") == "1"
+        if not allow_html and re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
             raise ValueError("Content contains HTML tags that may cause display issues")
+   
+        # if re.search(SecurityValidator.DANGEROUS_HTML_PATTERN, text, re.IGNORECASE):
+        #     raise ValueError("Content contains HTML tags that may cause display issues")
 
         return v
 

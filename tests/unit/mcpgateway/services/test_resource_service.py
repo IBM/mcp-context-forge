@@ -119,7 +119,42 @@ def mock_inactive_resource():
 
     return resource
 
+# Mock DB session
+class DummySession:
+    def add(self, obj): pass
+    def commit(self): pass
+    def refresh(self, obj): pass
+    def rollback(self): pass
 
+@pytest.mark.asyncio
+async def test_rate_limiting():
+    service = ResourceService()
+    db = DummySession()
+
+    resource_data = ResourceCreate(
+        uri="test://resource",
+        name="Test Resource",
+        content="Some content",
+        mime_type="text/plain"
+    )
+
+    # Clear recent_creates
+    service.recent_creates = []
+
+    # Create 3 resources within the window
+    for _ in range(service.MAX_RATE):
+        await service.register_resource(db, resource_data)
+
+    # The next create should raise a ResourceError due to rate limiting
+    with pytest.raises(ResourceError) as excinfo:
+        await service.register_resource(db, resource_data)
+    
+    assert "Rate limit exceeded" in str(excinfo.value)
+
+    # Wait until the window passes and try again
+    await asyncio.sleep(service.WINDOW + 1)
+    await service.register_resource(db, resource_data)  # Should succeed
+    
 @pytest.fixture
 def sample_resource_create():
     """Create a sample ResourceCreate object."""

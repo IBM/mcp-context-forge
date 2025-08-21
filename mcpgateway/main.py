@@ -92,7 +92,17 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.content_security import SecurityError
+from mcpgateway.services.content_security import SecurityError, ValidationError
+# Custom handler for content_security.ValidationError
+from fastapi.responses import PlainTextResponse
+
+# # Register exception handler for custom ValidationError
+# @app.exception_handler(ValidationError)
+# async def content_validation_exception_handler(_request: Request, exc: ValidationError):
+#     """Handle content security validation errors with a plain message and no traceback."""
+#     return PlainTextResponse(f"mcpgateway.services.content_security.ValidationError: {exc}", status_code=400)
+
+
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -330,6 +340,12 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
     """
     return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
+
+# Register exception handler for custom ValidationError
+@app.exception_handler(ValidationError)
+async def content_validation_exception_handler(_request: Request, exc: ValidationError):
+    """Handle content security validation errors with a plain message and no traceback."""
+    return PlainTextResponse(f"mcpgateway.services.content_security.ValidationError: {exc}", status_code=400)
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):
