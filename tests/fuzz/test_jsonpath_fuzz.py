@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Property-based fuzz testing for JSONPath processing."""
+"""Location: ./tests/fuzz/test_jsonpath_fuzz.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Property-based fuzz testing for JSONPath processing.
+"""
 from hypothesis import given, strategies as st, assume
 import pytest
 from fastapi import HTTPException

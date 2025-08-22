@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Coverage-guided fuzzing for JSON-RPC validation using Atheris."""
+"""Location: ./tests/fuzz/fuzzers/fuzz_jsonrpc.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Coverage-guided fuzzing for JSON-RPC validation using Atheris.
+"""
 import atheris
 import sys
 import json

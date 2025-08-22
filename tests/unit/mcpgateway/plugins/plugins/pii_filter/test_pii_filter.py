@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for PII Filter Plugin.
-
+"""Location: ./tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Unit tests for PII Filter Plugin.
 """
 
 # Third-Party

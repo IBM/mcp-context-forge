@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Base Transport Interface.
-
+"""Location: ./mcpgateway/transports/base.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Base Transport Interface.
 This module defines the base protocol for MCP transports.
 """
 

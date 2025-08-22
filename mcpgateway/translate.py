@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-r"""Bridges between different MCP transport protocols.
-
+'''Location: ./mcpgateway/translate.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
+r"""Bridges between different MCP transport protocols.
 This module provides bidirectional bridging between MCP servers that communicate
 via different transport protocols: stdio/JSON-RPC, HTTP/SSE, and streamable HTTP.
 It enables exposing local MCP servers over HTTP or consuming remote endpoints
@@ -108,6 +108,7 @@ Usage:
     Streamable HTTP supports both stateful (with session management) and stateless
     modes, and can return either JSON responses or SSE streams.
 """
+'''
 
 # Future
 from __future__ import annotations

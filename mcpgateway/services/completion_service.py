@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Completion Service Implementation.
-
+"""Location: ./mcpgateway/services/completion_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Completion Service Implementation.
 This module implements argument completion according to the MCP specification.
 It handles completion suggestions for prompt arguments and resource URIs.
 

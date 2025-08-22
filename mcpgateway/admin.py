@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Admin UI Routes for MCP Gateway.
-
+"""Location: ./mcpgateway/admin.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Admin UI Routes for MCP Gateway.
 This module contains all the administrative UI endpoints for the MCP Gateway.
 It provides a comprehensive interface for managing servers, tools, resources,
 prompts, gateways, and roots through RESTful API endpoints. The module handles

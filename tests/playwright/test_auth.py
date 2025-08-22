@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Authentication tests for MCP Gateway Admin UI.
-
+"""Location: ./tests/playwright/test_auth.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
+Authentication tests for MCP Gateway Admin UI.
 """
 
 # Standard

@@ -1,25 +1,21 @@
 # -*- coding: utf-8 -*-
-"""
-Full-coverage unit tests for **mcpgateway.utils.create_jwt_token**
+"""Location: ./tests/unit/mcpgateway/utils/test_create_jwt_token.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Full-coverage unit tests for **mcpgateway.utils.create_jwt_token**
 All paths are exercised, including:
 * sync core (`_create_jwt_token`) with / without ``exp`` claim
 * async wrappers (`create_jwt_token`, `get_jwt_token`)
 * helper `_decode_jwt_token`
 * CLI helpers: `_payload_from_cli`, `_parse_args`, and `main()` in both
   encode (`--pretty`) and decode (`--decode`) modes.
-
 No subprocesses - we invoke `main()` directly, patching ``sys.argv`` and
 capturing stdout with ``capsys``.
-
 Running:
-
     pytest -q --cov=mcpgateway.utils.create_jwt_token --cov-report=term-missing
-
 should show **100 %** statement coverage for the target module.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 Author: Your Name
 """
 

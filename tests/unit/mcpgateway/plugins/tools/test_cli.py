@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the mcpplugins CLI module (plugins/tools/cli.py).
-
+"""Location: ./tests/unit/mcpgateway/plugins/tools/test_cli.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
+Tests for the mcpplugins CLI module (plugins/tools/cli.py).
 """
 
 # Future

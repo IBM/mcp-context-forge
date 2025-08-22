@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Authentication verification utilities for MCP Gateway.
-
-This module provides JWT and Basic authentication verification functions
-for securing API endpoints. It supports authentication via Authorization
-headers and cookies.
-
+"""Location: ./mcpgateway/utils/verify_credentials.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Authentication verification utilities for MCP Gateway.
+This module provides JWT and Basic authentication verification functions
+for securing API endpoints. It supports authentication via Authorization
+headers and cookies.
 Examples:
     >>> from mcpgateway.utils import verify_credentials as vc
     >>> class DummySettings:

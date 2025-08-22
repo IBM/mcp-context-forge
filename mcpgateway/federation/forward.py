@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Federation Request Forwarding.
+"""Location: ./mcpgateway/federation/forward.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Federation Request Forwarding.
 
 This module implements request forwarding for federated MCP Gateways.
 It handles:

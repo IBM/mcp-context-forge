@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Plugin MCP Server.
-
+"""Location: ./mcpgateway/plugins/framework/external/mcp/server/server.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
+
+Plugin MCP Server.
          Fred Araujo
 
 Module that contains plugin MCP server code to serve external plugins.

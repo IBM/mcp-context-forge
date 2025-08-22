@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Security-focused fuzz testing for MCP Gateway."""
+"""Location: ./tests/fuzz/test_security_fuzz.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Security-focused fuzz testing for MCP Gateway.
+"""
 from hypothesis import given, strategies as st
 import pytest
 from fastapi.testclient import TestClient

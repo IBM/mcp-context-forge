@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""db_isready - Wait until the configured database is ready
+"""Location: ./mcpgateway/utils/db_isready.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+db_isready - Wait until the configured database is ready
 ==========================================================
 This helper blocks until the given database (defined by an **SQLAlchemy** URL)
 successfully answers a trivial round-trip - ``SELECT 1`` - and then returns.

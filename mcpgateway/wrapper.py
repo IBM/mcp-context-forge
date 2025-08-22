@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-MCP Gateway Wrapper.
-
+"""Location: ./mcpgateway/wrapper.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
+MCP Gateway Wrapper.
 MCP Client (stdio) <-> MCP Gateway Bridge
 
 This module implements a wrapper stdio bridge that facilitates

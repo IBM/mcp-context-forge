@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for resource hook functionality in the plugin framework."""
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_resource_hooks.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for resource hook functionality in the plugin framework.
+"""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch

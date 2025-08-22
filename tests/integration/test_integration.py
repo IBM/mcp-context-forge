@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # tests/integration/test_integration.py
-"""End-to-end happy-path integration tests for the MCP Gateway API.
-
+"""Location: ./tests/integration/test_integration.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+End-to-end happy-path integration tests for the MCP Gateway API.
 These tests exercise several endpoints together instead of in isolation:
 
 1. Create a tool ➜ create a server that references that tool.

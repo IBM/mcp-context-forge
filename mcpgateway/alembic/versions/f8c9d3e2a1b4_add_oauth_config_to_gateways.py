@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add oauth config to gateways
+"""Location: ./mcpgateway/alembic/versions/f8c9d3e2a1b4_add_oauth_config_to_gateways.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add oauth config to gateways
 
 Revision ID: f8c9d3e2a1b4
 Revises: eb17fd368f9d
 Create Date: 2024-12-20 10:00:00.000000
-
 """
 
 # Standard

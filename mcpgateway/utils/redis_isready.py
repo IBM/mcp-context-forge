@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""redis_isready - Wait until Redis is ready and accepting connections
-
+"""Location: ./mcpgateway/utils/redis_isready.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Reeve Barreto, Mihai Criveti
 
+redis_isready - Wait until Redis is ready and accepting connections
 This helper blocks until the given **Redis** server (defined by a connection URL)
 successfully responds to a `PING` command. It is intended to delay application startup until Redis is online.
 

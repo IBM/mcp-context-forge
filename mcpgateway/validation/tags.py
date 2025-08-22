@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tag validation and normalization utilities.
-
+"""Location: ./mcpgateway/validation/tags.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Tag validation and normalization utilities.
 This module provides validation and normalization for tags used across
 all MCP Gateway entities (tools, resources, prompts, servers, gateways).
 """
