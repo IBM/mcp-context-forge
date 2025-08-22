@@ -106,7 +106,7 @@ podman build -t mcp-context-forge:dev -f Containerfile .
 !!! note "Production deployments"
     Production deployments can pull the signed image directly:
     ```
-    ghcr.io/ibm/mcp-context-forge:0.5.0
+    ghcr.io/ibm/mcp-context-forge:0.6.0
     ```
 
 ---
@@ -169,8 +169,8 @@ ibmcloud is subnet-create mcp-subnet-eu-de-3 \
 ibmcloud cr login
 
 # Tag and push the image
-podman tag mcp-context-forge:dev eu.icr.io/mcp-gw/mcpgateway:0.5.0
-podman push eu.icr.io/mcp-gw/mcpgateway:0.5.0
+podman tag mcp-context-forge:dev eu.icr.io/mcp-gw/mcpgateway:0.6.0
+podman push eu.icr.io/mcp-gw/mcpgateway:0.6.0
 
 # Verify the image
 ibmcloud cr images --restrict mcp-gw
@@ -359,7 +359,7 @@ mcpContextForge:
 
   image:
     repository: eu.icr.io/mcp-gw/mcpgateway
-    tag: "0.5.0"
+    tag: "0.6.0"
     pullPolicy: IfNotPresent
 
   # Service configuration
@@ -727,11 +727,11 @@ Update the image tag in your values file and commit:
 
 ```bash
 # Update values file
-sed -i 's/tag: "0.3.0"/tag: "0.5.0"/' charts/mcp-stack/envs/iks/values.yaml
+sed -i 's/tag: "0.3.0"/tag: "0.6.0"/' charts/mcp-stack/envs/iks/values.yaml
 
 # Commit and push
 git add charts/mcp-stack/envs/iks/values.yaml
-git commit -m "Upgrade MCP Gateway to v0.5.0"
+git commit -m "Upgrade MCP Gateway to v0.6.0"
 git push
 
 # Argo CD will automatically sync the changes

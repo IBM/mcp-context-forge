@@ -18,7 +18,7 @@ docker run -d --name mcpgateway \
   -e AUTH_REQUIRED=true \
   -e DATABASE_URL=sqlite:///./mcp.db \
   --network=host \
-  ghcr.io/ibm/mcp-context-forge:0.5.0
+  ghcr.io/ibm/mcp-context-forge:0.6.0
 
 docker logs mcpgateway
 ```

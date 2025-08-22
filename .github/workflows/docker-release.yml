@@ -4,12 +4,12 @@
 #
 # This workflow re-tags a Docker image (built by a previous workflow)
 # when a GitHub Release is published, giving it a semantic version tag
-# like `v0.5.0`. It assumes the CI build has already pushed an image
+# like `v0.6.0`. It assumes the CI build has already pushed an image
 # tagged with the commit SHA, and that all checks on that commit passed.
 #
 # ➤ Trigger: Release published (e.g. from GitHub UI or `gh release` CLI)
 # ➤ Assumes: Existing image tagged with the commit SHA is available
-# ➤ Result: Image re-tagged as `ghcr.io/OWNER/REPO:v0.5.0`
+# ➤ Result: Image re-tagged as `ghcr.io/OWNER/REPO:v0.6.0`
 #
 # ======================================================================
 
@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g., v0.5.0)'
+        description: 'Release tag (e.g., v0.6.0)'
         required: true
         type: string
 

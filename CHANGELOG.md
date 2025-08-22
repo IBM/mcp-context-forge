@@ -6,18 +6,182 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
-## [Unreleased]
+## [0.6.0] - 2025-08-22 - Security, Scale & Smart Automation
+
+### Overview
+
+This major release focuses on **Security, Scale & Smart Automation** with **118 commits** and **50+ issues resolved**, bringing significant improvements across multiple domains:
+
+- **🔌 Plugin Framework** - Comprehensive plugin system with pre/post hooks for extensible gateway capabilities
+- **🤖 A2A (Agent-to-Agent) Support** - Full integration for external AI agents (OpenAI, Anthropic, custom agents)
+- **📊 OpenTelemetry Observability** - Vendor-agnostic observability with Phoenix integration and comprehensive metrics
+- **🔄 Bulk Import System** - Enterprise-grade bulk tool import with 200-tool capacity and rate limiting
+- **🔐 Enhanced Security** - OAuth 2.0 support, improved headers, well-known URI handlers, and security validation
+- **⚡ Performance & Scale** - Streamable HTTP improvements, better caching, connection optimizations
+- **🛠️ Developer Experience** - Enhanced UI/UX, better error handling, tool annotations, mutation testing
 
 ### Added
 
-#### **Admin UI Log Viewer** (#138)
-* **Real-time log monitoring** - Built-in log viewer in Admin UI with live streaming via Server-Sent Events
-* **Advanced filtering** - Filter by log level, entity type, time range, and full-text search
-* **Export capabilities** - Export filtered logs to JSON or CSV format
-* **In-memory buffer** - Configurable circular buffer (default 1MB) with automatic size-based eviction
-* **Color-coded severity** - Visual indicators for debug, info, warning, error, and critical levels
-* **API endpoints** - REST API for programmatic access to logs, streaming, and export
-* **Request tracing** - Track logs by request ID for debugging distributed operations
+#### **🔌 Plugin Framework & Extensibility** (#319, #313)
+* **Comprehensive Plugin System** - Full plugin framework with manifest-based configuration
+* **Pre/Post Request Hooks** - Plugin hooks for request/response interception and modification
+* **Tool Invocation Hooks** (#682) - `tool_pre_invoke` and `tool_post_invoke` plugin hooks
+* **Plugin CLI Tools** (#720) - Command-line interface for authoring and packaging plugins
+* **Phoenix Observability Plugin** (#727) - Built-in Phoenix integration for observability
+* **External Plugin Support** (#773) - Support for loading external plugins with configuration management
+
+#### **🤖 A2A (Agent-to-Agent) Integration** (#298, #792)
+* **Multi-Agent Support** - Integration for OpenAI, Anthropic, and custom AI agents
+* **Agent as Tools** - A2A agents automatically exposed as tools within virtual servers
+* **Protocol Versioning** - A2A protocol version support for compatibility
+* **Authentication Support** - Flexible auth types (API key, OAuth, bearer tokens) for agents
+* **Metrics & Monitoring** - Comprehensive metrics collection for agent interactions
+* **Admin UI Integration** - Dedicated A2A management tab in admin interface
+
+#### **📊 OpenTelemetry Observability** (#735)
+* **Vendor-Agnostic Observability** - Full OpenTelemetry instrumentation across the gateway
+* **Phoenix Integration** (#727) - Built-in Phoenix observability plugin for ML monitoring
+* **Distributed Tracing** - Request tracing across federated gateways and MCP servers
+* **Metrics Export** - Comprehensive metrics export to OTLP-compatible backends
+* **Performance Monitoring** - Detailed performance metrics for tools, resources, and agents
+
+#### **🔄 Bulk Operations & Scale**
+* **Bulk Tool Import** (#737, #798) - Enterprise-grade bulk import with 200-tool capacity
+* **Rate Limiting** - Built-in rate limiting for bulk operations (10 requests/minute)
+* **Batch Processing** - Efficient batch processing with progress tracking
+* **Import Validation** - Comprehensive validation during bulk import operations
+* **Export Capabilities** (#186, #185) - Granular configuration export/import via UI & API
+
+#### **🔐 Security Enhancements**
+* **OAuth 2.0 Support** (#799) - OAuth authentication support in gateway edit functionality
+* **Well-Known URI Handler** (#540) - Configurable handlers for security.txt, robots.txt
+* **Enhanced Security Headers** (#533, #344) - Additional configurable security headers for Admin UI
+* **Header Passthrough Security** (#685) - Improved security for HTTP header passthrough
+* **Bearer Token Removal Option** (#705) - Option to completely disable bearer token authentication
+
+#### **💾 Admin UI Log Viewer** (#138, #364)
+* **Real-time Log Monitoring** - Built-in log viewer with live streaming via Server-Sent Events
+* **Advanced Filtering** - Filter by log level, entity type, time range, and full-text search
+* **Export Capabilities** - Export filtered logs to JSON or CSV format
+* **In-memory Buffer** - Configurable circular buffer (1MB default) with size-based eviction
+* **Color-coded Severity** - Visual indicators for debug, info, warning, error, critical levels
+* **Request Tracing** - Track logs by request ID for debugging distributed operations
+
+#### **🏷️ Tagging & Metadata System** (#586)
+* **Comprehensive Tag Support** - Tags for tools, resources, prompts, gateways, and A2A agents
+* **Tag-based Filtering** - Filter and search by tags across all entities
+* **Tag Validation** - Input validation and editing support for tags
+* **Metadata Tracking** (#137) - Creator and timestamp metadata for servers, tools, resources
+
+#### **🔄 MCP Protocol Enhancements**
+* **MCP Elicitation Support** (#708) - Implementation of MCP elicitation protocol (v2025-06-18)
+* **Streamable HTTP Virtual Server Support** (#320) - Full virtual server support for Streamable HTTP
+* **SSE Keepalive Configuration** (#690) - Configurable keepalive events for SSE transport
+* **Enhanced Tool Annotations** (#774) - Fixed and improved tool annotation system
+
+#### **🚀 Performance & Infrastructure**
+* **Mutation Testing** (#280, #256) - Comprehensive mutation testing with mutmut for test quality
+* **Async Performance Testing** (#254) - Async code testing and performance profiling
+* **Database Caching Improvements** (#794) - Enhanced caching with database as cache type
+* **Connection Optimizations** (#787) - Improved connection handling and authentication decoding
+
+### Fixed
+
+#### **🐛 Critical Bug Fixes**
+* **Virtual Server Functionality** (#704) - Fixed virtual servers not working as advertised in v0.5.0
+* **Tool Invocation Errors** (#753, #696) - Fixed tool invocation returning 'Invalid method' errors
+* **Streamable HTTP Issues** (#728, #560) - Fixed translation feature connection and tool listing issues
+* **Database Migration** (#661, #478, #479) - Fixed database migration issues during doctest execution
+* **Resource & Prompt Loading** (#716, #393) - Fixed resources and prompts not displaying in Admin Dashboard
+
+#### **🔧 Tool & Gateway Management**
+* **Tool Edit Screen Issues** (#715, #786) - Fixed field mismatch and MCP tool validation errors
+* **Duplicate Gateway Registration** (#649) - Fixed bypassing of uniqueness check for equivalent URLs
+* **Gateway Registration Failures** (#646) - Fixed MCP Server/Federated Gateway registration issues
+* **Tool Description Display** (#557) - Fixed cleanup of tool descriptions (newline removal, text truncation)
+
+#### **🚦 Connection & Transport Issues**
+* **DNS Resolution Issues** (#744) - Fixed gateway failures with CDNs/load balancers
+* **Docker Container Issues** (#560) - Fixed tool listing when running inside Docker
+* **Connection Authentication** - Fixed auth header issues and connection reliability
+* **Session Management** (#518) - Fixed Redis runtime errors with multiple sessions
+
+#### **🖥️ UI/UX Improvements**
+* **Tool Annotations Display** (#774) - Fixed annotations not working with improved specificity
+* **Escape Key Handler** (#802) - Added event handler for escape key functionality
+* **Content Validation** (#436) - Fixed content length verification when headers absent
+* **Resource MIME Types** (#520) - Fixed resource mime-type always storing as text/plain
+
+### Changed
+
+#### **🔄 Architecture & Protocol Updates**
+* **Wrapper Functionality** (#779, #780) - Major redesign of wrapper functionality for performance
+* **Integration Type Migration** (#452) - Removed "Integration Type: MCP", now supports only REST
+* **Transport Protocol Updates** - Enhanced Streamable HTTP support with virtual servers
+* **Plugin Configuration** - New plugin configuration system with enabled/disabled flags (#679)
+
+#### **📊 Metrics & Monitoring Enhancements** (#368)
+* **Enhanced Metrics Tab UI** - Virtual servers and top 5 performance tables
+* **Comprehensive Metrics Collection** - Improved metrics for A2A agents, plugins, and tools
+* **Performance Monitoring** - Better performance tracking across all system components
+
+#### **🔧 Developer Experience Improvements**
+* **Enhanced Error Messages** (#666, #672) - Improved error handling throughout main.py and frontend
+* **Better Validation** (#694) - Enhanced validation for gateway creation and all endpoints
+* **Documentation Updates** - Improved plugin development workflow and architecture documentation
+
+#### **⚙️ Configuration & Environment**
+* **Plugin Configuration** - New `plugins/config.yaml` system with enable/disable flags
+* **A2A Configuration** - Comprehensive A2A configuration options with feature flags
+* **Security Configuration** - Enhanced security configuration validation and startup checks
+
+### Security
+
+* **OAuth 2.0 Integration** - Secure OAuth authentication flow support
+* **Enhanced Header Security** - Improved HTTP header passthrough with security validation
+* **Well-Known URI Security** - Secure implementation of security.txt and robots.txt handlers
+* **Plugin Security Model** - Secure plugin loading with manifest validation
+* **A2A Security** - Encrypted credential storage for A2A agent authentication
+
+### Infrastructure & DevOps
+
+* **Comprehensive Testing** - Mutation testing, fuzz testing, async performance testing
+* **Enhanced CI/CD** - Improved build processes with better error handling
+* **Plugin Development Tools** - CLI tools for plugin authoring and packaging
+* **Observability Integration** - Full OpenTelemetry and Phoenix integration
+
+### Performance
+
+* **Bulk Import Optimization** - Efficient batch processing for large-scale tool imports
+* **Database Caching** - Enhanced caching strategies with database-backed cache
+* **Connection Pool Management** - Optimized connection handling for better performance
+* **Async Processing** - Improved async handling throughout the system
+
+---
+
+### 🌟 Release Contributors
+
+This release represents a major milestone in MCP Gateway's evolution toward enterprise-grade security, scale, and intelligent automation. With contributions from developers worldwide, 0.6.0 delivers groundbreaking features including a comprehensive plugin framework, A2A agent integration, and advanced observability.
+
+#### 🏆 Top Contributors in 0.6.0
+- **Mihai Criveti** (@crivetimihai) - Release coordination, A2A architecture, plugin framework, OpenTelemetry integration, and comprehensive testing infrastructure
+- **Manav Gupta** (@manavg) - Transport-translation enhancements, MCP eval server, reverse proxy implementation, and protocol optimizations
+- **Madhav Kandukuri** (@madhav165) - Tool service refactoring, database optimizations, UI improvements, and performance enhancements
+- **Keval Mahajan** (@kevalmahajan) - Plugin architecture, A2A catalog implementation, authentication improvements, and security enhancements
+
+#### 🎉 New Contributors
+Welcome to our first-time contributors who joined us in 0.6.0:
+
+- **Multiple Contributors** - Multiple contributors helped with OAuth implementation, bulk import features, UI enhancements, and bug fixes across the codebase
+- **Community Contributors** - Various developers contributed to plugin development, testing improvements, and documentation updates
+
+#### 💪 Returning Contributors
+Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+
+- **Core Team Members** - Continued contributions to architecture, testing, documentation, and feature development
+- **Community Members** - Ongoing support with bug reports, feature requests, and code improvements
+
+This release showcases the power of open-source collaboration, bringing together expertise in AI/ML, distributed systems, security, and developer experience to create a truly enterprise-ready MCP gateway solution.
 
 ---
 

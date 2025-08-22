@@ -18,7 +18,7 @@ export COMPOSE_CMD="docker compose"
 ## 🐳/🦭 Build the images
 
 ```bash
-docker pull ghcr.io/ibm/mcp-context-forge:0.5.0
+docker pull ghcr.io/ibm/mcp-context-forge:0.6.0
 ```
 
 ## 🐳/🦭 Build the images (when doing local development)

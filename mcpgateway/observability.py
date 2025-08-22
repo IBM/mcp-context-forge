@@ -122,7 +122,7 @@ def init_telemetry():
         # Create resource attributes
         resource_attributes = {
             "service.name": os.getenv("OTEL_SERVICE_NAME", "mcp-gateway"),
-            "service.version": "0.5.0",
+            "service.version": "0.6.0",
             "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
         }
 
@@ -204,7 +204,7 @@ def init_telemetry():
             provider.add_span_processor(span_processor)
 
         # Get tracer
-        _TRACER = trace.get_tracer("mcp-gateway", "0.5.0", schema_url="https://opentelemetry.io/schemas/1.11.0")
+        _TRACER = trace.get_tracer("mcp-gateway", "0.6.0", schema_url="https://opentelemetry.io/schemas/1.11.0")
 
         logger.info(f"✅ OpenTelemetry initialized with {exporter_type} exporter")
         if exporter_type == "otlp":

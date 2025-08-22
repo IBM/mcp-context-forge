@@ -63,7 +63,7 @@ And is readily available as open source, published a container image and as a Py
     docker run -d --name mcpgateway \
       -p 4444:4444 \
       -e JWT_SECRET_KEY=YOUR_KEY \
-      ghcr.io/ibm/mcp-context-forge:0.5.0
+      ghcr.io/ibm/mcp-context-forge:0.6.0
     ```
 
     Please ⭐ the project on GitHub if you find this useful, it helps us grow!
@@ -80,7 +80,7 @@ And is readily available as open source, published a container image and as a Py
     docker run -d --name mcpgateway \
       -p 4444:4444 \
       -e JWT_SECRET_KEY=YOUR_KEY \
-      ghcr.io/ibm/mcp-context-forge:0.5.0
+      ghcr.io/ibm/mcp-context-forge:0.6.0
     ```
 
     **PyPI:**
@@ -107,7 +107,7 @@ And is readily available as open source, published a container image and as a Py
     docker run -d --name mcpgateway \
       -p 4444:4444 \
       -e JWT_SECRET_KEY=YOUR_KEY \
-      ghcr.io/ibm/mcp-context-forge:0.5.0
+      ghcr.io/ibm/mcp-context-forge:0.6.0
     ```
 
     **Or install via PyPI:**

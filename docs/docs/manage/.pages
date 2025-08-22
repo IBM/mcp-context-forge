@@ -11,6 +11,7 @@ nav:
   - observability.md
   - observability
   - proxy.md
+  - oauth.md
   - securing.md
   - tuning.md
   - ui-customization.md
