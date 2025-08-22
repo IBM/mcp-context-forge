@@ -557,9 +557,14 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
                     # Reconstruct docstring with preserved content
                     new_inner_content = "\n".join(new_header_lines)
                     if content_lines:
-                        new_inner_content += "\n\n" + "\n".join(content_lines).strip()
+                        content_str = "\n".join(content_lines)
+                        new_inner_content += "\n\n" + content_str
+                    
+                    # Ensure proper ending with newline before closing quotes
+                    if not new_inner_content.endswith('\n'):
+                        new_inner_content += '\n'
 
-                    new_docstring = f"{quotes}{new_inner_content.strip()}{quotes}"
+                    new_docstring = f"{quotes}{new_inner_content}{quotes}"
 
                     # Prepare source with appropriate headers
                     header_lines = []
