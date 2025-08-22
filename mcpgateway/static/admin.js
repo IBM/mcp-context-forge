@@ -7350,12 +7350,12 @@ function generateConfig(server, configType) {
         case "stdio":
             return {
                 mcpServers: {
-                    [cleanServerName]: {
+                    "mcpgateway-wrapper": {
                         command: "python",
                         args: ["-m", "mcpgateway.wrapper"],
                         env: {
-                            MCP_AUTH: "your-token-here",
-                            MCP_SERVER_URL: `${baseUrl}/servers/${server.id}/mcp`,
+                            MCP_AUTH_TOKEN: "your-token-here",
+                            MCP_SERVER_CATALOG_URLS: `${baseUrl}/servers/${server.id}`,
                             MCP_TOOL_CALL_TIMEOUT: "120",
                         },
                     },
@@ -7364,7 +7364,7 @@ function generateConfig(server, configType) {
 
         case "sse":
             return {
-                mcpServers: {
+                servers: {
                     [cleanServerName]: {
                         type: "sse",
                         url: `${baseUrl}/servers/${server.id}/sse`,
@@ -7377,10 +7377,10 @@ function generateConfig(server, configType) {
 
         case "http":
             return {
-                mcpServers: {
+                servers: {
                     [cleanServerName]: {
                         type: "http",
-                        url: `${baseUrl}/servers/${server.id}`,
+                        url: `${baseUrl}/servers/${server.id}/mcp`,
                         headers: {
                             Authorization: "Bearer your-token-here",
                         },
