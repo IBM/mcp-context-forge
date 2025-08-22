@@ -141,7 +141,7 @@ By default, access tokens are fetched on-demand and not persisted. The Authoriza
 - Auto-refresh using refresh tokens when near expiry
 - Encrypt tokens at rest using `AUTH_ENCRYPTION_SECRET`
 
-If enabled in future releases, you will be able to toggle token storage and auto-refresh in the gateway’s OAuth settings. See oauth-authorization-code-ui-design.md.
+If enabled in future releases, you will be able to toggle token storage and auto-refresh in the gateway's OAuth settings. See oauth-authorization-code-ui-design.md.
 
 ---
 
@@ -189,4 +189,3 @@ See also: [securing.md](./securing.md) for general hardening guidance and [proxy
 - Can I use PKCE? Not yet; planned as a future enhancement.
 - Can I configure per-tool OAuth? Roadmap considers multiple OAuth configs per tool; current design is per-gateway.
 - Do you cache tokens? Default is no caching; tokens are fetched per operation. Optional storage/refresh is planned per the UI design.
-
