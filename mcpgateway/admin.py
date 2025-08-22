@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.middleware.rate_limiter import content_rate_limiter
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -1508,7 +1509,16 @@ async def admin_ui(
         True
         >>>
         >>> # Test with populated data (mocking a few items)
-        >>> mock_server = ServerRead(id="s1", name="S1", description="d", created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), is_active=True, associated_tools=[], associated_resources=[], associated_prompts=[], icon="i", metrics=ServerMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0, last_execution_time=None))
+        >>> mock_server = ServerRead(
+        ...     id="s1", name="S1", description="d", created_at=datetime.now(timezone.utc),
+        ...     updated_at=datetime.now(timezone.utc), is_active=True, associated_tools=[],
+        ...     associated_resources=[], associated_prompts=[], icon="i",
+        ...     metrics=ServerMetrics(
+        ...         total_executions=0, successful_executions=0, failed_executions=0,
+        ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
+        ...         avg_response_time=0.0, last_execution_time=None
+        ...     )
+        ... )
         >>> mock_tool = ToolRead(
         ...     id="t1", name="T1", original_name="T1", url="http://t1.com", description="d",
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
@@ -2611,7 +2621,10 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         True
         >>>
         >>> # Error path: Gateway connection error
-        >>> form_data_conn_error = FormData([("name", "Bad Gateway"), ("url", "http://bad.com"), ("auth_type", "bearer"), ("auth_token", "abc")]) # Added auth_type and token
+        >>> form_data_conn_error = FormData([
+        ...     ("name", "Bad Gateway"), ("url", "http://bad.com"),
+        ...     ("auth_type", "bearer"), ("auth_token", "abc")
+        ... ])  # Added auth_type and token
         >>> mock_request_conn_error = MagicMock(spec=Request)
         >>> mock_request_conn_error.form = AsyncMock(return_value=form_data_conn_error)
         >>> gateway_service.register_gateway = AsyncMock(side_effect=GatewayConnectionError("Connection failed"))
@@ -2624,7 +2637,10 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         True
         >>>
         >>> # Error path: Validation error (e.g., missing name)
-        >>> form_data_validation_error = FormData([("url", "http://no-name.com"), ("auth_type", "headers"), ("auth_header_key", "X-Key"), ("auth_header_value", "val")]) # 'name' is missing, added auth_type
+        >>> form_data_validation_error = FormData([
+        ...     ("url", "http://no-name.com"), ("auth_type", "headers"),
+        ...     ("auth_header_key", "X-Key"), ("auth_header_value", "val")
+        ... ])  # 'name' is missing, added auth_type
         >>> mock_request_validation_error = MagicMock(spec=Request)
         >>> mock_request_validation_error.form = AsyncMock(return_value=form_data_validation_error)
         >>> # No need to mock register_gateway, ValidationError happens during GatewayCreate()
@@ -4226,6 +4242,20 @@ async def get_aggregated_metrics(
         },
     }
     return metrics
+
+
+@admin_router.post("/rate-limiter/reset")
+async def admin_reset_rate_limiter(_user: str = Depends(require_auth)) -> JSONResponse:
+    """Reset the rate limiter state.
+
+    Args:
+        _user: Authenticated user dependency (unused but required for auth).
+
+    Returns:
+        JSONResponse: Success message indicating rate limiter was reset.
+    """
+    await content_rate_limiter.reset()
+    return JSONResponse(content={"message": "Rate limiter reset successfully", "success": True}, status_code=200)
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])

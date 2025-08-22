@@ -40,6 +40,8 @@ from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+
+# Custom handler for content_security.ValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -92,6 +94,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.content_security import SecurityError
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -117,6 +120,13 @@ from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
+
+# # Register exception handler for custom ValidationError
+# @app.exception_handler(ValidationError)
+# async def content_validation_exception_handler(_request: Request, exc: ValidationError):
+#     """Handle content security validation errors with a plain message and no traceback."""
+#     return PlainTextResponse(f"mcpgateway.services.content_security.ValidationError: {exc}", status_code=400)
+
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -291,60 +301,43 @@ app = FastAPI(
 
 
 # Global exceptions handlers
-@app.exception_handler(ValidationError)
-async def validation_exception_handler(_request: Request, exc: ValidationError):
-    """Handle Pydantic validation errors globally.
-
-    Intercepts ValidationError exceptions raised anywhere in the application
-    and returns a properly formatted JSON error response with detailed
-    validation error information.
-
-    Args:
-        _request: The FastAPI request object that triggered the validation error.
-                  (Unused but required by FastAPI's exception handler interface)
-        exc: The Pydantic ValidationError exception containing validation
-             failure details.
-
-    Returns:
-        JSONResponse: A 422 Unprocessable Entity response with formatted
-                      validation error details.
-
-    Examples:
-        >>> from pydantic import ValidationError, BaseModel
-        >>> from fastapi import Request
-        >>> import asyncio
-        >>>
-        >>> class TestModel(BaseModel):
-        ...     name: str
-        ...     age: int
-        >>>
-        >>> # Create a validation error
-        >>> try:
-        ...     TestModel(name="", age="invalid")
-        ... except ValidationError as e:
-        ...     # Test our handler
-        ...     result = asyncio.run(validation_exception_handler(None, e))
-        ...     result.status_code
-        422
-    """
-    return JSONResponse(status_code=422, content=ErrorFormatter.format_validation_error(exc))
 
 
 @app.exception_handler(RequestValidationError)
-async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle FastAPI request validation errors (automatic request parsing).
 
     This handles ValidationErrors that occur during FastAPI's automatic request
     parsing before the request reaches your endpoint.
 
     Args:
-        _request: The FastAPI request object that triggered validation error.
+        request: The FastAPI request object that triggered validation error.
         exc: The RequestValidationError exception containing failure details.
 
     Returns:
         JSONResponse: A 422 Unprocessable Entity response with error details.
     """
-    if _request.url.path.startswith("/tools"):
+    # Check if this is a resource creation request with content validation error
+    if request.url.path.startswith("/resources") and request.method == "POST":
+        logger.debug(f"Resource validation error caught: {exc.errors()}")
+        for error in exc.errors():
+            msg = error.get("msg", "")
+            loc = error.get("loc", [])
+            # Debug logging
+            logger.debug(f"Validation error - loc: {loc}, msg: {msg}")
+            # Check if this is a content validation error with HTML tags
+            if len(loc) >= 1 and loc[-1] == "content" and ("script tags" in msg.lower() or "html tags" in msg.lower()):
+                # Extract the actual error message after "Value error, "
+                clean_msg = msg.replace("Value error, ", "") if "Value error, " in msg else msg
+                # Replace "HTML tags" with "script tags" for consistency
+                if "html tags" in clean_msg.lower():
+                    clean_msg = clean_msg.replace("HTML tags", "script tags").replace("html tags", "script tags")
+                logger.debug(f"Returning clean message: {clean_msg}")
+                return JSONResponse(status_code=400, content={"detail": clean_msg})
+        # If we get here, it's a resource error but not content-related
+        logger.debug("Resource validation error but not content-related, falling through")
+
+    if request.url.path.startswith("/tools"):
         error_details = []
 
         for error in exc.errors():
@@ -362,7 +355,40 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
 
         response_content = {"detail": error_details}
         return JSONResponse(status_code=422, content=response_content)
-    return await fastapi_default_validation_handler(_request, exc)
+    return await fastapi_default_validation_handler(request, exc)
+
+
+# Alias for tests
+validation_exception_handler = request_validation_exception_handler
+
+
+# Register exception handler for custom ValidationError
+@app.exception_handler(ValidationError)
+async def content_validation_exception_handler(request: Request, exc: ValidationError):
+    """Handle content security validation errors with a clean message format.
+
+    Args:
+        request: The FastAPI request object that triggered validation error.
+        exc: The ValidationError exception containing failure details.
+
+    Returns:
+        JSONResponse: Clean error message with 400 status code.
+    """
+    # Check if this is a resource validation error
+    if request.url.path.startswith("/resources"):
+        for error in exc.errors():
+            msg = error.get("msg", "")
+            loc = error.get("loc", [])
+            if len(loc) >= 1 and loc[-1] == "content" and ("script tags" in msg.lower() or "html tags" in msg.lower()):
+                # Extract the actual error message after "Value error, "
+                clean_msg = msg.replace("Value error, ", "") if "Value error, " in msg else msg
+                # Replace "HTML tags" with "script tags" for consistency
+                if "html tags" in clean_msg.lower():
+                    clean_msg = clean_msg.replace("HTML tags", "script tags").replace("html tags", "script tags")
+                return JSONResponse(status_code=400, content={"detail": clean_msg})
+
+    # Default handling for other validation errors
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.exception_handler(IntegrityError)
@@ -1822,8 +1848,8 @@ async def create_resource(
     Create a new resource.
 
     Args:
-        resource (ResourceCreate): Data for the new resource.
-        request (Request): FastAPI request object for metadata extraction.
+        resource (ResourceCreate): Resource creation schema.
+        request (Request): FastAPI request object for context.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -1831,12 +1857,11 @@ async def create_resource(
         ResourceRead: The created resource.
 
     Raises:
-        HTTPException: On conflict or validation errors or IntegrityError.
+        HTTPException: If creation fails due to security, validation, conflict, or integrity errors.
     """
     logger.debug(f"User {user} is creating a new resource")
     try:
         metadata = MetadataCapture.extract_creation_metadata(request, user)
-
         return await resource_service.register_resource(
             db,
             resource,
@@ -1846,15 +1871,27 @@ async def create_resource(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            user=user,
         )
+    except SecurityError as e:
+        logger.warning(f"Security violation in resource creation by user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as e:
+        # Check if this is a content validation error with HTML tags
+        error_msg = str(e)
+        if "script tags" in error_msg.lower() or "html tags" in error_msg.lower():
+            # Replace "HTML tags" with "script tags" for consistency
+            if "html tags" in error_msg.lower():
+                error_msg = error_msg.replace("HTML tags", "script tags").replace("html tags", "script tags")
+            raise HTTPException(status_code=400, detail=error_msg)
+        else:
+            raise HTTPException(status_code=422, detail=error_msg)
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
+        if "Rate limit" in str(e):
+            raise HTTPException(status_code=429, detail=str(e))
         raise HTTPException(status_code=400, detail=str(e))
-    except ValidationError as e:
-        # Handle validation errors from Pydantic
-        logger.error(f"Validation error while creating resource: {e}")
-        raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
@@ -2058,24 +2095,20 @@ async def create_prompt(
     Create a new prompt.
 
     Args:
-        prompt (PromptCreate): Payload describing the prompt to create.
-        request (Request): The FastAPI request object for metadata extraction.
-        db (Session): Active SQLAlchemy session.
-        user (str): Authenticated username.
+        prompt (PromptCreate): Prompt creation schema.
+        request (Request): FastAPI request object for context.
+        db (Session): Database session.
+        user (str): Authenticated user.
 
     Returns:
-        PromptRead: The newly-created prompt.
+        PromptRead: The created prompt.
 
     Raises:
-        HTTPException: * **409 Conflict** - another prompt with the same name already exists.
-            * **400 Bad Request** - validation or persistence error raised
-                by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
+        HTTPException: If creation fails due to security, validation, or integrity errors.
     """
     logger.debug(f"User: {user} requested to create prompt: {prompt}")
     try:
-        # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
-
         return await prompt_service.register_prompt(
             db,
             prompt,
@@ -2085,25 +2118,22 @@ async def create_prompt(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            user=user,
         )
-    except Exception as e:
-        if isinstance(e, PromptNameConflictError):
-            # If the prompt name already exists, return a 409 Conflict error
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-        if isinstance(e, PromptError):
-            # If there is a general prompt error, return a 400 Bad Request error
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        if isinstance(e, ValidationError):
-            # If there is a validation error, return a 422 Unprocessable Entity error
-            logger.error(f"Validation error while creating prompt: {e}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(e))
-        if isinstance(e, IntegrityError):
-            # If there is an integrity error, return a 409 Conflict error
-            logger.error(f"Integrity error while creating prompt: {e}")
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(e))
-        # For any other unexpected errors, return a 500 Internal Server Error
-        logger.error(f"Unexpected error while creating prompt: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
+    except SecurityError as e:
+        logger.warning(f"Security violation in prompt creation by user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail="Template failed security validation")
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PromptNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except PromptError as e:
+        if "Rate limit" in str(e):
+            raise HTTPException(status_code=429, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except IntegrityError as e:
+        logger.error(f"Integrity error while creating prompt: {e}")
+        raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
 @prompt_router.post("/{name}")

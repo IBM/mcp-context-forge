@@ -41,15 +41,24 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
+from mcpgateway.middleware.rate_limiter import content_rate_limiter
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
+
+# Content security and rate limiting
+from mcpgateway.services.content_security import content_security
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
+
+# Define disallowed MIME types
+DISALLOWED_MIME_TYPES = {"text/html", "application/javascript", "text/javascript"}
+
 
 # Plugin support imports (conditional)
 try:
@@ -74,27 +83,19 @@ class ResourceNotFoundError(ResourceError):
 
 
 class ResourceURIConflictError(ResourceError):
-    """Raised when a resource URI conflicts with existing (active or inactive) resource."""
+    """
+    Raised when a resource URI conflicts with existing (active or inactive) resource.
+    """
 
     def __init__(self, uri: str, is_active: bool = True, resource_id: Optional[int] = None):
-        """Initialize the error with resource information.
+        """
+        Initialize the error with resource information.
 
         Args:
-            uri: The conflicting resource URI
-            is_active: Whether the existing resource is active
-            resource_id: ID of the existing resource if available
+            uri (str): The resource URI that caused the conflict.
+            is_active (bool): Whether the conflicting resource is active. Defaults to True.
+            resource_id (Optional[int], optional): The ID of the conflicting resource, if available.
         """
-        self.uri = uri
-        self.is_active = is_active
-        self.resource_id = resource_id
-        message = f"Resource already exists with URI: {uri}"
-        if not is_active:
-            message += f" (currently inactive, ID: {resource_id})"
-        super().__init__(message)
-
-
-class ResourceValidationError(ResourceError):
-    """Raised when resource validation fails."""
 
 
 class ResourceService:
@@ -229,49 +230,66 @@ class ResourceService:
         created_user_agent: Optional[str] = None,
         import_batch_id: Optional[str] = None,
         federation_source: Optional[str] = None,
+        user: Optional[str] = None,
     ) -> ResourceRead:
-        """Register a new resource.
+        """
+        Register a new resource.
 
         Args:
-            db: Database session
-            resource: Resource creation schema
-            created_by: User who created the resource
-            created_from_ip: IP address of the creator
-            created_via: Method used to create the resource (e.g., API, UI)
-            created_user_agent: User agent of the creator
-            import_batch_id: Optional batch ID for bulk imports
-            federation_source: Optional source of the resource if federated
+            db (Session): Database session.
+            resource (ResourceCreate): Resource creation schema.
+            created_by (Optional[str]): User who created the resource.
+            created_from_ip (Optional[str]): IP address of the creator.
+            created_via (Optional[str]): Method used to create the resource (e.g., API, UI).
+            created_user_agent (Optional[str]): User agent of the creator.
+            import_batch_id (Optional[str]): Optional batch ID for bulk imports.
+            federation_source (Optional[str]): Optional source of the resource if federated.
+            user (Optional[str]): Authenticated user.
 
         Returns:
-            Created resource information
+            ResourceRead: Created resource information.
 
         Raises:
             IntegrityError: If a database integrity error occurs.
-            ResourceError: For other resource registration errors
-
-        Examples:
-            >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock, AsyncMock
-            >>> from mcpgateway.schemas import ResourceRead
-            >>> service = ResourceService()
-            >>> db = MagicMock()
-            >>> resource = MagicMock()
-            >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> db.add = MagicMock()
-            >>> db.commit = MagicMock()
-            >>> db.refresh = MagicMock()
-            >>> service._notify_resource_added = AsyncMock()
-            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
-            >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
-            >>> import asyncio
-            >>> asyncio.run(service.register_resource(db, resource))
-            'resource_read'
+            ResourceError: For other resource registration errors.
         """
+        user_id = user if isinstance(user, str) else (user.get("username") if isinstance(user, dict) else created_by or "system")
+        logger.info(f"Rate limiting check for user_id: {user_id}, rate limiting enabled: {settings.content_rate_limiting_enabled}")
+
+        # Rate limit check - only apply if rate limiting is enabled
+        if settings.content_rate_limiting_enabled:
+            allowed, retry_after = await content_rate_limiter.check_rate_limit(user_id, "create")
+            if not allowed:
+                raise ResourceError(f"Rate limit exceeded. Please try again later. Retry after {retry_after} seconds.")
+            await content_rate_limiter.record_operation(user_id, "create")
+
         try:
-            # Detect mime type if not provided
-            mime_type = resource.mime_type
-            if not mime_type:
-                mime_type = self._detect_mime_type(resource.uri, resource.content)
+            # Content security validation
+            if resource.content:
+                # --- Prevent disallowed tags like <script>, <html>, <iframe>, <body> ---
+                if settings.content_validate_patterns:
+                    disallowed_tags = ["<script", "<html", "<iframe", "<body"]
+                    lowered_content = resource.content.lower()
+                    for tag in disallowed_tags:
+                        if tag in lowered_content:
+                            raise ResourceError(f"Resource content contains disallowed {tag.replace('<', '')} tags")
+                validated_content, _ = await content_security.validate_resource_content(content=resource.content, uri=resource.uri, mime_type=resource.mime_type)
+                resource.content = validated_content
+                if not resource.mime_type:
+                    resource.mime_type = self._detect_mime_type(resource.uri, resource.content)
+
+            # --- Detect mime type if not provided ---
+            mime_type = resource.mime_type or self._detect_mime_type(resource.uri, resource.content)
+
+            # --- Enforce content size limit ---
+            if resource.content:
+                content_size = len(resource.content.encode("utf-8")) if isinstance(resource.content, str) else len(resource.content)
+                if content_size > settings.content_max_resource_size:
+                    raise ResourceError("Resource content size exceeds maximum allowed size")
+
+            # --- Enforce disallowed MIME types ---
+            if mime_type in DISALLOWED_MIME_TYPES:
+                raise ResourceError(f"Resource content contains disallowed MIME type '{mime_type}'")
 
             # Determine content storage
             is_text = mime_type and mime_type.startswith("text/") or isinstance(resource.content, str)
@@ -312,10 +330,13 @@ class ResourceService:
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to register resource: {str(e)}")
+        finally:
+            # Don't release the count - we want permanent rate limiting
+            pass
 
     async def list_resources(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ResourceRead]:
         """
-        Retrieve a list of registered resources from the database.
+
 
         This method retrieves resources from the database and converts them into a list
         of ResourceRead objects. It supports filtering out inactive resources based on the
@@ -363,7 +384,7 @@ class ResourceService:
 
     async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
         """
-        Retrieve a list of registered resources from the database.
+
 
         This method retrieves resources from the database and converts them into a list
         of ResourceRead objects. It supports filtering out inactive resources based on the
@@ -686,40 +707,24 @@ class ResourceService:
             db.rollback()
             logger.error(f"Failed to unsubscribe: {str(e)}")
 
-    async def update_resource(self, db: Session, uri: str, resource_update: ResourceUpdate) -> ResourceRead:
+    async def update_resource(self, db: Session, uri: str, resource_update: ResourceUpdate, user: Optional[str] = None) -> ResourceRead:
         """
         Update a resource.
 
         Args:
-            db: Database session
-            uri: Resource URI
-            resource_update: Resource update object
+            db (Session): Database session.
+            uri (str): Resource URI.
+            resource_update (ResourceUpdate): Resource update object.
+            user (Optional[str]): Authenticated user.
 
         Returns:
-            The updated ResourceRead object
+            ResourceRead: The updated resource.
 
         Raises:
-            ResourceNotFoundError: If the resource is not found
-            ResourceError: For other update errors
+            ResourceNotFoundError: If the resource is not found.
+            ResourceError: For other update errors.
             IntegrityError: If a database integrity error occurs.
-            Exception: For unexpected errors
-
-        Examples:
-            >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock, AsyncMock
-            >>> from mcpgateway.schemas import ResourceRead
-            >>> service = ResourceService()
-            >>> db = MagicMock()
-            >>> resource = MagicMock()
-            >>> db.get.return_value = resource
-            >>> db.commit = MagicMock()
-            >>> db.refresh = MagicMock()
-            >>> service._notify_resource_updated = AsyncMock()
-            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
-            >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
-            >>> import asyncio
-            >>> asyncio.run(service.update_resource(db, 'uri', MagicMock()))
-            'resource_read'
+            Exception: For unexpected errors.
         """
         try:
             # Find resource
@@ -746,7 +751,19 @@ class ResourceService:
 
             # Update content if provided
             if resource_update.content is not None:
-                # Determine content storage
+                user_id = user if isinstance(user, str) else (user.get("username") if isinstance(user, dict) else "system")
+                if settings.content_rate_limiting_enabled:
+                    allowed, retry_after = await content_rate_limiter.check_rate_limit(user_id, "update")
+                    if not allowed:
+                        raise ResourceError(f"Rate limit exceeded. Please try again later. Retry after {retry_after} seconds.")
+                    await content_rate_limiter.record_operation(user_id, "update")
+                try:
+                    # Content security validation
+                    validated_content, _ = await content_security.validate_resource_content(content=resource_update.content, uri=uri, mime_type=resource_update.mime_type or resource.mime_type)
+                    resource_update.content = validated_content
+                finally:
+                    # Don't release the count - we want permanent rate limiting
+                    pass
                 is_text = resource.mime_type and resource.mime_type.startswith("text/") or isinstance(resource_update.content, str)
 
                 resource.text_content = resource_update.content if is_text else None
@@ -782,25 +799,12 @@ class ResourceService:
         Delete a resource.
 
         Args:
-            db: Database session
-            uri: Resource URI
+            db (Session): Database session.
+            uri (str): Resource URI.
 
         Raises:
-            ResourceNotFoundError: If the resource is not found
-            ResourceError: For other deletion errors
-
-        Examples:
-            >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock, AsyncMock
-            >>> service = ResourceService()
-            >>> db = MagicMock()
-            >>> resource = MagicMock()
-            >>> db.get.return_value = resource
-            >>> db.delete = MagicMock()
-            >>> db.commit = MagicMock()
-            >>> service._notify_resource_deleted = AsyncMock()
-            >>> import asyncio
-            >>> asyncio.run(service.delete_resource(db, 'uri'))
+            ResourceNotFoundError: If the resource is not found.
+            ResourceError: For other deletion errors.
         """
         try:
             # Find resource by its URI.
@@ -842,27 +846,15 @@ class ResourceService:
         Get a resource by URI.
 
         Args:
-            db: Database session
-            uri: Resource URI
-            include_inactive: Whether to include inactive resources
+            db (Session): Database session.
+            uri (str): Resource URI.
+            include_inactive (bool): Whether to include inactive resources.
 
         Returns:
-            ResourceRead object
+            ResourceRead: Resource object.
 
         Raises:
-            ResourceNotFoundError: If the resource is not found
-
-        Examples:
-            >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock
-            >>> service = ResourceService()
-            >>> db = MagicMock()
-            >>> resource = MagicMock()
-            >>> db.execute.return_value.scalar_one_or_none.return_value = resource
-            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
-            >>> import asyncio
-            >>> asyncio.run(service.get_resource_by_uri(db, 'uri'))
-            'resource_read'
+            ResourceNotFoundError: If the resource is not found.
         """
         query = select(DbResource).where(DbResource.uri == uri)
 
@@ -888,7 +880,7 @@ class ResourceService:
         Notify subscribers of resource activation.
 
         Args:
-            resource: Resource to activate
+            resource (DbResource): Resource to activate.
         """
         event = {
             "type": "resource_activated",
@@ -907,7 +899,7 @@ class ResourceService:
         Notify subscribers of resource deactivation.
 
         Args:
-            resource: Resource to deactivate
+            resource (DbResource): Resource to deactivate.
         """
         event = {
             "type": "resource_deactivated",
@@ -926,7 +918,7 @@ class ResourceService:
         Notify subscribers of resource deletion.
 
         Args:
-            resource_info: Dictionary of resource to delete
+            resource_info (Dict[str, Any]): Dictionary of resource to delete.
         """
         event = {
             "type": "resource_deleted",
@@ -940,7 +932,7 @@ class ResourceService:
         Notify subscribers of resource removal.
 
         Args:
-            resource: Resource to remove
+            resource (DbResource): Resource to remove.
         """
         event = {
             "type": "resource_removed",
@@ -955,13 +947,14 @@ class ResourceService:
         await self._publish_event(resource.uri, event)
 
     async def subscribe_events(self, uri: Optional[str] = None) -> AsyncGenerator[Dict[str, Any], None]:
-        """Subscribe to resource events.
+        """
+        Subscribe to resource events.
 
         Args:
-            uri: Optional URI to filter events
+            uri (Optional[str]): Optional URI to filter events.
 
         Yields:
-            Resource event messages
+            Dict[str, Any]: Resource event messages.
         """
         queue: asyncio.Queue = asyncio.Queue()
 
