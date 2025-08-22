@@ -4,6 +4,11 @@
 
 ## LinkedIn Posts:
 
+!!! details "[ContextForge MCP Gateway Launch & Community Involvement (LinkedIn)](https://www.linkedin.com/posts/activity-7358919823617118209-ckeH?utm_source=share&utm_medium=member_desktop&rcm=ACoAAAAgvs4BHQK8P3ZKnbh21VUmY7RZYb12CP8)"
+
+    !!! quote "Ameed Taylor - Managing Consultant @ IBM | Date: August 7, 2025"
+        "For developers wrestling with multiple AI tool integrations, the IBM team recently launched **ContextForge MCP Gateway** as an open-source solution."
+
 !!! details "[MCP Context Forge Collaboration & Open-Source Release (LinkedIn)](https://www.linkedin.com/posts/mgupta76_github-ibmmcp-context-forge-a-model-context-activity-7340773401583632384-ZiLi)"
 
     !!! quote "Manav Gupta - Vice President & CTO, IBM Canada @ IBM | June 24, 2025"
