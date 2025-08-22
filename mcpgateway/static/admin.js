@@ -4245,10 +4245,15 @@ async function testTool(toolId) {
 
                         let input;
 
-                        if (itemTypes.includes("number") || itemTypes.includes("integer")) {
+                        if (
+                            itemTypes.includes("number") ||
+                            itemTypes.includes("integer")
+                        ) {
                             input = document.createElement("input");
                             input.type = "number";
-                            input.step = itemTypes.includes("integer") ? "1" : "any";
+                            input.step = itemTypes.includes("integer")
+                                ? "1"
+                                : "any";
                         } else if (itemTypes.includes("boolean")) {
                             const hiddenFalse = document.createElement("input");
                             hiddenFalse.type = "hidden";
@@ -4276,11 +4281,15 @@ async function testTool(toolId) {
                         }
 
                         input.name = input.name || keyValidation.value + "[]";
-                        input.required = schema.required && schema.required.includes(key);
+                        input.required =
+                            schema.required && schema.required.includes(key);
                         input.className =
                             "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
-                        if (typeof value === "string" || typeof value === "number") {
+                        if (
+                            typeof value === "string" ||
+                            typeof value === "number"
+                        ) {
                             input.value = value;
                         }
 
@@ -4345,7 +4354,8 @@ async function testTool(toolId) {
                         fieldInput.name = keyValidation.value;
                         fieldInput.value = "true";
 
-                        fieldInput.required = schema.required && schema.required.includes(key);
+                        fieldInput.required =
+                            schema.required && schema.required.includes(key);
                         fieldInput.className =
                             "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded";
 
@@ -4366,7 +4376,10 @@ async function testTool(toolId) {
                         if (prop.type === "text") {
                             fieldInput = document.createElement("textarea");
                             fieldInput.rows = 4;
-                        } else if (prop.type === "number" || prop.type === "integer") {
+                        } else if (
+                            prop.type === "number" ||
+                            prop.type === "integer"
+                        ) {
                             fieldInput = document.createElement("input");
                             fieldInput.type = "number";
                         } else {
@@ -4375,7 +4388,8 @@ async function testTool(toolId) {
                         }
 
                         fieldInput.name = keyValidation.value;
-                        fieldInput.required = schema.required && schema.required.includes(key);
+                        fieldInput.required =
+                            schema.required && schema.required.includes(key);
                         fieldInput.className =
                             "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
