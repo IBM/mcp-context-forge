@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-
+"""Location: ./tests/unit/mcpgateway/transports/test_sse_transport.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Tests for the MCP Gateway SSE transport implementation.
-
 """
 
 # Standard

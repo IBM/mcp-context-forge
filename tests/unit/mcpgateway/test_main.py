@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/unit/mcpgateway/test_main.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
@@ -70,6 +70,7 @@ MOCK_TOOL_READ = {
     "id": "1",
     "name": "test_tool",
     "originalName": "test_tool",
+    "customName": "test_tool",
     "url": "http://example.com/tools/test",
     "description": "A test tool",
     "requestType": "POST",
@@ -87,7 +88,7 @@ MOCK_TOOL_READ = {
     "executionCount": 5,
     "metrics": MOCK_METRICS,
     "gatewaySlug": "gateway-1",
-    "originalNameSlug": "test-tool",
+    "customNameSlug": "test-tool",
 }
 
 # camelCase → snake_case key map for the fields that differ
@@ -102,6 +103,7 @@ _TOOL_KEY_MAP = {
     "gatewayId": "gateway_id",
     "gatewaySlug": "gateway_slug",
     "originalNameSlug": "original_name_slug",
+    "customNameSlug": "custom_name_slug",
 }
 
 

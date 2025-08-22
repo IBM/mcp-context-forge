@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/playwright/entities/test_tools.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
 # Third-Party
 from playwright.sync_api import expect, Page
 

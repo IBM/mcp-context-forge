@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-
+"""Location: ./tests/unit/mcpgateway/plugins/framework/loader/test_plugin_loader.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor

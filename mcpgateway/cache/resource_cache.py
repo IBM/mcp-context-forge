@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Resource Cache Implementation.
-
+"""Location: ./mcpgateway/cache/resource_cache.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Resource Cache Implementation.
 This module implements a simple in-memory cache with TTL expiration for caching
 resource content in the MCP Gateway. Features:
 - TTL-based expiration

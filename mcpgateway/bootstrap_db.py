@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Database bootstrap/upgrade entry-point for MCP Gateway.
-
+"""Location: ./mcpgateway/bootstrap_db.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhav Kandukuri
 
+Database bootstrap/upgrade entry-point for MCP Gateway.
 The script:
 
 1. Creates a synchronous SQLAlchemy ``Engine`` from ``settings.database_url``.

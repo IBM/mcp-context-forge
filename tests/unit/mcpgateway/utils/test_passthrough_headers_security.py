@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Security tests for HTTP header passthrough utilities.
-
+"""Location: ./tests/unit/mcpgateway/utils/test_passthrough_headers_security.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Security tests for HTTP header passthrough utilities.
 """
 
 # Standard

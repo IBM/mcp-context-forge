@@ -1191,7 +1191,7 @@
             "tag": {
               "type": "string",
               "description": "Image tag",
-              "default": "0.5.0"
+              "default": "0.6.0"
             },
             "pullPolicy": {
               "type": "string",

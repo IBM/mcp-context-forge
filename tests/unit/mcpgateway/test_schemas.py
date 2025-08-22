@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the MCP types module.
-
+"""Location: ./tests/unit/mcpgateway/test_schemas.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Tests for the MCP types module.
 This module contains tests for the various MCP protocol type definitions
 defined in the models.py module.
 """

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""version.py - diagnostics endpoint (HTML + JSON)
-
+"""Location: ./mcpgateway/version.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+version.py - diagnostics endpoint (HTML + JSON)
 A FastAPI router that mounts at /version and returns either:
 - JSON - machine-readable diagnostics payload
 - HTML - a lightweight dashboard when the client requests text/html or ?format=html

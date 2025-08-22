@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""jwt_cli.py - generate, inspect, **and be imported** for token helpers.
-
+"""Location: ./mcpgateway/utils/create_jwt_token.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+jwt_cli.py - generate, inspect, **and be imported** for token helpers.
 * **Run as a script** - friendly CLI (works with *no* flags).
 * **Import as a library** - drop-in async functions `create_jwt_token` & `get_jwt_token`
   kept for backward-compatibility, now delegating to the shared core helper.

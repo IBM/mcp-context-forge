@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
-"""
-Full-coverage unit tests for **mcpgateway.utils.error_formatter**
-
-Running:
-
-    pytest -q --cov=mcpgateway.utils.error_formatter --cov-report=term-missing
-
-Should show **100 %** statement coverage for the target module.
-
+"""Location: ./tests/unit/mcpgateway/utils/test_error_formatter.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Full-coverage unit tests for **mcpgateway.utils.error_formatter**
+Running:
+    pytest -q --cov=mcpgateway.utils.error_formatter --cov-report=term-missing
+Should show **100 %** statement coverage for the target module.
 Author: Mihai Criveti
 """
 

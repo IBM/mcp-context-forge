@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""External plugin client which connects to a remote server through MCP.
-
+"""Location: ./mcpgateway/plugins/framework/external/mcp/client.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
+External plugin client which connects to a remote server through MCP.
 Module that contains plugin MCP client code to serve external plugins.
 """
 

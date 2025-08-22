@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""HTTP Header Passthrough Utilities.
-
+"""Location: ./mcpgateway/utils/passthrough_headers.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+HTTP Header Passthrough Utilities.
 This module provides utilities for handling HTTP header passthrough functionality
 in the MCP Gateway. It enables forwarding of specific headers from incoming
 client requests to backing MCP servers while preventing conflicts with

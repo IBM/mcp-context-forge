@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test the validators module.
-
+"""Location: ./tests/unit/mcpgateway/validation/test_validators.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test the validators module.
 Author: Madhav Kandukuri
 """
 

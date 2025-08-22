@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Gateway Schema Definitions.
-
+"""Location: ./mcpgateway/schemas.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+MCP Gateway Schema Definitions.
 This module provides Pydantic models for request/response validation in the MCP Gateway.
 It implements schemas for:
 - Tool registration and invocation
@@ -628,6 +628,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the tool")
+    custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Optional[Literal["REST", "MCP", "A2A"]] = Field(None, description="Tool integration type")
@@ -659,6 +660,19 @@ class ToolUpdate(BaseModelWithConfigDict):
     @classmethod
     def validate_name(cls, v: str) -> str:
         """Ensure tool names follow MCP naming conventions
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+        """
+        return SecurityValidator.validate_tool_name(v)
+
+    @field_validator("custom_name")
+    @classmethod
+    def validate_custom_name(cls, v: str) -> str:
+        """Ensure custom tool names follow MCP naming conventions
 
         Args:
             v (str): Value to validate
@@ -864,7 +878,8 @@ class ToolRead(BaseModelWithConfigDict):
     metrics: ToolMetrics
     name: str
     gateway_slug: str
-    original_name_slug: str
+    custom_name: str
+    custom_name_slug: str
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the tool")
 
     # Comprehensive metadata for audit tracking
@@ -2123,6 +2138,10 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the gateway")
 
     @field_validator("tags")

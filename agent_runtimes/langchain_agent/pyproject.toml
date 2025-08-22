@@ -27,93 +27,75 @@ classifiers = [
 requires-python = ">=3.10"
 
 dependencies = [
-    # Core FastAPI and Web Framework
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "python-multipart>=0.0.6",
-
-    # HTTP Client
-    "httpx>=0.25.0",
-
-    # LangChain and AI
-    "langchain>=0.1.0",
-    "langchain-core>=0.1.0",
-    "langchain-openai>=0.0.2",
-    "openai>=1.0.0",
-
-    # Data and Validation
-    "pydantic>=2.5.0",
-    "python-dotenv>=1.0.0",
-
-    # Utilities
-    "typing-extensions>=4.0.0",
+    "fastapi>=0.116.1",
+    "httpx>=0.28.1",
+    "langchain>=0.3.27",
+    "langchain-core>=0.3.74",
+    "langchain-openai>=0.3.31",
+    "openai>=1.101.0",
+    "pydantic>=2.11.7",
+    "python-dotenv>=1.1.1",
+    "python-multipart>=0.0.20",
+    "typing-extensions>=4.14.1",
+    "uvicorn[standard]>=0.35.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    # Testing
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.0.0",
-    "pytest-mock>=3.10.0",
-    "httpx>=0.25.0",  # For testing HTTP endpoints
-
-    # Code Quality
-    "ruff>=0.1.0",
-    "mypy>=1.5.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-
-    # Security
-    "bandit>=1.7.5",
-
-    # Documentation
-    "mkdocs>=1.5.0",
-    "mkdocs-material>=9.0.0",
-
-    # Development
-    "pre-commit>=3.0.0",
-    "watchdog>=3.0.0",
+    "bandit>=1.8.6",
+    "black>=25.1.0",
+    "httpx>=0.28.1",
+    "isort>=6.0.1",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.18",
+    "mypy>=1.17.1",
+    "pre-commit>=4.3.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.2.1",
+    "pytest-mock>=3.14.1",
+    "ruff>=0.12.10",
+    "watchdog>=6.0.0",
 ]
 
 test = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.0.0",
-    "pytest-mock>=3.10.0",
-    "httpx>=0.25.0",
+    "httpx>=0.28.1",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.2.1",
+    "pytest-mock>=3.14.1",
 ]
 
 lint = [
-    "ruff>=0.1.0",
-    "mypy>=1.5.0",
-    "bandit>=1.7.5",
+    "bandit>=1.8.6",
+    "mypy>=1.17.1",
+    "ruff>=0.12.10",
 ]
 
 # LLM Provider Support
 azure = [
-    "langchain-openai>=0.0.2",  # AzureChatOpenAI
+    "langchain-openai>=0.3.31",
 ]
 
 bedrock = [
-    "langchain-aws>=0.1.0",
-    "boto3>=1.34.0",
+    "boto3>=1.40.15",
+    "langchain-aws>=0.2.31",
 ]
 
 ollama = [
-    "langchain-community>=0.0.10",
+    "langchain-community>=0.3.27",
 ]
 
 anthropic = [
-    "langchain-anthropic>=0.1.0",
+    "langchain-anthropic>=0.3.19",
 ]
 
 all-providers = [
-    "langchain-openai>=0.0.2",
-    "langchain-aws>=0.1.0",
-    "langchain-community>=0.0.10",
-    "langchain-anthropic>=0.1.0",
-    "boto3>=1.34.0",
+    "boto3>=1.40.15",
+    "langchain-anthropic>=0.3.19",
+    "langchain-aws>=0.2.31",
+    "langchain-community>=0.3.27",
+    "langchain-openai>=0.3.31",
 ]
 
 [project.urls]

@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test the configuration module.
-
+"""Location: ./tests/unit/mcpgateway/test_config.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test the configuration module.
 Author: Mihai Criveti
 """
 

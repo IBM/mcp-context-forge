@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Validation Package.
-
+"""Location: ./mcpgateway/validation/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Validation Package.
 Provides validation components for the MCP Gateway including:
 - JSON-RPC request/response validation
 - Tag validation and normalization

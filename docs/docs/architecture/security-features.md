@@ -2,7 +2,7 @@
 
 **⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
 
-**Current Version: 0.5.0 (Beta)** - MCP Gateway is currently in early beta. Security features are continuously evolving toward the 1.0 release.
+**Current Version: 0.6.0 (Beta)** - MCP Gateway is currently in early beta. Security features are continuously evolving toward the 1.0 release.
 
 ## Comprehensive Security Capabilities
 
@@ -16,7 +16,7 @@
 
 * **Enterprise SSO Integration** - Support for GitHub, Google, LDAP/Active Directory identity providers ([#220](https://github.com/IBM/mcp-context-forge/issues/220), [#277](https://github.com/IBM/mcp-context-forge/issues/277), [#278](https://github.com/IBM/mcp-context-forge/issues/278), [#284](https://github.com/IBM/mcp-context-forge/issues/284))
 
-* **OAuth Integration** - Support for OAuth 2.0 for delegated access to MCP servers ([#605](https://github.com/IBM/mcp-context-forge/issues/605)) 🚧
+* **OAuth Integration** - Support for OAuth 2.0 for delegated access to MCP servers (✅ [#605](https://github.com/IBM/mcp-context-forge/issues/605))
 
 * **Per-Virtual-Server API Keys** - Scoped access control for individual virtual servers ([#282](https://github.com/IBM/mcp-context-forge/issues/282))
 
@@ -72,6 +72,8 @@
 
 * **Pre/Post Request Hooks** - Extensible plugin system for custom security policies (✅ [#319](https://github.com/IBM/mcp-context-forge/issues/319), ✅ [#682](https://github.com/IBM/mcp-context-forge/issues/682))
 
+* **Plugin CLI Tools** - Command-line interface for authoring and packaging plugins (✅ [#720](https://github.com/IBM/mcp-context-forge/issues/720))
+
 * **AI Middleware Integration** - Framework for adding LLM-based security capabilities ([#313](https://github.com/IBM/mcp-context-forge/issues/313))
 
 * **Semantic Tool Filtering** - Intelligent auto-filtering of tools based on context ([#182](https://github.com/IBM/mcp-context-forge/issues/182))
@@ -86,7 +88,9 @@
 
 * **Dual Logging Support** - Console and file outputs with rotation policies (✅ [#364](https://github.com/IBM/mcp-context-forge/issues/364))
 
-* **OpenTelemetry Integration** - OpenLLMetry for comprehensive observability ([#175](https://github.com/IBM/mcp-context-forge/issues/175))
+* **OpenTelemetry Integration** - Vendor-agnostic observability with comprehensive metrics (✅ [#735](https://github.com/IBM/mcp-context-forge/issues/735))
+
+* **Phoenix Observability Plugin** - Built-in Phoenix integration for ML monitoring (✅ [#727](https://github.com/IBM/mcp-context-forge/issues/727))
 
 * **Prometheus Metrics** - Performance and security metrics instrumentation ([#218](https://github.com/IBM/mcp-context-forge/issues/218))
 
@@ -112,9 +116,9 @@
 
 * **Input Validation Test Suite** - Comprehensive security validation tests (✅ [#552](https://github.com/IBM/mcp-context-forge/issues/552))
 
-* **Fuzz Testing** - Hypothesis, atheris, schemathesis, RESTler ([#256](https://github.com/IBM/mcp-context-forge/issues/256))
+* **Fuzz Testing** - Hypothesis, atheris, schemathesis, RESTler (✅ [#256](https://github.com/IBM/mcp-context-forge/issues/256))
 
-* **Mutation Testing** - Test quality validation with mutmut ([#280](https://github.com/IBM/mcp-context-forge/issues/280))
+* **Mutation Testing** - Test quality validation with mutmut (✅ [#280](https://github.com/IBM/mcp-context-forge/issues/280))
 
 * **Security Scanners** - Bandit, grype, nodejsscan integration ([#279](https://github.com/IBM/mcp-context-forge/issues/279), ✅ [#415](https://github.com/IBM/mcp-context-forge/issues/415), ✅ [#499](https://github.com/IBM/mcp-context-forge/issues/499))
 
@@ -135,7 +139,7 @@
   - **Static analysis compatibility** - Meta tags complement HTTP headers for nodejsscan
   - **15 configuration options** - Individual control over all security features
 
-* **Well-Known URI Handler** - security.txt and robots.txt support ([#540](https://github.com/IBM/mcp-context-forge/issues/540)) 🚧
+* **Well-Known URI Handler** - security.txt and robots.txt support (✅ [#540](https://github.com/IBM/mcp-context-forge/issues/540))
 
 * **Password Policy Engine** - Configurable password and secret policies ([#426](https://github.com/IBM/mcp-context-forge/issues/426)) 🚧
 
@@ -239,7 +243,7 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 
 ## Security Compliance & Standards
 
-### 🏆 Currently Implemented (v0.5.0)
+### 🏆 Currently Implemented (v0.6.0)
 
 * **Authentication**: JWT tokens with configurable secrets, Basic Auth support (✅ [#663](https://github.com/IBM/mcp-context-forge/issues/663), ✅ [#705](https://github.com/IBM/mcp-context-forge/issues/705))
 * **Input Validation**: Comprehensive validation across all API endpoints using Pydantic (✅ [#339](https://github.com/IBM/mcp-context-forge/issues/339), ✅ [#340](https://github.com/IBM/mcp-context-forge/issues/340))
@@ -259,19 +263,20 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 * **Secret Detection**: Gitleaks, Dodgy integration preventing credential leaks (✅ [#558](https://github.com/IBM/mcp-context-forge/issues/558))
 * **Security Headers**: HTTP header passthrough with authorization support (✅ [#685](https://github.com/IBM/mcp-context-forge/issues/685))
 * **Authentication Masking**: Auth values masked in API responses (✅ [#601](https://github.com/IBM/mcp-context-forge/issues/601), ✅ [#471](https://github.com/IBM/mcp-context-forge/issues/471), ✅ [#472](https://github.com/IBM/mcp-context-forge/issues/472))
+* **Plugin Framework**: Comprehensive plugin system with pre/post hooks and CLI tools (✅ [#319](https://github.com/IBM/mcp-context-forge/issues/319), ✅ [#682](https://github.com/IBM/mcp-context-forge/issues/682), ✅ [#720](https://github.com/IBM/mcp-context-forge/issues/720))
+* **OpenTelemetry Observability**: Vendor-agnostic observability with Phoenix integration (✅ [#735](https://github.com/IBM/mcp-context-forge/issues/735), ✅ [#727](https://github.com/IBM/mcp-context-forge/issues/727))
+* **OAuth Integration**: OAuth 2.0 authentication support for enhanced access control (✅ [#605](https://github.com/IBM/mcp-context-forge/issues/605))
+* **Well-Known URI Security**: Configurable handlers for security.txt and robots.txt (✅ [#540](https://github.com/IBM/mcp-context-forge/issues/540))
+* **Enhanced Testing**: Mutation testing, fuzz testing, and comprehensive security validation (✅ [#280](https://github.com/IBM/mcp-context-forge/issues/280), ✅ [#256](https://github.com/IBM/mcp-context-forge/issues/256))
 
 ### 🚀 Upcoming Security Enhancements
 
-**Release 0.5.0 - August 2025**
-- Enhanced authentication mechanisms
-- Configuration validation framework
-- Comprehensive audit logging
-- Security headers implementation
-
-**Release 0.6.0 - August 2025**
-- Database-backed authentication
-- Multi-layer caching security
-- Circuit breakers implementation
+**Release 0.6.0 - Completed August 2025**
+- ✅ Plugin framework with security hooks
+- ✅ OpenTelemetry observability integration
+- ✅ OAuth 2.0 authentication support
+- ✅ Well-known URI security handlers
+- ✅ Enhanced testing (mutation, fuzz testing)
 
 **Release 0.7.0 - September 2025**
 - Full RBAC implementation

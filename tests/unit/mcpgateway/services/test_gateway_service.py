@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
-"""
-Unit-tests for the GatewayService implementation.
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Unit-tests for the GatewayService implementation.
 These tests use only MagicMock / AsyncMock - no real network access
 and no real database needed.  Where the service relies on Pydantic
 models or SQLAlchemy Result objects, we monkey-patch or fake just
 enough behaviour to satisfy the code paths under test.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 """
 
 # Future

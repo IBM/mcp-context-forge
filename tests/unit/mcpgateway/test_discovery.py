@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for Federation Discovery Service.
-
+"""Location: ./tests/unit/mcpgateway/test_discovery.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Unit tests for Federation Discovery Service.
 Comprehensive unit tests for the discovery service module.
 """
 

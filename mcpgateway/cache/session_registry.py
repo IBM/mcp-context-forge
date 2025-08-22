@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Session Registry with optional distributed state.
-
+"""Location: ./mcpgateway/cache/session_registry.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Session Registry with optional distributed state.
 This module provides a registry for SSE sessions with support for distributed deployment
 using Redis or SQLAlchemy as optional backends for shared state between workers.
 

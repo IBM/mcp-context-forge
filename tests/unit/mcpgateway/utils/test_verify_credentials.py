@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for **mcpgateway.utils.verify_credentials**
-
+"""Location: ./tests/unit/mcpgateway/utils/test_verify_credentials.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for **mcpgateway.utils.verify_credentials**
 Author: Mihai Criveti
 
 Paths covered

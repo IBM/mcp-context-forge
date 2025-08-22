@@ -6,7 +6,7 @@
 
 ## ⚠️ Early Beta Software Notice
 
-**Current Version: 0.5.0 (Beta)**
+**Current Version: 0.6.0 (Beta)**
 
 MCP Gateway is currently in early beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 

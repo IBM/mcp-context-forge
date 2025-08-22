@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Gateway Resilient HTTP Client with Retry Logic.
-
+"""Location: ./mcpgateway/utils/retry_manager.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
+MCP Gateway Resilient HTTP Client with Retry Logic.
 This module provides a resilient HTTP client that automatically retries requests
 in the event of certain errors or status codes. It implements exponential backoff
 with jitter for retrying requests, making it suitable for use in environments where

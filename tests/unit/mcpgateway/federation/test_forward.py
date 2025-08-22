@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for Federation Forwarding Service.
-
+"""Location: ./tests/unit/mcpgateway/federation/test_forward.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Unit tests for Federation Forwarding Service.
 Comprehensive unit tests for the forwarding service module with full coverage.
 """
 

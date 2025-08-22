@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Resource Service Implementation.
-
+"""Location: ./mcpgateway/services/resource_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Resource Service Implementation.
 This module implements resource management according to the MCP specification.
 It handles:
 - Resource registration and retrieval
@@ -421,7 +421,7 @@ class ResourceService:
             >>> from unittest.mock import MagicMock
             >>> service = ResourceService()
             >>> db = MagicMock()
-            >>> uri = 'resource_uri'
+            >>> uri = 'http://example.com/resource.txt'
             >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock(content='test')
             >>> import asyncio
             >>> result = asyncio.run(service.read_resource(db, uri))

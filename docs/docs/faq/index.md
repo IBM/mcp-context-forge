@@ -16,7 +16,7 @@
     OCI image (Docker/Podman) - shares host network so localhost works:
 
     ```bash
-    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:0.5.0
+    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:0.6.0
     ```
 
 ???+ example "🗂️ What URLs are available for the admin interface and API docs?"
@@ -108,7 +108,7 @@
     Include a persistent volume with your container or Kubernetes deployment. Ex:
 
     ```bash
-    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:0.5.0
+    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:0.6.0
     ```
 
     For production use, we recommend PostgreSQL. A Docker Compose target with PostgreSQL and Redis is provided.

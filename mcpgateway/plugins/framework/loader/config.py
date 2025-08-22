@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Configuration loader implementation.
-
+"""Location: ./mcpgateway/plugins/framework/loader/config.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor, Mihai Criveti
 
+Configuration loader implementation.
 This module loads configurations for plugins.
 """
 

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Gateway Centralized for Pydantic validation error, SQL exception.
-
+"""Location: ./mcpgateway/utils/error_formatter.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+MCP Gateway Centralized for Pydantic validation error, SQL exception.
 This module provides centralized error formatting for the MCP Gateway,
 transforming technical Pydantic validation errors and SQLAlchemy database
 exceptions into user-friendly messages suitable for API responses.

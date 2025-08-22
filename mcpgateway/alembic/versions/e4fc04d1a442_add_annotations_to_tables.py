@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add annotations to tables
+"""Location: ./mcpgateway/alembic/versions/e4fc04d1a442_add_annotations_to_tables.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add annotations to tables
 
 Revision ID: e4fc04d1a442
 Revises: b77ca9d2de7e
 Create Date: 2025-06-27 21:45:35.099713
-
 """
 
 # Standard

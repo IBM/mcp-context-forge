@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Final push to reach 75% coverage.
-
+"""Location: ./tests/unit/mcpgateway/test_final_coverage_push.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Final push to reach 75% coverage.
 """
 
 # Standard

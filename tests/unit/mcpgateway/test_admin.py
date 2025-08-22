@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the admin module with improved coverage.
-
+"""Location: ./tests/unit/mcpgateway/test_admin.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Tests for the admin module with improved coverage.
 This module tests the admin UI routes for the MCP Gateway, ensuring
 they properly handle server, tool, resource, prompt, gateway and root management.
 Enhanced with additional test cases for better coverage.
@@ -437,7 +437,7 @@ class TestAdminToolRoutes:
         from starlette.datastructures import FormData
 
         mock_request.form = AsyncMock(
-            return_value=FormData([("name", "Tool_Name_1"), ("url", "http://example.com"), ("requestType", "GET"), ("integrationType", "REST"), ("headers", "{}"), ("input_schema", "{}")])
+            return_value=FormData([("name", "Tool_Name_1"),("customName", "Tool_Name_1"), ("url", "http://example.com"), ("requestType", "GET"), ("integrationType", "REST"), ("headers", "{}"), ("input_schema", "{}")])
         )
         mock_update_tool.side_effect = IntegrityError("Integrity constraint", {}, Exception("Duplicate key"))
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
@@ -466,6 +466,7 @@ class TestAdminToolRoutes:
         form_data = FakeForm(
             {
                 "name": "Updated_Tool",  # Valid tool name format
+                "customName": "Updated_Tool",  # Add required field for validation
                 "url": "http://updated.com",
                 "description": "",
                 "headers": "",

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""mcpgateway CLI ─ a thin wrapper around Uvicorn
-
+"""Location: ./mcpgateway/cli.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+mcpgateway CLI ─ a thin wrapper around Uvicorn
 This module is exposed as a **console-script** via:
 
     [project.scripts]

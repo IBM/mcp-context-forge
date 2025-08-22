@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Schemathesis-based API endpoint fuzzing."""
+"""Location: ./tests/fuzz/test_api_schema_fuzz.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Schemathesis-based API endpoint fuzzing.
+"""
 import pytest
 from fastapi.testclient import TestClient
 from mcpgateway.main import app

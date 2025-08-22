@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test the validators module.
-
+"""Location: ./tests/unit/mcpgateway/validation/test_validators_advanced.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test the validators module.
 Author: Mihai Criveti
 
 This module provides comprehensive tests for the SecurityValidator class,

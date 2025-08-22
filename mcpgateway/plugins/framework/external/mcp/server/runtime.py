@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Runtime MCP server for external plugins.
-
+"""Location: ./mcpgateway/plugins/framework/external/mcp/server/runtime.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
+
+Runtime MCP server for external plugins.
 """
 
 # Standard

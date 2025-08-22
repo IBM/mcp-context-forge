@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test cases for well-known URI endpoints."""
+"""Location: ./tests/unit/mcpgateway/test_well_known.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test cases for well-known URI endpoints.
+"""
 
 import json
 import pytest

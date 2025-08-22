@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-"""
-Unit-tests for PromptService.
+"""Location: ./tests/unit/mcpgateway/services/test_prompt_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Unit-tests for PromptService.
 All tests run entirely with `MagicMock` / `AsyncMock`; no live DB or Jinja
 environment is required.  Where `PromptService` returns Pydantic models we
 monkey-patch the `model_validate` method so that it simply echoes the raw
 dict we pass in - that keeps validation out of scope for these pure-unit
 tests.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Future

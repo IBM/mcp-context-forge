@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Gateway Configuration.
-
+"""Location: ./mcpgateway/config.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
+MCP Gateway Configuration.
 This module defines configuration settings for the MCP Gateway using Pydantic.
 It loads configuration from environment variables with sensible defaults.
 
@@ -443,7 +443,6 @@ Disallow: /
 
     # Cache control for well-known files (seconds)
     well_known_cache_max_age: int = 3600  # 1 hour default
-
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"

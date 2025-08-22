@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for observability module."""
+"""Location: ./tests/unit/mcpgateway/test_observability.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for observability module.
+"""
 
 # Standard
 import os

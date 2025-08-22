@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Simple tests to boost coverage to 75%.
-
+"""Location: ./tests/unit/mcpgateway/test_simple_coverage_boost.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Simple tests to boost coverage to 75%.
 """
 
 # Standard

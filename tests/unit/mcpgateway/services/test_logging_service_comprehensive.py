@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Comprehensive unit tests for LoggingService to improve coverage.
-
+"""Location: ./tests/unit/mcpgateway/services/test_logging_service_comprehensive.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Comprehensive unit tests for LoggingService to improve coverage.
 """
 
 # Standard

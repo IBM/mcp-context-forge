@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Run RESTler API fuzzing via Docker when the server is ready.
+"""Location: ./tests/fuzz/scripts/run_restler_docker.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Run RESTler API fuzzing via Docker when the server is ready.
 
 This helper waits for the gateway at BASE_URL to expose /openapi.json,
 downloads it into reports/restler/openapi.json, and then launches RESTler

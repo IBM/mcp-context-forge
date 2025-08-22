@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Prompt Service Implementation.
-
+"""Location: ./mcpgateway/services/prompt_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Prompt Service Implementation.
 This module implements prompt template management according to the MCP specification.
 It handles:
 - Prompt template registration and retrieval

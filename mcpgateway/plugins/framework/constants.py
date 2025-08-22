@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Plugins constants file.
-
+"""Location: ./mcpgateway/plugins/framework/constants.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
+Plugins constants file.
 This module stores a collection of plugin constants used throughout the framework.
 """
 

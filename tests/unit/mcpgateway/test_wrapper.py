@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the MCP *wrapper* module (single file, full coverage).
-
+"""Location: ./tests/unit/mcpgateway/test_wrapper.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti + contributors
 
+Tests for the MCP *wrapper* module (single file, full coverage).
 This suite fakes the "mcp" dependency tree so that no real network or
 pydantic models are required and exercises almost every branch inside
 *mcpgateway.wrapper*.
@@ -30,10 +30,10 @@ def setup_function():
 # Utilities
 # -------------------
 def test_convert_url_variants():
-    assert wrapper.convert_url("http://x/servers/uuid") == "http://x/servers/uuid/mcp"
-    assert wrapper.convert_url("http://x/servers/uuid/") == "http://x/servers/uuid//mcp"
-    assert wrapper.convert_url("http://x/servers/uuid/mcp") == "http://x/servers/uuid/mcp"
-    assert wrapper.convert_url("http://x/servers/uuid/sse") == "http://x/servers/uuid/mcp"
+    assert wrapper.convert_url("http://x/servers/uuid") == "http://x/servers/uuid/mcp/"
+    assert wrapper.convert_url("http://x/servers/uuid/") == "http://x/servers/uuid//mcp/"
+    assert wrapper.convert_url("http://x/servers/uuid/mcp") == "http://x/servers/uuid/mcp/"
+    assert wrapper.convert_url("http://x/servers/uuid/sse") == "http://x/servers/uuid/mcp/"
 
 
 def test_make_error_defaults_and_data():
@@ -145,7 +145,7 @@ def test_parse_args_with_env(monkeypatch):
     sys.argv = ["prog"]
     try:
         s = wrapper.parse_args()
-        assert s.server_url.endswith("/mcp")
+        assert s.server_url.endswith("/mcp/")
         assert s.auth_header == "Bearer 123"
     finally:
         sys.argv = sys_argv

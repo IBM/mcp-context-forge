@@ -397,7 +397,7 @@ def show_file_lines(file_path: Path, num_lines: int = 10) -> str:
 
 
 def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = False, debug: bool = False,
-                require_shebang: Optional[bool] = None, require_encoding: bool = True) -> Optional[Dict[str, Any]]:
+                 require_shebang: Optional[bool] = None, require_encoding: bool = True) -> Optional[Dict[str, Any]]:
     """Check a single file and optionally fix its header.
 
     Args:
@@ -476,6 +476,8 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
         location_match = re.search(r"^Location: \./(.*)$", docstring_node, re.MULTILINE)
         if not location_match:
             issues.append("Missing 'Location' line")
+        elif location_match.group(1) != relative_path_str:
+            issues.append(f"Incorrect 'Location' line: expected './{relative_path_str}', found './{location_match.group(1)}'")
 
         if f"Copyright {COPYRIGHT_YEAR}" not in docstring_node:
             issues.append("Missing 'Copyright' line")
@@ -489,7 +491,8 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
         if not issues:
             return None
 
-        if mode in ["fix-all", "fix", "interactive"]:
+        # Generate new source code for diff preview or actual fixing
+        if mode in ["fix-all", "fix", "interactive"] or show_diff:
             # Extract the raw docstring from source
             if module_body and isinstance(module_body[0], ast.Expr):
                 docstring_expr_node = module_body[0]
@@ -500,38 +503,68 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
                     quotes = '"""' if raw_docstring.startswith('"""') else "'''"
                     inner_content = raw_docstring.strip(quotes)
 
-                    # Extract existing header fields and body
+                    # Extract existing header fields
                     existing_header_fields = extract_header_info(source_code, inner_content)
 
-                    # Find where the header ends and body begins
+                    # Split docstring into lines for analysis
                     docstring_lines = inner_content.strip().splitlines()
-                    header_end_idx = 0
+
+                    # Separate the docstring into header and content parts
+                    content_lines = []
+                    in_header_section = False
 
                     for i, line in enumerate(docstring_lines):
-                        if any(line.strip().startswith(field + ":") for field in HEADER_FIELDS):
-                            header_end_idx = i + 1
-                        elif header_end_idx > 0 and line.strip():
-                            # Found first non-header content
-                            break
+                        line_stripped = line.strip()
 
-                    # Extract body content
-                    docstring_body_lines = docstring_lines[header_end_idx:]
-                    if docstring_body_lines and not docstring_body_lines[0].strip():
-                        docstring_body_lines = docstring_body_lines[1:]
+                        # Check if this line is a header field
+                        is_header_field = (any(line_stripped.startswith(field + ":") for field in HEADER_FIELDS) or
+                                         line_stripped.startswith("Copyright"))
+
+                        if is_header_field:
+                            in_header_section = True
+                        elif in_header_section and not line_stripped:
+                            # Empty line might separate header from content - continue checking
+                            continue
+                        elif in_header_section and line_stripped and not is_header_field:
+                            # Found content after header section - this and everything after is content
+                            content_lines.extend(docstring_lines[i:])
+                            break
+                        elif not in_header_section and line_stripped:
+                            # Content before any header section (like module descriptions)
+                            # Look ahead to see if there are headers following
+                            has_headers_following = any(
+                                any(future_line.strip().startswith(field + ":") for field in HEADER_FIELDS) or
+                                future_line.strip().startswith("Copyright")
+                                for future_line in docstring_lines[i+1:]
+                            )
+                            if has_headers_following:
+                                # This is content, headers follow later
+                                content_lines.append(line)
+                            else:
+                                # No headers following, this is regular content
+                                content_lines.extend(docstring_lines[i:])
+                                break
 
                     # Build new header
                     new_header_lines = []
-                    new_header_lines.append(existing_header_fields.get("Location") or f"Location: ./{relative_path_str}")
+                    # Always use correct location path
+                    new_header_lines.append(f"Location: ./{relative_path_str}")
                     new_header_lines.append(existing_header_fields.get("Copyright") or f"Copyright {COPYRIGHT_YEAR}")
                     new_header_lines.append(existing_header_fields.get("SPDX-License-Identifier") or f"SPDX-License-Identifier: {LICENSE}")
-                    new_header_lines.append(f"Authors: {authors}")
+                    # Preserve existing Authors field if it exists, otherwise use the provided authors
+                    new_header_lines.append(existing_header_fields.get("Authors") or f"Authors: {authors}")
 
-                    # Reconstruct docstring
+                    # Reconstruct docstring with preserved content
                     new_inner_content = "\n".join(new_header_lines)
-                    if docstring_body_lines:
-                        new_inner_content += "\n\n" + "\n".join(docstring_body_lines).strip()
+                    if content_lines:
+                        content_str = "\n".join(content_lines)
+                        new_inner_content += "\n\n" + content_str
 
-                    new_docstring = f"{quotes}{new_inner_content.strip()}{quotes}"
+                    # Ensure proper ending with newline before closing quotes
+                    if not new_inner_content.endswith('\n'):
+                        new_inner_content += '\n'
+
+                    new_docstring = f"{quotes}{new_inner_content}{quotes}"
 
                     # Prepare source with appropriate headers
                     header_lines = []
@@ -562,7 +595,8 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
         # No docstring found
         issues.append("No docstring found")
 
-        if mode in ["fix-all", "fix", "interactive"]:
+        # Generate new source code for diff preview or actual fixing
+        if mode in ["fix-all", "fix", "interactive"] or show_diff:
             # Create new header
             new_header = get_header_template(
                 relative_path_str,
@@ -683,15 +717,15 @@ def parse_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
     # Header configuration options
     header_group = parser.add_argument_group("header configuration")
     header_group.add_argument("--require-shebang", choices=["always", "never", "auto"], default="auto",
-                            help="Require shebang line: 'always', 'never', or 'auto' (only for executable files). Default: auto")
+                              help="Require shebang line: 'always', 'never', or 'auto' (only for executable files). Default: auto")
     header_group.add_argument("--require-encoding", action="store_true", default=True,
-                            help="Require encoding line. Default: True")
+                              help="Require encoding line. Default: True")
     header_group.add_argument("--no-encoding", action="store_false", dest="require_encoding",
-                            help="Don't require encoding line.")
+                              help="Don't require encoding line.")
     header_group.add_argument("--copyright-year", type=int, default=COPYRIGHT_YEAR,
-                            help=f"Copyright year to use. Default: {COPYRIGHT_YEAR}")
+                              help=f"Copyright year to use. Default: {COPYRIGHT_YEAR}")
     header_group.add_argument("--license", type=str, default=LICENSE,
-                            help=f"License identifier to use. Default: {LICENSE}")
+                              help=f"License identifier to use. Default: {LICENSE}")
 
     return parser.parse_args(argv)
 
@@ -830,7 +864,7 @@ def print_results(issues_found: List[Dict[str, Any]], mode: str, modified_count:
         # Show debug info if available
         if "debug" in issue_info:
             debug = issue_info["debug"]
-            print(f"   Debug info:", file=sys.stderr)
+            print("   Debug info:", file=sys.stderr)
             print(f"     Executable: {debug['executable']}", file=sys.stderr)
             print(f"     Has shebang: {debug['has_shebang']}", file=sys.stderr)
             print(f"     Has encoding: {debug['has_encoding']}", file=sys.stderr)

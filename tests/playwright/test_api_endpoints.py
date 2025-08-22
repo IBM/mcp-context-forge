@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test API endpoints through UI interactions."""
+"""Location: ./tests/playwright/test_api_endpoints.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test API endpoints through UI interactions.
+"""
 
 # Third-Party
 from playwright.sync_api import APIRequestContext, expect, Page

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive RPC input validation security tests.
-
+"""Location: ./tests/security/test_rpc_input_validation.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Comprehensive RPC input validation security tests.
 This test module specifically targets the vulnerability where RPC method names
 are not properly validated before processing, allowing malicious content to
 reach internal tool lookup logic.

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""HTMX and dynamic UI interaction tests for MCP Gateway Admin UI.
-
+"""Location: ./tests/playwright/test_htmx_interactions.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+HTMX and dynamic UI interaction tests for MCP Gateway Admin UI.
 """
 
 # Standard

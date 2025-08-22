@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""test_version.py - full-coverage unit tests for diagnostics endpoint
-
+"""Location: ./tests/unit/mcpgateway/test_version.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+test_version.py - full-coverage unit tests for diagnostics endpoint
 This suite drives every code path in :pyfile:`mcpgateway/version.py`.
 """
 

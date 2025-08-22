@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test RPC endpoint behavior to verify input validation happens before processing.
-
+"""Location: ./tests/security/test_rpc_endpoint_validation.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Test RPC endpoint behavior to verify input validation happens before processing.
 This test file demonstrates the actual vulnerability where malicious method names
 reach the tool lookup logic instead of being rejected at the API layer.
 

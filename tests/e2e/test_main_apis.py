@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 
 # -*- coding: utf-8 -*-
-"""
-End-to-end tests for MCP Gateway main APIs.
-
+"""Location: ./tests/e2e/test_main_apis.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+End-to-end tests for MCP Gateway main APIs.
 This module contains comprehensive end-to-end tests for all main API endpoints in main.py.
 These tests are designed to exercise the entire application stack with minimal mocking,
 using only a temporary SQLite database and bypassing authentication.

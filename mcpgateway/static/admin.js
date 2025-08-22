@@ -1,3 +1,25 @@
+// Make URL field read-only for integration type MCP
+function updateEditToolUrl() {
+    const editTypeField = document.getElementById("edit-tool-type");
+    const editurlField = document.getElementById("edit-tool-url");
+    if (editTypeField && editurlField) {
+        if (editTypeField.value === "MCP") {
+            editurlField.readOnly = true;
+        } else {
+            editurlField.readOnly = false;
+        }
+    }
+}
+
+// Attach event listener after DOM is loaded or when modal opens
+document.addEventListener("DOMContentLoaded", function () {
+    const TypeField = document.getElementById("edit-tool-type");
+    if (TypeField) {
+        TypeField.addEventListener("change", updateEditToolUrl);
+        // Set initial state
+        updateEditToolUrl();
+    }
+});
 /**
  * ====================================================================
  * SECURE ADMIN.JS - COMPLETE VERSION WITH XSS PROTECTION
@@ -513,6 +535,17 @@ function openModal(modalId) {
         console.error(`Error opening modal ${modalId}:`, error);
     }
 }
+
+// Global event handler for Escape key
+document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+        // Find any active modal
+        const activeModal = Array.from(AppState.activeModals)[0];
+        if (activeModal) {
+            closeModal(activeModal);
+        }
+    }
+});
 
 function closeModal(modalId, clearId = null) {
     try {
@@ -1885,14 +1918,12 @@ async function editTool(toolId) {
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/tools/${toolId}`,
         );
-
         if (!response.ok) {
             // If the response is not OK, throw an error
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         const tool = await response.json();
-
         const isInactiveCheckedBool = isInactiveChecked("tools");
         let hiddenField = safeGetElement("edit-show-inactive");
         if (!hiddenField) {
@@ -1915,15 +1946,21 @@ async function editTool(toolId) {
 
         // Validate and set fields
         const nameValidation = validateInputName(tool.name, "tool");
+        const customNameValidation = validateInputName(tool.customName, "tool");
+
         const urlValidation = validateUrl(tool.url);
 
         const nameField = safeGetElement("edit-tool-name");
+        const customNameField = safeGetElement("edit-tool-custom-name");
         const urlField = safeGetElement("edit-tool-url");
         const descField = safeGetElement("edit-tool-description");
         const typeField = safeGetElement("edit-tool-type");
 
         if (nameField && nameValidation.valid) {
             nameField.value = nameValidation.value;
+        }
+        if (customNameField && customNameValidation.valid) {
+            customNameField.value = customNameValidation.value;
         }
         if (urlField && urlValidation.valid) {
             urlField.value = urlValidation.value;
@@ -2001,6 +2038,7 @@ async function editTool(toolId) {
                 typeField.disabled = false;
             }
             updateEditToolRequestTypes(tool.requestType || null); // preselect from DB
+            updateEditToolUrl(tool.url || null);
         }
 
         // Request Type field handling (disable for MCP)
@@ -2019,6 +2057,84 @@ async function editTool(toolId) {
         const authTypeField = safeGetElement("edit-auth-type");
         if (authTypeField) {
             authTypeField.value = tool.auth?.authType || "";
+        }
+        const editAuthTokenField = safeGetElement("edit-auth-token");
+        // Prefill integration type from DB and set request types accordingly
+        if (typeField) {
+            // Always set value from DB, never from previous UI state
+            typeField.value = tool.integrationType;
+            // Remove any previous hidden field for type
+            const prevHiddenType = document.getElementById(
+                "hidden-edit-tool-type",
+            );
+            if (prevHiddenType) {
+                prevHiddenType.remove();
+            }
+            // Remove any previous hidden field for authType
+            const prevHiddenAuthType = document.getElementById(
+                "hidden-edit-auth-type",
+            );
+            if (prevHiddenAuthType) {
+                prevHiddenAuthType.remove();
+            }
+            // Disable integration type field for MCP tools (cannot be changed)
+            if (tool.integrationType === "MCP") {
+                typeField.disabled = true;
+                if (authTypeField) {
+                    authTypeField.disabled = true;
+                    // Add hidden field for authType
+                    const hiddenAuthTypeField = document.createElement("input");
+                    hiddenAuthTypeField.type = "hidden";
+                    hiddenAuthTypeField.name = authTypeField.name;
+                    hiddenAuthTypeField.value = authTypeField.value;
+                    hiddenAuthTypeField.id = "hidden-edit-auth-type";
+                    authTypeField.form.appendChild(hiddenAuthTypeField);
+                }
+                if (urlField) {
+                    urlField.readOnly = true;
+                }
+                if (headersField) {
+                    headersField.setAttribute("readonly", "readonly");
+                }
+                if (schemaField) {
+                    schemaField.setAttribute("readonly", "readonly");
+                }
+                if (editAuthTokenField) {
+                    editAuthTokenField.setAttribute("readonly", "readonly");
+                }
+                if (window.editToolHeadersEditor) {
+                    window.editToolHeadersEditor.setOption("readOnly", true);
+                }
+                if (window.editToolSchemaEditor) {
+                    window.editToolSchemaEditor.setOption("readOnly", true);
+                }
+            } else {
+                typeField.disabled = false;
+                if (authTypeField) {
+                    authTypeField.disabled = false;
+                }
+                if (urlField) {
+                    urlField.readOnly = false;
+                }
+                if (headersField) {
+                    headersField.removeAttribute("readonly");
+                }
+                if (schemaField) {
+                    schemaField.removeAttribute("readonly");
+                }
+                if (editAuthTokenField) {
+                    editAuthTokenField.removeAttribute("readonly");
+                }
+                if (window.editToolHeadersEditor) {
+                    window.editToolHeadersEditor.setOption("readOnly", false);
+                }
+                if (window.editToolSchemaEditor) {
+                    window.editToolSchemaEditor.setOption("readOnly", false);
+                }
+            }
+            // Update request types and URL field
+            updateEditToolRequestTypes(tool.requestType || null);
+            updateEditToolUrl(tool.url || null);
         }
 
         // Auth containers
@@ -3078,6 +3194,7 @@ async function editGateway(gatewayId) {
         const authHeadersSection = safeGetElement(
             "auth-headers-fields-gw-edit",
         );
+        const authOAuthSection = safeGetElement("auth-oauth-fields-gw-edit");
 
         // Individual fields
         const authUsernameField = safeGetElement(
@@ -3098,6 +3215,24 @@ async function editGateway(gatewayId) {
             "auth-headers-fields-gw-edit",
         )?.querySelector("input[name='auth_header_value']");
 
+        // OAuth fields
+        const oauthGrantTypeField = safeGetElement("oauth-grant-type-gw-edit");
+        const oauthClientIdField = safeGetElement("oauth-client-id-gw-edit");
+        const oauthClientSecretField = safeGetElement(
+            "oauth-client-secret-gw-edit",
+        );
+        const oauthTokenUrlField = safeGetElement("oauth-token-url-gw-edit");
+        const oauthAuthUrlField = safeGetElement(
+            "oauth-authorization-url-gw-edit",
+        );
+        const oauthRedirectUriField = safeGetElement(
+            "oauth-redirect-uri-gw-edit",
+        );
+        const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
+        const oauthAuthCodeFields = safeGetElement(
+            "oauth-auth-code-fields-gw-edit",
+        );
+
         // Hide all auth sections first
         if (authBasicSection) {
             authBasicSection.style.display = "none";
@@ -3107,6 +3242,9 @@ async function editGateway(gatewayId) {
         }
         if (authHeadersSection) {
             authHeadersSection.style.display = "none";
+        }
+        if (authOAuthSection) {
+            authOAuthSection.style.display = "none";
         }
 
         switch (gateway.authType) {
@@ -3137,6 +3275,47 @@ async function editGateway(gatewayId) {
                     }
                     if (authHeaderValueField) {
                         authHeaderValueField.value = "*****"; // mask header value
+                    }
+                }
+                break;
+            case "oauth":
+                if (authOAuthSection) {
+                    authOAuthSection.style.display = "block";
+                }
+                // Populate OAuth fields if available
+                if (gateway.oauthConfig) {
+                    const config = gateway.oauthConfig;
+                    if (oauthGrantTypeField && config.grant_type) {
+                        oauthGrantTypeField.value = config.grant_type;
+                        // Show/hide authorization code fields based on grant type
+                        if (oauthAuthCodeFields) {
+                            oauthAuthCodeFields.style.display =
+                                config.grant_type === "authorization_code"
+                                    ? "block"
+                                    : "none";
+                        }
+                    }
+                    if (oauthClientIdField && config.client_id) {
+                        oauthClientIdField.value = config.client_id;
+                    }
+                    if (oauthClientSecretField) {
+                        oauthClientSecretField.value = ""; // Don't populate secret for security
+                    }
+                    if (oauthTokenUrlField && config.token_url) {
+                        oauthTokenUrlField.value = config.token_url;
+                    }
+                    if (oauthAuthUrlField && config.authorization_url) {
+                        oauthAuthUrlField.value = config.authorization_url;
+                    }
+                    if (oauthRedirectUriField && config.redirect_uri) {
+                        oauthRedirectUriField.value = config.redirect_uri;
+                    }
+                    if (
+                        oauthScopesField &&
+                        config.scopes &&
+                        Array.isArray(config.scopes)
+                    ) {
+                        oauthScopesField.value = config.scopes.join(" ");
                     }
                 }
                 break;
@@ -3553,6 +3732,7 @@ function handleAuthTypeSelection(
     basicFields,
     bearerFields,
     headersFields,
+    oauthFields,
 ) {
     if (!basicFields || !bearerFields || !headersFields) {
         console.warn("Auth field elements not found");
@@ -3561,30 +3741,48 @@ function handleAuthTypeSelection(
 
     // Hide all fields first
     [basicFields, bearerFields, headersFields].forEach((field) => {
-        field.style.display = "none";
+        if (field) {
+            field.style.display = "none";
+        }
     });
+
+    // Hide OAuth fields if they exist
+    if (oauthFields) {
+        oauthFields.style.display = "none";
+    }
 
     // Show relevant field based on selection
     switch (value) {
         case "basic":
-            basicFields.style.display = "block";
+            if (basicFields) {
+                basicFields.style.display = "block";
+            }
             break;
         case "bearer":
-            bearerFields.style.display = "block";
+            if (bearerFields) {
+                bearerFields.style.display = "block";
+            }
             break;
         case "authheaders": {
-            headersFields.style.display = "block";
-            // Ensure at least one header row is present
-            const containerId =
-                headersFields.querySelector('[id$="-container"]')?.id;
-            if (containerId) {
-                const container = document.getElementById(containerId);
-                if (container && container.children.length === 0) {
-                    addAuthHeader(containerId);
+            if (headersFields) {
+                headersFields.style.display = "block";
+                // Ensure at least one header row is present
+                const containerId =
+                    headersFields.querySelector('[id$="-container"]')?.id;
+                if (containerId) {
+                    const container = document.getElementById(containerId);
+                    if (container && container.children.length === 0) {
+                        addAuthHeader(containerId);
+                    }
                 }
             }
             break;
         }
+        case "oauth":
+            if (oauthFields) {
+                oauthFields.style.display = "block";
+            }
+            break;
         default:
             // All fields already hidden
             break;
@@ -3899,6 +4097,12 @@ function updateEditToolRequestTypes(selectedMethod = null) {
         return;
     }
 
+    // Track previous value using a data attribute
+    if (!editToolTypeSelect.dataset.prevValue) {
+        editToolTypeSelect.dataset.prevValue = editToolTypeSelect.value;
+    }
+
+    // const prevType = editToolTypeSelect.dataset.prevValue;
     const selectedType = editToolTypeSelect.value;
     const allowedMethods = integrationRequestMap[selectedType] || [];
 
@@ -3929,6 +4133,27 @@ function updateEditToolRequestTypes(selectedMethod = null) {
 // TOOL SELECT FUNCTIONALITY
 // ===================================================================
 
+// Prevent manual REST→MCP changes in edit-tool-form
+document.addEventListener("DOMContentLoaded", function () {
+    const editToolTypeSelect = document.getElementById("edit-tool-type");
+    if (editToolTypeSelect) {
+        // Store the initial value for comparison
+        editToolTypeSelect.dataset.prevValue = editToolTypeSelect.value;
+
+        editToolTypeSelect.addEventListener("change", function (e) {
+            const prevType = this.dataset.prevValue;
+            const selectedType = this.value;
+            if (prevType === "REST" && selectedType === "MCP") {
+                alert("You cannot change integration type from REST to MCP.");
+                this.value = prevType;
+                // Optionally, reset any dependent fields here
+            } else {
+                this.dataset.prevValue = selectedType;
+            }
+        });
+    }
+});
+//= ==================================================================
 function initToolSelect(
     selectId,
     pillsId,
@@ -4152,6 +4377,7 @@ async function testTool(toolId) {
         }
 
         const tool = await response.json();
+        console.log(`Tool ${toolId} fetched successfully`, tool);
         toolInputSchemaRegistry = tool;
 
         // 7. CLEAN STATE before proceeding
@@ -5947,6 +6173,42 @@ async function handleEditGatewayFormSubmit(e) {
             JSON.stringify(passthroughHeaders),
         );
 
+        // Handle OAuth configuration
+        const authType = formData.get("auth_type");
+        if (authType === "oauth") {
+            const oauthConfig = {
+                grant_type: formData.get("oauth_grant_type"),
+                client_id: formData.get("oauth_client_id"),
+                client_secret: formData.get("oauth_client_secret"),
+                token_url: formData.get("oauth_token_url"),
+                scopes: formData.get("oauth_scopes")
+                    ? formData
+                          .get("oauth_scopes")
+                          .split(" ")
+                          .filter((s) => s.trim())
+                    : [],
+            };
+
+            // Add authorization code specific fields
+            if (oauthConfig.grant_type === "authorization_code") {
+                oauthConfig.authorization_url = formData.get(
+                    "oauth_authorization_url",
+                );
+                oauthConfig.redirect_uri = formData.get("oauth_redirect_uri");
+            }
+
+            // Remove individual OAuth fields and add as oauth_config
+            formData.delete("oauth_grant_type");
+            formData.delete("oauth_client_id");
+            formData.delete("oauth_client_secret");
+            formData.delete("oauth_token_url");
+            formData.delete("oauth_scopes");
+            formData.delete("oauth_authorization_url");
+            formData.delete("oauth_redirect_uri");
+
+            formData.append("oauth_config", JSON.stringify(oauthConfig));
+        }
+
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
         // Submit via fetch
@@ -6564,6 +6826,7 @@ function setupAuthenticationToggles() {
             basicId: "auth-basic-fields-gw-edit",
             bearerId: "auth-bearer-fields-gw-edit",
             headersId: "auth-headers-fields-gw-edit",
+            oauthId: "auth-oauth-fields-gw-edit",
         },
         {
             id: "edit-auth-type",
@@ -6630,6 +6893,15 @@ function setupFormHandlers() {
                 refreshEditors();
             }
         });
+    }
+
+    // Add OAuth grant type change handler for Edit Gateway modal
+    const editOAuthGrantTypeField = safeGetElement("oauth-grant-type-gw-edit");
+    if (editOAuthGrantTypeField) {
+        editOAuthGrantTypeField.addEventListener(
+            "change",
+            handleEditOAuthGrantTypeChange,
+        );
     }
 
     const toolForm = safeGetElement("add-tool-form");
@@ -6774,6 +7046,38 @@ function handleOAuthGrantTypeChange() {
     }
 }
 
+function handleEditOAuthGrantTypeChange() {
+    const grantType = this.value;
+    const authCodeFields = safeGetElement("oauth-auth-code-fields-gw-edit");
+
+    if (authCodeFields) {
+        if (grantType === "authorization_code") {
+            authCodeFields.style.display = "block";
+
+            // Make authorization code specific fields required
+            const requiredFields =
+                authCodeFields.querySelectorAll('input[type="url"]');
+            requiredFields.forEach((field) => {
+                field.required = true;
+            });
+
+            // Show additional validation for required fields
+            console.log(
+                "Authorization Code flow selected - additional fields are now required",
+            );
+        } else {
+            authCodeFields.style.display = "none";
+
+            // Remove required validation for hidden fields
+            const requiredFields =
+                authCodeFields.querySelectorAll('input[type="url"]');
+            requiredFields.forEach((field) => {
+                field.required = false;
+            });
+        }
+    }
+}
+
 function setupSchemaModeHandlers() {
     const schemaModeRadios = document.getElementsByName("schema_input_mode");
     const uiBuilderDiv = safeGetElement("ui-builder");
@@ -6827,8 +7131,10 @@ function setupIntegrationTypeHandlers() {
 
     const editToolTypeSelect = safeGetElement("edit-tool-type");
     if (editToolTypeSelect) {
-        editToolTypeSelect.addEventListener("change", () =>
-            updateEditToolRequestTypes(),
+        editToolTypeSelect.addEventListener(
+            "change",
+            () => updateEditToolRequestTypes(),
+            // updateEditToolUrl(),
         );
     }
 }
@@ -7044,12 +7350,12 @@ function generateConfig(server, configType) {
         case "stdio":
             return {
                 mcpServers: {
-                    [cleanServerName]: {
+                    "mcpgateway-wrapper": {
                         command: "python",
                         args: ["-m", "mcpgateway.wrapper"],
                         env: {
-                            MCP_AUTH: "your-token-here",
-                            MCP_SERVER_URL: `${baseUrl}/servers/${server.id}/mcp`,
+                            MCP_AUTH_TOKEN: "your-token-here",
+                            MCP_SERVER_CATALOG_URLS: `${baseUrl}/servers/${server.id}`,
                             MCP_TOOL_CALL_TIMEOUT: "120",
                         },
                     },
@@ -7058,7 +7364,7 @@ function generateConfig(server, configType) {
 
         case "sse":
             return {
-                mcpServers: {
+                servers: {
                     [cleanServerName]: {
                         type: "sse",
                         url: `${baseUrl}/servers/${server.id}/sse`,
@@ -7071,10 +7377,10 @@ function generateConfig(server, configType) {
 
         case "http":
             return {
-                mcpServers: {
+                servers: {
                     [cleanServerName]: {
                         type: "http",
-                        url: `${baseUrl}/servers/${server.id}`,
+                        url: `${baseUrl}/servers/${server.id}/mcp`,
                         headers: {
                             Authorization: "Bearer your-token-here",
                         },

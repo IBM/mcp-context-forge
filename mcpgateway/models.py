@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Protocol Type Definitions.
-
+"""Location: ./mcpgateway/models.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+MCP Protocol Type Definitions.
 This module defines all core MCP protocol types according to the specification.
 It includes:
   - Message content types (text, image, resource)

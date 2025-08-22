@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Sampling Handler Implementation.
-
+"""Location: ./mcpgateway/handlers/sampling.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+MCP Sampling Handler Implementation.
 This module implements the sampling handler for MCP LLM interactions.
 It handles model selection, sampling preferences, and message generation.
 

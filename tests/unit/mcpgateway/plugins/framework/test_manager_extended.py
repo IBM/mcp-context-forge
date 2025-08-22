@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Extended tests for plugin manager to achieve 100% coverage.
-
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_manager_extended.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Extended tests for plugin manager to achieve 100% coverage.
 """
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch

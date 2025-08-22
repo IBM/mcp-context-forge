@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-MCP Gateway Wrapper.
-
+"""Location: ./mcpgateway/wrapper.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
+MCP Gateway Wrapper.
 MCP Client (stdio) <-> MCP Gateway Bridge
 
 This module implements a wrapper stdio bridge that facilitates
@@ -154,7 +153,7 @@ def convert_url(url: str) -> str:
     """Normalize an MCP server URL.
 
     - If it ends with `/sse`, replace with `/mcp`.
-    - If it ends with `/mcp` already, leave unchanged.
+    - If it ends with `/mcp` already, leave it.
     - Otherwise, append `/mcp`.
 
     Args:
@@ -165,17 +164,19 @@ def convert_url(url: str) -> str:
 
     Examples:
         >>> convert_url("http://localhost:4444/servers/uuid")
-        'http://localhost:4444/servers/uuid/mcp'
+        'http://localhost:4444/servers/uuid/mcp/'
         >>> convert_url("http://localhost:4444/servers/uuid/sse")
-        'http://localhost:4444/servers/uuid/mcp'
+        'http://localhost:4444/servers/uuid/mcp/'
         >>> convert_url("http://localhost:4444/servers/uuid/mcp")
-        'http://localhost:4444/servers/uuid/mcp'
+        'http://localhost:4444/servers/uuid/mcp/'
     """
     if url.endswith("/mcp") or url.endswith("/mcp/"):
+        if url.endswith("/mcp"):
+            return url + "/"
         return url
     if url.endswith("/sse"):
-        return url.replace("/sse", "/mcp")
-    return url + "/mcp"
+        return url.replace("/sse", "/mcp/")
+    return url + "/mcp/"
 
 
 def send_to_stdout(obj: Union[dict, str]) -> None:
@@ -630,7 +631,7 @@ def parse_args() -> Settings:
         >>> sys.argv = ["prog", "--url", "http://localhost:4444/servers/u"]
         >>> try:
         ...     s = parse_args()
-        ...     s.server_url.endswith("/mcp")
+        ...     s.server_url.endswith("/mcp/")
         ... finally:
         ...     sys.argv = _argv
         True

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Export/Import CLI Commands.
-
+"""Location: ./mcpgateway/cli_export_import.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Export/Import CLI Commands.
 This module provides CLI commands for exporting and importing MCP Gateway configuration.
 It implements the export/import CLI functionality according to the specification including:
 - Complete configuration export with filtering options

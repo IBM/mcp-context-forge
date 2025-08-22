@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Generate comprehensive fuzzing report for MCP Gateway."""
+"""Location: ./tests/fuzz/scripts/generate_fuzz_report.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Generate comprehensive fuzzing report for MCP Gateway.
+"""
 import json
 import os
 import sys

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for resource plugin functionality."""
+"""Location: ./tests/integration/test_resource_plugin_integration.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for resource plugin functionality.
+"""
 
 import os
 from unittest.mock import MagicMock, patch

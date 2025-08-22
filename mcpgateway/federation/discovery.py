@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Federation Discovery Service.
-
+"""Location: ./mcpgateway/federation/discovery.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Federation Discovery Service.
 This module implements automatic peer discovery for MCP Gateways.
 It supports multiple discovery mechanisms:
 - DNS-SD service discovery

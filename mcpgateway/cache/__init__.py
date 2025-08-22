@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Cache Package.
-
+"""Location: ./mcpgateway/cache/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Cache Package.
 Provides caching components for the MCP Gateway including:
 - Resource content caching
 """

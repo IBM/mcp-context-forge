@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""OAuth Router for MCP Gateway.
+"""Location: ./mcpgateway/routers/oauth_router.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OAuth Router for MCP Gateway.
 
 This module handles OAuth 2.0 Authorization Code flow endpoints including:
 - Initiating OAuth flows
