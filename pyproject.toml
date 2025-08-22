@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "0.5.0"
+version = "0.6.0"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -126,7 +126,7 @@ observability-zipkin = [
 ]
 
 observability-all = [
-    "mcp-contextforge-gateway[observability]>=0.5.0",
+    "mcp-contextforge-gateway[observability]>=0.6.0",
     "opentelemetry-exporter-jaeger>=1.21.0",
     "opentelemetry-exporter-zipkin>=1.36.0",
 ]
@@ -223,10 +223,10 @@ playwright = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=0.5.0",
+    "mcp-contextforge-gateway[redis]>=0.6.0",
 ]
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.5.0",
+    "mcp-contextforge-gateway[redis,dev]>=0.6.0",
 ]
 
 # --------------------------------------------------------------------

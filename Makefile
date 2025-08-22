@@ -2666,7 +2666,7 @@ MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry regist
 # OCI image tag to preload into the cluster.
 # - By default we point to the *local* image built via `make docker-prod`, e.g.
 #   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
-#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.5.0).
+#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.6.0).
 TAG              ?= latest         # override with TAG=<ver>
 IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
 
@@ -3301,7 +3301,7 @@ devpi-unconfigure-pip:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📦  Version helper (defaults to the version in pyproject.toml)
-#      override on the CLI:  make VER=0.5.0 devpi-delete
+#      override on the CLI:  make VER=0.6.0 devpi-delete
 # ─────────────────────────────────────────────────────────────────────────────
 VER ?= $(shell python3 -c "import tomllib, pathlib; \
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
