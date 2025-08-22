@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tool Service Implementation.
-
+"""Location: ./mcpgateway/services/tool_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Tool Service Implementation.
 This module implements tool management and invocation according to the MCP specification.
 It handles:
 - Tool registration and validation

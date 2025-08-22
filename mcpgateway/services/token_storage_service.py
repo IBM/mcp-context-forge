@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""OAuth Token Storage Service for MCP Gateway.
+"""Location: ./mcpgateway/services/token_storage_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OAuth Token Storage Service for MCP Gateway.
 
 This module handles the storage, retrieval, and management of OAuth access and refresh tokens
 for Authorization Code flow implementations.

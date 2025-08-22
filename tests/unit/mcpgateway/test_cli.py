@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the mcpgateway CLI module (cli.py).
-
+"""Location: ./tests/unit/mcpgateway/test_cli.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Tests for the mcpgateway CLI module (cli.py).
 This module contains tests for the tiny "Uvicorn wrapper" found in
 mcpgateway.cli.  It exercises **every** decision point:
 

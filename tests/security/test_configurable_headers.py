@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/security/test_configurable_headers.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Configurable Security Headers Testing.
 

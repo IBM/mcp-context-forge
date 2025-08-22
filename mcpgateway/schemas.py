@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Gateway Schema Definitions.
-
+"""Location: ./mcpgateway/schemas.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+MCP Gateway Schema Definitions.
 This module provides Pydantic models for request/response validation in the MCP Gateway.
 It implements schemas for:
 - Tool registration and invocation

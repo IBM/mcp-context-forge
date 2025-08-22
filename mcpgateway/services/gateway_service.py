@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Gateway Service Implementation.
-
+"""Location: ./mcpgateway/services/gateway_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Gateway Service Implementation.
 This module implements gateway federation according to the MCP specification.
 It handles:
 - Gateway discovery and registration

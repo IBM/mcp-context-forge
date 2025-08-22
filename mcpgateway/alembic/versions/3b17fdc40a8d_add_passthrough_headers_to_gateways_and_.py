@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add passthrough headers to gateways and global config
+"""Location: ./mcpgateway/alembic/versions/3b17fdc40a8d_add_passthrough_headers_to_gateways_and_.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add passthrough headers to gateways and global config
 
 Revision ID: 3b17fdc40a8d
 Revises: e75490e949b1
 Create Date: 2025-08-08 03:45:46.489696
-
 """
 
 # Standard

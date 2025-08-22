@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Full-coverage test-suite for **mcpgateway.translate**.
-
+"""Location: ./tests/unit/mcpgateway/test_translate.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Full-coverage test-suite for **mcpgateway.translate**.
 This suite touches **every executable path** inside `mcpgateway.translate`
 and therefore produces a coverage report of **100 %**.  Specifically, it
 exercises:

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test RPC tool invocation after PR #746 changes."""
+"""Location: ./tests/unit/mcpgateway/test_rpc_tool_invocation.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test RPC tool invocation after PR #746 changes.
+"""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch

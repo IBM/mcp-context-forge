@@ -508,18 +508,18 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
 
                     # Split docstring into lines for analysis
                     docstring_lines = inner_content.strip().splitlines()
-                    
+
                     # Separate the docstring into header and content parts
                     content_lines = []
                     in_header_section = False
-                    
+
                     for i, line in enumerate(docstring_lines):
                         line_stripped = line.strip()
-                        
+
                         # Check if this line is a header field
-                        is_header_field = (any(line_stripped.startswith(field + ":") for field in HEADER_FIELDS) or 
+                        is_header_field = (any(line_stripped.startswith(field + ":") for field in HEADER_FIELDS) or
                                          line_stripped.startswith("Copyright"))
-                        
+
                         if is_header_field:
                             in_header_section = True
                         elif in_header_section and not line_stripped:
@@ -559,7 +559,7 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
                     if content_lines:
                         content_str = "\n".join(content_lines)
                         new_inner_content += "\n\n" + content_str
-                    
+
                     # Ensure proper ending with newline before closing quotes
                     if not new_inner_content.endswith('\n'):
                         new_inner_content += '\n'

@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/test_db_isready.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
 # Standard
 import asyncio
 import sys

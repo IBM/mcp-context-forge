@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Export Service Implementation.
-
+"""Location: ./mcpgateway/services/export_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Export Service Implementation.
 This module implements comprehensive configuration export functionality according to the export specification.
 It handles:
 - Entity collection from all entity types (Tools, Gateways, Servers, Prompts, Resources, Roots)

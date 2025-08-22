@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tag Service Implementation.
-
+"""Location: ./mcpgateway/services/tag_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Tag Service Implementation.
 This module implements tag management and retrieval for all entities in the MCP Gateway.
 It handles:
 - Fetching all unique tags across entities

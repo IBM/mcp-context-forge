@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Root Service Implementation.
-
+"""Location: ./mcpgateway/services/root_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Root Service Implementation.
 This module implements root directory management according to the MCP specification.
 It handles root registration, validation, and change notifications.
 """

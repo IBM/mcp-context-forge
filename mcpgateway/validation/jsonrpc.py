@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""JSON-RPC Validation.
-
+"""Location: ./mcpgateway/validation/jsonrpc.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+JSON-RPC Validation.
 This module provides validation functions for JSON-RPC 2.0 requests and responses
 according to the specification at https://www.jsonrpc.org/specification.
 

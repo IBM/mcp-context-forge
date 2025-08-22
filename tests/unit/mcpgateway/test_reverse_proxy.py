@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the MCP reverse proxy module."""
+"""Location: ./tests/unit/mcpgateway/test_reverse_proxy.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the MCP reverse proxy module.
+"""
 
 # Standard
 import asyncio

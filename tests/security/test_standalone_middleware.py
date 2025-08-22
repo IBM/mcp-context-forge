@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/security/test_standalone_middleware.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Standalone Security Middleware Testing.
 

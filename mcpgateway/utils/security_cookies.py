@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcpgateway/utils/security_cookies.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Security Cookie Utilities for MCP Gateway.
 

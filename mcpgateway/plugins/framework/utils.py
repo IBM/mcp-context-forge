@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Utility module for plugins layer.
-
+"""Location: ./mcpgateway/plugins/framework/utils.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor, Mihai Criveti
 
+Utility module for plugins layer.
 This module implements the utility functions associated with
 plugins.
 """

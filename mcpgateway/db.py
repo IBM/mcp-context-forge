@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Gateway Database Models.
-
+"""Location: ./mcpgateway/db.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+MCP Gateway Database Models.
 This module defines SQLAlchemy models for storing MCP entities including:
 - Tools with input schema validation
 - Resources with subscription tracking

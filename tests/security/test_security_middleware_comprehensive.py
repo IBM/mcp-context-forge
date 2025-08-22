@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/security/test_security_middleware_comprehensive.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Comprehensive Security Middleware Testing.
 

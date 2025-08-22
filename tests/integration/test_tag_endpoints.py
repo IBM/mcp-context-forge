@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for tag endpoints."""
+"""Location: ./tests/integration/test_tag_endpoints.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for tag endpoints.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, patch

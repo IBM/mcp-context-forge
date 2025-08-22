@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""SecurityValidator for MCP Gateway
-
+"""Location: ./mcpgateway/validators.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Madhav Kandukuri
 
+SecurityValidator for MCP Gateway
 This module defines the `SecurityValidator` class, which provides centralized, configurable
 validation logic for user-generated content in MCP-based applications.
 

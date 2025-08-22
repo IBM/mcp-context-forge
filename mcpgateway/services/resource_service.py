@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Resource Service Implementation.
-
+"""Location: ./mcpgateway/services/resource_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Resource Service Implementation.
 This module implements resource management according to the MCP specification.
 It handles:
 - Resource registration and retrieval

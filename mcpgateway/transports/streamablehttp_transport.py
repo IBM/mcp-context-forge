@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Streamable HTTP Transport Implementation.
-
+"""Location: ./mcpgateway/transports/streamablehttp_transport.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
+Streamable HTTP Transport Implementation.
 This module implements Streamable Http transport for MCP
 
 Key components include:

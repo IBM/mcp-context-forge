@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Fuzzing test configuration."""
+"""Location: ./tests/fuzz/conftest.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Fuzzing test configuration.
+"""
 import pytest
 from hypothesis import settings, Verbosity, HealthCheck
 

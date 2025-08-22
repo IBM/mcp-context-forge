@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add_tags_support_to_all_entities
+"""Location: ./mcpgateway/alembic/versions/cc7b95fec5d9_add_tags_support_to_all_entities.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_tags_support_to_all_entities
 
 Revision ID: cc7b95fec5d9
 Revises: e75490e949b1
 Create Date: 2025-08-06 22:27:08.682814
-
 """
 
 # Standard

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""OAuth 2.0 Manager for MCP Gateway.
+"""Location: ./mcpgateway/services/oauth_manager.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OAuth 2.0 Manager for MCP Gateway.
 
 This module handles OAuth 2.0 authentication flows including:
 - Client Credentials (Machine-to-Machine)

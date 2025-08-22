@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Property-based fuzz testing for JSON-RPC validation."""
+"""Location: ./tests/fuzz/test_jsonrpc_fuzz.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Property-based fuzz testing for JSON-RPC validation.
+"""
 import json
 from hypothesis import given, strategies as st, settings, example
 import pytest
