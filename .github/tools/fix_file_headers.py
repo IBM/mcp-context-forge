@@ -503,24 +503,47 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
                     quotes = '"""' if raw_docstring.startswith('"""') else "'''"
                     inner_content = raw_docstring.strip(quotes)
 
-                    # Extract existing header fields and body
+                    # Extract existing header fields
                     existing_header_fields = extract_header_info(source_code, inner_content)
 
-                    # Find where the header ends and body begins
+                    # Split docstring into lines for analysis
                     docstring_lines = inner_content.strip().splitlines()
-                    header_end_idx = 0
-
+                    
+                    # Separate the docstring into header and content parts
+                    content_lines = []
+                    in_header_section = False
+                    
                     for i, line in enumerate(docstring_lines):
-                        if any(line.strip().startswith(field + ":") for field in HEADER_FIELDS):
-                            header_end_idx = i + 1
-                        elif header_end_idx > 0 and line.strip():
-                            # Found first non-header content
+                        line_stripped = line.strip()
+                        
+                        # Check if this line is a header field
+                        is_header_field = (any(line_stripped.startswith(field + ":") for field in HEADER_FIELDS) or 
+                                         line_stripped.startswith("Copyright"))
+                        
+                        if is_header_field:
+                            in_header_section = True
+                        elif in_header_section and not line_stripped:
+                            # Empty line might separate header from content - continue checking
+                            continue
+                        elif in_header_section and line_stripped and not is_header_field:
+                            # Found content after header section - this and everything after is content
+                            content_lines.extend(docstring_lines[i:])
                             break
-
-                    # Extract body content
-                    docstring_body_lines = docstring_lines[header_end_idx:]
-                    if docstring_body_lines and not docstring_body_lines[0].strip():
-                        docstring_body_lines = docstring_body_lines[1:]
+                        elif not in_header_section and line_stripped:
+                            # Content before any header section (like module descriptions)
+                            # Look ahead to see if there are headers following
+                            has_headers_following = any(
+                                any(future_line.strip().startswith(field + ":") for field in HEADER_FIELDS) or
+                                future_line.strip().startswith("Copyright")
+                                for future_line in docstring_lines[i+1:]
+                            )
+                            if has_headers_following:
+                                # This is content, headers follow later
+                                content_lines.append(line)
+                            else:
+                                # No headers following, this is regular content
+                                content_lines.extend(docstring_lines[i:])
+                                break
 
                     # Build new header
                     new_header_lines = []
@@ -531,10 +554,10 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
                     # Preserve existing Authors field if it exists, otherwise use the provided authors
                     new_header_lines.append(existing_header_fields.get("Authors") or f"Authors: {authors}")
 
-                    # Reconstruct docstring
+                    # Reconstruct docstring with preserved content
                     new_inner_content = "\n".join(new_header_lines)
-                    if docstring_body_lines:
-                        new_inner_content += "\n\n" + "\n".join(docstring_body_lines).strip()
+                    if content_lines:
+                        new_inner_content += "\n\n" + "\n".join(content_lines).strip()
 
                     new_docstring = f"{quotes}{new_inner_content.strip()}{quotes}"
 
