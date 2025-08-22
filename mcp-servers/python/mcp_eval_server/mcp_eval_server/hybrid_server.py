@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Hybrid server that runs both MCP (stdio) and REST API simultaneously.
 
 This module creates a server that can handle both:
