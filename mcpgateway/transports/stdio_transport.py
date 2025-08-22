@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""stdio Transport Implementation.
-
+"""Location: ./mcpgateway/transports/stdio_transport.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+stdio Transport Implementation.
 This module implements standard input/output (stdio) transport for MCP Gateway, enabling
 communication over stdin/stdout streams. This transport is particularly useful
 for command-line tools, subprocess communication, and scenarios where processes

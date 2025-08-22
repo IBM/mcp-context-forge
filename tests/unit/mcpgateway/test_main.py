@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/unit/mcpgateway/test_main.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti

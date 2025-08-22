@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for ResourceService plugin integration."""
+"""Location: ./tests/unit/mcpgateway/services/test_resource_service_plugins.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for ResourceService plugin integration.
+"""
 
 import os
 from unittest.mock import AsyncMock, MagicMock, patch

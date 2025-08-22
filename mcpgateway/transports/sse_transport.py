@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""SSE Transport Implementation.
-
+"""Location: ./mcpgateway/transports/sse_transport.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+SSE Transport Implementation.
 This module implements Server-Sent Events (SSE) transport for MCP,
 providing server-to-client streaming with proper session management.
 """

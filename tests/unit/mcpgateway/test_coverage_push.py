@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Focused tests to push coverage to 75%.
-
+"""Location: ./tests/unit/mcpgateway/test_coverage_push.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Focused tests to push coverage to 75%.
 """
 
 # Standard

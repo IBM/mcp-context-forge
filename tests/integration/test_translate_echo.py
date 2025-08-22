@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for mcpgateway.translate stdio↔SSE echo loop.
-
+"""Location: ./tests/integration/test_translate_echo.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Integration tests for mcpgateway.translate stdio↔SSE echo loop.
 This module contains integration tests for the translate module's
 bidirectional stdio↔SSE communication, testing real echo scenarios
 and message flow patterns.

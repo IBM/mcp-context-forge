@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Metadata capture utilities for comprehensive audit tracking.
-
+"""Location: ./mcpgateway/utils/metadata_capture.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Metadata capture utilities for comprehensive audit tracking.
 This module provides utilities for capturing comprehensive metadata during
 entity creation and modification operations. It extracts request context
 information such as authenticated user, IP address, user agent, and source

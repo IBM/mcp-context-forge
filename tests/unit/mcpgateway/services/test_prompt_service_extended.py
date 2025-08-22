@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
-"""
-Extended unit tests for PromptService to improve coverage.
-
-These tests focus on uncovered areas of the PromptService implementation,
-including error handling, edge cases, and specific functionality scenarios.
-
+"""Location: ./tests/unit/mcpgateway/services/test_prompt_service_extended.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Extended unit tests for PromptService to improve coverage.
+These tests focus on uncovered areas of the PromptService implementation,
+including error handling, edge cases, and specific functionality scenarios.
 """
 
 # Future

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Plugin manager.
-
+"""Location: ./mcpgateway/plugins/framework/manager.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor, Mihai Criveti
 
+Plugin manager.
 Module that manages and calls plugins at hookpoints throughout the gateway.
 
 This module provides the core plugin management functionality including:

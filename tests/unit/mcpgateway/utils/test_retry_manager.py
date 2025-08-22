@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/utils/test_retry_manager.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
 # Standard
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace

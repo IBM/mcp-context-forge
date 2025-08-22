@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for metadata tracking feature.
-
+"""Location: ./tests/integration/test_metadata_integration.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Integration tests for metadata tracking feature.
 This module tests the complete metadata tracking functionality across
 the entire application stack, including API endpoints, database storage,
 and UI integration.

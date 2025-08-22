@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""uuid-pk_and_slug_refactor
+"""Location: ./mcpgateway/alembic/versions/b77ca9d2de7e_uuid_pk_and_slug_refactor.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+uuid-pk_and_slug_refactor
 
 Revision ID: b77ca9d2de7e
 Revises:
 Create Date: 2025-06-26 21:29:59.117140
-
 """
 
 # Standard

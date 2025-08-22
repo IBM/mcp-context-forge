@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Property-based fuzz testing for Pydantic schema validation."""
+"""Location: ./tests/fuzz/test_schema_validation_fuzz.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Property-based fuzz testing for Pydantic schema validation.
+"""
 import json
 from hypothesis import given, strategies as st
 import pytest

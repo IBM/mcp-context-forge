@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for LogStorageService."""
+"""Location: ./tests/unit/mcpgateway/services/test_log_storage_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for LogStorageService.
+"""
 
 # Standard
 import asyncio

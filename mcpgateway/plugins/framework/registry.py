@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Plugin instance registry.
-
+"""Location: ./mcpgateway/plugins/framework/registry.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Plugin instance registry.
 Module that stores plugin instances and manages hook points.
 """
 

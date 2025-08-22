@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the admin module with improved coverage.
-
+"""Location: ./tests/unit/mcpgateway/test_admin.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Tests for the admin module with improved coverage.
 This module tests the admin UI routes for the MCP Gateway, ensuring
 they properly handle server, tool, resource, prompt, gateway and root management.
 Enhanced with additional test cases for better coverage.

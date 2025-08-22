@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test cases for admin UI.
-
+"""Location: ./tests/playwright/test_admin_ui.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
+Test cases for admin UI.
 """
 
 # Standard

@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add oauth tokens table
+"""Location: ./mcpgateway/alembic/versions/add_oauth_tokens_table.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add oauth tokens table
 
 Revision ID: add_oauth_tokens_table
 Revises: f8c9d3e2a1b4
 Create Date: 2024-12-20 11:00:00.000000
-
 """
 
 # Standard

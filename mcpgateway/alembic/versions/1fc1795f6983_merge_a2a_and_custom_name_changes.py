@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""merge_a2a_and_custom_name_changes
+"""Location: ./mcpgateway/alembic/versions/1fc1795f6983_merge_a2a_and_custom_name_changes.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+merge_a2a_and_custom_name_changes
 
 Revision ID: 1fc1795f6983
 Revises: add_a2a_agents_and_metrics, c9dd86c0aac9
 Create Date: 2025-08-20 19:04:40.589538
-
 """
 
 # Standard

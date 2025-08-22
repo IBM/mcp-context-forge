@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add_a2a_agents_and_metrics
+"""Location: ./mcpgateway/alembic/versions/add_a2a_agents_and_metrics.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_a2a_agents_and_metrics
 
 Revision ID: add_a2a_agents_and_metrics
 Revises: add_oauth_tokens_table
 Create Date: 2025-08-19 10:00:00.000000
-
 """
 
 # Standard

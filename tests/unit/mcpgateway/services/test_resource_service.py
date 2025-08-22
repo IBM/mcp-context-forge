@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive test suite for ResourceService.
-
+"""Location: ./tests/unit/mcpgateway/services/test_resource_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Assistant
 
+Comprehensive test suite for ResourceService.
 This suite provides complete test coverage for:
 - All ResourceService methods
 - Error conditions and edge cases

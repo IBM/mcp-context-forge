@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for metadata capture utilities.
-
+"""Location: ./tests/unit/mcpgateway/utils/test_metadata_capture.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Unit tests for metadata capture utilities.
 This module tests the metadata capture functionality for comprehensive
 audit tracking of entity creation and modification operations.
 """

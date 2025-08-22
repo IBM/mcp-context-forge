@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for **mcpgateway.transports.streamablehttp_transport**
-
+"""Location: ./tests/unit/mcpgateway/transports/test_streamablehttp_transport.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for **mcpgateway.transports.streamablehttp_transport**
 Author: Mihai Criveti
 
 Focus areas

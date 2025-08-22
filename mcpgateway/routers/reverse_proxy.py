@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcpgateway/routers/reverse_proxy.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 FastAPI router for handling reverse proxy connections.
 
 This module provides WebSocket and SSE endpoints for reverse proxy clients

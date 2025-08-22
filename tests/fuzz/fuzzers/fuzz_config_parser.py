@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Coverage-guided fuzzing for configuration parsing using Atheris."""
+"""Location: ./tests/fuzz/fuzzers/fuzz_config_parser.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Coverage-guided fuzzing for configuration parsing using Atheris.
+"""
 import atheris
 import sys
 import os

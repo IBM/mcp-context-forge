@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Tests for external client on stdio.
-
+"""Location: ./tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_stdio.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for external client on stdio.
 """
 from contextlib import AsyncExitStack
 import json

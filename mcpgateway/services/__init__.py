@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Services Package.
-
+"""Location: ./mcpgateway/services/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Services Package.
 Exposes core MCP Gateway services:
 - Tool management
 - Resource handling

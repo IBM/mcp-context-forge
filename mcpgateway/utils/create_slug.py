@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Slug generation utilities for MCP Gateway.
-
+"""Location: ./mcpgateway/utils/create_slug.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Manav Gupta
 
+Slug generation utilities for MCP Gateway.
 This module provides utilities for creating URL-friendly slugs from text.
 It handles Unicode normalization, special character replacement, and
 contraction processing to generate clean, readable slugs.

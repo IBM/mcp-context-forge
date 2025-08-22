@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for **mcpgateway.transports.streamablehttp_transport**
-
+"""Location: ./tests/unit/mcpgateway/handlers/test_sampling.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Unit tests for **mcpgateway.transports.streamablehttp_transport**
 Focus areas
 -----------
 * **InMemoryEventStore** - storing, replaying, and eviction when the per-stream
@@ -14,7 +14,6 @@ Focus areas
 
 No external MCP server is started; we test the isolated utility pieces that
 have no heavy dependencies.
-
 """
 
 # Future

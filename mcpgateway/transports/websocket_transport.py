@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""WebSocket Transport Implementation.
-
+"""Location: ./mcpgateway/transports/websocket_transport.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+WebSocket Transport Implementation.
 This module implements WebSocket transport for MCP, providing
 full-duplex communication between client and server.
 """

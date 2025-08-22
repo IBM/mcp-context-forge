@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Transport Package.
-
+"""Location: ./mcpgateway/transports/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+MCP Transport Package.
 This package provides transport implementations for the MCP protocol:
 - stdio: Communication over standard input/output
 - SSE: Server-Sent Events for server-to-client streaming

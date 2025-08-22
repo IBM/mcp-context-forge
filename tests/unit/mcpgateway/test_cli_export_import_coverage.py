@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Tests for CLI export/import to improve coverage.
-
+"""Location: ./tests/unit/mcpgateway/test_cli_export_import_coverage.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Tests for CLI export/import to improve coverage.
 """
 
 # Standard

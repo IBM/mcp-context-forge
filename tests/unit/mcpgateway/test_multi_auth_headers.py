@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test multi-header authentication functionality."""
+"""Location: ./tests/unit/mcpgateway/test_multi_auth_headers.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test multi-header authentication functionality.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch

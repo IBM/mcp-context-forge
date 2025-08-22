@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for Tag Service."""
+"""Location: ./tests/unit/mcpgateway/services/test_tag_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for Tag Service.
+"""
 
 # Standard
 from unittest.mock import MagicMock

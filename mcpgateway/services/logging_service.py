@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Logging Service Implementation.
-
+"""Location: ./mcpgateway/services/logging_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Logging Service Implementation.
 This module implements structured logging according to the MCP specification.
 It supports RFC 5424 severity levels, log level management, and log event subscriptions.
 """

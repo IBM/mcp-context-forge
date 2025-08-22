@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Unit-tests for the LoggingService.
-
+"""Location: ./tests/unit/mcpgateway/services/test_logging_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Unit-tests for the LoggingService.
 Key details
 -----------
 `LoggingService.subscribe()` registers the subscriber *inside* the first

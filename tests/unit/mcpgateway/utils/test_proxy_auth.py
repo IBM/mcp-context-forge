@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for proxy authentication functionality.
+"""Location: ./tests/unit/mcpgateway/utils/test_proxy_auth.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for proxy authentication functionality.
 
 Tests the new MCP_CLIENT_AUTH_ENABLED and proxy authentication features.
 """

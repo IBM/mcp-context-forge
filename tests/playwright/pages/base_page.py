@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Base page object for common functionality."""
+"""Location: ./tests/playwright/pages/base_page.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Base page object for common functionality.
+"""
 
 # Third-Party
 from playwright.sync_api import Page

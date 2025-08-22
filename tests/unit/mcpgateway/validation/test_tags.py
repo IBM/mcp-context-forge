@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for tag validation and normalization.
-
+"""Location: ./tests/unit/mcpgateway/validation/test_tags.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Tests for tag validation and normalization.
 """
 
 

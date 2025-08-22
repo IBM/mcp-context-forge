@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add enabled and reachable columns in tools and gateways tables and migrate data (is_active ➜ enabled,reachable).
+"""Location: ./mcpgateway/alembic/versions/e75490e949b1_add_improved_status_to_tables.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add enabled and reachable columns in tools and gateways tables and migrate data (is_active ➜ enabled,reachable).
 
 Revision ID: e75490e949b1
 Revises: e4fc04d1a442

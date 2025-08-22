@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Base plugin implementation.
-
+"""Location: ./mcpgateway/plugins/framework/base.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor, Mihai Criveti
 
+Base plugin implementation.
 This module implements the base plugin object.
 It supports pre and post hooks AI safety, security and business processing
 for the following locations in the server:

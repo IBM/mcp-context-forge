@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""mcpplugins CLI ─ command line tools for authoring and packaging plugins
-
+"""Location: ./mcpgateway/plugins/tools/cli.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
+mcpplugins CLI ─ command line tools for authoring and packaging plugins
 This module is exposed as a **console-script** via:
 
     [project.scripts]

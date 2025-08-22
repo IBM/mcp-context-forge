@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for OAuth Manager."""
+"""Location: ./tests/unit/mcpgateway/test_oauth_manager.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for OAuth Manager.
+"""
 
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock

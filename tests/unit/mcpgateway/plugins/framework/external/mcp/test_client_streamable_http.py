@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Tests for external client on streamable http.
-
+"""Location: ./tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_streamable_http.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for external client on streamable http.
 """
 import os
 import subprocess

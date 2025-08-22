@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""OAuth Encryption Utilities.
+"""Location: ./mcpgateway/utils/oauth_encryption.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OAuth Encryption Utilities.
 
 This module provides encryption and decryption functions for OAuth client secrets
 using the AUTH_ENCRYPTION_SECRET from configuration.

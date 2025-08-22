@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Integration tests for /version and the Version tab in the Admin UI.
-
+"""Location: ./tests/unit/mcpgateway/test_ui_version.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for /version and the Version tab in the Admin UI.
 Author: Mihai Criveti
 """
 

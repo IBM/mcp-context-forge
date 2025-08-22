@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive security tests for MCP Gateway input validation.
-
+"""Location: ./tests/security/test_input_validation.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Comprehensive security tests for MCP Gateway input validation.
 This module tests all input validation functions across the gateway schemas
 to ensure proper security measures are in place against various attack vectors.
 

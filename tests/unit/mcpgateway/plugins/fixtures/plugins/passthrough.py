@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Passthrough plugin.
-
+"""Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/passthrough.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Passthrough plugin.
 """
 
 

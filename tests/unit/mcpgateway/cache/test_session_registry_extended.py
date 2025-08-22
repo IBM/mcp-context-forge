@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Extended tests for session_registry.py to improve coverage.
-
+"""Location: ./tests/unit/mcpgateway/cache/test_session_registry_extended.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Extended tests for session_registry.py to improve coverage.
 This test suite focuses on uncovered code paths in session_registry.py
 including import error handling, backend edge cases, and error scenarios.
 """

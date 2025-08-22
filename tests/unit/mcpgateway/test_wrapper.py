@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the MCP *wrapper* module (single file, full coverage).
-
+"""Location: ./tests/unit/mcpgateway/test_wrapper.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti + contributors
 
+Tests for the MCP *wrapper* module (single file, full coverage).
 This suite fakes the "mcp" dependency tree so that no real network or
 pydantic models are required and exercises almost every branch inside
 *mcpgateway.wrapper*.

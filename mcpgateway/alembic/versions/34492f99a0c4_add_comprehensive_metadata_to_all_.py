@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add_comprehensive_metadata_to_all_entities
+"""Location: ./mcpgateway/alembic/versions/34492f99a0c4_add_comprehensive_metadata_to_all_.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_comprehensive_metadata_to_all_entities
 
 Revision ID: 34492f99a0c4
 Revises: eb17fd368f9d
 Create Date: 2025-08-18 08:06:17.141169
-
 """
 
 # Standard

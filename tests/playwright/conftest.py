@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/playwright/conftest.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Playwright test configuration - Simple version without python-dotenv.
 This assumes environment variables are loaded by the Makefile.
 """

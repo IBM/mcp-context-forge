@@ -1,18 +1,16 @@
 # -*- coding: utf-8 -*-
-"""
-Unit-tests for `mcpgateway.transports.stdio_transport.StdioTransport`.
+"""Location: ./tests/unit/mcpgateway/transports/test_stdio_transport.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Unit-tests for `mcpgateway.transports.stdio_transport.StdioTransport`.
 The real transport interacts with the running event-loop and the
 process's stdin / stdout file-descriptors.  Those OS objects are tricky
 to mock portably, so these tests **inject in-memory fakes** in place of
 `StreamReader` and `StreamWriter`.  That lets us assert the transport's
 logic (JSON encoding/decoding, connection state, error handling) without
 ever touching real pipes.
-
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 """
 
 # Future

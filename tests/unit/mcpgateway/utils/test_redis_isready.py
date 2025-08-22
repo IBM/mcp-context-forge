@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""redis_isready - Wait until Redis is ready and accepting connections
-
+"""Location: ./tests/unit/mcpgateway/utils/test_redis_isready.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Reeve Barreto, Mihai Criveti
 
+redis_isready - Wait until Redis is ready and accepting connections
 """
 
 # Standard

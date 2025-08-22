@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Memory-backend unit tests for ``session_registry.py``.
-
+"""Location: ./tests/unit/mcpgateway/cache/test_session_registry.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Memory-backend unit tests for ``session_registry.py``.
 This suite exercises the in-memory implementation of
 :pyfile:`mcpgateway/cache/session_registry.py`.
 
