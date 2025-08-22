@@ -490,7 +490,7 @@ mcpFastTimeServer:
   replicaCount: 2
   image:
     repository: ghcr.io/ibm/fast-time-server
-    tag: "0.5.0"
+    tag: "0.6.0"
     pullPolicy: IfNotPresent
   port: 8080
 

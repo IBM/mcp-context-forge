@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "0.5.0"
+version = "0.6.0"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -48,7 +48,7 @@ maintainers = [
 dependencies = [
     "aiohttp>=3.12.15",
     "alembic>=1.16.4",
-    "copier>=9.9.0",
+    "copier>=9.9.1",
     "cryptography>=45.0.6",
     "fastapi>=0.116.1",
     "filelock>=3.19.1",
@@ -59,7 +59,7 @@ dependencies = [
     "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.25.1",
-    "mcp>=1.13.0",
+    "mcp>=1.13.1",
     "oauthlib>=3.3.1",
     "parse>=1.20.2",
     "psutil>=7.0.0",
@@ -72,7 +72,7 @@ dependencies = [
     "sqlalchemy>=2.0.43",
     "sse-starlette>=3.0.2",
     "starlette>=0.47.2",
-    "typer>=0.16.0",
+    "typer>=0.16.1",
     "uvicorn>=0.35.0",
     "zeroconf>=0.147.0",
 ]
@@ -110,10 +110,10 @@ alembic = [
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.25.0",
-    "opentelemetry-exporter-otlp>=1.25.0",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
-    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-api>=1.36.0",
+    "opentelemetry-exporter-otlp>=1.36.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
+    "opentelemetry-sdk>=1.36.0",
 ]
 
 # Additional observability backends (optional)
@@ -179,8 +179,8 @@ dev = [
     "pylint>=3.3.8",
     "pylint-pydantic>=0.3.5",
     "pyre-check>=0.9.25",
-    "pyrefly>=0.29.0",
-    "pyright>=1.1.403",
+    "pyrefly>=0.29.2",
+    "pyright>=1.1.404",
     "pyroma>=5.0",
     "pyspelling>=2.10",
     "pytest>=8.4.1",
@@ -196,7 +196,7 @@ dev = [
     "pyupgrade>=3.20.0",
     "radon>=6.0.1",
     "redis>=6.4.0",
-    "ruff>=0.12.9",
+    "ruff>=0.12.10",
     "semgrep>=1.132.1",
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
@@ -204,10 +204,10 @@ dev = [
     "tox>=4.28.4",
     "tox-uv>=1.28.0",
     "twine>=6.1.0",
-    "ty>=0.0.1a18",
+    "ty>=0.0.1a19",
     "types-tabulate>=0.9.0.20241207",
     "unimport>=1.2.1",
-    "uv>=0.8.11",
+    "uv>=0.8.13",
     "vulture>=2.14",
     "websockets>=15.0.1",
     "yamllint>=1.37.1",
