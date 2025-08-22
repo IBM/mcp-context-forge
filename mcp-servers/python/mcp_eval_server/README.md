@@ -81,28 +81,6 @@ curl -X POST -H 'Content-Type: application/json' \
      http://localhost:9000/
 ```
 
-**🎉 That's it!** Choose your preferred mode and get access to **63 specialized evaluation tools**!
-
-## 🆕 **NEW TOOLS SPOTLIGHT**
-
-### **🔥 Most Requested Features - Now Available!**
-
-**🔗 RAG Evaluation** - *Finally!* Complete RAG system assessment
-**⚖️ Bias & Fairness** - *Essential!* Demographic bias and intersectional analysis
-**🛡️ Robustness Testing** - *Critical!* Adversarial attacks and security assessment
-**🔒 Safety & Alignment** - *Vital!* Harmful content detection and value alignment
-**🌍 Multilingual Support** - *Global!* Translation and cultural adaptation testing
-**⚡ Performance Monitoring** - *Powerful!* Real-time latency and efficiency tracking
-**🔐 Privacy & Compliance** - *Enterprise!* PII detection and regulatory compliance
-
-### **💡 Revolutionary Capabilities Unlocked**
-- **🎯 RAG Groundedness** - Verify answers are properly grounded in context
-- **🚨 Hallucination Detection** - Identify contradictions with source material
-- **⚖️ Intersectional Bias** - Multi-dimensional fairness analysis
-- **🛡️ Prompt Injection Resistance** - Security testing against malicious prompts
-- **🌍 Cultural Sensitivity** - Cross-cultural appropriateness evaluation
-- **🔐 PII Exposure Detection** - Protect sensitive personal information
-- **⚡ Real-time Monitoring** - Live performance and health tracking
 
 ## ✨ **Complete Tool Arsenal**
 
