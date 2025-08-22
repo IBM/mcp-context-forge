@@ -397,7 +397,7 @@ def show_file_lines(file_path: Path, num_lines: int = 10) -> str:
 
 
 def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = False, debug: bool = False,
-                require_shebang: Optional[bool] = None, require_encoding: bool = True) -> Optional[Dict[str, Any]]:
+                 require_shebang: Optional[bool] = None, require_encoding: bool = True) -> Optional[Dict[str, Any]]:
     """Check a single file and optionally fix its header.
 
     Args:
@@ -476,6 +476,8 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
         location_match = re.search(r"^Location: \./(.*)$", docstring_node, re.MULTILINE)
         if not location_match:
             issues.append("Missing 'Location' line")
+        elif location_match.group(1) != relative_path_str:
+            issues.append(f"Incorrect 'Location' line: expected './{relative_path_str}', found './{location_match.group(1)}'")
 
         if f"Copyright {COPYRIGHT_YEAR}" not in docstring_node:
             issues.append("Missing 'Copyright' line")
@@ -489,7 +491,8 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
         if not issues:
             return None
 
-        if mode in ["fix-all", "fix", "interactive"]:
+        # Generate new source code for diff preview or actual fixing
+        if mode in ["fix-all", "fix", "interactive"] or show_diff:
             # Extract the raw docstring from source
             if module_body and isinstance(module_body[0], ast.Expr):
                 docstring_expr_node = module_body[0]
@@ -521,10 +524,12 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
 
                     # Build new header
                     new_header_lines = []
-                    new_header_lines.append(existing_header_fields.get("Location") or f"Location: ./{relative_path_str}")
+                    # Always use correct location path
+                    new_header_lines.append(f"Location: ./{relative_path_str}")
                     new_header_lines.append(existing_header_fields.get("Copyright") or f"Copyright {COPYRIGHT_YEAR}")
                     new_header_lines.append(existing_header_fields.get("SPDX-License-Identifier") or f"SPDX-License-Identifier: {LICENSE}")
-                    new_header_lines.append(f"Authors: {authors}")
+                    # Preserve existing Authors field if it exists, otherwise use the provided authors
+                    new_header_lines.append(existing_header_fields.get("Authors") or f"Authors: {authors}")
 
                     # Reconstruct docstring
                     new_inner_content = "\n".join(new_header_lines)
@@ -562,7 +567,8 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
         # No docstring found
         issues.append("No docstring found")
 
-        if mode in ["fix-all", "fix", "interactive"]:
+        # Generate new source code for diff preview or actual fixing
+        if mode in ["fix-all", "fix", "interactive"] or show_diff:
             # Create new header
             new_header = get_header_template(
                 relative_path_str,
@@ -683,15 +689,15 @@ def parse_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
     # Header configuration options
     header_group = parser.add_argument_group("header configuration")
     header_group.add_argument("--require-shebang", choices=["always", "never", "auto"], default="auto",
-                            help="Require shebang line: 'always', 'never', or 'auto' (only for executable files). Default: auto")
+                              help="Require shebang line: 'always', 'never', or 'auto' (only for executable files). Default: auto")
     header_group.add_argument("--require-encoding", action="store_true", default=True,
-                            help="Require encoding line. Default: True")
+                              help="Require encoding line. Default: True")
     header_group.add_argument("--no-encoding", action="store_false", dest="require_encoding",
-                            help="Don't require encoding line.")
+                              help="Don't require encoding line.")
     header_group.add_argument("--copyright-year", type=int, default=COPYRIGHT_YEAR,
-                            help=f"Copyright year to use. Default: {COPYRIGHT_YEAR}")
+                              help=f"Copyright year to use. Default: {COPYRIGHT_YEAR}")
     header_group.add_argument("--license", type=str, default=LICENSE,
-                            help=f"License identifier to use. Default: {LICENSE}")
+                              help=f"License identifier to use. Default: {LICENSE}")
 
     return parser.parse_args(argv)
 
@@ -830,7 +836,7 @@ def print_results(issues_found: List[Dict[str, Any]], mode: str, modified_count:
         # Show debug info if available
         if "debug" in issue_info:
             debug = issue_info["debug"]
-            print(f"   Debug info:", file=sys.stderr)
+            print("   Debug info:", file=sys.stderr)
             print(f"     Executable: {debug['executable']}", file=sys.stderr)
             print(f"     Has shebang: {debug['has_shebang']}", file=sys.stderr)
             print(f"     Has encoding: {debug['has_encoding']}", file=sys.stderr)
