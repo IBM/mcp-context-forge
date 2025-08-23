@@ -385,7 +385,7 @@ class ToolService:
                 original_name=tool.name,
                 custom_name=tool.name,
                 custom_name_slug=slugify(tool.name),
-                display_name=tool.displayName,
+                display_name=tool.displayName or tool.name,
                 url=str(tool.url),
                 description=tool.description,
                 integration_type=tool.integration_type,

@@ -5388,7 +5388,8 @@ async function viewTool(toolId) {
             // Create structure safely without double-escaping
             const safeHTML = `
         <div class="space-y-2 dark:bg-gray-800 dark:text-gray-300">
-          <p><strong>Name:</strong> <span class="tool-name"></span></p>
+          <p><strong>Display Name:</strong> <span class="tool-display-name"></span></p>
+          <p><strong>Technical Name:</strong> <span class="tool-name"></span></p>
           <p><strong>URL:</strong> <span class="tool-url"></span></p>
           <p><strong>Type:</strong> <span class="tool-type"></span></p>
           <p><strong>Description:</strong> <span class="tool-description"></span></p>
@@ -5468,6 +5469,7 @@ async function viewTool(toolId) {
                 }
             };
 
+            setTextSafely(".tool-display-name", tool.displayName || tool.customName || tool.name);
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);

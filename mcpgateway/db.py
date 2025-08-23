@@ -1629,6 +1629,7 @@ def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     - Sets custom_name to original_name if not provided.
     - Calculates custom_name_slug from custom_name using slugify.
     - Updates name to gateway_slug + separator + custom_name_slug.
+    - Sets display_name to custom_name if not provided.
 
     Args:
         mapper: SQLAlchemy mapper for the Tool model.
@@ -1638,6 +1639,9 @@ def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     # Set custom_name to original_name if not provided
     if not target.custom_name:
         target.custom_name = target.original_name
+    # Set display_name to custom_name if not provided
+    if not target.display_name:
+        target.display_name = target.custom_name
     # Always update custom_name_slug from custom_name
     target.custom_name_slug = slugify(target.custom_name)
     # Update name field

@@ -74,7 +74,7 @@ class TestDisplayNameFeature:
         assert saved_tool.original_name == "test_tool"
 
     def test_tool_create_without_display_name(self, db_session):
-        """Test creating a tool without displayName field."""
+        """Test creating a tool without displayName field defaults to custom_name."""
         # Create tool without displayName
         db_tool = DbTool(
             original_name="test_tool_2",
@@ -91,9 +91,9 @@ class TestDisplayNameFeature:
         db_session.add(db_tool)
         db_session.commit()
 
-        # Verify the tool was created with null displayName
+        # Verify the tool was created with default displayName (should default to custom_name)
         saved_tool = db_session.query(DbTool).first()
-        assert saved_tool.display_name is None
+        assert saved_tool.display_name == "test_tool_2"  # Should default to custom_name
         assert saved_tool.original_name == "test_tool_2"
 
     def test_tool_update_display_name(self, db_session):
@@ -273,25 +273,51 @@ class TestSchemaValidation:
     def test_server_create_schema_with_uuid(self):
         """Test ServerCreate schema with custom UUID."""
         server_data = {
-            "id": "custom-server-uuid-123",
+            "id": "550e8400-e29b-41d4-a716-446655440000",
             "name": "Test Server",
             "description": "Test server with custom UUID"
         }
 
         server_create = ServerCreate(**server_data)
-        assert server_create.id == "custom-server-uuid-123"
+        assert server_create.id == "550e8400-e29b-41d4-a716-446655440000"
         assert server_create.name == "Test Server"
 
     def test_server_update_schema_with_uuid(self):
         """Test ServerUpdate schema with UUID."""
         update_data = {
-            "id": "updated-server-uuid-456",
+            "id": "123e4567-e89b-12d3-a456-426614174000",
             "name": "Updated Server Name"
         }
 
         server_update = ServerUpdate(**update_data)
-        assert server_update.id == "updated-server-uuid-456"
+        assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
         assert server_update.name == "Updated Server Name"
+    
+    def test_server_uuid_validation(self):
+        """Test UUID validation in schemas."""
+        from mcpgateway.schemas import ServerCreate, ServerUpdate
+        
+        # Test valid UUID
+        server_create = ServerCreate(
+            id="550e8400-e29b-41d4-a716-446655440000",
+            name="Test Server"
+        )
+        assert server_create.id == "550e8400-e29b-41d4-a716-446655440000"
+        
+        # Test invalid UUID should raise validation error
+        with pytest.raises(Exception):  # Pydantic ValidationError
+            ServerCreate(
+                id="invalid-uuid-format",
+                name="Test Server"
+            )
+        
+        # Test ServerUpdate UUID validation
+        server_update = ServerUpdate(id="123e4567-e89b-12d3-a456-426614174000")
+        assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
+        
+        # Test invalid UUID in update
+        with pytest.raises(Exception):  # Pydantic ValidationError
+            ServerUpdate(id="bad-uuid-format")
 
 
 @pytest.mark.asyncio

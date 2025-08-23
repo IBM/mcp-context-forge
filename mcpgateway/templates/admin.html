@@ -1146,7 +1146,7 @@
                       value="{{ tool.id }}"
                       class="tool-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                     />
-                    <span class="select-none">{{ tool.name }}</span>
+                    <span class="select-none">{{ tool.displayName or tool.customName or tool.name }}</span>
                   </label>
                   {% endfor %}
                   <p
@@ -1415,7 +1415,7 @@
                   <td
                     class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24 dark:text-gray-100"
                   >
-                    {{ tool.customNameSlug }}
+                    {{ tool.name }}
                   </td>
                   <td
                     class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-24"
@@ -5480,7 +5480,7 @@
                             value="{{ tool.id }}"
                             class="tool-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                           />
-                          <span class="select-none">{{ tool.name }}</span>
+                          <span class="select-none">{{ tool.displayName or tool.customName or tool.name }}</span>
                         </label>
                         {% endfor %}
                       </div>
