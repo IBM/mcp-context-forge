@@ -27,17 +27,36 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # Create global_config table
-    op.create_table("global_config", sa.Column("id", sa.Integer(), nullable=False), sa.Column("passthrough_headers", sa.JSON(), nullable=True), sa.PrimaryKeyConstraint("id"))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    # Add passthrough_headers column to gateways table
-    op.add_column("gateways", sa.Column("passthrough_headers", sa.JSON(), nullable=True))
+    # Check if this is a fresh database without existing tables
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping passthrough headers migration.")
+        return
+
+    # Create global_config table if it doesn't exist
+    if not inspector.has_table("global_config"):
+        op.create_table("global_config", sa.Column("id", sa.Integer(), nullable=False), sa.Column("passthrough_headers", sa.JSON(), nullable=True), sa.PrimaryKeyConstraint("id"))
+
+    # Add passthrough_headers column to gateways table if it doesn't exist
+    if inspector.has_table("gateways"):
+        columns = [col["name"] for col in inspector.get_columns("gateways")]
+        if "passthrough_headers" not in columns:
+            op.add_column("gateways", sa.Column("passthrough_headers", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # Remove passthrough_headers column from gateways table
-    op.drop_column("gateways", "passthrough_headers")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    # Drop global_config table
-    op.drop_table("global_config")
+    # Remove passthrough_headers column from gateways table if it exists
+    if inspector.has_table("gateways"):
+        columns = [col["name"] for col in inspector.get_columns("gateways")]
+        if "passthrough_headers" in columns:
+            op.drop_column("gateways", "passthrough_headers")
+
+    # Drop global_config table if it exists
+    if inspector.has_table("global_config"):
+        op.drop_table("global_config")

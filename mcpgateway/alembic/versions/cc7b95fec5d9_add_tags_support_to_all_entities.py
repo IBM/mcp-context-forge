@@ -17,6 +17,7 @@ from typing import Sequence, Union
 # Third-Party
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql as pg
 
 # revision identifiers, used by Alembic.
 revision: str = "cc7b95fec5d9"
@@ -27,50 +28,71 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema - Add tags JSON column to all entity tables."""
-    # Add tags column to tools table
-    op.add_column("tools", sa.Column("tags", sa.JSON(), nullable=True, server_default="[]"))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    # Add tags column to resources table
-    op.add_column("resources", sa.Column("tags", sa.JSON(), nullable=True, server_default="[]"))
+    # Check if this is a fresh database without existing tables
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
 
-    # Add tags column to prompts table
-    op.add_column("prompts", sa.Column("tags", sa.JSON(), nullable=True, server_default="[]"))
+    # Define tables to add tags to
+    tables = ["tools", "resources", "prompts", "servers", "gateways"]
 
-    # Add tags column to servers table
-    op.add_column("servers", sa.Column("tags", sa.JSON(), nullable=True, server_default="[]"))
+    # Add tags column to each table if it doesn't exist
+    for table_name in tables:
+        if inspector.has_table(table_name):
+            columns = [col["name"] for col in inspector.get_columns(table_name)]
+            if "tags" not in columns:
+                is_postgresql = bind.dialect.name == "postgresql"
+                col_type = pg.JSONB() if is_postgresql else sa.JSON()
+                default = sa.text("'[]'::jsonb") if is_postgresql else sa.text("'[]'")
+                op.add_column(
+                    table_name,
+                    sa.Column("tags", col_type, nullable=True, server_default=default),
+                )
 
-    # Add tags column to gateways table
-    op.add_column("gateways", sa.Column("tags", sa.JSON(), nullable=True, server_default="[]"))
-
-    # Create indexes for PostgreSQL (GIN indexes for JSON)
-    # These will be ignored on SQLite but work on PostgreSQL
-    try:
-        op.create_index("idx_tools_tags", "tools", ["tags"], postgresql_using="gin")
-        op.create_index("idx_resources_tags", "resources", ["tags"], postgresql_using="gin")
-        op.create_index("idx_prompts_tags", "prompts", ["tags"], postgresql_using="gin")
-        op.create_index("idx_servers_tags", "servers", ["tags"], postgresql_using="gin")
-        op.create_index("idx_gateways_tags", "gateways", ["tags"], postgresql_using="gin")
-    except Exception:  # nosec B110 - database compatibility
-        # SQLite doesn't support GIN indexes, skip silently
-        pass
+    # Create safe B-tree indexes (avoid GIN to prevent transaction abortion)
+    # GIN indexes can be added separately after migration completes successfully
+    for table_name in tables:
+        if inspector.has_table(table_name):
+            index_name = f"idx_{table_name}_tags"
+            try:
+                existing_indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
+                if index_name not in existing_indexes:
+                    # Create simple B-tree index that works on both PostgreSQL and SQLite
+                    # This avoids PostgreSQL GIN operator class errors that abort transactions
+                    op.create_index(index_name, table_name, ["tags"])
+                    print(f"Created B-tree index {index_name} on {table_name}.tags")
+            except Exception as e:
+                print(f"Warning: Could not create index {index_name}: {e}")
 
 
 def downgrade() -> None:
     """Downgrade schema - Remove tags columns from all entity tables."""
-    # Drop indexes first (if they exist)
-    try:
-        op.drop_index("idx_tools_tags", "tools")
-        op.drop_index("idx_resources_tags", "resources")
-        op.drop_index("idx_prompts_tags", "prompts")
-        op.drop_index("idx_servers_tags", "servers")
-        op.drop_index("idx_gateways_tags", "gateways")
-    except Exception:  # nosec B110 - database compatibility
-        # Indexes might not exist on SQLite
-        pass
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    # Drop tags columns
-    op.drop_column("gateways", "tags")
-    op.drop_column("servers", "tags")
-    op.drop_column("prompts", "tags")
-    op.drop_column("resources", "tags")
-    op.drop_column("tools", "tags")
+    # Define tables to remove tags from
+    tables = ["tools", "resources", "prompts", "servers", "gateways"]
+
+    # Drop indexes first (if they exist)
+    for table_name in tables:
+        if inspector.has_table(table_name):
+            index_name = f"idx_{table_name}_tags"
+            try:
+                existing_indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
+                if index_name in existing_indexes:
+                    op.drop_index(index_name, table_name=table_name)
+            except Exception as e:
+                print(f"Warning: Could not drop index {index_name}: {e}")
+
+    # Drop tags columns (if they exist)
+    for table_name in reversed(tables):  # Reverse order for safety
+        if inspector.has_table(table_name):
+            columns = [col["name"] for col in inspector.get_columns(table_name)]
+            if "tags" in columns:
+                try:
+                    op.drop_column(table_name, "tags")
+                except Exception as e:
+                    print(f"Warning: Could not drop column tags from {table_name}: {e}")
