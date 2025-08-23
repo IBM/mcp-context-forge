@@ -43,7 +43,7 @@ MCP Gateway loads configuration from:
 - Environment variables (overrides `.env`)
 - CLI flags (e.g., via `run.sh`)
 
-⚠️ **Security Note**: Never store sensitive credentials directly in environment variables. Use a secrets management system in production. See the [Security Guide](../manage/securing.md#secrets-management) for details.
+⚠️ **Security Note**: Never store sensitive credentials directly in environment variables. Use a secrets management system in production. See the [Security Guide](../manage/securing.md#5-secrets-management) for details.
 
 ---
 
@@ -70,4 +70,4 @@ The default container image:
 
 > For Kubernetes, you can mount a ConfigMap or Secret as `.env`.
 
-**Important**: For production deployments, ensure you follow the container hardening guidelines in our [Security Guide](../manage/securing.md#container-security).
+**Important**: For production deployments, ensure you follow the container hardening guidelines in our [Security Guide](../manage/securing.md#4-container-security).

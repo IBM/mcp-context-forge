@@ -1170,4 +1170,4 @@ module.exports = MCPGatewayClient;
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
 - [MCP Gateway Documentation](https://ibm.github.io/mcp-context-forge/)
 - [MCP Gateway Admin UI Guide](../manage/index.md)
-- [MCP Gateway Wrapper Documentation](mcpgateway-wrapper.md)
+- [MCP Gateway Wrapper Documentation](../using/mcpgateway-wrapper.md)

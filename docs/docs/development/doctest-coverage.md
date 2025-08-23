@@ -328,4 +328,4 @@ python -m py_compile module.py
 - [Development Guide](index.md) - General development information
 - [Testing Guide](../testing/index.md) - Testing strategies and tools
 - [Contributing Guidelines](https://github.com/IBM/mcp-context-forge/blob/main/CONTRIBUTING.md) - How to contribute to the project
-- [Makefile Targets](../../../README.md#makefile-targets) - Available make targets including doctest commands
+- [Makefile Targets](../index.md#makefile-targets) - Available make targets including doctest commands

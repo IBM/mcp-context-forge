@@ -196,7 +196,7 @@ We're particularly interested in:
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
 
 ### **Gateway Documentation**
-- [MCP Context Forge Gateway](../README.md)
+- [MCP Context Forge Gateway](../../index.md)
 - [mcpgateway.wrapper Usage](../mcpgateway-wrapper.md)
 - [mcpgateway.translate Bridge](../mcpgateway-translate.md)
 

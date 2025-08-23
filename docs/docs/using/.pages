@@ -4,6 +4,7 @@ nav:
   - mcpgateway-translate.md
   - reverse-proxy.md
   - multi-auth-headers.md
+  - tool-annotations.md
   - Clients: clients
   - Agents: agents
   - Servers: servers
