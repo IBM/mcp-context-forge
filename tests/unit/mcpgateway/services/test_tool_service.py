@@ -96,6 +96,8 @@ def mock_tool():
     tool.name = "test-gateway-test-tool"
     tool.custom_name="test_tool"
     tool.custom_name_slug = "test-tool"
+    tool.display_name = None
+    tool.tags = []
 
     # Set up metrics
     tool.metrics = []

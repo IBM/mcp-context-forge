@@ -892,6 +892,7 @@ class ImportService:
 
         return ToolCreate(
             name=tool_data["name"],
+            displayName=tool_data.get("displayName"),
             url=tool_data["url"],
             description=tool_data.get("description"),
             integration_type=tool_data.get("integration_type", "REST"),
@@ -919,6 +920,7 @@ class ImportService:
 
         return ToolUpdate(
             name=tool_data.get("name"),
+            displayName=tool_data.get("displayName"),
             url=tool_data.get("url"),
             description=tool_data.get("description"),
             integration_type=tool_data.get("integration_type"),

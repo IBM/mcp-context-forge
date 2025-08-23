@@ -1962,6 +1962,11 @@ async function editTool(toolId) {
         if (customNameField && customNameValidation.valid) {
             customNameField.value = customNameValidation.value;
         }
+
+        const displayNameField = safeGetElement("edit-tool-display-name");
+        if (displayNameField) {
+            displayNameField.value = tool.displayName || "";
+        }
         if (urlField && urlValidation.valid) {
             urlField.value = urlValidation.value;
         }
@@ -3552,6 +3557,11 @@ async function editServer(serverId) {
         }
         if (descField) {
             descField.value = server.description || "";
+        }
+
+        const idField = safeGetElement("edit-server-id");
+        if (idField) {
+            idField.value = server.id || "";
         }
 
         // Set tags field
@@ -5282,27 +5292,39 @@ async function viewTool(toolId) {
 
         const tool = await response.json();
 
-        // Build auth HTML safely
+        // Build auth HTML safely with new styling
         let authHTML = "";
         if (tool.auth?.username && tool.auth?.password) {
             authHTML = `
-        <p><strong>Authentication Type:</strong> Basic</p>
-        <p><strong>Username:</strong> <span class="auth-username"></span></p>
-        <p><strong>Password:</strong> ********</p>
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+          <div class="text-gray-600 dark:text-gray-400">Basic Authentication</div>
+          <div class="mt-1">Username: <span class="auth-username font-medium"></span></div>
+          <div>Password: <span class="font-medium">********</span></div>
+        </div>
       `;
         } else if (tool.auth?.token) {
             authHTML = `
-        <p><strong>Authentication Type:</strong> Token</p>
-        <p><strong>Token:</strong> ********</p>
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+          <div class="text-gray-600 dark:text-gray-400">Bearer Token</div>
+          <div class="mt-1">Token: <span class="font-medium">********</span></div>
+        </div>
       `;
         } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
             authHTML = `
-        <p><strong>Authentication Type:</strong> Custom Headers</p>
-        <p><strong>Header Key:</strong> <span class="auth-header-key"></span></p>
-        <p><strong>Header Value:</strong> ********</p>
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+          <div class="text-gray-600 dark:text-gray-400">Custom Headers</div>
+          <div class="mt-1">Header: <span class="auth-header-key font-medium"></span></div>
+          <div>Value: <span class="font-medium">********</span></div>
+        </div>
       `;
         } else {
-            authHTML = "<p><strong>Authentication Type:</strong> None</p>";
+            authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm text-gray-600 dark:text-gray-400">None</div>
+      `;
         }
 
         // Create annotation badges safely - NO ESCAPING since we're using textContent
@@ -5377,35 +5399,106 @@ async function viewTool(toolId) {
         if (toolDetailsDiv) {
             // Create structure safely without double-escaping
             const safeHTML = `
-        <div class="space-y-2 dark:bg-gray-800 dark:text-gray-300">
-          <p><strong>Name:</strong> <span class="tool-name"></span></p>
-          <p><strong>URL:</strong> <span class="tool-url"></span></p>
-          <p><strong>Type:</strong> <span class="tool-type"></span></p>
-          <p><strong>Description:</strong> <span class="tool-description"></span></p>
-          <p><strong>Tags:</strong> <span class="tool-tags"></span></p>
-          <p><strong>Request Type:</strong> <span class="tool-request-type"></span></p>
-          ${authHTML}
-          ${renderAnnotations(tool.annotations)}
-          <div>
-            <strong>Headers:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-200 tool-headers"></pre>
+        <div class="dark:bg-gray-800 dark:text-gray-300">
+          <!-- Two Column Layout for Main Info -->
+          <div class="grid grid-cols-2 gap-6 mb-6">
+            <!-- Left Column -->
+            <div class="space-y-3">
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
+                <div class="mt-1 tool-display-name font-medium"></div>
+              </div>
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Technical Name:</span>
+                <div class="mt-1 tool-name text-sm text-gray-600 dark:text-gray-400"></div>
+              </div>
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">URL:</span>
+                <div class="mt-1 tool-url text-sm text-gray-600 dark:text-gray-400 break-all"></div>
+              </div>
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Type:</span>
+                <div class="mt-1 tool-type text-sm"></div>
+              </div>
+            </div>
+            <!-- Right Column -->
+            <div class="space-y-3">
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Description:</span>
+                <div class="mt-1 tool-description text-sm text-gray-600 dark:text-gray-400"></div>
+              </div>
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Tags:</span>
+                <div class="mt-1 tool-tags text-sm"></div>
+              </div>
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Request Type:</span>
+                <div class="mt-1 tool-request-type text-sm"></div>
+              </div>
+              <div class="auth-info">
+                ${authHTML}
+              </div>
+            </div>
           </div>
-          <div>
-            <strong>Input Schema:</strong>
-            <pre class="mt-1 bg-gray-100 p-2 rounded dark:bg-gray-800 dark:text-gray-200 tool-schema"></pre>
+
+          <!-- Annotations Section -->
+          <div class="mb-6">
+            ${renderAnnotations(tool.annotations)}
           </div>
-          <div>
-            <strong>Metrics:</strong>
-            <ul class="list-disc list-inside ml-4">
-              <li>Total Executions: <span class="metric-total"></span></li>
-              <li>Successful Executions: <span class="metric-success"></span></li>
-              <li>Failed Executions: <span class="metric-failed"></span></li>
-              <li>Failure Rate: <span class="metric-failure-rate"></span></li>
-              <li>Min Response Time: <span class="metric-min-time"></span></li>
-              <li>Max Response Time: <span class="metric-max-time"></span></li>
-              <li>Average Response Time: <span class="metric-avg-time"></span></li>
-              <li>Last Execution Time: <span class="metric-last-time"></span></li>
-            </ul>
+
+          <!-- Technical Details Section -->
+          <div class="space-y-4">
+            <div>
+              <strong class="text-gray-700 dark:text-gray-300">Headers:</strong>
+              <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-headers overflow-x-auto"></pre>
+            </div>
+            <div>
+              <strong class="text-gray-700 dark:text-gray-300">Input Schema:</strong>
+              <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-schema overflow-x-auto"></pre>
+            </div>
+          </div>
+
+          <!-- Metrics Section -->
+          <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+            <strong class="text-gray-700 dark:text-gray-300">Metrics:</strong>
+            <div class="grid grid-cols-2 gap-4 mt-3 text-sm">
+              <div class="space-y-2">
+                <div class="flex justify-between">
+                  <span class="text-gray-600 dark:text-gray-400">Total Executions:</span>
+                  <span class="metric-total font-medium"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-600 dark:text-gray-400">Successful Executions:</span>
+                  <span class="metric-success font-medium text-green-600"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-600 dark:text-gray-400">Failed Executions:</span>
+                  <span class="metric-failed font-medium text-red-600"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-600 dark:text-gray-400">Failure Rate:</span>
+                  <span class="metric-failure-rate font-medium"></span>
+                </div>
+              </div>
+              <div class="space-y-2">
+                <div class="flex justify-between">
+                  <span class="text-gray-600 dark:text-gray-400">Min Response Time:</span>
+                  <span class="metric-min-time font-medium"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-600 dark:text-gray-400">Max Response Time:</span>
+                  <span class="metric-max-time font-medium"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-600 dark:text-gray-400">Average Response Time:</span>
+                  <span class="metric-avg-time font-medium"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-600 dark:text-gray-400">Last Execution Time:</span>
+                  <span class="metric-last-time font-medium"></span>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="mt-6 border-t pt-4">
             <strong>Metadata:</strong>
@@ -5458,6 +5551,10 @@ async function viewTool(toolId) {
                 }
             };
 
+            setTextSafely(
+                ".tool-display-name",
+                tool.displayName || tool.customName || tool.name,
+            );
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);

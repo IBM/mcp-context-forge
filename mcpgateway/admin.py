@@ -670,6 +670,7 @@ async def admin_edit_server(
     update operation.
 
     Expects form fields:
+      - id (optional): Updated UUID for the server
       - name (optional): The updated name of the server
       - description (optional): An updated description of the server's purpose
       - icon (optional): Updated URL or path to the server's icon
@@ -778,6 +779,7 @@ async def admin_edit_server(
     try:
         LOGGER.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
+            id=form.get("id"),
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
@@ -1979,6 +1981,7 @@ async def admin_add_tool(
 
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
+        "displayName": form.get("displayName"),
         "url": form.get("url"),
         "description": form.get("description"),
         "request_type": request_type,
@@ -2044,6 +2047,7 @@ async def admin_edit_tool(
 
     Expects form fields:
       - name
+      - displayName (optional)
       - url
       - description (optional)
       - requestType (to be mapped to request_type)
@@ -2218,6 +2222,7 @@ async def admin_edit_tool(
 
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
+        "displayName": form.get("displayName"),
         "custom_name": form.get("customName"),
         "url": form.get("url"),
         "description": form.get("description"),

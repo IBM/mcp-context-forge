@@ -332,6 +332,7 @@ class ToolCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     name: str = Field(..., description="Unique name for the tool")
+    displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
@@ -371,6 +372,9 @@ class ToolCreate(BaseModel):
         Returns:
             str: Value if validated as safe
 
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
             >>> ToolCreate.validate_name('valid_tool')
@@ -392,6 +396,9 @@ class ToolCreate(BaseModel):
 
         Returns:
             str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -432,6 +439,35 @@ class ToolCreate(BaseModel):
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
         return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("displayName")
+    @classmethod
+    def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure display names display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
+        Examples:
+            >>> from mcpgateway.schemas import ToolCreate
+            >>> ToolCreate.validate_display_name('My Custom Tool')
+            'My Custom Tool'
+            >>> ToolCreate.validate_display_name('<script>alert("xss")</script>')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+            raise ValueError(f"Display name exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Display name")
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod
@@ -628,6 +664,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the tool")
+    displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
@@ -818,6 +855,35 @@ class ToolUpdate(BaseModelWithConfigDict):
                     values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
+    @field_validator("displayName")
+    @classmethod
+    def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure display names display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
+        Examples:
+            >>> from mcpgateway.schemas import ToolUpdate
+            >>> ToolUpdate.validate_display_name('My Custom Tool')
+            'My Custom Tool'
+            >>> ToolUpdate.validate_display_name('<script>alert("xss")</script>')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+            raise ValueError(f"Display name exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Display name")
+
     @model_validator(mode="before")
     @classmethod
     def prevent_manual_mcp_update(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -877,6 +943,7 @@ class ToolRead(BaseModelWithConfigDict):
     execution_count: int
     metrics: ToolMetrics
     name: str
+    displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     gateway_slug: str
     custom_name: str
     custom_name_slug: str
@@ -2781,6 +2848,7 @@ class ServerCreate(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    id: Optional[str] = Field(None, description="Custom UUID for the server (if not provided, one will be generated)")
     name: str = Field(..., description="The server's name")
     description: Optional[str] = Field(None, description="Server description")
     icon: Optional[str] = Field(None, description="URL for the server's icon")
@@ -2798,6 +2866,33 @@ class ServerCreate(BaseModel):
             List of validated tag strings
         """
         return validate_tags_field(v)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate server ID/UUID format
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
+        Examples:
+            >>> from mcpgateway.schemas import ServerCreate
+            >>> ServerCreate.validate_id('550e8400-e29b-41d4-a716-446655440000')
+            '550e8400-e29b-41d4-a716-446655440000'
+            >>> ServerCreate.validate_id('invalid-uuid')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_uuid(v, "Server ID")
 
     associated_tools: Optional[List[str]] = Field(None, description="Comma-separated tool IDs")
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
@@ -2875,6 +2970,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     All fields are optional to allow partial updates.
     """
 
+    id: Optional[str] = Field(None, description="Custom UUID for the server")
     name: Optional[str] = Field(None, description="The server's name")
     description: Optional[str] = Field(None, description="Server description")
     icon: Optional[str] = Field(None, description="URL for the server's icon")
@@ -2894,6 +2990,33 @@ class ServerUpdate(BaseModelWithConfigDict):
         if v is None:
             return None
         return validate_tags_field(v)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate server ID/UUID format
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
+        Examples:
+            >>> from mcpgateway.schemas import ServerUpdate
+            >>> ServerUpdate.validate_id('550e8400-e29b-41d4-a716-446655440000')
+            '550e8400-e29b-41d4-a716-446655440000'
+            >>> ServerUpdate.validate_id('invalid-uuid')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_uuid(v, "Server ID")
 
     associated_tools: Optional[List[str]] = Field(None, description="Comma-separated tool IDs")
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
