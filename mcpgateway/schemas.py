@@ -332,6 +332,7 @@ class ToolCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     name: str = Field(..., description="Unique name for the tool")
+    displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     url: Union[str, AnyHttpUrl] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
@@ -628,6 +629,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the tool")
+    displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
@@ -877,6 +879,7 @@ class ToolRead(BaseModelWithConfigDict):
     execution_count: int
     metrics: ToolMetrics
     name: str
+    displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     gateway_slug: str
     custom_name: str
     custom_name_slug: str
@@ -2781,6 +2784,7 @@ class ServerCreate(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    id: Optional[str] = Field(None, description="Custom UUID for the server (if not provided, one will be generated)")
     name: str = Field(..., description="The server's name")
     description: Optional[str] = Field(None, description="Server description")
     icon: Optional[str] = Field(None, description="URL for the server's icon")
@@ -2875,6 +2879,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     All fields are optional to allow partial updates.
     """
 
+    id: Optional[str] = Field(None, description="Custom UUID for the server")
     name: Optional[str] = Field(None, description="The server's name")
     description: Optional[str] = Field(None, description="Server description")
     icon: Optional[str] = Field(None, description="URL for the server's icon")

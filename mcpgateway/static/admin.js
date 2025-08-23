@@ -1962,6 +1962,11 @@ async function editTool(toolId) {
         if (customNameField && customNameValidation.valid) {
             customNameField.value = customNameValidation.value;
         }
+
+        const displayNameField = safeGetElement("edit-tool-display-name");
+        if (displayNameField) {
+            displayNameField.value = tool.displayName || "";
+        }
         if (urlField && urlValidation.valid) {
             urlField.value = urlValidation.value;
         }
@@ -3552,6 +3557,11 @@ async function editServer(serverId) {
         }
         if (descField) {
             descField.value = server.description || "";
+        }
+
+        const idField = safeGetElement("edit-server-id");
+        if (idField) {
+            idField.value = server.id || "";
         }
 
         // Set tags field

@@ -469,6 +469,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     original_name=tool.name,
                     custom_name=tool.name,
                     custom_name_slug=slugify(tool.name),
+                    display_name=None,
                     url=normalized_url,
                     description=tool.description,
                     integration_type="MCP",  # Gateway-discovered tools are MCP type
@@ -655,6 +656,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             original_name=tool.name,
                             custom_name=tool.name,
                             custom_name_slug=slugify(tool.name),
+                            display_name=None,
                             url=gateway.url.rstrip("/"),
                             description=tool.description,
                             integration_type="MCP",  # Gateway-discovered tools are MCP type
@@ -837,8 +839,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             if not existing_tool:
                                 gateway.tools.append(
                                     DbTool(
+                                        original_name=tool.name,
                                         custom_name=tool.custom_name,
                                         custom_name_slug=slugify(tool.custom_name),
+                                        display_name=None,
                                         url=gateway.url,
                                         description=tool.description,
                                         integration_type="MCP",  # Gateway-discovered tools are MCP type
@@ -1024,8 +1028,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             if not existing_tool:
                                 gateway.tools.append(
                                     DbTool(
+                                        original_name=tool.name,
                                         custom_name=tool.custom_name,
                                         custom_name_slug=slugify(tool.custom_name),
+                                        display_name=None,
                                         url=gateway.url,
                                         description=tool.description,
                                         integration_type="MCP",  # Gateway-discovered tools are MCP type

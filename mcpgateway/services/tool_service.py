@@ -283,10 +283,14 @@ class ToolService:
             tool_dict["auth"] = None
 
         tool_dict["name"] = tool.name
-        tool_dict["custom_name"] = tool.custom_name
-        tool_dict["gateway_slug"] = tool.gateway_slug if tool.gateway_slug else ""
-        tool_dict["custom_name_slug"] = tool.custom_name_slug
-        tool_dict["tags"] = tool.tags or []
+        # Handle displayName with fallback and None checks
+        display_name = getattr(tool, "display_name", None)
+        custom_name = getattr(tool, "custom_name", tool.original_name)
+        tool_dict["displayName"] = display_name or custom_name
+        tool_dict["custom_name"] = custom_name
+        tool_dict["gateway_slug"] = getattr(tool, "gateway_slug", "") or ""
+        tool_dict["custom_name_slug"] = getattr(tool, "custom_name_slug", "") or ""
+        tool_dict["tags"] = getattr(tool, "tags", []) or []
 
         return ToolRead.model_validate(tool_dict)
 
@@ -381,6 +385,7 @@ class ToolService:
                 original_name=tool.name,
                 custom_name=tool.name,
                 custom_name_slug=slugify(tool.name),
+                display_name=tool.displayName,
                 url=str(tool.url),
                 description=tool.description,
                 integration_type=tool.integration_type,
@@ -1007,6 +1012,8 @@ class ToolService:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
+            if tool_update.displayName is not None:
+                tool.display_name = tool_update.displayName
             if tool_update.url is not None:
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:
@@ -1333,6 +1340,7 @@ class ToolService:
         # Create tool entry for the A2A agent
         tool_data = ToolCreate(
             name=tool_name,
+            displayName=f"A2A: {agent.name}",
             url=agent.endpoint_url,
             description=f"A2A Agent: {agent.description or agent.name}",
             integration_type="A2A",  # Special integration type for A2A agents
