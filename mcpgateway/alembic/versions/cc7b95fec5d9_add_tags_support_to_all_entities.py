@@ -17,6 +17,7 @@ from typing import Sequence, Union
 # Third-Party
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql as pg
 
 # revision identifiers, used by Alembic.
 revision: str = "cc7b95fec5d9"
@@ -43,34 +44,28 @@ def upgrade() -> None:
         if inspector.has_table(table_name):
             columns = [col["name"] for col in inspector.get_columns(table_name)]
             if "tags" not in columns:
-                op.add_column(table_name, sa.Column("tags", sa.JSON(), nullable=True, server_default=sa.text("'[]'")))
+                is_postgresql = bind.dialect.name == "postgresql"
+                col_type = pg.JSONB() if is_postgresql else sa.JSON()
+                default = sa.text("'[]'::jsonb") if is_postgresql else sa.text("'[]'")
+                op.add_column(
+                    table_name,
+                    sa.Column("tags", col_type, nullable=True, server_default=default),
+                )
 
-    # Create indexes for PostgreSQL (GIN indexes for JSON)
-    # Detect database type to handle index creation appropriately
-    is_postgresql = bind.dialect.name == "postgresql"
-
-    if is_postgresql:
-        for table_name in tables:
-            if inspector.has_table(table_name):
-                index_name = f"idx_{table_name}_tags"
-                # Check if index already exists
-                try:
-                    existing_indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
-                    if index_name not in existing_indexes:
-                        op.create_index(index_name, table_name, ["tags"], postgresql_using="gin")
-                except Exception as e:
-                    print(f"Warning: Could not create index {index_name}: {e}")
-    else:
-        # For SQLite, create regular indexes (no GIN support)
-        for table_name in tables:
-            if inspector.has_table(table_name):
-                index_name = f"idx_{table_name}_tags"
-                try:
-                    existing_indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
-                    if index_name not in existing_indexes:
-                        op.create_index(index_name, table_name, ["tags"])
-                except Exception as e:
-                    print(f"Warning: Could not create index {index_name}: {e}")
+    # Create safe B-tree indexes (avoid GIN to prevent transaction abortion)
+    # GIN indexes can be added separately after migration completes successfully
+    for table_name in tables:
+        if inspector.has_table(table_name):
+            index_name = f"idx_{table_name}_tags"
+            try:
+                existing_indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
+                if index_name not in existing_indexes:
+                    # Create simple B-tree index that works on both PostgreSQL and SQLite
+                    # This avoids PostgreSQL GIN operator class errors that abort transactions
+                    op.create_index(index_name, table_name, ["tags"])
+                    print(f"Created B-tree index {index_name} on {table_name}.tags")
+            except Exception as e:
+                print(f"Warning: Could not create index {index_name}: {e}")
 
 
 def downgrade() -> None:
@@ -88,7 +83,7 @@ def downgrade() -> None:
             try:
                 existing_indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
                 if index_name in existing_indexes:
-                    op.drop_index(index_name, table_name)
+                    op.drop_index(index_name, table_name=table_name)
             except Exception as e:
                 print(f"Warning: Could not drop index {index_name}: {e}")
 
