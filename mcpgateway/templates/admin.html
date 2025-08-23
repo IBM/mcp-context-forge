@@ -1072,6 +1072,21 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Custom UUID (optional)</label
+                >
+                <input
+                  type="text"
+                  name="id"
+                  placeholder="Leave blank to auto-generate"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  Provide a custom UUID if you need to preserve an existing server ID
+                </p>
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
                   >Name</label
                 >
                 <input
@@ -1131,7 +1146,7 @@
                       value="{{ tool.id }}"
                       class="tool-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                     />
-                    <span class="select-none">{{ tool.name }}</span>
+                    <span class="select-none">{{ tool.displayName or tool.customName or tool.name }}</span>
                   </label>
                   {% endfor %}
                   <p
@@ -1400,7 +1415,7 @@
                   <td
                     class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24 dark:text-gray-100"
                   >
-                    {{ tool.customNameSlug }}
+                    {{ tool.name }}
                   </td>
                   <td
                     class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-24"
@@ -1835,6 +1850,19 @@
                   type="text"
                   name="name"
                   required
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Display Name (optional)</label
+                >
+                <input
+                  type="text"
+                  name="displayName"
+                  placeholder="Custom display name for your UI"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -4056,7 +4084,7 @@
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -4188,7 +4216,7 @@
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -4211,6 +4239,20 @@
                         name="customName"
                         required
                         id="edit-tool-custom-name"
+                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Display Name</label
+                      >
+                      <input
+                        type="text"
+                        name="displayName"
+                        id="edit-tool-display-name"
+                        placeholder="Custom display name for your UI"
                         class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>
@@ -4498,7 +4540,7 @@
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -4659,7 +4701,7 @@
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -4932,7 +4974,7 @@
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -5332,7 +5374,7 @@
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -5344,6 +5386,21 @@
                 <form id="edit-server-form" method="POST">
                   <div class="grid grid-cols-1 gap-6">
                     <!-- Existing fields -->
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >UUID</label
+                      >
+                      <input
+                        type="text"
+                        name="id"
+                        id="edit-server-id"
+                        class="mt-1 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Changing UUID will create a new server endpoint. Use with caution.
+                      </p>
+                    </div>
                     <div>
                       <label
                         class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -5423,7 +5480,7 @@
                             value="{{ tool.id }}"
                             class="tool-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                           />
-                          <span class="select-none">{{ tool.name }}</span>
+                          <span class="select-none">{{ tool.displayName or tool.customName or tool.name }}</span>
                         </label>
                         {% endfor %}
                       </div>

@@ -191,6 +191,7 @@ class ExportService:
 
             tool_data = {
                 "name": tool.original_name,  # Use original name, not the slugified version
+                "displayName": tool.displayName,  # Export displayName field from ToolRead
                 "url": str(tool.url),
                 "integration_type": tool.integration_type,
                 "request_type": tool.request_type,
@@ -203,8 +204,8 @@ class ExportService:
                 "rate_limit": getattr(tool, "rate_limit", None),
                 "timeout": getattr(tool, "timeout", None),
                 "is_active": tool.enabled,
-                "created_at": tool.created_at.isoformat() if tool.created_at else None,
-                "updated_at": tool.updated_at.isoformat() if tool.updated_at else None,
+                "created_at": tool.created_at.isoformat() if hasattr(tool.created_at, "isoformat") and tool.created_at else None,
+                "updated_at": tool.updated_at.isoformat() if hasattr(tool.updated_at, "isoformat") and tool.updated_at else None,
             }
 
             # Handle authentication data securely - get raw encrypted values

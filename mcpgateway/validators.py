@@ -52,6 +52,7 @@ import html
 import logging
 import re
 from urllib.parse import urlparse
+import uuid
 
 # First-Party
 from mcpgateway.config import settings
@@ -278,6 +279,39 @@ class SecurityValidator:
             raise ValueError(f"Tool name exceeds maximum length of {cls.MAX_NAME_LENGTH}")
 
         return value
+
+    @classmethod
+    def validate_uuid(cls, value: str, field_name: str = "UUID") -> str:
+        """Validate UUID format
+
+        Args:
+            value (str): Value to validate
+            field_name (str): Name of field being validated
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is not a valid UUID
+
+        Examples:
+            >>> SecurityValidator.validate_uuid('550e8400-e29b-41d4-a716-446655440000')
+            '550e8400-e29b-41d4-a716-446655440000'
+            >>> SecurityValidator.validate_uuid('invalid-uuid')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
+        """
+        if not value:
+            return value
+
+        try:
+            # Validate UUID format by attempting to parse it
+            uuid_obj = uuid.UUID(value)
+            # Return the normalized string representation
+            return str(uuid_obj)
+        except ValueError:
+            raise ValueError(f"{field_name} must be a valid UUID format")
 
     @classmethod
     def validate_template(cls, value: str) -> str:
