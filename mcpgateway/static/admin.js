@@ -5469,7 +5469,10 @@ async function viewTool(toolId) {
                 }
             };
 
-            setTextSafely(".tool-display-name", tool.displayName || tool.customName || tool.name);
+            setTextSafely(
+                ".tool-display-name",
+                tool.displayName || tool.customName || tool.name,
+            );
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);

@@ -292,29 +292,29 @@ class TestSchemaValidation:
         server_update = ServerUpdate(**update_data)
         assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
         assert server_update.name == "Updated Server Name"
-    
+
     def test_server_uuid_validation(self):
         """Test UUID validation in schemas."""
         from mcpgateway.schemas import ServerCreate, ServerUpdate
-        
+
         # Test valid UUID
         server_create = ServerCreate(
             id="550e8400-e29b-41d4-a716-446655440000",
             name="Test Server"
         )
         assert server_create.id == "550e8400-e29b-41d4-a716-446655440000"
-        
+
         # Test invalid UUID should raise validation error
         with pytest.raises(Exception):  # Pydantic ValidationError
             ServerCreate(
                 id="invalid-uuid-format",
                 name="Test Server"
             )
-        
+
         # Test ServerUpdate UUID validation
         server_update = ServerUpdate(id="123e4567-e89b-12d3-a456-426614174000")
         assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
-        
+
         # Test invalid UUID in update
         with pytest.raises(Exception):  # Pydantic ValidationError
             ServerUpdate(id="bad-uuid-format")
@@ -375,3 +375,59 @@ class TestServiceIntegration:
         # Validate that the response includes displayName
         assert tool_dict["displayName"] == "Custom Display Name"
         assert tool_dict["custom_name"] == "Service Test Tool"
+
+
+class TestSmartDisplayNameGeneration:
+    """Test smart display name generation for auto-discovered tools."""
+
+    def test_generate_display_name_function(self):
+        """Test the display name generation utility function."""
+        from mcpgateway.utils.display_name import generate_display_name
+
+        test_cases = [
+            ("duckduckgo_search", "Duckduckgo Search"),
+            ("weather-api", "Weather Api"),
+            ("get_user.profile", "Get User Profile"),
+            ("file_system", "File System"),
+            ("fetch-web_content", "Fetch Web Content"),
+            ("simple", "Simple"),
+            ("", ""),
+            ("UPPER_CASE", "Upper Case"),
+            ("multiple___underscores", "Multiple Underscores"),
+        ]
+
+        for technical_name, expected in test_cases:
+            result = generate_display_name(technical_name)
+            assert result == expected, f"For '{technical_name}': expected '{expected}', got '{result}'"
+
+    def test_manual_tool_displayname_preserved(self):
+        """Test that manually specified displayName is preserved."""
+        from mcpgateway.schemas import ToolCreate
+
+        # Manual tool with explicit displayName should keep it
+        tool = ToolCreate(
+            name="manual_api_tool",
+            displayName="My Custom API Tool",
+            url="https://example.com/api",
+            integration_type="REST",
+            request_type="POST"
+        )
+
+        assert tool.displayName == "My Custom API Tool"
+        assert tool.name == "manual_api_tool"
+
+    def test_manual_tool_without_displayname(self):
+        """Test that manual tools without displayName get service defaults."""
+        from mcpgateway.schemas import ToolCreate
+
+        # Manual tool without displayName (service layer will set default)
+        tool = ToolCreate(
+            name="manual_webhook",
+            url="https://example.com/webhook",
+            integration_type="REST",
+            request_type="POST"
+        )
+
+        # Schema doesn't set default, service layer does
+        assert tool.displayName is None
+        assert tool.name == "manual_webhook"

@@ -372,6 +372,9 @@ class ToolCreate(BaseModel):
         Returns:
             str: Value if validated as safe
 
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
             >>> ToolCreate.validate_name('valid_tool')
@@ -393,6 +396,9 @@ class ToolCreate(BaseModel):
 
         Returns:
             str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -444,6 +450,9 @@ class ToolCreate(BaseModel):
 
         Returns:
             str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -856,6 +865,9 @@ class ToolUpdate(BaseModelWithConfigDict):
 
         Returns:
             str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
 
         Examples:
             >>> from mcpgateway.schemas import ToolUpdate
@@ -2866,6 +2878,9 @@ class ServerCreate(BaseModel):
         Returns:
             str: Value if validated as safe
 
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
         Examples:
             >>> from mcpgateway.schemas import ServerCreate
             >>> ServerCreate.validate_id('550e8400-e29b-41d4-a716-446655440000')
@@ -2986,6 +3001,9 @@ class ServerUpdate(BaseModelWithConfigDict):
 
         Returns:
             str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
 
         Examples:
             >>> from mcpgateway.schemas import ServerUpdate

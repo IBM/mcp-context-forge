@@ -48,6 +48,7 @@ from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -1340,7 +1341,7 @@ class ToolService:
         # Create tool entry for the A2A agent
         tool_data = ToolCreate(
             name=tool_name,
-            displayName=f"A2A: {agent.name}",
+            displayName=generate_display_name(agent.name),
             url=agent.endpoint_url,
             description=f"A2A Agent: {agent.description or agent.name}",
             integration_type="A2A",  # Special integration type for A2A agents

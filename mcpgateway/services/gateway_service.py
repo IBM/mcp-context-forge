@@ -82,6 +82,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
@@ -469,7 +470,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     original_name=tool.name,
                     custom_name=tool.name,
                     custom_name_slug=slugify(tool.name),
-                    display_name=tool.name,
+                    display_name=generate_display_name(tool.name),
                     url=normalized_url,
                     description=tool.description,
                     integration_type="MCP",  # Gateway-discovered tools are MCP type
@@ -656,7 +657,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             original_name=tool.name,
                             custom_name=tool.name,
                             custom_name_slug=slugify(tool.name),
-                            display_name=tool.name,
+                            display_name=generate_display_name(tool.name),
                             url=gateway.url.rstrip("/"),
                             description=tool.description,
                             integration_type="MCP",  # Gateway-discovered tools are MCP type
@@ -842,7 +843,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         original_name=tool.name,
                                         custom_name=tool.custom_name,
                                         custom_name_slug=slugify(tool.custom_name),
-                                        display_name=tool.custom_name,
+                                        display_name=generate_display_name(tool.custom_name),
                                         url=gateway.url,
                                         description=tool.description,
                                         integration_type="MCP",  # Gateway-discovered tools are MCP type
@@ -1031,7 +1032,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         original_name=tool.name,
                                         custom_name=tool.custom_name,
                                         custom_name_slug=slugify(tool.custom_name),
-                                        display_name=tool.custom_name,
+                                        display_name=generate_display_name(tool.custom_name),
                                         url=gateway.url,
                                         description=tool.description,
                                         integration_type="MCP",  # Gateway-discovered tools are MCP type
