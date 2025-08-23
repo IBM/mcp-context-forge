@@ -34,7 +34,7 @@ def upgrade() -> None:
     existing_tables = inspector.get_table_names()
 
     if "a2a_agents" not in existing_tables:
-        # Create a2a_agents table
+        # Create a2a_agents table with unique constraints included (SQLite compatible)
         op.create_table(
             "a2a_agents",
             sa.Column("id", sa.String(36), primary_key=True),
@@ -65,11 +65,9 @@ def upgrade() -> None:
             sa.Column("import_batch_id", sa.String()),
             sa.Column("federation_source", sa.String()),
             sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
+            sa.UniqueConstraint("name", name="uq_a2a_agents_name"),
+            sa.UniqueConstraint("slug", name="uq_a2a_agents_slug"),
         )
-
-        # Create unique constraints
-        op.create_unique_constraint("uq_a2a_agents_name", "a2a_agents", ["name"])
-        op.create_unique_constraint("uq_a2a_agents_slug", "a2a_agents", ["slug"])
 
     if "a2a_agent_metrics" not in existing_tables:
         # Create a2a_agent_metrics table
@@ -93,57 +91,90 @@ def upgrade() -> None:
         )
 
     # Create indexes for performance (check if they exist first)
-    existing_indexes = []
-    try:
-        existing_indexes = [idx["name"] for idx in inspector.get_indexes("a2a_agents")]
-    except Exception:
-        pass
-
-    if "idx_a2a_agents_enabled" not in existing_indexes:
+    # Only create indexes if tables were actually created
+    if "a2a_agents" in existing_tables:
         try:
-            op.create_index("idx_a2a_agents_enabled", "a2a_agents", ["enabled"])
+            existing_indexes = [idx["name"] for idx in inspector.get_indexes("a2a_agents")]
         except Exception:
-            pass
+            existing_indexes = []
 
-    if "idx_a2a_agents_agent_type" not in existing_indexes:
-        try:
-            op.create_index("idx_a2a_agents_agent_type", "a2a_agents", ["agent_type"])
-        except Exception:
-            pass
+        if "idx_a2a_agents_enabled" not in existing_indexes:
+            try:
+                op.create_index("idx_a2a_agents_enabled", "a2a_agents", ["enabled"])
+            except Exception as e:
+                print(f"Warning: Could not create index idx_a2a_agents_enabled: {e}")
+
+        if "idx_a2a_agents_agent_type" not in existing_indexes:
+            try:
+                op.create_index("idx_a2a_agents_agent_type", "a2a_agents", ["agent_type"])
+            except Exception as e:
+                print(f"Warning: Could not create index idx_a2a_agents_agent_type: {e}")
+
+        # Create B-tree index for tags (safer than GIN, works on both PostgreSQL and SQLite)
+        if "idx_a2a_agents_tags" not in existing_indexes:
+            try:
+                op.create_index("idx_a2a_agents_tags", "a2a_agents", ["tags"])
+            except Exception as e:
+                print(f"Warning: Could not create index idx_a2a_agents_tags: {e}")
 
     # Metrics table indexes
-    try:
-        existing_indexes = [idx["name"] for idx in inspector.get_indexes("a2a_agent_metrics")]
-        if "idx_a2a_agent_metrics_agent_id" not in existing_indexes:
-            op.create_index("idx_a2a_agent_metrics_agent_id", "a2a_agent_metrics", ["a2a_agent_id"])
-        if "idx_a2a_agent_metrics_timestamp" not in existing_indexes:
-            op.create_index("idx_a2a_agent_metrics_timestamp", "a2a_agent_metrics", ["timestamp"])
-    except Exception:
-        pass
+    if "a2a_agent_metrics" in existing_tables:
+        try:
+            existing_metrics_indexes = [idx["name"] for idx in inspector.get_indexes("a2a_agent_metrics")]
+        except Exception:
+            existing_metrics_indexes = []
 
-    # Create GIN indexes for tags on PostgreSQL (ignored on SQLite)
-    try:
-        if "idx_a2a_agents_tags" not in existing_indexes:
-            op.create_index("idx_a2a_agents_tags", "a2a_agents", ["tags"], postgresql_using="gin")
-    except Exception:  # nosec B110 - database compatibility
-        pass  # SQLite doesn't support GIN indexes
+        if "idx_a2a_agent_metrics_agent_id" not in existing_metrics_indexes:
+            try:
+                op.create_index("idx_a2a_agent_metrics_agent_id", "a2a_agent_metrics", ["a2a_agent_id"])
+            except Exception as e:
+                print(f"Warning: Could not create index idx_a2a_agent_metrics_agent_id: {e}")
+
+        if "idx_a2a_agent_metrics_timestamp" not in existing_metrics_indexes:
+            try:
+                op.create_index("idx_a2a_agent_metrics_timestamp", "a2a_agent_metrics", ["timestamp"])
+            except Exception as e:
+                print(f"Warning: Could not create index idx_a2a_agent_metrics_timestamp: {e}")
 
 
 def downgrade() -> None:
     """Reverse the A2A agents and metrics tables."""
+    # Check if tables exist before trying to drop indexes/tables
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_tables = inspector.get_table_names()
 
-    # Drop indexes first
-    try:
-        op.drop_index("idx_a2a_agents_tags", "a2a_agents")
-    except Exception:  # nosec B110 - database compatibility
-        pass
+    # Drop indexes first (if they exist)
+    if "a2a_agents" in existing_tables:
+        try:
+            existing_indexes = [idx["name"] for idx in inspector.get_indexes("a2a_agents")]
 
-    op.drop_index("idx_a2a_agent_metrics_timestamp", "a2a_agent_metrics")
-    op.drop_index("idx_a2a_agent_metrics_agent_id", "a2a_agent_metrics")
-    op.drop_index("idx_a2a_agents_agent_type", "a2a_agents")
-    op.drop_index("idx_a2a_agents_enabled", "a2a_agents")
+            for index_name in ["idx_a2a_agents_tags", "idx_a2a_agents_agent_type", "idx_a2a_agents_enabled"]:
+                if index_name in existing_indexes:
+                    try:
+                        op.drop_index(index_name, "a2a_agents")
+                    except Exception as e:
+                        print(f"Warning: Could not drop index {index_name}: {e}")
+        except Exception as e:
+            print(f"Warning: Could not get indexes for a2a_agents: {e}")
 
-    # Drop tables
-    op.drop_table("server_a2a_association")
-    op.drop_table("a2a_agent_metrics")
-    op.drop_table("a2a_agents")
+    if "a2a_agent_metrics" in existing_tables:
+        try:
+            existing_metrics_indexes = [idx["name"] for idx in inspector.get_indexes("a2a_agent_metrics")]
+
+            for index_name in ["idx_a2a_agent_metrics_timestamp", "idx_a2a_agent_metrics_agent_id"]:
+                if index_name in existing_metrics_indexes:
+                    try:
+                        op.drop_index(index_name, "a2a_agent_metrics")
+                    except Exception as e:
+                        print(f"Warning: Could not drop index {index_name}: {e}")
+        except Exception as e:
+            print(f"Warning: Could not get indexes for a2a_agent_metrics: {e}")
+
+    # Drop tables (if they exist)
+    for table_name in ["server_a2a_association", "a2a_agent_metrics", "a2a_agents"]:
+        if table_name in existing_tables:
+            try:
+                op.drop_table(table_name)
+            except Exception as e:
+                print(f"Warning: Could not drop table {table_name}: {e}")

@@ -69,25 +69,34 @@ def upgrade() -> None:
                         print(f"Warning: Could not add column {col_name} to {table}: {e}")
 
     # Create indexes for query performance (safe B-tree indexes)
+    # Note: modified_at column doesn't exist in schema, so we skip it
     index_definitions = [
         ("created_by", ["created_by"]),
         ("created_at", ["created_at"]),
-        ("modified_at", ["modified_at"]),
         ("created_via", ["created_via"]),
     ]
 
     for table in tables:
         if inspector.has_table(table):
-            existing_indexes = [idx["name"] for idx in inspector.get_indexes(table)]
+            try:
+                existing_indexes = [idx["name"] for idx in inspector.get_indexes(table)]
+            except Exception as e:
+                print(f"Warning: Could not get indexes for {table}: {e}")
+                continue
 
             for index_suffix, columns in index_definitions:
                 index_name = f"idx_{table}_{index_suffix}"
                 if index_name not in existing_indexes:
-                    try:
-                        op.create_index(index_name, table, columns)
-                        print(f"Created index {index_name}")
-                    except Exception as e:
-                        print(f"Warning: Could not create index {index_name}: {e}")
+                    # Check if the column exists before creating index
+                    table_columns = [col["name"] for col in inspector.get_columns(table)]
+                    if all(col in table_columns for col in columns):
+                        try:
+                            op.create_index(index_name, table, columns)
+                            print(f"Created index {index_name}")
+                        except Exception as e:
+                            print(f"Warning: Could not create index {index_name}: {e}")
+                    else:
+                        print(f"Skipping index {index_name} - required columns {columns} not found in {table}")
 
 
 def downgrade() -> None:
@@ -97,13 +106,17 @@ def downgrade() -> None:
 
     tables = ["tools", "resources", "prompts", "servers", "gateways"]
 
-    # Index names to drop
-    index_suffixes = ["created_by", "created_at", "modified_at", "created_via"]
+    # Index names to drop (modified_at doesn't exist, so skip it)
+    index_suffixes = ["created_by", "created_at", "created_via"]
 
     # Drop indexes first (if they exist)
     for table in tables:
         if inspector.has_table(table):
-            existing_indexes = [idx["name"] for idx in inspector.get_indexes(table)]
+            try:
+                existing_indexes = [idx["name"] for idx in inspector.get_indexes(table)]
+            except Exception as e:
+                print(f"Warning: Could not get indexes for {table}: {e}")
+                continue
 
             for suffix in index_suffixes:
                 index_name = f"idx_{table}_{suffix}"
