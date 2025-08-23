@@ -40,7 +40,13 @@ def upgrade() -> None:
         print("Fresh database detected. Skipping migration.")
         return
 
-    op.add_column("tools", sa.Column("annotations", sa.JSON(), server_default=sa.text("'{}'"), nullable=False))
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+        if "annotations" not in columns:
+            try:
+                op.add_column("tools", sa.Column("annotations", sa.JSON(), server_default=sa.text("'{}'"), nullable=False))
+            except Exception as e:
+                print(f"Warning: Could not add annotations column to tools: {e}")
 
 
 def downgrade() -> None:
@@ -57,4 +63,10 @@ def downgrade() -> None:
         print("Fresh database detected. Skipping migration.")
         return
 
-    op.drop_column("tools", "annotations")
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+        if "annotations" in columns:
+            try:
+                op.drop_column("tools", "annotations")
+            except Exception as e:
+                print(f"Warning: Could not drop annotations column from tools: {e}")

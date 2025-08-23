@@ -30,11 +30,42 @@ def upgrade():
     Renames 'is_active' to 'enabled' and adds a new 'reachable' column (default True)
     in both 'tools' and 'gateways' tables.
     """
-    op.alter_column("tools", "is_active", new_column_name="enabled")
-    op.add_column("tools", sa.Column("reachable", sa.Boolean(), nullable=False, server_default=sa.true()))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    op.alter_column("gateways", "is_active", new_column_name="enabled")
-    op.add_column("gateways", sa.Column("reachable", sa.Boolean(), nullable=False, server_default=sa.true()))
+    # Check if this is a fresh database without existing tables
+    if not inspector.has_table("tools") and not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping status migration.")
+        return
+
+    # Only modify tables if they exist and have the columns we're trying to modify
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+        if "is_active" in columns:
+            try:
+                op.alter_column("tools", "is_active", new_column_name="enabled")
+            except Exception as e:
+                print(f"Warning: Could not rename is_active to enabled in tools: {e}")
+
+        if "reachable" not in columns:
+            try:
+                op.add_column("tools", sa.Column("reachable", sa.Boolean(), nullable=False, server_default=sa.true()))
+            except Exception as e:
+                print(f"Warning: Could not add reachable column to tools: {e}")
+
+    if inspector.has_table("gateways"):
+        columns = [col["name"] for col in inspector.get_columns("gateways")]
+        if "is_active" in columns:
+            try:
+                op.alter_column("gateways", "is_active", new_column_name="enabled")
+            except Exception as e:
+                print(f"Warning: Could not rename is_active to enabled in gateways: {e}")
+
+        if "reachable" not in columns:
+            try:
+                op.add_column("gateways", sa.Column("reachable", sa.Boolean(), nullable=False, server_default=sa.true()))
+            except Exception as e:
+                print(f"Warning: Could not add reachable column to gateways: {e}")
 
 
 def downgrade():
@@ -42,8 +73,31 @@ def downgrade():
     Reverts the changes by renaming 'enabled' back to 'is_active'
     and dropping the 'reachable' column in both 'tools' and 'gateways' tables.
     """
-    op.alter_column("tools", "enabled", new_column_name="is_active")
-    op.drop_column("tools", "reachable")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    op.alter_column("gateways", "enabled", new_column_name="is_active")
-    op.drop_column("gateways", "reachable")
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+        if "enabled" in columns:
+            try:
+                op.alter_column("tools", "enabled", new_column_name="is_active")
+            except Exception as e:
+                print(f"Warning: Could not rename enabled to is_active in tools: {e}")
+        if "reachable" in columns:
+            try:
+                op.drop_column("tools", "reachable")
+            except Exception as e:
+                print(f"Warning: Could not drop reachable column from tools: {e}")
+
+    if inspector.has_table("gateways"):
+        columns = [col["name"] for col in inspector.get_columns("gateways")]
+        if "enabled" in columns:
+            try:
+                op.alter_column("gateways", "enabled", new_column_name="is_active")
+            except Exception as e:
+                print(f"Warning: Could not rename enabled to is_active in gateways: {e}")
+        if "reachable" in columns:
+            try:
+                op.drop_column("gateways", "reachable")
+            except Exception as e:
+                print(f"Warning: Could not drop reachable column from gateways: {e}")

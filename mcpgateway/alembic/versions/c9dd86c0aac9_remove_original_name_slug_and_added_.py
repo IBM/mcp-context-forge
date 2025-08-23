@@ -27,20 +27,56 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # Remove original_name_slug column
-    op.alter_column("tools", "original_name_slug", new_column_name="custom_name_slug")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    # Add custom_name column
-    op.add_column("tools", sa.Column("custom_name", sa.String(), nullable=True))
-    op.execute("UPDATE tools SET custom_name = original_name")
+    # Check if this is a fresh database without existing tables
+    if not inspector.has_table("tools"):
+        print("Fresh database detected. Skipping custom name migration.")
+        return
+
+    # Only modify tables if they exist and have the columns we're trying to modify
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+
+        # Rename original_name_slug to custom_name_slug if it exists
+        if "original_name_slug" in columns:
+            try:
+                op.alter_column("tools", "original_name_slug", new_column_name="custom_name_slug")
+            except Exception as e:
+                print(f"Warning: Could not rename original_name_slug to custom_name_slug: {e}")
+
+        # Add custom_name column if it doesn't exist
+        if "custom_name" not in columns:
+            try:
+                op.add_column("tools", sa.Column("custom_name", sa.String(), nullable=True))
+                # Only try to update if original_name column exists
+                if "original_name" in columns:
+                    op.execute("UPDATE tools SET custom_name = original_name")
+            except Exception as e:
+                print(f"Warning: Could not add custom_name column: {e}")
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # Remove custom_name column
-    op.drop_column("tools", "custom_name")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
-    # Add original_name_slug column back
-    op.alter_column("tools", "custom_name_slug", new_column_name="original_name_slug")
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+
+        # Remove custom_name column if it exists
+        if "custom_name" in columns:
+            try:
+                op.drop_column("tools", "custom_name")
+            except Exception as e:
+                print(f"Warning: Could not drop custom_name column: {e}")
+
+        # Rename custom_name_slug back to original_name_slug if it exists
+        if "custom_name_slug" in columns:
+            try:
+                op.alter_column("tools", "custom_name_slug", new_column_name="original_name_slug")
+            except Exception as e:
+                print(f"Warning: Could not rename custom_name_slug to original_name_slug: {e}")
     # ### end Alembic commands ###
