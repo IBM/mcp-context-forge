@@ -263,7 +263,7 @@
 ## 🤝 Contributing & Community
 
 ???+ tip "👩💻 How can I file issues or contribute?"
-    Use [GitHub Issues](https://github.com/IBM/mcp-context-forge/issues) and `CONTRIBUTING.md`.
+    Use [GitHub Issues](https://github.com/IBM/mcp-context-forge/issues) and [CONTRIBUTING.md](https://github.com/IBM/mcp-context-forge/blob/main/CONTRIBUTING.md).
 
 ???+ tip "🧑🎓 What code style and CI tools are used?"
     - Pre-commit: `ruff`, `black`, `mypy`, `isort`

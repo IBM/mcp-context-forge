@@ -2,115 +2,11 @@
 
 > Model Context Protocol gateway & proxy - unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
 
-![](docs/docs/images/contextforge-banner.png)
-
-<!-- === CI / Security / Build Badges === -->
-[![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
-[![CodeQL](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml)&nbsp;
-[![Bandit Security](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml)&nbsp;
-[![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
-[![Tests & Coverage](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml)&nbsp;
-[![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
-
-<!-- === Container Build & Deploy === -->
-[![Secure Docker Build](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml)&nbsp;
-[![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml)
-
-<!-- === Package / Container === -->
-[![Async](https://img.shields.io/badge/async-await-green.svg)](https://docs.python.org/3/library/asyncio.html)
-[![License](https://img.shields.io/github/license/ibm/mcp-context-forge)](LICENSE)&nbsp;
-[![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/)&nbsp;
-[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
-
-
 ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
 
 ![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
+
 ---
-
-<!-- vscode-markdown-toc -->
-## Table of Contents
-
-* 1. [Table of Contents](#table-of-contents)
-* 2. [🚀 Overview & Goals](#-overview--goals)
-* 3. [Quick Start - PyPI](#quick-start---pypi)
-    * 3.1. [1 - Install & run (copy-paste friendly)](#1---install--run-copy-paste-friendly)
-* 4. [Quick Start - Containers](#quick-start---containers)
-    * 4.1. [🐳 Docker](#-docker)
-        * 4.1.1. [1 - Minimum viable run](#1---minimum-viable-run)
-        * 4.1.2. [2 - Persist the SQLite database](#2---persist-the-sqlite-database)
-        * 4.1.3. [3 - Local tool discovery (host network)](#3---local-tool-discovery-host-network)
-    * 4.2. [🦭 Podman (rootless-friendly)](#-podman-rootless-friendly)
-        * 4.2.1. [1 - Basic run](#1---basic-run)
-        * 4.2.2. [2 - Persist SQLite](#2---persist-sqlite)
-        * 4.2.3. [3 - Host networking (rootless)](#3---host-networking-rootless)
-* 5. [Testing `mcpgateway.wrapper` by hand](#testing-mcpgatewaywrapper-by-hand)
-    * 5.1. [🧩 Running from an MCP Client (`mcpgateway.wrapper`)](#-running-from-an-mcp-client-mcpgatewaywrapper)
-        * 5.1.1. [1 - Install `uv` (`uvx` is an alias it provides)](#1---install-uv-uvx-is-an-alias-it-provides)
-        * 5.1.2. [2 - Create an on-the-spot venv & run the wrapper](#2---create-an-on-the-spot-venv--run-the-wrapper)
-        * 5.1.3. [Claude Desktop JSON (runs through **uvx**)](#claude-desktop-json-runs-through-uvx)
-    * 5.2. [🚀 Using with Claude Desktop (or any GUI MCP client)](#-using-with-claude-desktop-or-any-gui-mcp-client)
-* 6. [🚀 Quick Start: VS Code Dev Container](#-quick-start-vs-code-dev-container)
-    * 6.1. [1 - Clone & Open](#1---clone--open)
-    * 6.2. [2 - First-Time Build (Automatic)](#2---first-time-build-automatic)
-* 7. [Quick Start (manual install)](#quick-start-manual-install)
-    * 7.1. [Prerequisites](#prerequisites)
-    * 7.2. [One-liner (dev)](#one-liner-dev)
-    * 7.3. [Containerized (self-signed TLS)](#containerized-self-signed-tls)
-    * 7.4. [Smoke-test the API](#smoke-test-the-api)
-* 8. [Installation](#installation)
-    * 8.1. [Via Make](#via-make)
-    * 8.2. [UV (alternative)](#uv-alternative)
-    * 8.3. [pip (alternative)](#pip-alternative)
-    * 8.4. [Optional (PostgreSQL adapter)](#optional-postgresql-adapter)
-        * 8.4.1. [Quick Postgres container](#quick-postgres-container)
-* 9. [Configuration (`.env` or env vars)](#configuration-env-or-env-vars)
-    * 9.1. [Basic](#basic)
-    * 9.2. [Authentication](#authentication)
-    * 9.3. [UI Features](#ui-features)
-    * 9.4. [Security](#security)
-    * 9.5. [Logging](#logging)
-    * 9.6. [Transport](#transport)
-    * 9.7. [Federation](#federation)
-    * 9.8. [Resources](#resources)
-    * 9.9. [Tools](#tools)
-    * 9.10. [Prompts](#prompts)
-    * 9.11. [Health Checks](#health-checks)
-    * 9.12. [Database](#database)
-    * 9.13. [Cache Backend](#cache-backend)
-    * 9.14. [Development](#development)
-* 10. [Running](#running)
-    * 10.1. [Makefile](#makefile)
-    * 10.2. [Script helper](#script-helper)
-    * 10.3. [Manual (Uvicorn)](#manual-uvicorn)
-* 11. [Authentication examples](#authentication-examples)
-* 12. [☁️ AWS / Azure / OpenShift](#️-aws--azure--openshift)
-* 13. [☁️ IBM Cloud Code Engine Deployment](#️-ibm-cloud-code-engine-deployment)
-    * 13.1. [🔧 Prerequisites](#-prerequisites-1)
-    * 13.2. [📦 Environment Variables](#-environment-variables)
-    * 13.3. [🚀 Make Targets](#-make-targets)
-    * 13.4. [📝 Example Workflow](#-example-workflow)
-* 14. [API Endpoints](#api-endpoints)
-* 15. [Testing](#testing)
-* 16. [Project Structure](#project-structure)
-* 17. [API Documentation](#api-documentation)
-* 18. [Makefile targets](#makefile-targets)
-* 19. [🔍 Troubleshooting](#-troubleshooting)
-    * 19.1. [Diagnose the listener](#diagnose-the-listener)
-    * 19.2. [Why localhost fails on Windows](#why-localhost-fails-on-windows)
-        * 19.2.1. [Fix (Podman rootless)](#fix-podman-rootless)
-        * 19.2.2. [Fix (Docker Desktop > 4.19)](#fix-docker-desktop--419)
-* 20. [Contributing](#contributing)
-* 21. [Changelog](#changelog)
-* 22. [License](#license)
-* 23. [Core Authors and Maintainers](#core-authors-and-maintainers)
-* 24. [Star History and Project Activity](#star-history-and-project-activity)
-
-<!-- vscode-markdown-toc-config
-    numbering=true
-    autoSave=true
-    /vscode-markdown-toc-config -->
-<!-- /vscode-markdown-toc -->
 
 
 
@@ -123,6 +19,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 It currently supports:
 
 * Federation across multiple MCP and REST services
+* **A2A (Agent-to-Agent) integration** for external AI agents (OpenAI, Anthropic, custom)
 * Virtualization of legacy APIs as MCP-compliant tools and servers
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
 * An Admin UI for real-time management, configuration, and log monitoring
@@ -134,95 +31,67 @@ It currently supports:
 
 For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/)
 
-**⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component with **NO OFFICIAL SUPPORT** from IBM or its affiliates that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle. See [SECURITY.md](./SECURITY.md) for more details.
+**⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component with **NO OFFICIAL SUPPORT** from IBM or its affiliates that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle. See [SECURITY.md](https://github.com/IBM/mcp-context-forge/blob/main/SECURITY.md) for more details.
 
 ---
 
-<details>
-<summary><strong>🔌 Gateway Layer with Protocol Flexibility</strong></summary>
+??? info "🔌 Gateway Layer with Protocol Flexibility"
+    * Sits in front of any MCP server or REST API
+    * Lets you choose your MCP protocol version (e.g., `2025-03-26`)
+    * Exposes a single, unified interface for diverse backends
 
-* Sits in front of any MCP server or REST API
-* Lets you choose your MCP protocol version (e.g., `2025-03-26`)
-* Exposes a single, unified interface for diverse backends
+??? info "🌐 Federation of Peer Gateways (MCP Registry)"
+    * Auto-discovers or configures peer gateways (via mDNS or manual)
+    * Performs health checks and merges remote registries transparently
+    * Supports Redis-backed syncing and fail-over
 
-</details>
+??? info "🧩 Virtualization of REST/gRPC Services"
+    * Wraps non-MCP services as virtual MCP servers
+    * Registers tools, prompts, and resources with minimal configuration
 
-<details>
-<summary><strong>🌐 Federation of Peer Gateways (MCP Registry)</strong></summary>
+??? info "🔁 REST-to-MCP Tool Adapter"
+    * Adapts REST APIs into tools with:
 
-* Auto-discovers or configures peer gateways (via mDNS or manual)
-* Performs health checks and merges remote registries transparently
-* Supports Redis-backed syncing and fail-over
+        * Automatic JSON Schema extraction
+        * Support for headers, tokens, and custom auth
+        * Retry, timeout, and rate-limit policies
 
-</details>
+??? info "🧠 Unified Registries"
+    * **Prompts**: Jinja2 templates, multimodal support, rollback/versioning
+    * **Resources**: URI-based access, MIME detection, caching, SSE updates
+    * **Tools**: Native or adapted, with input validation and concurrency controls
 
-<details>
-<summary><strong>🧩 Virtualization of REST/gRPC Services</strong></summary>
+??? info "📈 Admin UI, Observability & Dev Experience"
+    * Admin UI built with HTMX + Alpine.js
+    * Real-time log viewer with filtering, search, and export capabilities
+    * Auth: Basic, JWT, or custom schemes
+    * Structured logs, health endpoints, metrics
+    * 400+ tests, Makefile targets, live reload, pre-commit hooks
 
-* Wraps non-MCP services as virtual MCP servers
-* Registers tools, prompts, and resources with minimal configuration
+??? info "🔍 OpenTelemetry Observability"
+    * **Vendor-agnostic tracing** with OpenTelemetry (OTLP) protocol support
+    * **Multiple backend support**: Phoenix (LLM-focused), Jaeger, Zipkin, Tempo, DataDog, New Relic
+    * **Distributed tracing** across federated gateways and services
+    * **Automatic instrumentation** of tools, prompts, resources, and gateway operations
+    * **LLM-specific metrics**: Token usage, costs, model performance
+    * **Zero-overhead when disabled** with graceful degradation
+    * **Easy configuration** via environment variables
 
-</details>
+    Quick start with Phoenix (LLM observability):
+    ```bash
+    # Start Phoenix
+    docker run -p 6006:6006 -p 4317:4317 arizephoenix/phoenix:latest
 
-<details>
-<summary><strong>🔁 REST-to-MCP Tool Adapter</strong></summary>
+    # Configure gateway
+    export OTEL_ENABLE_OBSERVABILITY=true
+    export OTEL_TRACES_EXPORTER=otlp
+    export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 
-* Adapts REST APIs into tools with:
+    # Run gateway - traces automatically sent to Phoenix
+    mcpgateway
+    ```
 
-  * Automatic JSON Schema extraction
-  * Support for headers, tokens, and custom auth
-  * Retry, timeout, and rate-limit policies
-
-</details>
-
-<details>
-<summary><strong>🧠 Unified Registries</strong></summary>
-
-* **Prompts**: Jinja2 templates, multimodal support, rollback/versioning
-* **Resources**: URI-based access, MIME detection, caching, SSE updates
-* **Tools**: Native or adapted, with input validation and concurrency controls
-
-</details>
-
-<details>
-<summary><strong>📈 Admin UI, Observability & Dev Experience</strong></summary>
-
-* Admin UI built with HTMX + Alpine.js
-* Real-time log viewer with filtering, search, and export capabilities
-* Auth: Basic, JWT, or custom schemes
-* Structured logs, health endpoints, metrics
-* 400+ tests, Makefile targets, live reload, pre-commit hooks
-
-</details>
-
-<details>
-<summary><strong>🔍 OpenTelemetry Observability</strong></summary>
-
-* **Vendor-agnostic tracing** with OpenTelemetry (OTLP) protocol support
-* **Multiple backend support**: Phoenix (LLM-focused), Jaeger, Zipkin, Tempo, DataDog, New Relic
-* **Distributed tracing** across federated gateways and services
-* **Automatic instrumentation** of tools, prompts, resources, and gateway operations
-* **LLM-specific metrics**: Token usage, costs, model performance
-* **Zero-overhead when disabled** with graceful degradation
-* **Easy configuration** via environment variables
-
-Quick start with Phoenix (LLM observability):
-```bash
-# Start Phoenix
-docker run -p 6006:6006 -p 4317:4317 arizephoenix/phoenix:latest
-
-# Configure gateway
-export OTEL_ENABLE_OBSERVABILITY=true
-export OTEL_TRACES_EXPORTER=otlp
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-
-# Run gateway - traces automatically sent to Phoenix
-mcpgateway
-```
-
-See [Observability Documentation](https://ibm.github.io/mcp-context-forge/manage/observability/) for detailed setup with other backends.
-
-</details>
+    See [Observability Documentation](https://ibm.github.io/mcp-context-forge/manage/observability/) for detailed setup with other backends.
 
 ---
 
@@ -242,13 +111,9 @@ MCPGATEWAY_ADMIN_API_ENABLED=true \
 uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 ```
 
-<details>
-<summary><strong>📋 Prerequisites</strong></summary>
-
-* **Python ≥ 3.10** (3.11 recommended)
-* **curl + jq** - only for the last smoke-test step
-
-</details>
+??? info "📋 Prerequisites"
+    * **Python ≥ 3.10** (3.11 recommended)
+    * **curl + jq** - only for the last smoke-test step
 
 ### 1 - Install & run (copy-paste friendly)
 
@@ -275,141 +140,135 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
 ```
 
-<details>
-<summary><strong>Windows (PowerShell) quick-start</strong></summary>
+??? info "Windows (PowerShell) quick-start"
+    ```powershell
+    # 1️⃣  Isolated env + install from PyPI
+    mkdir mcpgateway ; cd mcpgateway
+    python3 -m venv .venv ; .\.venv\Scripts\Activate.ps1
+    pip install --upgrade pip
+    pip install mcp-contextforge-gateway
 
-```powershell
-# 1️⃣  Isolated env + install from PyPI
-mkdir mcpgateway ; cd mcpgateway
-python3 -m venv .venv ; .\.venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install mcp-contextforge-gateway
+    # 2️⃣  Environment variables (session-only)
+    $Env:MCPGATEWAY_UI_ENABLED        = "true"
+    $Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
+    $Env:BASIC_AUTH_PASSWORD          = "changeme"      # admin/changeme
+    $Env:JWT_SECRET_KEY               = "my-test-key"
 
-# 2️⃣  Environment variables (session-only)
-$Env:MCPGATEWAY_UI_ENABLED        = "true"
-$Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
-$Env:BASIC_AUTH_PASSWORD          = "changeme"      # admin/changeme
-$Env:JWT_SECRET_KEY               = "my-test-key"
+    # 3️⃣  Launch the gateway
+    mcpgateway.exe --host 0.0.0.0 --port 4444
 
-# 3️⃣  Launch the gateway
-mcpgateway.exe --host 0.0.0.0 --port 4444
+    #   Optional: background it
+    # Start-Process -FilePath "mcpgateway.exe" -ArgumentList "--host 0.0.0.0 --port 4444"
 
-#   Optional: background it
-# Start-Process -FilePath "mcpgateway.exe" -ArgumentList "--host 0.0.0.0 --port 4444"
+    # 4️⃣  Bearer token and smoke-test
+    $Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
+        --username admin --exp 10080 --secret my-test-key
 
-# 4️⃣  Bearer token and smoke-test
-$Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
-    --username admin --exp 10080 --secret my-test-key
+    curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
+         http://127.0.0.1:4444/version | jq
+    ```
 
-curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
-     http://127.0.0.1:4444/version | jq
-```
+??? info "More configuration"
+    Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and tweak any of the settings (or use them as env variables).
 
-</details>
+??? info "🚀 End-to-end demo (register a local MCP server)"
+    ```bash
+    # 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
+    python3 -m mcpgateway.translate \
+         --stdio "docker run --rm -i -p 8888:8080 ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
+         --expose-sse \
+         --port 8003
 
-<details>
-<summary><strong>More configuration</strong></summary>
+    # Or using the official mcp-server-git using uvx:
+    pip install uv # to install uvx, if not already installed
+    python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9000
 
-Copy [.env.example](.env.example) to `.env` and tweak any of the settings (or use them as env variables).
+    # Alternative: running the local binary
+    # cd mcp-servers/go/fast-time-server; make build
+    # python3 -m mcpgateway.translate --stdio "./dist/fast-time-server -transport=stdio" --expose-sse --port 8002
 
-</details>
+    # NEW: Expose via multiple protocols simultaneously!
+    python3 -m mcpgateway.translate \
+         --stdio "uvx mcp-server-git" \
+         --expose-sse \
+         --expose-streamable-http \
+         --port 9000
+    # Now accessible via both /sse (SSE) and /mcp (streamable HTTP) endpoints
 
-<details>
-<summary><strong>🚀 End-to-end demo (register a local MCP server)</strong></summary>
+    # 2️⃣  Register it with the gateway
+    curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+         -H "Content-Type: application/json" \
+         -d '{"name":"fast_time","url":"http://localhost:9000/sse"}' \
+         http://localhost:4444/gateways
 
-```bash
-# 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
-python3 -m mcpgateway.translate \
-     --stdio "docker run --rm -i -p 8888:8080 ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
-     --expose-sse \
-     --port 8003
+    # 3️⃣  Verify tool catalog
+    curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools | jq
 
-# Or using the official mcp-server-git using uvx:
-pip install uv # to install uvx, if not already installed
-python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9000
+    # 4️⃣  Create a *virtual server* bundling those tools. Use the ID of tools from the tool catalog (Step #3) and pass them in the associatedTools list.
+    curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+         -H "Content-Type: application/json" \
+         -d '{"name":"time_server","description":"Fast time tools","associatedTools":[<ID_OF_TOOLS>]}' \
+         http://localhost:4444/servers | jq
 
-# Alternative: running the local binary
-# cd mcp-servers/go/fast-time-server; make build
-# python3 -m mcpgateway.translate --stdio "./dist/fast-time-server -transport=stdio" --expose-sse --port 8002
+    # Example curl
+    curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"
+         -H "Content-Type: application/json"
+         -d '{"name":"time_server","description":"Fast time tools","associatedTools":["6018ca46d32a4ac6b4c054c13a1726a2"]}' \
+         http://localhost:4444/servers | jq
 
-# NEW: Expose via multiple protocols simultaneously!
-python3 -m mcpgateway.translate \
-     --stdio "uvx mcp-server-git" \
-     --expose-sse \
-     --expose-streamable-http \
-     --port 9000
-# Now accessible via both /sse (SSE) and /mcp (streamable HTTP) endpoints
+    # 5️⃣  List servers (should now include the UUID of the newly created virtual server)
+    curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
 
-# 2️⃣  Register it with the gateway
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"fast_time","url":"http://localhost:9000/sse"}' \
-     http://localhost:4444/gateways
+    # 6️⃣  Client SSE endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
+    npx -y @modelcontextprotocol/inspector
+    # Transport Type: SSE, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/sse,  Header Name: "Authorization", Bearer Token
+    ```
 
-# 3️⃣  Verify tool catalog
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools | jq
+??? info "🖧 Using the stdio wrapper (mcpgateway-wrapper)"
+    ```bash
+    export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN
+    export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
+    python3 -m mcpgateway.wrapper  # Ctrl-C to exit
+    ```
 
-# 4️⃣  Create a *virtual server* bundling those tools. Use the ID of tools from the tool catalog (Step #3) and pass them in the associatedTools list.
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":[<ID_OF_TOOLS>]}' \
-     http://localhost:4444/servers | jq
+    You can also run it with `uv` or inside Docker/Podman - see the *Containers* section above.
 
-# Example curl
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"
-     -H "Content-Type: application/json"
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["6018ca46d32a4ac6b4c054c13a1726a2"]}' \
-     http://localhost:4444/servers | jq
+    In MCP Inspector, define `MCP_AUTH` and `MCP_SERVER_URL` env variables, and select `python3` as the Command, and `-m mcpgateway.wrapper` as Arguments.
 
-# 5️⃣  List servers (should now include the UUID of the newly created virtual server)
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
+    ```bash
+    echo $PWD/.venv/bin/python3 # Using the Python3 full path ensures you have a working venv
+    export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
+    export MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}
+    npx -y @modelcontextprotocol/inspector
+    ```
 
-# 6️⃣  Client SSE endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
-npx -y @modelcontextprotocol/inspector
-# Transport Type: SSE, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/sse,  Header Name: "Authorization", Bearer Token
-```
+    or
 
-</details>
+    Pass the url and auth as arguments (no need to set environment variables)
+    ```bash
+    npx -y @modelcontextprotocol/inspector
+    command as `python`
+    Arguments as `-m mcpgateway.wrapper --url "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp" --auth "Bearer <your token>"`
+    ```
 
-<details>
-<summary><strong>🖧 Using the stdio wrapper (mcpgateway-wrapper)</strong></summary>
 
-```bash
-export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1
-python3 -m mcpgateway.wrapper  # Ctrl-C to exit
-```
+    When using a MCP Client such as Claude with stdio:
 
-You can also run it with `uv` or inside Docker/Podman - see the *Containers* section above.
-
-In MCP Inspector, define `MCP_AUTH_TOKEN` and `MCP_SERVER_CATALOG_URLS` env variables, and select `python3` as the Command, and `-m mcpgateway.wrapper` as Arguments.
-
-```bash
-echo $PWD/.venv/bin/python3 # Using the Python3 full path ensures you have a working venv
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
-export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-npx -y @modelcontextprotocol/inspector
-```
-
-When using a MCP Client such as Claude with stdio:
-
-```json
-{
-  "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_AUTH_TOKEN": "your-token-here",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
+    ```json
+    {
+      "mcpServers": {
+        "mcpgateway-wrapper": {
+          "command": "python",
+          "args": ["-m", "mcpgateway.wrapper"],
+          "env": {
+            "MCP_AUTH": "your-token-here",
+            "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
+            "MCP_TOOL_CALL_TIMEOUT": "120"
+          }
+        }
       }
     }
-  }
-}
-```
-
-</details>
+    ```
 
 ---
 
@@ -550,61 +409,49 @@ podman run -d --name mcpgateway \
 
 ---
 
-<details>
-<summary><strong>✏️ Docker/Podman tips</strong></summary>
+??? info "✏️ Docker/Podman tips"
+    * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](.env.example) for reference.
+    * **Pinned tags** - Use an explicit version (e.g. `v0.6.0`) instead of `latest` for reproducible builds.
+    * **JWT tokens** - Generate one in the running container:
 
-* **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `v0.6.0`) instead of `latest` for reproducible builds.
-* **JWT tokens** - Generate one in the running container:
-
-  ```bash
-  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 --secret my-test-key
-  ```
-* **Upgrades** - Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
-
-</details>
+        ```bash
+        docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 --secret my-test-key
+        ```
+    * **Upgrades** - Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
 
 ---
 
-<details>
-<summary><strong>🚑 Smoke-test the running container</strong></summary>
-
-```bash
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/health | jq
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/tools | jq
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/version | jq
-```
-
-</details>
+??? info "🚑 Smoke-test the running container"
+    ```bash
+    curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+         http://localhost:4444/health | jq
+    curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+         http://localhost:4444/tools | jq
+    curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+         http://localhost:4444/version | jq
+    ```
 
 ---
 
-<details>
-<summary><strong>🖧 Running the MCP Gateway stdio wrapper</strong></summary>
+??? info "🖧 Running the MCP Gateway stdio wrapper"
+    The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while keeping JWT authentication. You should run this from the MCP Client. The example below is just for testing.
 
-The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while keeping JWT authentication. You should run this from the MCP Client. The example below is just for testing.
+    ```bash
+    # Set environment variables
+    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
+    export MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}
+    export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
+    export MCP_TOOL_CALL_TIMEOUT=120
+    export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
 
-```bash
-# Set environment variables
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
-export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
-export MCP_TOOL_CALL_TIMEOUT=120
-export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
-
-docker run --rm -i \
-  -e MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN \
-  -e MCP_SERVER_CATALOG_URLS=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1 \
-  -e MCP_TOOL_CALL_TIMEOUT=120 \
-  -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:0.6.0 \
-  python3 -m mcpgateway.wrapper
-```
-
-</details>
+    docker run --rm -i \
+      -e MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN \
+      -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
+      -e MCP_TOOL_CALL_TIMEOUT=120 \
+      -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
+      ghcr.io/ibm/mcp-context-forge:0.6.0 \
+      python3 -m mcpgateway.wrapper
+    ```
 
 ---
 
@@ -614,169 +461,149 @@ Because the wrapper speaks JSON-RPC over stdin/stdout, you can interact with it 
 
 ```bash
 # Start the MCP Gateway Wrapper
-export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/YOUR_SERVER_UUID
+export MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_URL=http://localhost:4444/servers/YOUR_SERVER_UUID
 python3 -m mcpgateway.wrapper
 ```
 
-<details>
-<summary><strong>Initialize the protocol</strong></summary>
+??? info "Initialize the protocol"
+    ```json
+    # Initialize the protocol
+    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0.0.1"}}}
 
-```json
-# Initialize the protocol
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0.0.1"}}}
+    # Then after the reply:
+    {"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
 
-# Then after the reply:
-{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+    # Get prompts
+    {"jsonrpc":"2.0","id":4,"method":"prompts/list"}
+    {"jsonrpc":"2.0","id":5,"method":"prompts/get","params":{"name":"greeting","arguments":{"user":"Bob"}}}
 
-# Get prompts
-{"jsonrpc":"2.0","id":4,"method":"prompts/list"}
-{"jsonrpc":"2.0","id":5,"method":"prompts/get","params":{"name":"greeting","arguments":{"user":"Bob"}}}
+    # Get resources
+    {"jsonrpc":"2.0","id":6,"method":"resources/list"}
+    {"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"https://example.com/some.txt"}}
 
-# Get resources
-{"jsonrpc":"2.0","id":6,"method":"resources/list"}
-{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"https://example.com/some.txt"}}
+    # Get / call tools
+    {"jsonrpc":"2.0","id":2,"method":"tools/list"}
+    {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_system_time","arguments":{"timezone":"Europe/Dublin"}}}
+    ```
 
-# Get / call tools
-{"jsonrpc":"2.0","id":2,"method":"tools/list"}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_system_time","arguments":{"timezone":"Europe/Dublin"}}}
-```
+??? info "Expected responses from mcpgateway.wrapper"
+    ```json
+    {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.6.0"}}}
 
-</details>
+    # When there's no tools
+    {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
 
-<details>
-<summary><strong>Expected responses from mcpgateway.wrapper</strong></summary>
+    # After you add some tools and create a virtual server
+    {"jsonrpc":"2.0","id":2,"result":{"tools":[{"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true},"description":"Convert time between different timezones","inputSchema":{"properties":{"source_timezone":{"description":"Source IANA timezone name","type":"string"},"target_timezone":{"description":"Target IANA timezone name","type":"string"},"time":{"description":"Time to convert in RFC3339 format or common formats like '2006-01-02 15:04:05'","type":"string"}},"required":["time","source_timezone","target_timezone"],"type":"object"},"name":"convert_time"},{"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true},"description":"Get current system time in specified timezone","inputSchema":{"properties":{"timezone":{"description":"IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Defaults to UTC","type":"string"}},"type":"object"},"name":"get_system_time"}]}}
 
-```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.6.0"}}}
-
-# When there's no tools
-{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
-
-# After you add some tools and create a virtual server
-{"jsonrpc":"2.0","id":2,"result":{"tools":[{"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true},"description":"Convert time between different timezones","inputSchema":{"properties":{"source_timezone":{"description":"Source IANA timezone name","type":"string"},"target_timezone":{"description":"Target IANA timezone name","type":"string"},"time":{"description":"Time to convert in RFC3339 format or common formats like '2006-01-02 15:04:05'","type":"string"}},"required":["time","source_timezone","target_timezone"],"type":"object"},"name":"convert_time"},{"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true},"description":"Get current system time in specified timezone","inputSchema":{"properties":{"timezone":{"description":"IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Defaults to UTC","type":"string"}},"type":"object"},"name":"get_system_time"}]}}
-
-# Running the time tool:
-{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"2025-07-09T00:09:45+01:00"}]}}
-```
-
-</details>
+    # Running the time tool:
+    {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"2025-07-09T00:09:45+01:00"}]}}
+    ```
 
 ### 🧩 Running from an MCP Client (`mcpgateway.wrapper`)
 
 The `mcpgateway.wrapper` exposes everything your Gateway knows about over **stdio**, so any MCP client that *can't* (or *shouldn't*) open an authenticated SSE stream still gets full tool-calling power.
 
-> **Remember** to substitute your real Gateway URL (and server ID) for `http://localhost:4444/servers/UUID_OF_SERVER_1`.
-> When inside Docker/Podman, that often becomes `http://host.docker.internal:4444/servers/UUID_OF_SERVER_1` (macOS/Windows) or the gateway container's hostname (Linux).
+> **Remember** to substitute your real Gateway URL (and server ID) for `http://localhost:4444/servers/UUID_OF_SERVER_1/mcp`.
+> When inside Docker/Podman, that often becomes `http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp` (macOS/Windows) or the gateway container's hostname (Linux).
 
 ---
 
-<details>
-<summary><strong>🐳 Docker / Podman</strong></summary>
-
-```bash
-docker run -i --rm \
-  --network=host \
-  -e MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
-  -e MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
-  -e MCP_TOOL_CALL_TIMEOUT=120 \
-  ghcr.io/ibm/mcp-context-forge:0.6.0 \
-  python3 -m mcpgateway.wrapper
-```
-
-</details>
+??? info "🐳 Docker / Podman"
+    ```bash
+    docker run -i --rm \
+      --network=host \
+      -e MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
+      -e MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN} \
+      -e MCP_TOOL_CALL_TIMEOUT=120 \
+      ghcr.io/ibm/mcp-context-forge:0.6.0 \
+      python3 -m mcpgateway.wrapper
+    ```
 
 ---
 
-<details>
-<summary><strong>📦 pipx (one-liner install &amp; run)</strong></summary>
+??? info "📦 pipx (one-liner install & run)"
+    ```bash
+    # Install gateway package in its own isolated venv
+    pipx install --include-deps mcp-contextforge-gateway
 
-```bash
-# Install gateway package in its own isolated venv
-pipx install --include-deps mcp-contextforge-gateway
+    # Run the stdio wrapper
+    MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN} \
+    MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
+    python3 -m mcpgateway.wrapper
+    # Alternatively with uv
+    uv run --directory . -m mcpgateway.wrapper
+    ```
 
-# Run the stdio wrapper
-MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
-MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
-python3 -m mcpgateway.wrapper
-# Alternatively with uv
-uv run --directory . -m mcpgateway.wrapper
-```
+    **Claude Desktop JSON** (uses the host Python that pipx injected):
 
-**Claude Desktop JSON** (uses the host Python that pipx injected):
-
-```json
-{
-  "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "python3",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_AUTH_TOKEN": "<your-token>",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
+    ```json
+    {
+      "mcpServers": {
+        "mcpgateway-wrapper": {
+          "command": "python3",
+          "args": ["-m", "mcpgateway.wrapper"],
+          "env": {
+            "MCP_AUTH": "<your-token>",
+            "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
+            "MCP_TOOL_CALL_TIMEOUT": "120"
+          }
+        }
       }
     }
-  }
-}
-```
-
-</details>
+    ```
 
 ---
 
-<details>
-<summary><strong>⚡ uv / uvx (light-speed venvs)</strong></summary>
+??? info "⚡ uv / uvx (light-speed venvs)"
+    #### 1 - Install <code>uv</code>  (<code>uvx</code> is an alias it provides)
 
-#### 1 - Install <code>uv</code>  (<code>uvx</code> is an alias it provides)
+    ```bash
+    # (a) official one-liner
+    curl -Ls https://astral.sh/uv/install.sh | sh
 
-```bash
-# (a) official one-liner
-curl -Ls https://astral.sh/uv/install.sh | sh
+    # (b) or via pipx
+    pipx install uv
+    ```
 
-# (b) or via pipx
-pipx install uv
-```
+    #### 2 - Create an on-the-spot venv & run the wrapper
 
-#### 2 - Create an on-the-spot venv & run the wrapper
+    ```bash
+    # Create venv in ~/.venv/mcpgateway (or current dir if you prefer)
+    uv venv ~/.venv/mcpgateway
+    source ~/.venv/mcpgateway/bin/activate
 
-```bash
-# Create venv in ~/.venv/mcpgateway (or current dir if you prefer)
-uv venv ~/.venv/mcpgateway
-source ~/.venv/mcpgateway/bin/activate
+    # Install the gateway package using uv
+    uv pip install mcp-contextforge-gateway
 
-# Install the gateway package using uv
-uv pip install mcp-contextforge-gateway
+    # Launch wrapper
+    MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN} \
+    MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
+    uv run --directory . -m mcpgateway.wrapper # Use this just for testing, as the Client will run the uv command
+    ```
 
-# Launch wrapper
-MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN} \
-MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1 \
-uv run --directory . -m mcpgateway.wrapper # Use this just for testing, as the Client will run the uv command
-```
+    #### Claude Desktop JSON (runs through **uvx**)
 
-#### Claude Desktop JSON (runs through **uvx**)
-
-```json
-{
-  "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "uvx",
-      "args": [
-        "run",
-        "--",
-        "python",
-        "-m",
-        "mcpgateway.wrapper"
-      ],
-      "env": {
-        "MCP_AUTH_TOKEN": "<your-token>",
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1"
+    ```json
+    {
+      "mcpServers": {
+        "mcpgateway-wrapper": {
+          "command": "uvx",
+          "args": [
+            "run",
+            "--",
+            "python",
+            "-m",
+            "mcpgateway.wrapper"
+          ],
+          "env": {
+            "MCP_AUTH": "<your-token>",
+            "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+        }
+      }
     }
-  }
-}
-```
-
-</details>
+    ```
 
 ---
 
@@ -799,75 +626,59 @@ Spin up a fully-loaded dev environment (Python 3.11, Docker/Podman CLI, all proj
 
 ---
 
-<details>
-<summary><strong>📋 Prerequisites</strong></summary>
+??? info "📋 Prerequisites"
+    * **VS Code** with the [Dev Containers extension](https://code.visualstudio.com/docs/devcontainers/containers)
+    * **Docker** or **Podman** installed and running locally
 
-* **VS Code** with the [Dev Containers extension](https://code.visualstudio.com/docs/devcontainers/containers)
-* **Docker** or **Podman** installed and running locally
+??? info "🧰 Setup Instructions"
+    ### 1 - Clone & Open
 
-</details>
+    ```bash
+    git clone https://github.com/ibm/mcp-context-forge.git
+    cd mcp-context-forge
+    code .
+    ```
 
-<details>
-<summary><strong>🧰 Setup Instructions</strong></summary>
+    VS Code will detect the `.devcontainer` and prompt:
+    **"Reopen in Container"**
+    *or* manually run: <kbd>Ctrl/Cmd ⇧ P</kbd> → **Dev Containers: Reopen in Container**
 
-### 1 - Clone & Open
+    ---
 
-```bash
-git clone https://github.com/ibm/mcp-context-forge.git
-cd mcp-context-forge
-code .
-```
+    ### 2 - First-Time Build (Automatic)
 
-VS Code will detect the `.devcontainer` and prompt:
-**"Reopen in Container"**
-*or* manually run: <kbd>Ctrl/Cmd ⇧ P</kbd> → **Dev Containers: Reopen in Container**
+    The container build will:
 
----
+    * Install system packages & Python 3.11
+    * Run `make install-dev` to pull all dependencies
+    * Execute tests to verify the toolchain
 
-### 2 - First-Time Build (Automatic)
+    You'll land in `/workspace` ready to develop.
 
-The container build will:
+??? info "🛠️ Daily Developer Workflow"
+    Common tasks inside the container:
 
-* Install system packages & Python 3.11
-* Run `make install-dev` to pull all dependencies
-* Execute tests to verify the toolchain
+    ```bash
+    # Start dev server (hot reload)
+    make dev            # http://localhost:4444
 
-You'll land in `/workspace` ready to develop.
+    # Run tests & linters
+    make test
+    make lint
+    ```
 
-</details>
+    Optional:
 
-<details>
-<summary><strong>🛠️ Daily Developer Workflow</strong></summary>
+    * `make bash` - drop into an interactive shell
+    * `make clean` - clear build artefacts & caches
+    * Port forwarding is automatic (customize via `.devcontainer/devcontainer.json`)
 
-Common tasks inside the container:
+??? info "☁️ GitHub Codespaces: 1-Click Cloud IDE"
+    No local Docker? Use Codespaces:
 
-```bash
-# Start dev server (hot reload)
-make dev            # http://localhost:4444
-
-# Run tests & linters
-make test
-make lint
-```
-
-Optional:
-
-* `make bash` - drop into an interactive shell
-* `make clean` - clear build artefacts & caches
-* Port forwarding is automatic (customize via `.devcontainer/devcontainer.json`)
-
-</details>
-
-<details>
-<summary><strong>☁️ GitHub Codespaces: 1-Click Cloud IDE</strong></summary>
-
-No local Docker? Use Codespaces:
-
-1. Go to the repo → **Code ▸ Codespaces ▸ Create codespace on main**
-2. Wait for the container image to build in the cloud
-3. Develop using the same workflow above
-
-</details>
+    1. Go to the repo → **Code ▸ Codespaces ▸ Create codespace on main**
+    2. Wait for the container image to build in the cloud
+    3. Develop using the same workflow above
 
 ---
 
@@ -975,7 +786,7 @@ docker run --name mcp-postgres \
   -p 5432:5432 -d postgres
 ```
 
-A `make compose-up` target is provided along with a [docker-compose.yml](docker-compose.yml) file to make this process simpler.
+A `make compose-up` target is provided along with a [docker-compose.yml](https://github.com/IBM/mcp-context-forge/blob/main/docker-compose.yml) file to make this process simpler.
 
 ---
 
@@ -1047,6 +858,25 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 > 🖥️ Set both UI and Admin API to `false` to disable management UI and APIs in production.
 > 📥 The bulk import endpoint allows importing up to 200 tools in a single request via `/admin/tools/import`.
+
+### A2A (Agent-to-Agent) Features
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `MCPGATEWAY_A2A_ENABLED`       | Enable A2A agent features             | `true`  | bool    |
+| `MCPGATEWAY_A2A_MAX_AGENTS`    | Maximum number of A2A agents allowed  | `100`   | int     |
+| `MCPGATEWAY_A2A_DEFAULT_TIMEOUT` | Default timeout for A2A HTTP requests (seconds) | `30` | int |
+| `MCPGATEWAY_A2A_MAX_RETRIES`   | Maximum retry attempts for A2A calls  | `3`     | int     |
+| `MCPGATEWAY_A2A_METRICS_ENABLED` | Enable A2A agent metrics collection | `true`  | bool    |
+
+> 🤖 **A2A Integration**: Register external AI agents (OpenAI, Anthropic, custom) and expose them as MCP tools
+> 📊 **Metrics**: Track agent performance, success rates, and response times
+> 🔒 **Security**: Encrypted credential storage and configurable authentication
+> 🎛️ **Admin UI**: Dedicated tab for agent management with test functionality
+
+**A2A Configuration Effects:**
+- `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
+- `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
 ### Security
 
@@ -1566,6 +1396,82 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 # Delete tool
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1
 ```
+
+</details>
+
+---
+
+<details>
+<summary><strong>🤖 A2A Agent Management /a2a</strong></summary>
+
+```bash
+# Register a new A2A agent
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "name":"hello_world_agent",
+           "endpoint_url":"http://localhost:9999/",
+           "agent_type":"jsonrpc",
+           "description":"External AI agent for hello world functionality",
+           "auth_type":"api_key",
+           "auth_value":"your-api-key",
+           "tags":["ai", "hello-world"]
+         }' \
+     http://localhost:4444/a2a
+
+# List A2A agents
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/a2a
+
+# Get agent by ID
+curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/a2a/agent-id
+
+# Update agent
+curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{ "description":"Updated description" }' \
+     http://localhost:4444/a2a/agent-id
+
+# Test agent (direct invocation)
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "parameters": {
+             "method": "message/send",
+             "params": {
+               "message": {
+                 "messageId": "test-123",
+                 "role": "user",
+                 "parts": [{"type": "text", "text": "Hello!"}]
+               }
+             }
+           },
+           "interaction_type": "test"
+         }' \
+     http://localhost:4444/a2a/agent-name/invoke
+
+# Toggle agent status
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:4444/a2a/agent-id/toggle?activate=false
+
+# Delete agent
+curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:4444/a2a/agent-id
+
+# Associate agent with virtual server (agents become available as MCP tools)
+curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "name":"AI Assistant Server",
+           "description":"Virtual server with AI agents",
+           "associated_a2a_agents":["agent-id"]
+         }' \
+     http://localhost:4444/servers
+```
+
+> 🤖 **A2A Integration**: A2A agents are external AI agents that can be registered and exposed as MCP tools
+> 🔄 **Protocol Detection**: Gateway automatically detects JSONRPC vs custom A2A protocols
+> 📊 **Testing**: Built-in test functionality via Admin UI or `/a2a/{agent_id}/test` endpoint
+> 🎛️ **Virtual Servers**: Associate agents with servers to expose them as standard MCP tools
 
 </details>
 
@@ -2278,16 +2184,16 @@ Missing or empty required vars cause a fast-fail at startup.
 3. Keep `make test` green and 100% coverage.
 4. Open a PR - describe your changes clearly.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
+See [CONTRIBUTING.md](https://github.com/IBM/mcp-context-forge/blob/main/CONTRIBUTING.md) for more details.
 ---
 
 ## Changelog
 
-A complete changelog can be found here: [CHANGELOG.md](./CHANGELOG.md)
+A complete changelog can be found here: [CHANGELOG.md](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md)
 
 ## License
 
-Licensed under the **Apache License 2.0** - see [LICENSE](./LICENSE)
+Licensed under the **Apache License 2.0** - see [LICENSE](https://github.com/IBM/mcp-context-forge/blob/main/LICENSE)
 
 
 ## Core Authors and Maintainers

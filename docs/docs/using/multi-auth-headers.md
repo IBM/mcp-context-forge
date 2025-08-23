@@ -184,6 +184,6 @@ The system will automatically convert your configuration to the multi-header for
 ```
 
 ## Related Documentation
-- [Gateway Authentication](./authentication.md)
-- [Security Best Practices](../security/best-practices.md)
-- [API Documentation](../api/gateways.md)
+- [Gateway Authentication](../manage/securing.md)
+- [Security Best Practices](../architecture/security-features.md)
+- [Multi-Auth Headers](./multi-auth-headers.md)

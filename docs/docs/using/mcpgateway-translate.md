@@ -465,8 +465,8 @@ headers = {
 
 - [MCP Gateway Overview](../overview/index.md)
 - [MCP Protocol Specification](https://modelcontextprotocol.io)
-- [Transport Protocols](../architecture/index.md#transports)
-- [Authentication Guide](../manage/authentication.md)
+- [Transport Protocols](../architecture/index.md#system-architecture)
+- [Authentication Guide](../manage/securing.md)
 
 ## Support
 

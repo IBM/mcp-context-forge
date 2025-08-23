@@ -382,4 +382,4 @@ If you encounter issues:
 4. **Use dry-run**: Always validate imports before applying changes
 5. **Check authentication**: Verify tokens and encryption keys are correct
 
-For detailed troubleshooting, see the main [Export & Import Guide](export-import.md#-troubleshooting).
+For detailed troubleshooting, see the main [Export & Import Guide](export-import.md).

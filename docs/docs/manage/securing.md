@@ -242,7 +242,7 @@ MCPGATEWAY_LOG_SENSITIVE_DATA=false     # Never log sensitive data
 
 - [Security Policy](https://github.com/IBM/mcp-context-forge/blob/main/SECURITY.md) - Full security documentation
 - [Deployment Options](index.md) - Various deployment methods
-- [Environment Variables](../configuration/environment-variables.md) - Complete configuration reference
+- [Environment Variables](../index.md#configuration-env-or-env-vars) - Complete configuration reference
 
 ## ⚡ Quick Start Security Commands
 

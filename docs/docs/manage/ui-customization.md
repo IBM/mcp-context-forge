@@ -1510,7 +1510,7 @@ fetch('/metrics/custom', {
 
 ## Related Documentation
 
-- [Admin UI Overview](/overview/ui/) - Basic UI concepts and navigation
-- [Security Configuration](/manage/securing/) - Securing the Admin UI
-- [Performance Tuning](/manage/tuning/) - Optimizing UI performance
-- [API Reference](/api/admin/) - Admin API endpoints
+- [Admin UI Overview](../overview/ui.md) - Basic UI concepts and navigation
+- [Security Configuration](./securing.md) - Securing the Admin UI
+- [Performance Tuning](./tuning.md) - Optimizing UI performance
+- [API Reference](https://ibm.github.io/mcp-context-forge/api/admin/) - Admin API endpoints

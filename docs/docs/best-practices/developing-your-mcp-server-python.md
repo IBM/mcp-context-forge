@@ -125,7 +125,7 @@ curl -X POST http://127.0.0.1:4444/gateways \
   -d '{"name":"my_echo_server","url":"http://127.0.0.1:8000/mcp","transport":"streamablehttp"}'
 ```
 
-For instructions on registering your server via the UI, please see [Register with the Gateway UI](register-server.md#registering-a-tool-with-the-gateway).
+For instructions on registering your server via the UI, please see [Gateway Integration](../using/servers/index.md#gateway-integration).
 
 ### 4.2 Verify Registration
 

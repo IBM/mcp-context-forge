@@ -662,7 +662,7 @@ SESSION_TTL=3600  # 1 hour
 
 ## Related Documentation
 
-- [Authentication Overview](../authentication.md)
-- [Security Best Practices](../security.md)
+- [Authentication Overview](./securing.md)
+- [Security Best Practices](../architecture/security-features.md)
 - [Deployment Guide](../deployment/index.md)
-- [Federation Setup](../federation.md)
+- [Federation Setup](../architecture/index.md)

@@ -223,4 +223,4 @@ Associate A2A agents with virtual servers to:
 
 ---
 
-For more information on MCP Gateway features and configuration, see the [main documentation](../../overview/).
+For more information on MCP Gateway features and configuration, see the [main documentation](../../overview/index.md).

@@ -1293,6 +1293,6 @@ print(f"Converted time: {result['converted_time']}")
 ## Related Resources
 
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
-- [MCP Gateway Documentation](../gateway/index.md)
+- [MCP Gateway Documentation](../../index.md)
 - [Go MCP SDK](https://github.com/mark3labs/mcp-go)
 - [Time Zone Database](https://www.iana.org/time-zones)
