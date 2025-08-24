@@ -33,8 +33,44 @@ from mcpgateway.main import app
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="session")
 def test_client() -> TestClient:
-    """Spin up the FastAPI test client once for the whole session."""
-    return TestClient(app)
+    """Spin up the FastAPI test client once for the whole session with proper database setup."""
+    import tempfile
+    from _pytest.monkeypatch import MonkeyPatch
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    mp = MonkeyPatch()
+
+    # Create temp SQLite file
+    fd, path = tempfile.mkstemp(suffix=".db")
+    url = f"sqlite:///{path}"
+
+    # Patch settings
+    from mcpgateway.config import settings
+    mp.setattr(settings, "database_url", url, raising=False)
+
+    import mcpgateway.db as db_mod
+    import mcpgateway.main as main_mod
+
+    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    mp.setattr(db_mod, "engine", engine, raising=False)
+    mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+    mp.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
+    mp.setattr(main_mod, "engine", engine, raising=False)
+
+    # Create schema
+    db_mod.Base.metadata.create_all(bind=engine)
+
+    client = TestClient(app)
+    yield client
+
+    # Cleanup
+    mp.undo()
+    engine.dispose()
+    os.close(fd)
+    os.unlink(path)
 
 
 @pytest.fixture()

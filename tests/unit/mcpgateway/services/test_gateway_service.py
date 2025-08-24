@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch, mock_open
 import socket
 
 # Third-Party
@@ -133,6 +133,16 @@ def mock_gateway():
     gw.transport = "sse"
     gw.auth_value = {}
     return gw
+
+
+@pytest.fixture
+def mock_session():
+    """Return a mocked SQLAlchemy session."""
+    session = MagicMock()
+    session.query.return_value = MagicMock()
+    session.commit.return_value = None
+    session.rollback.return_value = None
+    return session
 
 
 # ---------------------------------------------------------------------------
@@ -1424,3 +1434,4 @@ class TestGatewayService:
         gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("fail"))
         ok = await gateway_service.check_gateway_health(mock_gateway)
         assert ok is False
+

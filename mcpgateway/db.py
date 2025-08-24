@@ -79,15 +79,23 @@ elif backend == "sqlite":
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
 # ---------------------------------------------------------------------------
-engine = create_engine(
-    settings.database_url,
-    pool_pre_ping=True,  # quick liveness check per checkout
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
-    pool_timeout=settings.db_pool_timeout,
-    pool_recycle=settings.db_pool_recycle,
-    connect_args=connect_args,
-)
+if backend == "sqlite":
+    # SQLite doesn't support pool overflow/timeout parameters
+    engine = create_engine(
+        settings.database_url,
+        connect_args=connect_args,
+    )
+else:
+    # Other databases support full pooling configuration
+    engine = create_engine(
+        settings.database_url,
+        pool_pre_ping=True,  # quick liveness check per checkout
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout,
+        pool_recycle=settings.db_pool_recycle,
+        connect_args=connect_args,
+    )
 
 
 # ---------------------------------------------------------------------------

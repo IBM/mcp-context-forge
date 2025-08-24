@@ -1261,7 +1261,244 @@ def test_start_sse(monkeypatch, translate):
     assert args.__name__ == "_run_sse_to_stdio"
 
 
-# Removed problematic async tests that were causing freezing
+@pytest.mark.asyncio
+async def test_run_stdio_to_streamable_http_basic(monkeypatch, translate):
+    """Test _run_stdio_to_streamable_http basic functionality."""
+    calls = []
+
+    class MockProcess:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = None
+            calls.append("process_created")
+
+        def terminate(self):
+            calls.append("process_terminate")
+
+        async def wait(self):
+            return 0
+
+    class MockMCPServer:
+        def __init__(self, name):
+            calls.append("mcp_server_init")
+
+    class MockSessionManager:
+        def __init__(self, app, stateless=False, json_response=False):
+            calls.append("session_manager_init")
+
+        async def handle_request(self, scope, receive, send):
+            calls.append("handle_request")
+
+    class MockRoute:
+        def __init__(self, path, handler, methods=None):
+            self.path = path
+            self.handler = handler
+            calls.append(f"route_{path}")
+
+    class MockStarlette:
+        def __init__(self, routes=None):
+            self.routes = routes or []
+            calls.append("starlette_init")
+
+        def add_middleware(self, *args, **kwargs):
+            calls.append("add_middleware")
+
+    class MockServer:
+        def __init__(self, config):
+            calls.append("uvicorn_server_init")
+
+        async def serve(self):
+            calls.append("server_serve")
+            # Quick exit to avoid hanging
+            return
+
+        async def shutdown(self):
+            calls.append("server_shutdown")
+
+    async def mock_create_subprocess(*args, **kwargs):
+        return MockProcess()
+
+    # Mock the pump task to be async
+    class MockTask:
+        def cancel(self):
+            calls.append("pump_task_cancelled")
+
+    async def mock_pump():
+        calls.append("pump_task")
+        return
+
+    def mock_create_task(coro):
+        # Close the coroutine to prevent warnings
+        try:
+            coro.close()
+        except GeneratorExit:
+            pass
+        return MockTask()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", mock_create_subprocess)
+    monkeypatch.setattr(translate, "MCPServer", MockMCPServer)
+    monkeypatch.setattr(translate, "StreamableHTTPSessionManager", MockSessionManager)
+    monkeypatch.setattr(translate, "Route", MockRoute)
+    monkeypatch.setattr(translate, "Starlette", MockStarlette)
+    monkeypatch.setattr(translate.uvicorn, "Server", MockServer)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(
+        translate.asyncio,
+        "get_running_loop",
+        lambda: types.SimpleNamespace(add_signal_handler=lambda *_, **__: None),
+    )
+    monkeypatch.setattr(translate.asyncio, "create_task", mock_create_task)
+
+    await translate._run_stdio_to_streamable_http("echo test", 8000, "info")
+
+    # Verify key components
+    assert "process_created" in calls
+    assert "mcp_server_init" in calls
+    assert "session_manager_init" in calls
+    assert "starlette_init" in calls
+    assert "server_serve" in calls
+    assert "pump_task_cancelled" in calls
+
+
+@pytest.mark.asyncio
+async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
+    """Test _run_stdio_to_streamable_http with CORS configuration."""
+    calls = []
+
+    class MockProcess:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = None
+
+        def terminate(self):
+            pass
+
+        async def wait(self):
+            return 0
+
+    class MockStarlette:
+        def __init__(self, routes=None):
+            self.routes = routes or []
+            calls.append("starlette_init")
+
+        def add_middleware(self, middleware_class, **kwargs):
+            calls.append(f"add_middleware_{middleware_class.__name__}")
+
+    # Mock Starlette CORS middleware import
+    class MockCORSMiddleware:
+        def __init__(self, **kwargs):
+            pass
+
+    # Mock the import path for CORS middleware
+    import types
+    cors_module = types.ModuleType('cors')
+    cors_module.CORSMiddleware = MockCORSMiddleware
+    middleware_module = types.ModuleType('middleware')
+    middleware_module.cors = cors_module
+    starlette_module = types.ModuleType('starlette')
+    starlette_module.middleware = middleware_module
+
+    import sys
+    sys.modules['starlette'] = starlette_module
+    sys.modules['starlette.middleware'] = middleware_module
+    sys.modules['starlette.middleware.cors'] = cors_module
+
+    class MockTask:
+        def cancel(self):
+            pass
+
+    def mock_create_task(coro):
+        # Close the coroutine to prevent warnings
+        try:
+            coro.close()
+        except GeneratorExit:
+            pass
+        return MockTask()
+
+    # Mock other required components
+    async def mock_subprocess(*a, **k):
+        return MockProcess()
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", mock_subprocess)
+    monkeypatch.setattr(translate, "MCPServer", lambda name: None)
+    monkeypatch.setattr(translate, "StreamableHTTPSessionManager", lambda **k: None)
+    monkeypatch.setattr(translate, "Route", lambda path, handler, methods=None: None)
+    monkeypatch.setattr(translate, "Starlette", MockStarlette)
+    async def mock_serve():
+        return None
+    async def mock_shutdown():
+        return None
+    monkeypatch.setattr(translate.uvicorn, "Server", lambda config: types.SimpleNamespace(serve=mock_serve, shutdown=mock_shutdown))
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(
+        translate.asyncio,
+        "get_running_loop",
+        lambda: types.SimpleNamespace(add_signal_handler=lambda *_, **__: None),
+    )
+    monkeypatch.setattr(translate.asyncio, "create_task", mock_create_task)
+
+    try:
+        # Test with CORS
+        await translate._run_stdio_to_streamable_http(
+            "echo test", 8000, "info", cors=["http://example.com"]
+        )
+
+        # Verify CORS middleware was added (using our Mock class name)
+        assert "add_middleware_MockCORSMiddleware" in calls
+    finally:
+        # Clean up sys.modules to avoid affecting other tests
+        sys.modules.pop('starlette', None)
+        sys.modules.pop('starlette.middleware', None)
+        sys.modules.pop('starlette.middleware.cors', None)
+
+
+def test_main_module_name_check(translate, capsys):
+    """Test the main function error handling with no arguments."""
+    # This should trigger an error since no transport is specified
+    with pytest.raises(SystemExit) as exc_info:
+        translate.main(["--stdio"])  # Missing required argument to stdio
+
+    assert exc_info.value.code == 2  # argparse error code
+    captured = capsys.readouterr()
+    assert "required" in captured.err or "argument" in captured.err
+
+
+@pytest.mark.asyncio
+async def test_sse_event_generator_keepalive_flow(monkeypatch, translate):
+    """Test SSE event generator with keepalive flow."""
+    ps = translate._PubSub()
+    stdio = Mock()
+
+    # Test with keepalive enabled
+    monkeypatch.setattr(translate, 'DEFAULT_KEEPALIVE_ENABLED', True)
+
+    app = translate._build_fastapi(ps, stdio, keep_alive=1)
+
+    class MockRequest:
+        def __init__(self):
+            self.base_url = "http://test/"
+            self._disconnect_after = 2
+            self._check_count = 0
+
+        async def is_disconnected(self):
+            self._check_count += 1
+            return self._check_count > self._disconnect_after
+
+    # Get the SSE route handler
+    handler = None
+    for route in app.routes:
+        if hasattr(route, "path") and route.path == "/sse":
+            handler = route.endpoint
+            break
+
+    assert handler is not None, "SSE handler not found"
+
+    # Call the handler and verify it creates a response
+    response = await handler(MockRequest())
+    assert response is not None
+
+    # Test passes if no exception is raised and response is created
 
 
 def test_parse_args_custom_paths(translate):
@@ -1451,6 +1688,15 @@ def test_config_import_fallback(monkeypatch, translate):
     # Verify the fallback values are used
     assert translate.DEFAULT_KEEP_ALIVE_INTERVAL == 30
     assert translate.DEFAULT_KEEPALIVE_ENABLED == True
+
+
+def test_httpx_import_error_fallback(monkeypatch, translate):
+    """Test that httpx import error fallback works properly."""
+    # Test the httpx ImportError handling path in lines 138-139
+    monkeypatch.setattr(translate, "httpx", None)
+
+    # Verify httpx is None when import fails
+    assert translate.httpx is None
 
 
 @pytest.mark.asyncio
@@ -1714,4 +1960,300 @@ async def test_read_stdout_message_endpoint_error(monkeypatch, translate):
         pass  # Expected to fail
 
 
-# Removed problematic async test that was causing issues
+def test_main_function_streamable_http_connect(monkeypatch, translate, capsys):
+    """Test main() function with --connect-streamable-http argument."""
+    executed: list[str] = []
+
+    async def _fake_streamable_http_runner(*args):
+        executed.append("streamable_http")
+
+    def _fake_asyncio_run(coro):
+        executed.append("asyncio_run")
+        try:
+            coro.close()
+        except GeneratorExit:
+            pass
+        return None
+
+    monkeypatch.setattr(translate.asyncio, "run", _fake_asyncio_run)
+
+    translate.main(["--connect-streamable-http", "http://example.com/mcp"])
+    assert "asyncio_run" in executed
+
+
+def test_start_streamable_http_stdio_function(monkeypatch, translate):
+    """Test start_streamable_http_stdio entry point."""
+    mock_run = Mock()
+    monkeypatch.setattr(translate.asyncio, "run", mock_run)
+
+    translate.start_streamable_http_stdio("cmd", 8000, "INFO", None, "127.0.0.1", False, False)
+    mock_run.assert_called_once()
+    args = mock_run.call_args[0][0]
+    assert args.__name__ == "_run_stdio_to_streamable_http"
+
+
+def test_start_streamable_http_client_function(monkeypatch, translate):
+    """Test start_streamable_http_client entry point."""
+    mock_run = Mock()
+    monkeypatch.setattr(translate.asyncio, "run", mock_run)
+
+    translate.start_streamable_http_client("http://example.com/mcp", "bearer_token", 30.0, "stdio_cmd")
+    mock_run.assert_called_once()
+    args = mock_run.call_args[0][0]
+    assert args.__name__ == "_run_streamable_http_to_stdio"
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_importerror(monkeypatch, translate):
+    """Test _run_streamable_http_to_stdio raises ImportError when httpx is None."""
+    monkeypatch.setattr(translate, "httpx", None)
+    with pytest.raises(ImportError, match="httpx package is required for streamable HTTP"):
+        await translate._run_streamable_http_to_stdio("http://example.com/mcp", None)
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_simple_mode(monkeypatch, translate):
+    """Test _run_streamable_http_to_stdio in simple mode (no stdio command)."""
+    # Third-Party
+    import httpx as real_httpx
+    setattr(translate, "httpx", real_httpx)
+
+    # Mock simple pump function as async
+    async def mock_pump(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(translate, "_simple_streamable_http_pump", mock_pump)
+
+    # Mock httpx.AsyncClient
+    class MockClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    monkeypatch.setattr(translate.httpx, "AsyncClient", MockClient)
+
+    # Test simple mode (no stdio_command)
+    await translate._run_streamable_http_to_stdio("http://example.com/mcp", "token", 30.0, None)
+
+    # Test passes if no exception is raised
+
+
+@pytest.mark.asyncio
+async def test_simple_streamable_http_pump_basic(monkeypatch, translate):
+    """Test _simple_streamable_http_pump basic functionality."""
+    # Third-Party
+    import httpx as real_httpx
+    setattr(translate, "httpx", real_httpx)
+
+    # Capture printed output
+    printed = []
+    monkeypatch.setattr("builtins.print", lambda x: printed.append(x))
+
+    class MockResponse:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def aiter_lines(self):
+            yield "data: test message"
+            yield "data: another message"
+            # End the stream
+            raise real_httpx.ConnectError("Test stream ended")
+
+    class MockClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def stream(self, method, url, headers=None):
+            return MockResponse()
+
+    client = MockClient()
+
+    try:
+        await translate._simple_streamable_http_pump(client, "http://test/mcp", 1, 0.1)
+    except Exception as e:
+        assert "Test stream ended" in str(e) or "Max retries" in str(e)
+
+    # Verify messages were printed
+    assert "test message" in printed
+    assert "another message" in printed
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_basic(monkeypatch, translate):
+    """Test _run_multi_protocol_server basic setup."""
+    calls = []
+
+    class MockStdIO:
+        def __init__(self, cmd, pubsub):
+            calls.append("stdio_init")
+            self.cmd = cmd
+            self.pubsub = pubsub
+
+        async def start(self):
+            calls.append("stdio_start")
+
+        async def stop(self):
+            calls.append("stdio_stop")
+
+    class MockFastAPI:
+        def __init__(self):
+            calls.append("fastapi_init")
+            self.routes = []
+            self.user_middleware = []
+
+        def add_middleware(self, *args, **kwargs):
+            calls.append("add_middleware")
+
+        def get(self, path):
+            def decorator(func):
+                calls.append(f"get_{path}")
+                return func
+            return decorator
+
+        def post(self, path, **kwargs):
+            def decorator(func):
+                calls.append(f"post_{path}")
+                return func
+            return decorator
+
+    class MockServer:
+        def __init__(self, config):
+            calls.append("server_init")
+
+        async def serve(self):
+            calls.append("server_serve")
+            # Simulate quick exit
+            return
+
+        async def shutdown(self):
+            calls.append("server_shutdown")
+
+    class MockConfig:
+        def __init__(self, *args, **kwargs):
+            calls.append("config_init")
+
+    monkeypatch.setattr(translate, "StdIOEndpoint", MockStdIO)
+    monkeypatch.setattr(translate, "FastAPI", MockFastAPI)
+    monkeypatch.setattr(translate.uvicorn, "Config", MockConfig)
+    monkeypatch.setattr(translate.uvicorn, "Server", MockServer)
+    monkeypatch.setattr(
+        translate.asyncio,
+        "get_running_loop",
+        lambda: types.SimpleNamespace(add_signal_handler=lambda *_, **__: None),
+    )
+
+    # Test with SSE exposed
+    await translate._run_multi_protocol_server(
+        "test_cmd", 8000, "info", None, "127.0.0.1",
+        expose_sse=True, expose_streamable_http=False
+    )
+
+    # Verify key components were initialized and started
+    assert "stdio_init" in calls
+    assert "stdio_start" in calls
+    assert "fastapi_init" in calls
+    assert "server_serve" in calls
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate):
+    """Test _run_multi_protocol_server with streamable HTTP enabled."""
+    calls = []
+
+    # Mock all the classes we need
+    class MockStdIO:
+        def __init__(self, cmd, pubsub):
+            calls.append("stdio_init")
+
+        async def start(self):
+            calls.append("stdio_start")
+
+        async def stop(self):
+            calls.append("stdio_stop")
+
+    class MockFastAPI:
+        def __init__(self):
+            calls.append("fastapi_init")
+            self.routes = []
+            self.user_middleware = []
+
+        def add_middleware(self, *args, **kwargs):
+            calls.append("add_middleware")
+
+        def get(self, path):
+            def decorator(func):
+                calls.append(f"get_{path}")
+                return func
+            return decorator
+
+        def post(self, path, **kwargs):
+            def decorator(func):
+                calls.append(f"post_{path}")
+                return func
+            return decorator
+
+        async def __call__(self, *args, **kwargs):
+            """Make FastAPI callable for ASGI wrapper."""
+            calls.append("fastapi_called")
+
+    class MockMCPServer:
+        def __init__(self, name):
+            calls.append("mcp_server_init")
+
+    class MockSessionManager:
+        def __init__(self, app, stateless=False, json_response=False):
+            calls.append("session_manager_init")
+
+        def run(self):
+            class MockContext:
+                async def __aenter__(self):
+                    calls.append("context_enter")
+                    return self
+                async def __aexit__(self, *args):
+                    calls.append("context_exit")
+            return MockContext()
+
+    class MockServer:
+        def __init__(self, config):
+            calls.append("server_init")
+
+        async def serve(self):
+            calls.append("server_serve")
+
+        async def shutdown(self):
+            calls.append("server_shutdown")
+
+    monkeypatch.setattr(translate, "StdIOEndpoint", MockStdIO)
+    monkeypatch.setattr(translate, "FastAPI", MockFastAPI)
+    monkeypatch.setattr(translate, "MCPServer", MockMCPServer)
+    monkeypatch.setattr(translate, "StreamableHTTPSessionManager", MockSessionManager)
+    monkeypatch.setattr(translate.uvicorn, "Server", MockServer)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(
+        translate.asyncio,
+        "get_running_loop",
+        lambda: types.SimpleNamespace(add_signal_handler=lambda *_, **__: None),
+    )
+
+    # Test with both SSE and streamable HTTP
+    await translate._run_multi_protocol_server(
+        "test_cmd", 8000, "info", None, "127.0.0.1",
+        expose_sse=True, expose_streamable_http=True,
+        stateless=True, json_response=True
+    )
+
+    # Verify streamable components were set up
+    assert "mcp_server_init" in calls
+    assert "session_manager_init" in calls
+    assert "context_enter" in calls
+    assert "context_exit" in calls

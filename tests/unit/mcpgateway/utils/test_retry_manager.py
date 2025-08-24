@@ -8,8 +8,9 @@ Authors: Mihai Criveti
 Module documentation...
 """
 # Standard
-from unittest.mock import AsyncMock, patch
+import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 # Third-Party
 import httpx
@@ -302,3 +303,459 @@ async def test_context_manager_closes_properly(client):
         async with client:
             pass
         mock_close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_status_code_logging():
+    """Test that non-retryable status codes are logged correctly."""
+    client = ResilientHttpClient()
+
+    with patch("mcpgateway.utils.retry_manager.logger") as mock_logger:
+        # Test with a non-retryable status code
+        response_400 = SimpleNamespace(status_code=400)
+        result = client._should_retry(Exception(), response_400)
+
+        assert result is False
+        mock_logger.info.assert_called_once_with("Response 400: Not retrying.")
+
+
+@pytest.mark.asyncio
+async def test_successful_response_return_when_not_retryable():
+    """Test that successful responses are returned immediately when not retryable."""
+    client = ResilientHttpClient(max_retries=3)
+
+    # Create a response that's not in retryable codes and _should_retry returns False
+    response_418 = httpx.Response(418)  # I'm a teapot - not in retryable codes
+
+    with patch.object(client.client, "request", new=AsyncMock(return_value=response_418)) as mock_req:
+        result = await client.get("http://teapot.com")
+
+        assert result.status_code == 418
+        assert mock_req.call_count == 1  # Should not retry
+
+
+@pytest.mark.asyncio
+async def test_stream_429_retry_after_header_handling(monkeypatch):
+    """Test stream method handling of 429 responses with Retry-After headers."""
+    client = ResilientHttpClient(max_retries=3, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    call_count = 0
+
+    class AsyncContextManager:
+        async def __aenter__(self):
+            nonlocal call_count
+            call_count += 1
+
+            if call_count == 1:
+                # First call: return 429 with Retry-After header
+                resp = SimpleNamespace(
+                    status_code=429,
+                    is_success=False,
+                    headers={"Retry-After": "2"}
+                )
+                return resp
+            else:
+                # Second call: return success
+                resp = SimpleNamespace(
+                    status_code=200,
+                    is_success=True,
+                    aiter_bytes=lambda: asyncio.as_completed([b"data"])
+                )
+                return resp
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def mock_stream(*args, **kwargs):
+        return AsyncContextManager()
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+
+    with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
+        async with client.stream("GET", "http://ratelimit.com") as resp:
+            assert resp.status_code == 200
+            assert resp.is_success
+
+    # Should have slept for the Retry-After duration
+    mock_sleep.assert_called_with(2.0)
+
+
+@pytest.mark.asyncio
+async def test_stream_429_retry_after_invalid_value(monkeypatch):
+    """Test stream method handling of 429 responses with invalid Retry-After headers."""
+    client = ResilientHttpClient(max_retries=3, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    call_count = 0
+
+    class AsyncContextManager:
+        async def __aenter__(self):
+            nonlocal call_count
+            call_count += 1
+
+            if call_count == 1:
+                # First call: return 429 with invalid Retry-After header
+                resp = SimpleNamespace(
+                    status_code=429,
+                    is_success=False,
+                    headers={"Retry-After": "invalid"}
+                )
+                return resp
+            else:
+                # Second call: return success
+                resp = SimpleNamespace(
+                    status_code=200,
+                    is_success=True,
+                    aiter_bytes=lambda: asyncio.as_completed([b"data"])
+                )
+                return resp
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def mock_stream(*args, **kwargs):
+        return AsyncContextManager()
+
+    # Mock _sleep_with_jitter to handle the single argument call
+    async def mock_sleep_with_jitter(*args):
+        pass  # Do nothing, just handle the call
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+    monkeypatch.setattr(client, "_sleep_with_jitter", mock_sleep_with_jitter)
+
+    async with client.stream("GET", "http://invalid-retry.com") as resp:
+        assert resp.status_code == 200
+        assert resp.is_success
+
+
+@pytest.mark.asyncio
+async def test_stream_non_retryable_response_handling(monkeypatch):
+    """Test stream method handling of non-retryable responses."""
+    client = ResilientHttpClient(max_retries=3, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    class AsyncContextManager:
+        async def __aenter__(self):
+            # Return a non-retryable error response (404)
+            resp = SimpleNamespace(
+                status_code=404,
+                is_success=False,
+                headers={}
+            )
+            return resp
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def mock_stream(*args, **kwargs):
+        return AsyncContextManager()
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+
+    # Should yield the non-retryable response once and return
+    async with client.stream("GET", "http://notfound.com") as resp:
+        assert resp.status_code == 404
+        assert not resp.is_success
+
+
+@pytest.mark.asyncio
+async def test_stream_retryable_response_handling(monkeypatch):
+    """Test stream method handling of retryable responses."""
+    client = ResilientHttpClient(max_retries=2, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    call_count = 0
+
+    class AsyncContextManager:
+        async def __aenter__(self):
+            nonlocal call_count
+            call_count += 1
+
+            if call_count == 1:
+                # First call: return retryable error response (503)
+                resp = SimpleNamespace(
+                    status_code=503,
+                    is_success=False,
+                    headers={}
+                )
+                return resp
+            else:
+                # Second call: return success
+                resp = SimpleNamespace(
+                    status_code=200,
+                    is_success=True,
+                    aiter_bytes=lambda: asyncio.as_completed([b"data"])
+                )
+                return resp
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def mock_stream(*args, **kwargs):
+        return AsyncContextManager()
+
+    # Mock _sleep_with_jitter to handle the single argument call
+    async def mock_sleep_with_jitter(*args):
+        pass  # Do nothing, just handle the call
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+    monkeypatch.setattr(client, "_sleep_with_jitter", mock_sleep_with_jitter)
+
+    async with client.stream("GET", "http://retryable.com") as resp:
+        assert resp.status_code == 200
+        assert resp.is_success
+
+
+@pytest.mark.asyncio
+async def test_stream_exception_handling_retryable(monkeypatch):
+    """Test stream method handling of retryable exceptions."""
+    client = ResilientHttpClient(max_retries=2, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    call_count = 0
+
+    def mock_stream(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First call: raise retryable exception
+            raise httpx.ConnectTimeout("Connection timeout")
+        else:
+            # Second call: return success
+            class AsyncContextManager:
+                async def __aenter__(self):
+                    resp = SimpleNamespace(
+                        status_code=200,
+                        is_success=True,
+                        aiter_bytes=lambda: asyncio.as_completed([b"data"])
+                    )
+                    return resp
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
+            return AsyncContextManager()
+
+    # Mock _sleep_with_jitter to handle the single argument call
+    async def mock_sleep_with_jitter(*args):
+        pass  # Do nothing, just handle the call
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+    monkeypatch.setattr(client, "_sleep_with_jitter", mock_sleep_with_jitter)
+
+    async with client.stream("GET", "http://timeout.com") as resp:
+        assert resp.status_code == 200
+        assert resp.is_success
+
+
+@pytest.mark.asyncio
+async def test_stream_exception_handling_non_retryable(monkeypatch):
+    """Test stream method handling of non-retryable exceptions."""
+    client = ResilientHttpClient(max_retries=3, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    def mock_stream(*args, **kwargs):
+        # Raise non-retryable exception
+        raise ValueError("Invalid parameter")
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+
+    # Should raise the exception immediately without retry
+    with pytest.raises(ValueError, match="Invalid parameter"):
+        async with client.stream("GET", "http://invalid.com") as resp:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_stream_max_retries_with_exception(monkeypatch):
+    """Test stream method when max retries is reached with exceptions."""
+    client = ResilientHttpClient(max_retries=2, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    def mock_stream(*args, **kwargs):
+        # Always raise retryable exception
+        raise httpx.ConnectTimeout("Connection timeout")
+
+    # Mock _sleep_with_jitter to handle the single argument call
+    async def mock_sleep_with_jitter(*args):
+        pass  # Do nothing, just handle the call
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+    monkeypatch.setattr(client, "_sleep_with_jitter", mock_sleep_with_jitter)
+
+    # Should raise RuntimeError wrapping the last exception
+    with pytest.raises(RuntimeError):
+        async with client.stream("GET", "http://always-timeout.com") as resp:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_stream_max_retries_no_exception(monkeypatch):
+    """Test stream method when max retries is reached without exceptions."""
+    client = ResilientHttpClient(max_retries=2, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    class AsyncContextManager:
+        async def __aenter__(self):
+            # Always return retryable error response (503)
+            resp = SimpleNamespace(
+                status_code=503,
+                is_success=False,
+                headers={}
+            )
+            return resp
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def mock_stream(*args, **kwargs):
+        return AsyncContextManager()
+
+    # Mock _sleep_with_jitter to handle the single argument call
+    async def mock_sleep_with_jitter(*args):
+        pass  # Do nothing, just handle the call
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+    monkeypatch.setattr(client, "_sleep_with_jitter", mock_sleep_with_jitter)
+
+    # Should raise RuntimeError for max retries reached
+    with pytest.raises(RuntimeError, match="Max retries reached opening stream"):
+        async with client.stream("GET", "http://always-503.com") as resp:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_stream_sleep_with_jitter_single_argument(monkeypatch):
+    """Test that _sleep_with_jitter is called with single argument in stream method."""
+    client = ResilientHttpClient(max_retries=2, base_backoff=0.1, max_delay=1, jitter_max=0.1)
+
+    class AsyncContextManager:
+        async def __aenter__(self):
+            # Return retryable error response (503)
+            resp = SimpleNamespace(
+                status_code=503,
+                is_success=False,
+                headers={}
+            )
+            return resp
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def mock_stream(*args, **kwargs):
+        return AsyncContextManager()
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+
+    # Mock _sleep_with_jitter to capture calls
+    sleep_calls = []
+
+    async def mock_sleep_with_jitter(*args):
+        sleep_calls.append(args)
+
+    monkeypatch.setattr(client, "_sleep_with_jitter", mock_sleep_with_jitter)
+
+    with pytest.raises(RuntimeError, match="Max retries reached opening stream"):
+        async with client.stream("GET", "http://always-503.com") as resp:
+            pass
+
+    # Should have called _sleep_with_jitter with single argument (backoff)
+    assert len(sleep_calls) == 2  # Two retry attempts
+    for call_args in sleep_calls:
+        assert len(call_args) == 1  # Single argument (backoff)
+        # Verify the argument is a number (the backoff value)
+        assert isinstance(call_args[0], (int, float))
+
+
+@pytest.mark.asyncio
+async def test_stream_429_retry_after_zero_value(monkeypatch):
+    """Test stream method handling of 429 responses with zero Retry-After value."""
+    client = ResilientHttpClient(max_retries=3, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    call_count = 0
+
+    class AsyncContextManager:
+        async def __aenter__(self):
+            nonlocal call_count
+            call_count += 1
+
+            if call_count == 1:
+                # First call: return 429 with zero Retry-After header
+                resp = SimpleNamespace(
+                    status_code=429,
+                    is_success=False,
+                    headers={"Retry-After": "0"}
+                )
+                return resp
+            else:
+                # Second call: return success
+                resp = SimpleNamespace(
+                    status_code=200,
+                    is_success=True,
+                    aiter_bytes=lambda: asyncio.as_completed([b"data"])
+                )
+                return resp
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def mock_stream(*args, **kwargs):
+        return AsyncContextManager()
+
+    # Mock _sleep_with_jitter to handle the single argument call
+    async def mock_sleep_with_jitter(*args):
+        pass  # Do nothing, just handle the call
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+    monkeypatch.setattr(client, "_sleep_with_jitter", mock_sleep_with_jitter)
+
+    # Mock asyncio.sleep to verify it's not called for zero wait time
+    with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
+        async with client.stream("GET", "http://zero-retry.com") as resp:
+            assert resp.status_code == 200
+            assert resp.is_success
+
+        # Should not have called asyncio.sleep for zero wait time
+        # Only the backoff sleep should be called
+        assert mock_sleep.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_429_no_retry_after_header(monkeypatch):
+    """Test stream method handling of 429 responses without Retry-After header."""
+    client = ResilientHttpClient(max_retries=3, base_backoff=0.1, max_delay=1, jitter_max=0)
+
+    call_count = 0
+
+    class AsyncContextManager:
+        async def __aenter__(self):
+            nonlocal call_count
+            call_count += 1
+
+            if call_count == 1:
+                # First call: return 429 without Retry-After header
+                resp = SimpleNamespace(
+                    status_code=429,
+                    is_success=False,
+                    headers={}  # No Retry-After header
+                )
+                return resp
+            else:
+                # Second call: return success
+                resp = SimpleNamespace(
+                    status_code=200,
+                    is_success=True,
+                    aiter_bytes=lambda: asyncio.as_completed([b"data"])
+                )
+                return resp
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def mock_stream(*args, **kwargs):
+        return AsyncContextManager()
+
+    # Mock _sleep_with_jitter to handle the single argument call
+    async def mock_sleep_with_jitter(*args):
+        pass  # Do nothing, just handle the call
+
+    monkeypatch.setattr(client.client, "stream", mock_stream)
+    monkeypatch.setattr(client, "_sleep_with_jitter", mock_sleep_with_jitter)
+
+    async with client.stream("GET", "http://no-retry-after.com") as resp:
+        assert resp.status_code == 200
+        assert resp.is_success

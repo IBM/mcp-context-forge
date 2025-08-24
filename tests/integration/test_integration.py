@@ -41,11 +41,47 @@ from mcpgateway.schemas import ResourceRead, ServerRead, ToolMetrics, ToolRead
 # -----------------------------------------------------------------------------
 @pytest.fixture
 def test_client() -> TestClient:
-    """FastAPI TestClient with auth dependency overridden."""
+    """FastAPI TestClient with proper database setup and auth dependency overridden."""
+    import tempfile
+    import os
+    from _pytest.monkeypatch import MonkeyPatch
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    mp = MonkeyPatch()
+
+    # Create temp SQLite file
+    fd, path = tempfile.mkstemp(suffix=".db")
+    url = f"sqlite:///{path}"
+
+    # Patch settings
+    from mcpgateway.config import settings
+    mp.setattr(settings, "database_url", url, raising=False)
+
+    import mcpgateway.db as db_mod
+    import mcpgateway.main as main_mod
+
+    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    mp.setattr(db_mod, "engine", engine, raising=False)
+    mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+    mp.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
+    mp.setattr(main_mod, "engine", engine, raising=False)
+
+    # Create schema
+    db_mod.Base.metadata.create_all(bind=engine)
+
     app.dependency_overrides[require_auth] = lambda: "integration-test-user"
     client = TestClient(app)
     yield client
+
+    # Cleanup
     app.dependency_overrides.pop(require_auth, None)
+    mp.undo()
+    engine.dispose()
+    os.close(fd)
+    os.unlink(path)
 
 
 @pytest.fixture

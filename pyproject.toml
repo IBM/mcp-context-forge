@@ -414,7 +414,9 @@ filterwarnings = [
 # Set environment variables for all tests
 env = [
     "MCPGATEWAY_ADMIN_API_ENABLED=true",
-    "MCPGATEWAY_UI_ENABLED=true"
+    "MCPGATEWAY_UI_ENABLED=true",
+    "DATABASE_URL=sqlite:///:memory:",
+    "TEST_DATABASE_URL=sqlite:///:memory:"
 ]
 
 # ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====

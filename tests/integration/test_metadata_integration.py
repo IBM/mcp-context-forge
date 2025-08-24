@@ -34,27 +34,46 @@ from mcpgateway.utils.verify_credentials import require_auth
 
 @pytest.fixture
 def test_app():
-    """Create test app with in-memory database."""
-    # Create in-memory SQLite database for testing
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    """Create test app with proper database setup."""
+    # Use file-based SQLite database for better compatibility
+    import tempfile
+    import os
+    from _pytest.monkeypatch import MonkeyPatch
+    from sqlalchemy.pool import StaticPool
 
+    mp = MonkeyPatch()
+
+    # Create temp SQLite file
+    fd, path = tempfile.mkstemp(suffix=".db")
+    url = f"sqlite:///{path}"
+
+    # Patch settings
+    from mcpgateway.config import settings
+    mp.setattr(settings, "database_url", url, raising=False)
+
+    import mcpgateway.db as db_mod
+    import mcpgateway.main as main_mod
+
+    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    mp.setattr(db_mod, "engine", engine, raising=False)
+    mp.setattr(db_mod, "SessionLocal", TestingSessionLocal, raising=False)
+    mp.setattr(main_mod, "SessionLocal", TestingSessionLocal, raising=False)
+    mp.setattr(main_mod, "engine", engine, raising=False)
+
+    # Create schema
     Base.metadata.create_all(bind=engine)
 
-    def override_get_db():
-        try:
-            db = TestingSessionLocal()
-            yield db
-        finally:
-            db.close()
-
-    app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[require_auth] = lambda: "test_user"
 
     yield app
 
     # Cleanup
     app.dependency_overrides.clear()
+    mp.undo()
+    engine.dispose()
+    os.close(fd)
+    os.unlink(path)
 
 
 @pytest.fixture
@@ -236,11 +255,17 @@ class TestMetadataIntegration:
         assert "version" in tool
 
     @pytest.mark.asyncio
-    async def test_service_layer_metadata_handling(self):
+    async def test_service_layer_metadata_handling(self, test_app):
         """Test metadata handling at the service layer."""
-        from mcpgateway.db import SessionLocal
         from mcpgateway.utils.metadata_capture import MetadataCapture
         from types import SimpleNamespace
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        # Create test database session
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        Base.metadata.create_all(bind=engine)
 
         # Create mock request
         mock_request = SimpleNamespace()
@@ -264,7 +289,7 @@ class TestMetadataIntegration:
 
         # Test service creation with metadata
         service = ToolService()
-        db = SessionLocal()
+        db = TestingSessionLocal()
 
         try:
             tool_read = await service.register_tool(

@@ -491,7 +491,7 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
-    def _extract_user_id(self, token_response: Dict[str, Any], credentials: Dict[str, Any]) -> str:  # pylint: disable=unused-argument
+    def _extract_user_id(self, token_response: Dict[str, Any], credentials: Dict[str, Any]) -> str:
         """Extract user ID from token response.
 
         Args:
@@ -501,15 +501,27 @@ class OAuthManager:
         Returns:
             User ID string
         """
-        # This is a placeholder implementation
-        # In a real implementation, you might:
-        # 1. Extract user_id from the token response if provided
-        # 2. Make a request to the OAuth provider's user info endpoint
-        # 3. Use a default identifier based on the gateway
+        # Try to extract user ID from various common fields in token response
+        # Different OAuth providers use different field names
 
-        # For now, use a placeholder user ID
-        # In production, you should implement proper user ID extraction
-        return f"user_{credentials.get('client_id', 'unknown')}"
+        # Check for 'sub' (subject) - JWT standard
+        if "sub" in token_response:
+            return token_response["sub"]
+
+        # Check for 'user_id' - common in some OAuth responses
+        if "user_id" in token_response:
+            return token_response["user_id"]
+
+        # Check for 'id' - also common
+        if "id" in token_response:
+            return token_response["id"]
+
+        # Fallback to client_id if no user info is available
+        if credentials.get("client_id"):
+            return credentials["client_id"]
+
+        # Final fallback
+        return "unknown_user"
 
 
 class OAuthError(Exception):
