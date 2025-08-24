@@ -34,7 +34,7 @@ def event_loop():
 @pytest.fixture(scope="session")
 def test_db_url():
     """Return the URL for the test database."""
-    return "sqlite:///./test.db"
+    return "sqlite:///:memory:"
 
 
 @pytest.fixture(scope="session")
@@ -72,13 +72,46 @@ def test_settings():
 
 
 @pytest.fixture
-def app(test_settings):
-    """Create a FastAPI test application."""
-    with patch("mcpgateway.config.get_settings", return_value=test_settings):
-        # First-Party
-        from mcpgateway.main import app
+def app():
+    """Create a FastAPI test application with proper database setup."""
+    # Use the existing app_with_temp_db fixture logic which works correctly
+    mp = MonkeyPatch()
 
-        yield app
+    # 1) create temp SQLite file
+    fd, path = tempfile.mkstemp(suffix=".db")
+    url = f"sqlite:///{path}"
+
+    # 2) patch settings
+    from mcpgateway.config import settings
+    mp.setattr(settings, "database_url", url, raising=False)
+
+    # First-Party
+    import mcpgateway.db as db_mod
+
+    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    mp.setattr(db_mod, "engine", engine, raising=False)
+    mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+
+    # 4) patch the already‑imported main module **without reloading**
+    import mcpgateway.main as main_mod
+    mp.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
+    # (patch engine too if your code references it)
+    mp.setattr(main_mod, "engine", engine, raising=False)
+
+    # 4) create schema
+    db_mod.Base.metadata.create_all(bind=engine)
+
+    # First-Party
+    from mcpgateway.main import app
+
+    yield app
+
+    # 6) teardown
+    mp.undo()
+    engine.dispose()
+    os.close(fd)
+    os.unlink(path)
 
 
 @pytest.fixture

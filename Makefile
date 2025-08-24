@@ -234,6 +234,8 @@ test:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pip install -q pytest pytest-asyncio pytest-cov && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		python3 -m pytest --maxfail=0 --disable-warnings -v --ignore=tests/fuzz"
 
 coverage:
@@ -241,6 +243,8 @@ coverage:
 	@mkdir -p $(TEST_DOCS_DIR)
 	@printf "# Unit tests\n\n" > $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
 			--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
 			--dist loadgroup -n 8 -rA --cov-append --capture=tee-sys -v \
