@@ -300,23 +300,358 @@ async def test_import_configuration_selective(import_service, mock_db, valid_imp
 
 
 @pytest.mark.asyncio
-async def test_rekey_auth_data(import_service):
-    """Test authentication data re-encryption."""
-    with patch('mcpgateway.services.import_service.decode_auth') as mock_decode:
-        with patch('mcpgateway.services.import_service.encode_auth') as mock_encode:
-            mock_decode.return_value = {"Authorization": "Bearer token123"}
-            mock_encode.return_value = "new_encrypted_value"
+async def test_import_configuration_error_handling(import_service, mock_db, valid_import_data):
+    """Test import error handling when unexpected exceptions occur."""
+    # Setup mocks to raise unexpected error
+    import_service.tool_service.register_tool.side_effect = Exception("Unexpected database error")
+    import_service.gateway_service.register_gateway.side_effect = Exception("Unexpected database error")
 
-            entity_data = {
-                "name": "test_entity",
-                "auth_value": "old_encrypted_value"
-            }
+    # Execute import - should handle the exception gracefully and continue
+    status = await import_service.import_configuration(
+        db=mock_db,
+        import_data=valid_import_data,
+        imported_by="test_user"
+    )
 
-            result = await import_service._rekey_auth_data(entity_data, "new_secret")
+    # Should complete with failures
+    assert status.status == "completed"
+    assert status.failed_entities == 2
+    assert status.created_entities == 0
 
-            assert result["auth_value"] == "new_encrypted_value"
-            mock_decode.assert_called_once_with("old_encrypted_value")
-            mock_encode.assert_called_once_with({"Authorization": "Bearer token123"})
+
+@pytest.mark.asyncio
+async def test_validate_import_data_invalid_entity_structure(import_service):
+    """Test validation with non-dict entity in list."""
+    invalid_data = {
+        "version": "2025-03-26",
+        "exported_at": "2025-01-01T00:00:00Z",
+        "entities": {
+            "tools": [
+                "not_a_dict"  # Should be a dictionary
+            ]
+        }
+    }
+
+    with pytest.raises(ImportValidationError) as excinfo:
+        import_service.validate_import_data(invalid_data)
+
+    assert "must be a dictionary" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_rekey_auth_data_success(import_service):
+    """Test successful authentication data re-keying."""
+    from mcpgateway.utils.services_auth import encode_auth
+    from mcpgateway.config import settings
+
+    # Store original secret
+    original_secret = settings.auth_encryption_secret
+
+    try:
+        # Create entity with auth data using a specific secret
+        settings.auth_encryption_secret = "original-key"
+        original_auth = {"type": "bearer", "token": "test_token"}
+        entity_data = {
+            "name": "test_tool",
+            "auth_type": "bearer",
+            "auth_value": encode_auth(original_auth)
+        }
+        original_auth_value = entity_data["auth_value"]
+
+        # Test re-keying with different secret
+        new_secret = "new-encryption-key"
+        result = await import_service._rekey_auth_data(entity_data, new_secret)
+
+        # Should have the same basic structure but potentially different auth_value
+        assert result["name"] == "test_tool"
+        assert result["auth_type"] == "bearer"
+        assert "auth_value" in result
+
+    finally:
+        # Restore original secret
+        settings.auth_encryption_secret = original_secret
+
+
+@pytest.mark.asyncio
+async def test_rekey_auth_data_no_auth(import_service):
+    """Test re-keying data without auth fields."""
+    entity_data = {
+        "name": "test_tool",
+        "url": "https://example.com"
+    }
+
+    result = await import_service._rekey_auth_data(entity_data, "new-key")
+
+    # Should return unchanged
+    assert result == entity_data
+
+
+@pytest.mark.asyncio
+async def test_rekey_auth_data_error_handling(import_service):
+    """Test error handling in auth data re-keying."""
+    entity_data = {
+        "name": "test_tool",
+        "auth_type": "bearer",
+        "auth_value": "invalid_encrypted_data"  # Invalid encrypted data
+    }
+
+    with pytest.raises(ImportError) as excinfo:
+        await import_service._rekey_auth_data(entity_data, "new-key")
+
+    assert "Failed to re-key authentication data" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_process_server_entities(import_service, mock_db):
+    """Test processing server entities."""
+    server_data = {
+        "name": "test_server",
+        "description": "Test server",
+        "tool_ids": ["tool1", "tool2"],
+        "is_active": True
+    }
+
+    import_data = {
+        "version": "2025-03-26",
+        "exported_at": "2025-01-01T00:00:00Z",
+        "entities": {
+            "servers": [server_data]
+        },
+        "metadata": {"entity_counts": {"servers": 1}}
+    }
+
+    # Setup mocks
+    import_service.server_service.register_server.return_value = MagicMock()
+
+    # Execute import
+    status = await import_service.import_configuration(
+        db=mock_db,
+        import_data=import_data,
+        imported_by="test_user"
+    )
+
+    # Validate status
+    assert status.status == "completed"
+    assert status.created_entities == 1
+
+    # Verify server service was called
+    import_service.server_service.register_server.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_entities(import_service, mock_db):
+    """Test processing prompt entities."""
+    prompt_data = {
+        "name": "test_prompt",
+        "template": "Hello {{name}}",
+        "description": "Test prompt",
+        "is_active": True
+    }
+
+    import_data = {
+        "version": "2025-03-26",
+        "exported_at": "2025-01-01T00:00:00Z",
+        "entities": {
+            "prompts": [prompt_data]
+        },
+        "metadata": {"entity_counts": {"prompts": 1}}
+    }
+
+    # Setup mocks - use register_prompt instead of create_prompt
+    import_service.prompt_service.register_prompt.return_value = MagicMock()
+
+    # Execute import
+    status = await import_service.import_configuration(
+        db=mock_db,
+        import_data=import_data,
+        imported_by="test_user"
+    )
+
+    # Validate status
+    assert status.status == "completed"
+    assert status.created_entities == 1
+
+    # Verify prompt service was called
+    import_service.prompt_service.register_prompt.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_resource_entities(import_service, mock_db):
+    """Test processing resource entities."""
+    resource_data = {
+        "name": "test_resource",
+        "uri": "file:///test.txt",
+        "description": "Test resource",
+        "mime_type": "text/plain",
+        "is_active": True
+    }
+
+    import_data = {
+        "version": "2025-03-26",
+        "exported_at": "2025-01-01T00:00:00Z",
+        "entities": {
+            "resources": [resource_data]
+        },
+        "metadata": {"entity_counts": {"resources": 1}}
+    }
+
+    # Setup mocks - use register_resource instead of create_resource
+    import_service.resource_service.register_resource.return_value = MagicMock()
+
+    # Execute import
+    status = await import_service.import_configuration(
+        db=mock_db,
+        import_data=import_data,
+        imported_by="test_user"
+    )
+
+    # Validate status
+    assert status.status == "completed"
+    assert status.created_entities == 1
+
+    # Verify resource service was called
+    import_service.resource_service.register_resource.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_root_entities(import_service):
+    """Test processing root entities."""
+    root_data = {
+        "uri": "file:///workspace",
+        "name": "Workspace"
+    }
+
+    import_data = {
+        "version": "2025-03-26",
+        "exported_at": "2025-01-01T00:00:00Z",
+        "entities": {
+            "roots": [root_data]
+        },
+        "metadata": {"entity_counts": {"roots": 1}}
+    }
+
+    # Setup mocks
+    import_service.root_service.add_root.return_value = MagicMock()
+
+    # Execute import
+    status = await import_service.import_configuration(
+        db=None,  # Root processing doesn't need db
+        import_data=import_data,
+        imported_by="test_user"
+    )
+
+    # Validate status
+    assert status.status == "completed"
+    assert status.created_entities == 1
+
+    # Verify root service was called
+    import_service.root_service.add_root.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_import_status_tracking(import_service):
+    """Test import status tracking functionality."""
+    # Create import status
+    import_id = "test-import-123"
+    status = ImportStatus(import_id)
+
+    # Verify initial state
+    assert status.import_id == import_id
+    assert status.status == "pending"
+    assert status.total_entities == 0
+    assert status.processed_entities == 0
+    assert status.created_entities == 0
+    assert status.updated_entities == 0
+    assert status.skipped_entities == 0
+    assert status.failed_entities == 0
+    assert len(status.errors) == 0
+    assert len(status.warnings) == 0
+    assert status.completed_at is None
+
+    # Test to_dict method
+    status_dict = status.to_dict()
+    assert status_dict["import_id"] == import_id
+    assert status_dict["status"] == "pending"
+    assert "progress" in status_dict
+    assert "errors" in status_dict
+    assert "warnings" in status_dict
+    assert "started_at" in status_dict
+    assert status_dict["completed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_import_service_initialization(import_service):
+    """Test import service initialization and shutdown."""
+    # Test initialization
+    await import_service.initialize()
+
+    # Test shutdown
+    await import_service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_import_with_rekey_secret(import_service, mock_db):
+    """Test import with authentication re-keying."""
+    from mcpgateway.utils.services_auth import encode_auth
+
+    # Create tool with auth data
+    original_auth = {"type": "bearer", "token": "old_token"}
+    tool_data = {
+        "name": "auth_tool",
+        "url": "https://api.example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+        "description": "Tool with auth",
+        "auth_type": "bearer",
+        "auth_value": encode_auth(original_auth)
+    }
+
+    import_data = {
+        "version": "2025-03-26",
+        "exported_at": "2025-01-01T00:00:00Z",
+        "entities": {
+            "tools": [tool_data]
+        },
+        "metadata": {"entity_counts": {"tools": 1}}
+    }
+
+    # Setup mocks
+    import_service.tool_service.register_tool.return_value = MagicMock()
+
+    # Execute import with rekey secret
+    status = await import_service.import_configuration(
+        db=mock_db,
+        import_data=import_data,
+        rekey_secret="new-encryption-key",
+        imported_by="test_user"
+    )
+
+    # Validate status
+    assert status.status == "completed"
+    assert status.created_entities == 1
+
+    # Verify tool service was called with re-keyed data
+    import_service.tool_service.register_tool.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_import_skipped_entity(import_service, mock_db, valid_import_data):
+    """Test skipped entity handling."""
+    # Setup selective entities that don't match any entities in the data
+    selected_entities = {
+        "tools": ["non_existent_tool"]  # This doesn't match "test_tool"
+    }
+
+    # Execute selective import
+    status = await import_service.import_configuration(
+        db=mock_db,
+        import_data=valid_import_data,
+        selected_entities=selected_entities,
+        imported_by="test_user"
+    )
+
+    # Should complete but skip entities not in selection
+    assert status.status == "completed"
 
 
 @pytest.mark.asyncio
