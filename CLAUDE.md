@@ -14,7 +14,7 @@ MCP Gateway (ContextForge) is a production-grade gateway, proxy, and registry fo
 ```bash
 cp .env.example .env && make venv install-dev check-env    # Complete setup workflow
 make venv                          # Create fresh virtual environment with uv
-make install-dev                   # Install with development dependencies  
+make install-dev                   # Install with development dependencies
 make check-env                     # Verify .env against .env.example
 ```
 
@@ -83,7 +83,7 @@ mcpgateway/
 
 tests/
 ├── unit/               # Unit tests with pytest fixtures
-├── integration/        # API endpoints & cross-service workflows  
+├── integration/        # API endpoints & cross-service workflows
 ├── e2e/               # End-to-end workflows
 ├── playwright/        # UI automation with Playwright
 ├── security/          # Security validation
@@ -160,7 +160,7 @@ python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 ### Adding a New MCP Server
 1. Start server: `python3 -m mcpgateway.translate --stdio "server-command" --port 9000`
 2. Register as gateway peer: `POST /gateways`
-3. Create virtual server: `POST /servers` 
+3. Create virtual server: `POST /servers`
 4. Access via SSE/WebSocket endpoints
 
 ### Container Operations
@@ -201,13 +201,13 @@ A2A agents are external AI agents (OpenAI, Anthropic, custom) integrated as tool
 
 ### Core MCP Protocol
 - `POST /` - JSON-RPC endpoint for MCP protocol
-- `GET /servers/{id}/sse` - Server-Sent Events transport  
+- `GET /servers/{id}/sse` - Server-Sent Events transport
 - `WS /servers/{id}/ws` - WebSocket transport
 - `GET /.well-known/mcp` - Well-known URI handler
 
 ### Admin APIs (when `MCPGATEWAY_ADMIN_API_ENABLED=true`)
 - `GET/POST /tools` - Tool management and invocation
-- `GET/POST /resources` - Resource management  
+- `GET/POST /resources` - Resource management
 - `GET/POST /prompts` - Prompt templates
 - `GET/POST /servers` - Virtual server management
 - `GET/POST /gateways` - Peer gateway federation
@@ -230,7 +230,7 @@ A2A agents are external AI agents (OpenAI, Anthropic, custom) integrated as tool
 - **No Claude mentions**: Never mention Claude or Claude Code in PRs/diffs
 - **No estimates**: Don't include effort estimates or "phases"
 
-### Code Style & Standards  
+### Code Style & Standards
 - **Python >= 3.11** with type hints (strict mypy settings)
 - **Formatting**: Black (line length 200), isort (profile=black)
 - **Linting**: Ruff (F,E,W,B,ASYNC), Pylint per `pyproject.toml`
@@ -239,7 +239,7 @@ A2A agents are external AI agents (OpenAI, Anthropic, custom) integrated as tool
 
 ### File Creation Policy
 - **NEVER create files** unless absolutely necessary for the goal
-- **ALWAYS prefer editing** existing files over creating new ones  
+- **ALWAYS prefer editing** existing files over creating new ones
 - **NEVER proactively create** documentation files (*.md) or README files
 - Only create documentation if explicitly requested by the user
 
@@ -254,7 +254,7 @@ A2A agents are external AI agents (OpenAI, Anthropic, custom) integrated as tool
 - `mcpgateway/main.py` - FastAPI application entry point
 - `mcpgateway/config.py` - Environment variable configuration
 - `mcpgateway/models.py` - SQLAlchemy ORM models
-- `mcpgateway/schemas.py` - Pydantic validation schemas  
+- `mcpgateway/schemas.py` - Pydantic validation schemas
 - `pyproject.toml` - Project configuration and dependencies
 - `Makefile` - Comprehensive build and development automation
 - `.env.example` - Environment variable template
@@ -264,6 +264,6 @@ A2A agents are external AI agents (OpenAI, Anthropic, custom) integrated as tool
 # Development cycle
 make autoflake isort black pre-commit
 
-# Complete quality pipeline  
+# Complete quality pipeline
 make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint verify
 ```
