@@ -65,32 +65,32 @@ class TestOAuthRouter:
         """Test successful OAuth flow initiation."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         auth_data = {
             "authorization_url": "https://oauth.example.com/authorize?client_id=test_client&response_type=code&state=gateway123_abc123",
             "state": "gateway123_abc123"
         }
-        
+
         with patch('mcpgateway.routers.oauth_router.OAuthManager') as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
             mock_oauth_manager_class.return_value = mock_oauth_manager
-            
+
             with patch('mcpgateway.routers.oauth_router.TokenStorageService') as mock_token_storage_class:
                 mock_token_storage = Mock()
                 mock_token_storage_class.return_value = mock_token_storage
-                
+
                 # Import the function to test
                 from mcpgateway.routers.oauth_router import initiate_oauth_flow
-                
+
                 # Execute
                 result = await initiate_oauth_flow("gateway123", mock_request, mock_db)
-                
+
                 # Assert
                 assert isinstance(result, RedirectResponse)
                 assert result.status_code == 307  # Temporary redirect
                 assert result.headers["location"] == auth_data["authorization_url"]
-                
+
                 mock_oauth_manager_class.assert_called_once_with(token_storage=mock_token_storage)
                 mock_oauth_manager.initiate_authorization_code_flow.assert_called_once_with(
                     "gateway123", mock_gateway.oauth_config
@@ -101,13 +101,13 @@ class TestOAuthRouter:
         """Test OAuth flow initiation with non-existent gateway."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
-        
+
         from mcpgateway.routers.oauth_router import initiate_oauth_flow
-        
+
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
             await initiate_oauth_flow("nonexistent", mock_request, mock_db)
-        
+
         assert exc_info.value.status_code == 404
         assert "Gateway not found" in str(exc_info.value.detail)
 
@@ -119,13 +119,13 @@ class TestOAuthRouter:
         mock_gateway.id = "gateway123"
         mock_gateway.oauth_config = None
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         from mcpgateway.routers.oauth_router import initiate_oauth_flow
-        
+
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
             await initiate_oauth_flow("gateway123", mock_request, mock_db)
-        
+
         assert exc_info.value.status_code == 400
         assert "Gateway is not configured for OAuth" in str(exc_info.value.detail)
 
@@ -137,13 +137,13 @@ class TestOAuthRouter:
         mock_gateway.id = "gateway123"
         mock_gateway.oauth_config = {"grant_type": "client_credentials"}
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         from mcpgateway.routers.oauth_router import initiate_oauth_flow
-        
+
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
             await initiate_oauth_flow("gateway123", mock_request, mock_db)
-        
+
         assert exc_info.value.status_code == 400
         assert "Gateway is not configured for Authorization Code flow" in str(exc_info.value.detail)
 
@@ -152,21 +152,21 @@ class TestOAuthRouter:
         """Test OAuth flow initiation when OAuth manager throws error."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         with patch('mcpgateway.routers.oauth_router.OAuthManager') as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.initiate_authorization_code_flow = AsyncMock(
                 side_effect=OAuthError("OAuth service unavailable")
             )
             mock_oauth_manager_class.return_value = mock_oauth_manager
-            
+
             with patch('mcpgateway.routers.oauth_router.TokenStorageService'):
                 from mcpgateway.routers.oauth_router import initiate_oauth_flow
-                
+
                 # Execute & Assert
                 with pytest.raises(HTTPException) as exc_info:
                     await initiate_oauth_flow("gateway123", mock_request, mock_db)
-                
+
                 assert exc_info.value.status_code == 500
                 assert "Failed to initiate OAuth flow" in str(exc_info.value.detail)
 
@@ -175,24 +175,24 @@ class TestOAuthRouter:
         """Test successful OAuth callback handling."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         callback_result = {
             "user_id": "user123",
             "expires_at": "2025-01-01T15:00:00",
             "access_token": "token123"
         }
-        
+
         with patch('mcpgateway.routers.oauth_router.OAuthManager') as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=callback_result)
             mock_oauth_manager_class.return_value = mock_oauth_manager
-            
+
             with patch('mcpgateway.routers.oauth_router.TokenStorageService') as mock_token_storage_class:
                 mock_token_storage = Mock()
                 mock_token_storage_class.return_value = mock_token_storage
-                
+
                 from mcpgateway.routers.oauth_router import oauth_callback
-                
+
                 # Execute
                 result = await oauth_callback(
                     code="auth_code_123",
@@ -200,14 +200,14 @@ class TestOAuthRouter:
                     request=None,
                     db=mock_db
                 )
-                
+
                 # Assert
                 assert isinstance(result, HTMLResponse)
                 assert result.status_code == 200
                 assert "OAuth Authorization Successful" in result.body.decode()
                 assert "user123" in result.body.decode()
                 assert "Test Gateway" in result.body.decode()
-                
+
                 mock_oauth_manager.complete_authorization_code_flow.assert_called_once_with(
                     "gateway123", "auth_code_123", "gateway123_random_state", mock_gateway.oauth_config
                 )
@@ -224,9 +224,9 @@ class TestOAuthRouter:
         """Test OAuth callback with non-existent gateway."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
-        
+
         from mcpgateway.routers.oauth_router import oauth_callback
-        
+
         # Execute
         result = await oauth_callback(
             code="auth_code_123",
@@ -234,7 +234,7 @@ class TestOAuthRouter:
             request=None,
             db=mock_db
         )
-        
+
         # Assert
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 404
@@ -248,9 +248,9 @@ class TestOAuthRouter:
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.oauth_config = None
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         from mcpgateway.routers.oauth_router import oauth_callback
-        
+
         # Execute
         result = await oauth_callback(
             code="auth_code_123",
@@ -258,7 +258,7 @@ class TestOAuthRouter:
             request=None,
             db=mock_db
         )
-        
+
         # Assert
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 400
@@ -269,17 +269,17 @@ class TestOAuthRouter:
         """Test OAuth callback when OAuth manager throws OAuthError."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         with patch('mcpgateway.routers.oauth_router.OAuthManager') as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(
                 side_effect=OAuthError("Invalid authorization code")
             )
             mock_oauth_manager_class.return_value = mock_oauth_manager
-            
+
             with patch('mcpgateway.routers.oauth_router.TokenStorageService'):
                 from mcpgateway.routers.oauth_router import oauth_callback
-                
+
                 # Execute
                 result = await oauth_callback(
                     code="invalid_code",
@@ -287,7 +287,7 @@ class TestOAuthRouter:
                     request=None,
                     db=mock_db
                 )
-                
+
                 # Assert
                 assert isinstance(result, HTMLResponse)
                 assert result.status_code == 400
@@ -299,17 +299,17 @@ class TestOAuthRouter:
         """Test OAuth callback when unexpected error occurs."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         with patch('mcpgateway.routers.oauth_router.OAuthManager') as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(
                 side_effect=Exception("Database connection lost")
             )
             mock_oauth_manager_class.return_value = mock_oauth_manager
-            
+
             with patch('mcpgateway.routers.oauth_router.TokenStorageService'):
                 from mcpgateway.routers.oauth_router import oauth_callback
-                
+
                 # Execute
                 result = await oauth_callback(
                     code="auth_code_123",
@@ -317,7 +317,7 @@ class TestOAuthRouter:
                     request=None,
                     db=mock_db
                 )
-                
+
                 # Assert
                 assert isinstance(result, HTMLResponse)
                 assert result.status_code == 500
@@ -329,12 +329,12 @@ class TestOAuthRouter:
         """Test getting OAuth status for authorization code flow."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         from mcpgateway.routers.oauth_router import get_oauth_status
-        
+
         # Execute
         result = await get_oauth_status("gateway123", mock_db)
-        
+
         # Assert
         expected = {
             "oauth_enabled": True,
@@ -358,12 +358,12 @@ class TestOAuthRouter:
             "scopes": ["api:read", "api:write"]
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         from mcpgateway.routers.oauth_router import get_oauth_status
-        
+
         # Execute
         result = await get_oauth_status("gateway123", mock_db)
-        
+
         # Assert
         expected = {
             "oauth_enabled": True,
@@ -379,13 +379,13 @@ class TestOAuthRouter:
         """Test getting OAuth status for non-existent gateway."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
-        
+
         from mcpgateway.routers.oauth_router import get_oauth_status
-        
+
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
             await get_oauth_status("nonexistent", mock_db)
-        
+
         assert exc_info.value.status_code == 404
         assert "Gateway not found" in str(exc_info.value.detail)
 
@@ -396,12 +396,12 @@ class TestOAuthRouter:
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.oauth_config = None
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        
+
         from mcpgateway.routers.oauth_router import get_oauth_status
-        
+
         # Execute
         result = await get_oauth_status("gateway123", mock_db)
-        
+
         # Assert
         expected = {
             "oauth_enabled": False,
@@ -414,13 +414,13 @@ class TestOAuthRouter:
         """Test getting OAuth status when database error occurs."""
         # Setup
         mock_db.execute.side_effect = Exception("Database connection failed")
-        
+
         from mcpgateway.routers.oauth_router import get_oauth_status
-        
+
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
             await get_oauth_status("gateway123", mock_db)
-        
+
         assert exc_info.value.status_code == 500
         assert "Failed to get OAuth status" in str(exc_info.value.detail)
 
@@ -435,24 +435,24 @@ class TestOAuthRouter:
                 {"name": "tool3", "description": "Test tool 3"}
             ]
         }
-        
+
         with patch('mcpgateway.services.gateway_service.GatewayService') as mock_gateway_service_class:
             mock_gateway_service = Mock()
             mock_gateway_service.fetch_tools_after_oauth = AsyncMock(return_value=mock_tools_result)
             mock_gateway_service_class.return_value = mock_gateway_service
-            
+
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
-            
+
             # Execute
             result = await fetch_tools_after_oauth("gateway123", mock_db)
-            
+
             # Assert
             expected = {
                 "success": True,
                 "message": "Successfully fetched and created 3 tools"
             }
             assert result == expected
-            
+
             mock_gateway_service.fetch_tools_after_oauth.assert_called_once_with(mock_db, "gateway123")
 
     @pytest.mark.asyncio
@@ -460,17 +460,17 @@ class TestOAuthRouter:
         """Test tools fetching after OAuth when no tools are returned."""
         # Setup
         mock_tools_result = {"tools": []}
-        
+
         with patch('mcpgateway.services.gateway_service.GatewayService') as mock_gateway_service_class:
             mock_gateway_service = Mock()
             mock_gateway_service.fetch_tools_after_oauth = AsyncMock(return_value=mock_tools_result)
             mock_gateway_service_class.return_value = mock_gateway_service
-            
+
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
-            
+
             # Execute
             result = await fetch_tools_after_oauth("gateway123", mock_db)
-            
+
             # Assert
             expected = {
                 "success": True,
@@ -488,13 +488,13 @@ class TestOAuthRouter:
                 side_effect=Exception("Failed to connect to MCP server")
             )
             mock_gateway_service_class.return_value = mock_gateway_service
-            
+
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
-            
+
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
                 await fetch_tools_after_oauth("gateway123", mock_db)
-            
+
             assert exc_info.value.status_code == 500
             assert "Failed to fetch tools" in str(exc_info.value.detail)
             assert "Failed to connect to MCP server" in str(exc_info.value.detail)
@@ -504,17 +504,17 @@ class TestOAuthRouter:
         """Test tools fetching when service returns malformed result."""
         # Setup
         mock_tools_result = {"message": "Success"}  # Missing "tools" key
-        
+
         with patch('mcpgateway.services.gateway_service.GatewayService') as mock_gateway_service_class:
             mock_gateway_service = Mock()
             mock_gateway_service.fetch_tools_after_oauth = AsyncMock(return_value=mock_tools_result)
             mock_gateway_service_class.return_value = mock_gateway_service
-            
+
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
-            
+
             # Execute
             result = await fetch_tools_after_oauth("gateway123", mock_db)
-            
+
             # Assert - should handle gracefully with 0 tools
             expected = {
                 "success": True,
