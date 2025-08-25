@@ -15,7 +15,7 @@
           "type": "object",
           "properties": {
             "path": {
-              "type": "string", 
+              "type": "string",
               "description": "File path to process"
             },
             "processing_mode": {
@@ -87,7 +87,7 @@
           "required": ["dataset", "analysis_algorithms"]
         },
         "annotations": {
-          "category": "ai", 
+          "category": "ai",
           "subcategory": "quantum",
           "complexity": "experimental",
           "version": "latest",
@@ -95,7 +95,7 @@
         }
       },
       {
-        "name": "autonomous_system_orchestrator_latest", 
+        "name": "autonomous_system_orchestrator_latest",
         "description": "Autonomous system orchestration and self-healing",
         "display_name": "Autonomous System Orchestrator",
         "schema": {
@@ -173,7 +173,7 @@
       {
         "name": "multimodal_ai_processor_latest",
         "description": "Multimodal AI processing (text, image, audio, video)",
-        "display_name": "Multimodal AI Processor", 
+        "display_name": "Multimodal AI Processor",
         "schema": {
           "type": "object",
           "properties": {
@@ -182,7 +182,7 @@
               "items": {"type": "string", "enum": ["text", "image", "audio", "video", "3d_model"]}
             },
             "processing_tasks": {
-              "type": "array", 
+              "type": "array",
               "items": {"type": "string", "enum": ["analysis", "generation", "translation", "summarization", "classification"]}
             },
             "ai_models": {
@@ -217,7 +217,7 @@
       {
         "name": "next_gen_sse_server_latest",
         "description": "Next-generation SSE server with advanced streaming",
-        "display_name": "Next-Gen SSE Server", 
+        "display_name": "Next-Gen SSE Server",
         "transport": "sse",
         "connection_string": "https://next-gen-sse.example.com:8080/v2/sse",
         "annotations": {
@@ -235,7 +235,7 @@
         "transport": "websocket",
         "connection_string": "wss://quantum-ws.example.com:8443/quantum/ws",
         "annotations": {
-          "environment": "production", 
+          "environment": "production",
           "transport": "websocket",
           "version": "latest",
           "security": "quantum_encryption",
@@ -250,7 +250,7 @@
         "connection_string": "grpcs://grpc.example.com:9090",
         "annotations": {
           "environment": "production",
-          "transport": "grpc", 
+          "transport": "grpc",
           "version": "latest",
           "performance": "high",
           "features": "streaming_rpc,load_balancing"
@@ -288,7 +288,7 @@
         }
       },
       {
-        "name": "ai_gateway_latest", 
+        "name": "ai_gateway_latest",
         "base_url": "https://ai-gateway.example.com:4444",
         "description": "AI-powered intelligent gateway",
         "display_name": "AI Gateway",
@@ -310,7 +310,7 @@
         "health_check_interval": 30,
         "annotations": {
           "type": "quantum_secured",
-          "version": "latest", 
+          "version": "latest",
           "security": "quantum_encryption,post_quantum_signatures",
           "compliance": "quantum_safe"
         }
@@ -338,7 +338,7 @@
         "mimeType": "application/wasm",
         "annotations": {
           "category": "library",
-          "type": "quantum_algorithms", 
+          "type": "quantum_algorithms",
           "version": "latest",
           "runtime": "wasm"
         }
@@ -362,7 +362,7 @@
         "name": "ml_pipeline_config_latest",
         "uri": "https://pipelines.example.com/latest/ml_pipeline.json",
         "description": "Machine learning pipeline configuration",
-        "display_name": "ML Pipeline Configuration", 
+        "display_name": "ML Pipeline Configuration",
         "mimeType": "application/json",
         "annotations": {
           "category": "config",
@@ -403,12 +403,12 @@
       {
         "name": "multimodal_synthesis_prompt_latest",
         "description": "Multimodal content synthesis prompt",
-        "display_name": "Multimodal Synthesis Prompt", 
+        "display_name": "Multimodal Synthesis Prompt",
         "template": "🎭 **Multimodal Content Synthesis**\n\n**Input Modalities**: {{input_types}}\n**Output Requirements**: {{output_requirements}}\n\n**Processing Pipeline**:\n1. **Analysis Phase**: {{analysis_instructions}}\n2. **Synthesis Phase**: {{synthesis_instructions}}\n3. **Quality Assurance**: {{qa_instructions}}\n\n**Style Guide**:\n- Visual Style: {{visual_style}}\n- Tone: {{tone}}\n- Target Audience: {{audience}}\n\n**Technical Constraints**:\n- Resolution: {{resolution}}\n- Duration: {{duration}} \n- File Size: < {{max_size}}\n\n**Quality Metrics**:\n- Coherence Score: > {{min_coherence}}\n- Relevance Score: > {{min_relevance}}\n\nBegin multimodal synthesis...",
         "annotations": {
           "category": "multimodal_ai",
           "complexity": "high",
-          "variables": "11", 
+          "variables": "11",
           "version": "latest",
           "output_types": "text,image,audio,video"
         }
@@ -420,7 +420,7 @@
         "description": "Quantum-enhanced AI agent for complex reasoning",
         "display_name": "Quantum AI Agent",
         "provider": "quantum_openai",
-        "model": "qgpt-quantum-1", 
+        "model": "qgpt-quantum-1",
         "endpoint_url": "https://quantum-api.openai.com/v1/quantum/chat",
         "annotations": {
           "provider": "quantum_openai",
@@ -440,7 +440,7 @@
         "model": "claude-3-opus-autonomous",
         "endpoint_url": "https://api.anthropic.com/v1/autonomous/chat",
         "annotations": {
-          "provider": "anthropic", 
+          "provider": "anthropic",
           "model_family": "claude",
           "capabilities": "[\"system_orchestration\", \"predictive_scaling\", \"autonomous_healing\"]",
           "max_tokens": "4096",
@@ -458,7 +458,7 @@
         "endpoint_url": "https://generativelanguage.googleapis.com/v1beta/multimodal:generateContent",
         "annotations": {
           "provider": "google",
-          "model_family": "gemini", 
+          "model_family": "gemini",
           "capabilities": "[\"text_vision_fusion\", \"audio_analysis\", \"video_understanding\", \"3d_reasoning\"]",
           "max_tokens": "12288",
           "multimodal_features": "true",

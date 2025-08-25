@@ -1,13 +1,48 @@
 # Migration Test Suite
 
-A comprehensive test suite for validating Alembic database migrations across MCP Gateway container versions following an **n-2 support policy**. This suite tests both SQLite (via Docker) and PostgreSQL/Redis (via docker-compose) deployments with extensive logging and reporting.
+A comprehensive test suite for validating **application-level database migrations** across MCP Gateway container versions following an **n-2 support policy**. This suite tests both SQLite (via Docker) and PostgreSQL/Redis (via docker-compose) deployments using realistic application container scenarios with extensive logging and reporting.
+
+**Migration Approach**: This test suite validates **application-managed migrations** where containers handle their own database initialization and schema evolution automatically, rather than executing manual Alembic commands. This approach reflects real-world deployment scenarios where applications manage their own database state.
+
+## 🔄 Migration Methodology
+
+### Application-Level Migration Testing
+
+This test suite implements **application-level migration validation** with the following key principles:
+
+1. **Container-as-Application**: Each container is treated as a complete application that manages its own database state
+2. **Automatic Schema Detection**: Applications automatically detect existing database schemas and apply necessary migrations on startup
+3. **Volume Persistence**: Database files are preserved across container version switches using Docker volume mounts
+4. **REST API Validation**: Data integrity and schema correctness are validated through application REST endpoints
+5. **Python3 HTTP Client**: All HTTP requests use Python3's urllib library for maximum container compatibility
+
+### Migration Test Flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Start v0.5.0   │───▶│   Seed Data      │───▶│ Capture State   │
+│   Container     │    │   via REST API   │    │  (API Health)   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                                               │
+         ▼                                               ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Preserve       │───▶│  Start v0.6.0    │───▶│ Auto-Migration  │
+│  Data Volume    │    │   Container      │    │  (Application)  │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                                               │
+         ▼                                               ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Validate      │───▶│  Data Integrity  │───▶│ Generate        │
+│   API Health    │    │     Check        │    │   Report        │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
 
 ## 📋 Version Policy (n-2 Support)
 
 The migration test suite follows an **n-2 support policy**, meaning we test the current version and the two previous versions:
 
 - **n** (latest): Current development version
-- **n-1**: Previous stable version  
+- **n-1**: Previous stable version
 - **n-2**: Baseline supported version
 
 **Current supported versions**: `0.5.0`, `0.6.0`, `latest`
@@ -35,19 +70,29 @@ make migration-debug          # Debug failed migrations
 
 ### Core Components
 
-- **Container Manager** (`utils/container_manager.py`): Orchestrates Docker/Podman containers
-- **Migration Runner** (`utils/migration_runner.py`): Executes migration test scenarios
-- **Schema Validator** (`utils/schema_validator.py`): Compares database schemas
-- **Data Seeder** (`utils/data_seeder.py`): Generates realistic test data
-- **Report Generator** (`utils/reporting.py`): Creates HTML dashboards
+- **Container Manager** (`utils/container_manager.py`): Orchestrates Docker/Podman containers with volume persistence
+- **Migration Runner** (`utils/migration_runner.py`): Executes application-level migration test scenarios
+- **Schema Validator** (`utils/schema_validator.py`): Validates application-managed schema evolution
+- **Data Seeder** (`utils/data_seeder.py`): Seeds test data via REST API endpoints
+- **Report Generator** (`utils/reporting.py`): Creates comprehensive HTML dashboards
+
+**Key Features**:
+- **Data Persistence**: Preserves database files across container version switches
+- **REST API Integration**: Uses application endpoints for data seeding and validation
+- **Python3 HTTP Client**: Uses Python3 urllib instead of curl for container compatibility
+- **Volume Management**: Automatic file ownership and permission handling
 
 ### Test Categories
 
-1. **Forward Migrations**: Sequential version upgrades (0.5.0 → 0.6.0 → latest)
+1. **Application-Level Forward Migrations**: Sequential version upgrades (0.5.0 → 0.6.0 → latest)
+   - Containers automatically detect and migrate existing databases
+   - Data persistence validation across version switches
+   - REST API-based data integrity verification
+
 2. **Reverse Migrations**: Sequential downgrades with data preservation
 3. **Skip-Version Migrations**: Multi-version jumps (0.4.0 → latest)
 4. **Performance Tests**: Large datasets, concurrent operations, stress testing
-5. **Data Integrity**: Schema validation, foreign key constraints, data preservation
+5. **Data Integrity**: Application health checks, API endpoint validation, record count verification
 
 ## Adding New Versions
 
@@ -150,20 +195,29 @@ pytest tests/migration/test_migration_performance.py::test_large_dataset_migrati
 
 ```python
 from tests.migration.utils.container_manager import ContainerManager
+from tests.migration.utils.migration_runner import MigrationTestRunner
 
-async def test_custom_migration():
+def test_custom_migration():
     container_manager = ContainerManager()
-    
+    migration_runner = MigrationTestRunner(container_manager)
+
     # Start container with specific version
-    container_id = await container_manager.start_sqlite_container("0.5.0")
-    
-    # Run custom migration
-    result = await container_manager.exec_alembic_command(
-        container_id, "upgrade", "head"
-    )
-    
-    # Validate result
-    assert result.returncode == 0
+    container_id = container_manager.start_sqlite_container("0.5.0")
+
+    # Let application initialize database automatically
+    time.sleep(3)  # Allow application startup
+
+    # Validate application is ready
+    health_result = container_manager._run_command([
+        container_manager.runtime, "exec", container_id,
+        "python3", "-c",
+        "import urllib.request; "
+        "resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); "
+        "print(resp.read().decode())"
+    ], capture_output=True)
+
+    assert health_result.returncode == 0
+    assert "healthy" in health_result.stdout
 ```
 
 ### Adding New Test Scenarios
@@ -255,12 +309,17 @@ psql -h localhost -p 5432 -U mcpgateway -d mcpgateway_test
 ### Migration State Investigation
 
 ```bash
-# Check Alembic history
+# Check application migration status
 make migration-debug
 
-# Manual Alembic commands in container
-docker exec <container_id> alembic history
-docker exec <container_id> alembic current
+# Application health and API checks in container
+docker exec <container_id> python3 -c "import urllib.request; resp = urllib.request.urlopen('http://localhost:4444/health'); print(resp.read().decode())"
+
+# Check application logs for migration details
+docker logs <container_id> | grep -i migration
+
+# Test API endpoints
+docker exec <container_id> python3 -c "import urllib.request; resp = urllib.request.urlopen('http://localhost:4444/tools'); print(resp.read().decode())"
 ```
 
 ## Performance Optimization
@@ -304,7 +363,7 @@ pytest tests/migration/ -n 4
   run: |
     make migration-setup
     make test-migration-all
-    
+
 - name: Upload Reports
   uses: actions/upload-artifact@v3
   with:
@@ -355,8 +414,22 @@ docker network prune
 
 **Permission errors:**
 ```bash
-# Fix volume permissions
-sudo chown -R $USER:$USER /tmp/migration_tests/
+# Fix volume permissions for application user (uid=1001)
+sudo chown -R 1001:1001 /tmp/migration_test_*
+# or make world-writable for testing
+sudo chmod -R 777 /tmp/migration_test_*
+```
+
+**Container HTTP request failures:**
+```bash
+# Test if python3 urllib works in container
+docker exec <container_id> python3 -c "import urllib.request; print('urllib available')"
+
+# Check if application is listening on all interfaces
+docker exec <container_id> netstat -tulpn | grep :4444
+
+# Verify HOST=0.0.0.0 is set
+docker exec <container_id> env | grep HOST
 ```
 
 ### Getting Help
@@ -395,6 +468,49 @@ tests/migration/
 └── reports/                           # Generated HTML reports (created at runtime)
 ```
 
+## Technical Notes
+
+### Recent Improvements
+
+**v2.0 (Application-Level Migration Testing)**:
+- ✅ **Python3 HTTP Client**: Replaced all `curl` commands with `python3 urllib.request` for container compatibility
+- ✅ **Volume Persistence**: Fixed data directory preservation across container version switches
+- ✅ **File Permissions**: Automatic ownership management for container user (uid=1001, gid=1001)
+- ✅ **REST API Integration**: All data operations use application endpoints instead of direct database access
+- ✅ **Application-Level Migrations**: Tests now validate how applications handle migrations automatically
+- ✅ **Enhanced Logging**: Comprehensive logging throughout all migration phases
+
+**HTTP Request Format**:
+```python
+# Modern approach (Python3 urllib)
+docker exec <container_id> python3 -c "import urllib.request; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); print(resp.read().decode())"
+
+# Legacy approach (curl - not available in containers)
+docker exec <container_id> curl -s -f http://localhost:4444/health
+```
+
+**Data Directory Management**:
+- Temporary directories are created with proper ownership (`1001:1001`)
+- Data volumes are preserved when switching between container versions
+- Database files persist across the entire migration test lifecycle
+
+### Architecture Decisions
+
+1. **Why Application-Level Testing?**
+   - Mirrors real-world deployment scenarios where applications manage their own database state
+   - Tests the actual migration behavior users will experience
+   - Validates container startup, health checks, and API availability
+
+2. **Why Python3 Instead of curl?**
+   - Container images don't include curl by default
+   - Python3 is available in all application containers
+   - Provides better error handling and timeout control
+
+3. **Why Volume Persistence?**
+   - Essential for testing actual migration behavior across versions
+   - Validates data preservation during upgrades
+   - Enables realistic upgrade/rollback scenarios
+
 ## Contributing
 
 When adding new migration tests:
@@ -402,9 +518,12 @@ When adding new migration tests:
 1. Follow existing naming conventions
 2. Add comprehensive logging with emojis
 3. Include both positive and negative test cases
-4. Update this README with new features
-5. Add appropriate Makefile targets
-6. Test with both SQLite and PostgreSQL
+4. Use **python3 urllib.request** for HTTP requests (never curl)
+5. Ensure proper **data volume persistence** across container switches
+6. Test **application-level migration behavior** rather than manual Alembic commands
+7. Update this README with new features
+8. Add appropriate Makefile targets
+9. Test with both SQLite and PostgreSQL
 
 ---
 

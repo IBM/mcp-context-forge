@@ -35,7 +35,7 @@
         },
         "annotations": {
           "category": "filesystem",
-          "version": "0.6.0", 
+          "version": "0.6.0",
           "display_name": "Enhanced File Reader",
           "created_by": "migration_test",
           "enhanced_features": "true"
@@ -144,14 +144,14 @@
         "connection_string": "http://enhanced-sse.example.com:8080/sse",
         "annotations": {
           "environment": "test",
-          "transport": "sse", 
+          "transport": "sse",
           "version": "0.6.0",
           "authentication": "bearer_token",
           "features": "enhanced_auth"
         }
       },
       {
-        "name": "secure_ws_server_v060", 
+        "name": "secure_ws_server_v060",
         "description": "Secure WebSocket server with TLS",
         "display_name": "Secure WebSocket Server",
         "transport": "websocket",
@@ -187,7 +187,7 @@
         "health_check_interval": 30,
         "annotations": {
           "type": "production",
-          "version": "0.6.0", 
+          "version": "0.6.0",
           "region": "us-east-1",
           "security": "enhanced",
           "load_balancing": "true"
@@ -239,7 +239,7 @@
         "uri": "file:///app/data/v0.6.0/performance_test_data.jsonl",
         "description": "Large dataset for performance testing",
         "display_name": "Performance Test Dataset",
-        "mimeType": "application/jsonlines", 
+        "mimeType": "application/jsonlines",
         "annotations": {
           "category": "data",
           "type": "performance_test",
@@ -255,7 +255,7 @@
         "display_name": "Welcome Prompt v0.6.0",
         "template": "Welcome to MCP Gateway v0.6.0, {{name}}! 🚀\n\nI'm here to help you with {{task}}. With our enhanced features, I can now:\n- {{feature_1}}\n- {{feature_2}}\n- {{feature_3}}\n\nHow would you like to get started?",
         "annotations": {
-          "category": "greeting", 
+          "category": "greeting",
           "variables": "5",
           "version": "0.6.0",
           "personalization": "true"
@@ -268,7 +268,7 @@
         "template": "🔒 Security Analysis Request\n\nTarget: {{target}}\nScope: {{scope}}\n\nPlease perform a {{analysis_type}} security assessment focusing on:\n\n1. **Vulnerabilities**: {{vulnerability_focus}}\n2. **Compliance**: {{compliance_standards}}\n3. **Risk Assessment**: {{risk_categories}}\n\n**Output Requirements**:\n- Format: {{output_format}}\n- Severity Level: {{min_severity}} and above\n- Include remediation suggestions: {{include_remediation}}\n\nProceed with the analysis.",
         "annotations": {
           "category": "security",
-          "complexity": "high", 
+          "complexity": "high",
           "variables": "8",
           "version": "0.6.0"
         }

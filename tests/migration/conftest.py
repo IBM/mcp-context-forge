@@ -34,13 +34,13 @@ def migration_test_dir():
     with tempfile.TemporaryDirectory(prefix="mcp_migration_test_") as temp_dir:
         test_dir = Path(temp_dir)
         logger.info(f"🗂️ Created migration test directory: {test_dir}")
-        
+
         # Create subdirectories
         (test_dir / "databases").mkdir()
-        (test_dir / "schemas").mkdir() 
+        (test_dir / "schemas").mkdir()
         (test_dir / "reports").mkdir()
         (test_dir / "logs").mkdir()
-        
+
         yield test_dir
         logger.info(f"🧹 Cleaning up migration test directory: {test_dir}")
 
@@ -49,25 +49,25 @@ def migration_test_dir():
 def container_runtime():
     """Detect and return the available container runtime."""
     import subprocess
-    
+
     # Try Docker first
     try:
-        subprocess.run(["docker", "--version"], 
+        subprocess.run(["docker", "--version"],
                       capture_output=True, check=True, timeout=10)
         logger.info("🐳 Using Docker as container runtime")
         return "docker"
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    
+
     # Try Podman
     try:
-        subprocess.run(["podman", "--version"], 
+        subprocess.run(["podman", "--version"],
                       capture_output=True, check=True, timeout=10)
         logger.info("🦭 Using Podman as container runtime")
         return "podman"
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    
+
     pytest.skip("No container runtime (Docker or Podman) available")
 
 
@@ -75,24 +75,24 @@ def container_runtime():
 def container_manager(container_runtime) -> Generator[ContainerManager, None, None]:
     """Create container manager for SQLite migration testing."""
     logger.info(f"🚀 Creating ContainerManager with {container_runtime}")
-    
+
     cm = ContainerManager(runtime=container_runtime, verbose=True)
-    
+
     # Ensure required images are available
     try:
         logger.info("📦 Pulling required container images...")
         cm.pull_images(["0.5.0", "0.6.0", "latest"])  # Start with subset for faster testing
     except Exception as e:
         logger.warning(f"⚠️ Could not pull some images: {e}")
-    
+
     yield cm
-    
+
     # Cleanup all containers created during tests
     logger.info("🧹 Cleaning up all migration test containers")
     cm.cleanup_all()
 
 
-@pytest.fixture(scope="module")  
+@pytest.fixture(scope="module")
 def migration_runner(container_manager) -> MigrationTestRunner:
     """Create migration test runner."""
     logger.info("🏃 Creating MigrationTestRunner")
@@ -103,7 +103,7 @@ def migration_runner(container_manager) -> MigrationTestRunner:
 def sample_test_data() -> Dict:
     """Generate sample test data for migration testing."""
     logger.info("🎲 Generating sample test data")
-    
+
     return {
         "tools": [
             {
@@ -119,7 +119,7 @@ def sample_test_data() -> Dict:
                 "annotations": {"category": "test", "version": "1.0"}
             },
             {
-                "name": "test_tool_complex", 
+                "name": "test_tool_complex",
                 "description": "Complex test tool with nested schema",
                 "schema": {
                     "type": "object",
@@ -155,7 +155,7 @@ def sample_test_data() -> Dict:
             },
             {
                 "name": "test_server_websocket",
-                "description": "WebSocket test server", 
+                "description": "WebSocket test server",
                 "transport": "websocket",
                 "connection_string": "ws://localhost:8080/ws",
                 "annotations": {"transport": "websocket", "protocol": "mcp"}
@@ -193,7 +193,7 @@ def sample_test_data() -> Dict:
 def large_test_data() -> Dict:
     """Generate large test dataset for performance testing."""
     logger.info("🎲 Generating large test dataset")
-    
+
     # Generate 100 tools, 20 servers, 10 gateways
     tools = []
     for i in range(100):
@@ -217,16 +217,16 @@ def large_test_data() -> Dict:
                 "category": f"category_{i % 10}"
             }
         })
-    
+
     servers = []
     for i in range(20):
         servers.append({
             "name": f"perf_test_server_{i:02d}",
             "description": f"Performance test server {i}",
-            "transport": "sse" if i % 2 == 0 else "websocket", 
+            "transport": "sse" if i % 2 == 0 else "websocket",
             "annotations": {"batch": "performance_test", "index": i}
         })
-    
+
     gateways = []
     for i in range(10):
         gateways.append({
@@ -235,7 +235,7 @@ def large_test_data() -> Dict:
             "description": f"Performance test gateway {i}",
             "annotations": {"batch": "performance_test", "index": i}
         })
-    
+
     return {
         "tools": tools,
         "servers": servers,
@@ -250,7 +250,7 @@ def version_matrix():
         "available_versions": ["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "latest"],
         "forward_pairs": [
             ("0.2.0", "0.3.0"),
-            ("0.3.0", "0.4.0"), 
+            ("0.3.0", "0.4.0"),
             ("0.4.0", "0.5.0"),
             ("0.5.0", "0.6.0"),
             ("0.6.0", "latest")
@@ -264,7 +264,7 @@ def version_matrix():
         ],
         "skip_pairs": [
             ("0.2.0", "0.4.0"),  # Skip 0.3.0
-            ("0.3.0", "0.6.0"),  # Skip 0.4.0, 0.5.0  
+            ("0.3.0", "0.6.0"),  # Skip 0.4.0, 0.5.0
             ("0.4.0", "latest"), # Skip 0.5.0, 0.6.0
             ("0.2.0", "latest")  # Skip all intermediate
         ]
@@ -276,9 +276,9 @@ def migration_test_logging(request):
     """Setup logging for each migration test."""
     test_name = request.node.name
     logger.info(f"🧪 Starting migration test: {test_name}")
-    
+
     yield
-    
+
     logger.info(f"✅ Completed migration test: {test_name}")
 
 
@@ -334,21 +334,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    
+
   redis:
     image: redis:latest
-    networks: [migration_test] 
+    networks: [migration_test]
     labels:
       migration-test: "true"
 '''
-    
+
     # Write compose file to temporary location
     compose_file = Path("tests/migration/docker-compose.test.yml")
     compose_file.parent.mkdir(parents=True, exist_ok=True)
-    
+
     with open(compose_file, 'w') as f:
         f.write(compose_content)
-    
+
     logger.info(f"📄 Created docker-compose file: {compose_file}")
     return str(compose_file)
 
@@ -363,7 +363,7 @@ def performance_thresholds():
             "max_memory_mb": 256     # MB
         },
         "postgres_upgrade": {
-            "max_duration": 120,     # seconds  
+            "max_duration": 120,     # seconds
             "max_memory_mb": 512     # MB
         },
         "large_dataset": {
@@ -378,17 +378,17 @@ def performance_thresholds():
 
 
 # Cleanup and reporting fixtures
-@pytest.fixture(scope="session", autouse=True) 
+@pytest.fixture(scope="session", autouse=True)
 def migration_test_session_setup_teardown():
     """Session-level setup and teardown for migration tests."""
     logger.info("🚀 Starting migration test session")
-    
+
     # Create reports directory
     reports_dir = Path("tests/migration/reports")
     reports_dir.mkdir(parents=True, exist_ok=True)
-    
+
     yield
-    
+
     logger.info("✅ Migration test session completed")
     logger.info(f"📊 Test reports available in: {reports_dir}")
 
@@ -397,13 +397,13 @@ def migration_test_session_setup_teardown():
 def test_result_collector():
     """Collect test results for reporting."""
     results = []
-    
+
     def collect_result(result):
         results.append(result)
         logger.info(f"📊 Collected test result: {result.get('test_name', 'unknown')}")
-    
+
     yield collect_result
-    
+
     # Save results at end of test
     if results:
         results_file = Path("tests/migration/reports/test_results.json")
@@ -419,15 +419,15 @@ def pytest_generate_tests(metafunc):
     if "version_pair" in metafunc.fixturenames:
         # Generate version pairs for forward migration testing (n-2 policy)
         pairs = VersionConfig.get_forward_migration_pairs()
-        metafunc.parametrize("version_pair", pairs, 
+        metafunc.parametrize("version_pair", pairs,
                            ids=[f"{p[0]}-to-{p[1]}" for p in pairs])
-    
+
     elif "reverse_version_pair" in metafunc.fixturenames:
         # Generate version pairs for reverse migration testing (n-2 policy)
         pairs = VersionConfig.get_reverse_migration_pairs()
         metafunc.parametrize("reverse_version_pair", pairs,
                            ids=[f"{p[0]}-to-{p[1]}" for p in pairs])
-    
+
     elif "skip_version_pair" in metafunc.fixturenames:
         # Generate version pairs for skip-version migration testing (n-2 policy)
         pairs = VersionConfig.get_skip_version_pairs()
@@ -441,12 +441,12 @@ def pytest_generate_tests(metafunc):
 def mock_container_manager():
     """Mock container manager for testing without actual containers."""
     from unittest.mock import Mock, MagicMock
-    
+
     mock_cm = Mock(spec=ContainerManager)
     mock_cm.runtime = "mock"
     mock_cm.active_containers = []
     mock_cm.AVAILABLE_VERSIONS = ["0.5.0", "0.6.0", "latest"]
-    
+
     # Mock methods with realistic behavior
     mock_cm.pull_images = MagicMock(return_value=None)
     mock_cm.start_sqlite_container = MagicMock(return_value="mock_container_id")
@@ -455,5 +455,5 @@ def mock_container_manager():
     mock_cm.seed_test_data = MagicMock(return_value=None)
     mock_cm.cleanup_container = MagicMock(return_value=None)
     mock_cm.cleanup_all = MagicMock(return_value=None)
-    
+
     return mock_cm
