@@ -196,3 +196,69 @@ def app_with_temp_db():
     engine.dispose()
     os.close(fd)
     os.unlink(path)
+
+
+@pytest.fixture(scope="function")
+def client_with_temp_db():
+    """
+    Creates a FastAPI test client with a completely isolated SQLite DB.
+    Ensures that mcpgateway.main, mcpgateway.db, and mcpgateway.services
+    all use the same temporary database.
+    """
+    import sys
+    from fastapi.testclient import TestClient
+    from _pytest.monkeypatch import MonkeyPatch
+
+    mp = MonkeyPatch()
+
+    # 1) create temp sqlite file
+    fd, path = tempfile.mkstemp(suffix=".db")
+    url = f"sqlite:///{path}"
+
+    # 2) build engine + session
+    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    # 3) patch engine + SessionLocal everywhere
+    import mcpgateway.db as db_mod
+    mp.setattr(db_mod, "engine", engine)
+    mp.setattr(db_mod, "SessionLocal", TestingSessionLocal)
+
+    import mcpgateway.services.tool_service as svc_mod
+    if hasattr(svc_mod, "SessionLocal"):
+        mp.setattr(svc_mod, "SessionLocal", TestingSessionLocal)
+
+    import mcpgateway.main as main_mod
+    mp.setattr(main_mod, "SessionLocal", TestingSessionLocal)
+
+    # 4) create schema
+    db_mod.Base.metadata.create_all(bind=engine)
+
+    # 5) import app
+    from mcpgateway.main import app
+
+    # 🔑 6) override get_db to always yield from TestingSessionLocal
+    def _override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[db_mod.get_db] = _override_get_db
+
+    # If admin.py imported its own copy of get_db, patch that too
+    import mcpgateway.admin as admin_mod
+    if hasattr(admin_mod, "get_db"):
+        app.dependency_overrides[admin_mod.get_db] = _override_get_db
+
+    client = TestClient(app)
+
+    yield client
+
+    # 7) teardown
+    app.dependency_overrides.clear()
+    mp.undo()
+    engine.dispose()
+    os.close(fd)
+    os.unlink(path)
