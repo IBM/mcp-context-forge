@@ -1,0 +1,285 @@
+# Migration Test Scenarios Configuration
+# This file defines test scenarios for database migration testing
+#
+# NOTE: Version configuration is now managed in version_config.py
+# This file contains scenario definitions that reference versions dynamically
+
+metadata:
+  description: "Migration test scenarios for MCP Gateway"
+  version: "2.0.0"
+  created_by: "migration_test_suite"
+  policy: "n-2 support policy (current + 2 previous versions)"
+
+# Version configuration moved to version_config.py
+# Current supported versions (n-2 policy): 0.5.0, 0.6.0, latest
+# To add a new version like 0.7.0:
+# 1. Update version_config.py RELEASES and CURRENT_VERSION
+# 2. Add test data in fixtures/test_data_sets/v0_7_0_sample.json
+# 3. Run 'make migration-setup' to pull new container images
+
+  # Version metadata
+  version_info:
+    "0.2.0":
+      release_date: "2023-10-01"
+      major_features: ["basic_mcp_support", "sqlite_database", "simple_auth"]
+      breaking_changes: []
+
+    "0.3.0":
+      release_date: "2023-11-15"
+      major_features: ["display_names", "enhanced_annotations", "improved_validation"]
+      breaking_changes: ["annotation_schema_changes"]
+
+    "0.4.0":
+      release_date: "2023-12-20"
+      major_features: ["uuid_primary_keys", "slug_system", "metadata_tracking"]
+      breaking_changes: ["primary_key_migration", "slug_introduction"]
+
+    "0.5.0":
+      release_date: "2024-01-25"
+      major_features: ["enhanced_status", "improved_logging", "performance_optimizations"]
+      breaking_changes: ["status_field_changes"]
+
+    "0.6.0":
+      release_date: "2024-02-15"
+      major_features: ["a2a_agents", "oauth_support", "federation_features"]
+      breaking_changes: ["oauth_table_addition"]
+
+    "latest":
+      release_date: "2024-02-20"
+      major_features: ["all_features", "latest_improvements", "cutting_edge"]
+      breaking_changes: ["potential_schema_updates"]
+
+# Test scenario definitions
+scenarios:
+
+  # Forward migration scenarios (upgrades)
+  forward_migrations:
+    - name: "sequential_upgrades"
+      description: "Test sequential version upgrades"
+      test_pairs:
+        - from: "0.2.0"
+          to: "0.3.0"
+          data_set: "v0_2_0_sample"
+          expected_duration: 30
+          critical: true
+
+        - from: "0.3.0"
+          to: "0.4.0"
+          data_set: "v0_3_0_sample"
+          expected_duration: 45
+          critical: true
+
+        - from: "0.4.0"
+          to: "0.5.0"
+          data_set: "v0_4_0_sample"
+          expected_duration: 35
+          critical: true
+
+        - from: "0.5.0"
+          to: "0.6.0"
+          data_set: "v0_5_0_sample"
+          expected_duration: 40
+          critical: true
+
+        - from: "0.6.0"
+          to: "latest"
+          data_set: "v0_6_0_sample"
+          expected_duration: 30
+          critical: true
+
+    - name: "skip_version_upgrades"
+      description: "Test upgrades that skip intermediate versions"
+      test_pairs:
+        - from: "0.2.0"
+          to: "0.4.0"
+          data_set: "v0_2_0_sample"
+          expected_duration: 60
+          critical: false
+          note: "Skips v0.3.0"
+
+        - from: "0.3.0"
+          to: "0.6.0"
+          data_set: "v0_3_0_sample"
+          expected_duration: 90
+          critical: false
+          note: "Skips v0.4.0 and v0.5.0"
+
+        - from: "0.4.0"
+          to: "latest"
+          data_set: "v0_4_0_sample"
+          expected_duration: 75
+          critical: false
+          note: "Skips v0.5.0 and v0.6.0"
+
+        - from: "0.2.0"
+          to: "latest"
+          data_set: "v0_2_0_sample"
+          expected_duration: 120
+          critical: false
+          note: "Skips all intermediate versions"
+
+  # Reverse migration scenarios (downgrades)
+  reverse_migrations:
+    - name: "sequential_downgrades"
+      description: "Test sequential version downgrades"
+      test_pairs:
+        - from: "latest"
+          to: "0.6.0"
+          data_set: "latest_sample"
+          expected_duration: 45
+          critical: false
+          note: "May have limited support"
+
+        - from: "0.6.0"
+          to: "0.5.0"
+          data_set: "v0_6_0_sample"
+          expected_duration: 50
+          critical: false
+          note: "OAuth features may be lost"
+
+        - from: "0.5.0"
+          to: "0.4.0"
+          data_set: "v0_5_0_sample"
+          expected_duration: 40
+          critical: false
+          note: "Status changes may affect data"
+
+        - from: "0.4.0"
+          to: "0.3.0"
+          data_set: "v0_4_0_sample"
+          expected_duration: 55
+          critical: false
+          note: "UUID to int migration complex"
+
+# Performance test scenarios
+performance_scenarios:
+  - name: "large_dataset_migration"
+    description: "Test migration performance with large datasets"
+    base_scenario: "0.5.0_to_0.6.0"
+    data_multiplier: 100
+    expected_max_duration: 300
+    memory_limit: "1GB"
+
+  - name: "concurrent_migration"
+    description: "Test migration under concurrent load"
+    base_scenario: "0.6.0_to_latest"
+    concurrent_operations: 5
+    expected_max_duration: 180
+
+  - name: "stress_test_migration"
+    description: "Stress test with maximum data volume"
+    base_scenario: "0.4.0_to_latest"
+    data_multiplier: 1000
+    expected_max_duration: 600
+    memory_limit: "2GB"
+
+# Data integrity test scenarios
+integrity_scenarios:
+  - name: "full_cycle_integrity"
+    description: "Test data integrity through full migration cycle"
+    path: ["0.4.0", "0.5.0", "0.6.0", "latest"]
+    data_validation:
+      - check_record_counts: true
+      - check_foreign_keys: true
+      - check_data_values: true
+      - check_schema_constraints: true
+
+  - name: "rollback_integrity"
+    description: "Test data integrity during rollback operations"
+    forward_migration: ["0.5.0", "0.6.0"]
+    rollback_migration: ["0.6.0", "0.5.0"]
+    data_preservation_threshold: 0.95
+
+  - name: "complex_schema_integrity"
+    description: "Test integrity of complex schema changes"
+    focus_tables: ["tools", "servers", "a2a_agents"]
+    schema_validation:
+      - check_column_types: true
+      - check_constraints: true
+      - check_indexes: true
+      - check_relationships: true
+
+# Error recovery test scenarios
+error_scenarios:
+  - name: "corrupted_data_recovery"
+    description: "Test migration with corrupted data"
+    corruption_types:
+      - "invalid_json_schemas"
+      - "broken_foreign_keys"
+      - "null_required_fields"
+      - "oversized_text_fields"
+    expected_behavior: "graceful_handling"
+
+  - name: "interrupted_migration"
+    description: "Test recovery from interrupted migrations"
+    interruption_points: [25, 50, 75]  # percentage of completion
+    recovery_method: "resume_or_rollback"
+
+  - name: "resource_constraint_migration"
+    description: "Test migration under resource constraints"
+    constraints:
+      memory_limit: "256MB"
+      disk_space_limit: "1GB"
+      timeout: 60
+    expected_behavior: "controlled_failure_or_completion"
+
+# Database-specific scenarios
+database_scenarios:
+  sqlite:
+    - name: "sqlite_specific_features"
+      description: "Test SQLite-specific migration features"
+      features:
+        - "wal_mode_handling"
+        - "foreign_key_enforcement"
+        - "transaction_isolation"
+
+  postgresql:
+    - name: "postgres_advanced_features"
+      description: "Test PostgreSQL-specific features"
+      features:
+        - "concurrent_index_creation"
+        - "constraint_validation"
+        - "json_column_migrations"
+        - "full_text_search_indexes"
+
+# Expected outcomes and validation rules
+validation_rules:
+  data_integrity:
+    max_data_loss_percentage: 0.0  # No data loss allowed
+    required_tables: ["tools", "servers", "gateways", "alembic_version"]
+    foreign_key_violations: 0
+
+  performance:
+    sqlite_max_duration: 60    # seconds
+    postgres_max_duration: 120 # seconds
+    memory_usage_limit: "512MB"
+
+  schema_validation:
+    breaking_changes_allowed: false
+    new_tables_allowed: true
+    column_type_changes_allowed: false
+
+  error_handling:
+    clear_error_messages: true
+    rollback_capability: true
+    transaction_safety: true
+
+# Test environment configuration
+environment:
+  container_settings:
+    docker:
+      memory_limit: "1GB"
+      cpu_limit: "2"
+      timeout: 600
+
+  logging:
+    level: "INFO"
+    capture_sql: true
+    capture_alembic_output: true
+    performance_metrics: true
+
+  reporting:
+    generate_html_report: true
+    include_schema_diffs: true
+    include_performance_charts: true
+    save_test_data: true

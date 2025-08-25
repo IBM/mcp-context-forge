@@ -4468,3 +4468,133 @@ fuzz-clean:                         ## 🧹 Clean fuzzing artifacts
 
 fuzz-all: fuzz-hypothesis fuzz-atheris fuzz-api fuzz-security fuzz-report  ## 🎯 Run complete fuzzing suite
 	@echo "🎯 Complete fuzzing suite finished"
+
+# =============================================================================
+# 🔄 MIGRATION TESTING
+# =============================================================================
+# help: 🔄 MIGRATION TESTING
+# help: migration-test-all       - Run comprehensive migration test suite (SQLite + PostgreSQL)
+# help: migration-test-sqlite    - Run SQLite container migration tests only
+# help: migration-test-postgres  - Run PostgreSQL compose migration tests only
+# help: migration-test-performance - Run migration performance benchmarking
+# help: migration-setup          - Setup migration test environment
+# help: migration-cleanup        - Clean up migration test containers and volumes
+# help: migration-debug          - Debug migration test failures with diagnostic info
+# help: migration-status         - Show current version configuration and supported versions
+
+# Migration testing configuration
+MIGRATION_TEST_DIR := tests/migration
+MIGRATION_REPORTS_DIR := $(MIGRATION_TEST_DIR)/reports
+
+# Get supported versions from version config (n-2 policy)
+MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.6.0 latest")
+
+.PHONY: migration-test-all migration-test-sqlite migration-test-postgres migration-test-performance \
+        migration-setup migration-cleanup migration-debug migration-status
+
+migration-test-all: migration-setup        ## Run comprehensive migration test suite (SQLite + PostgreSQL)
+	@echo "🚀 Running comprehensive migration tests..."
+	@echo "📋 Testing SQLite migrations..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+		-v --tb=short --maxfail=3 \
+		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'"
+	@echo ""
+	@echo "📋 Testing PostgreSQL migrations..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+		-v --tb=short --maxfail=3 -m 'not slow' \
+		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'"
+	@echo ""
+	@echo "📊 Generating migration test report..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -c 'from tests.migration.utils.reporting import MigrationReportGenerator; \
+		r = MigrationReportGenerator(); r.generate_summary_report()'"
+	@echo "✅ Migration tests complete! Reports in $(MIGRATION_REPORTS_DIR)/"
+
+migration-test-sqlite:                     ## Run SQLite container migration tests only
+	@echo "🐍 Running SQLite migration tests..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+		-v --tb=short --log-cli-level=INFO"
+	@echo "✅ SQLite migration tests complete!"
+
+migration-test-postgres:                   ## Run PostgreSQL compose migration tests only
+	@echo "🐘 Running PostgreSQL migration tests..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+		-v --tb=short --log-cli-level=INFO -m 'not slow'"
+	@echo "✅ PostgreSQL migration tests complete!"
+
+migration-test-performance:               ## Run migration performance benchmarking
+	@echo "⚡ Running migration performance tests..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		pytest $(MIGRATION_TEST_DIR)/test_migration_performance.py \
+		-v --tb=short --log-cli-level=INFO"
+	@echo "✅ Performance tests complete!"
+
+migration-setup:                           ## Setup migration test environment
+	@echo "🔧 Setting up migration test environment..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(MIGRATION_REPORTS_DIR)
+	@mkdir -p $(MIGRATION_TEST_DIR)/logs
+	@echo "📦 Pulling required container images..."
+	@if command -v docker >/dev/null 2>&1; then \
+		for version in $(MIGRATION_VERSIONS); do \
+			echo "  🔄 Pulling ghcr.io/ibm/mcp-context-forge:$$version..."; \
+			docker pull ghcr.io/ibm/mcp-context-forge:$$version || true; \
+		done; \
+	else \
+		echo "⚠️  Docker not available - tests may fail"; \
+	fi
+	@echo "✅ Migration test environment ready!"
+
+migration-cleanup:                         ## Clean up migration test containers and volumes
+	@echo "🧹 Cleaning up migration test environment..."
+	@if command -v docker >/dev/null 2>&1; then \
+		echo "🛑 Stopping migration test containers..."; \
+		docker ps -a --filter "name=migration-test-" -q | xargs -r docker stop; \
+		docker ps -a --filter "name=migration-test-" -q | xargs -r docker rm; \
+		echo "🗑️  Removing migration test volumes..."; \
+		docker volume ls --filter "name=migration-test-" -q | xargs -r docker volume rm; \
+		echo "🧼 Pruning migration test networks..."; \
+		docker network ls --filter "name=migration-test-" -q | xargs -r docker network rm; \
+	fi
+	@echo "🗂️  Cleaning up temporary files..."
+	@rm -rf /tmp/migration_test_*
+	@rm -rf $(MIGRATION_TEST_DIR)/logs/*.log
+	@echo "✅ Migration test cleanup complete!"
+
+migration-debug:                           ## Debug migration test failures with diagnostic info
+	@echo "🔍 Migration test diagnostic information:"
+	@echo ""
+	@echo "📦 Container Runtime Info:"
+	@if command -v docker >/dev/null 2>&1; then \
+		echo "  Docker version: $$(docker --version)"; \
+		echo "  Running containers:"; \
+		docker ps --filter "name=migration-test-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"; \
+		echo "  Available images:"; \
+		docker images --filter "reference=ghcr.io/ibm/mcp-context-forge" --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"; \
+	else \
+		echo "  ❌ Docker not available"; \
+	fi
+	@echo ""
+	@echo "📁 Test Environment:"
+	@echo "  Migration test dir: $(MIGRATION_TEST_DIR)"
+	@echo "  Reports dir: $(MIGRATION_REPORTS_DIR)"
+	@echo "  Virtual env: $(VENV_DIR)"
+	@echo "  Logs: $$(find $(MIGRATION_TEST_DIR)/logs -name "*.log" 2>/dev/null | wc -l) log files"
+	@echo ""
+	@echo "🔧 Recent log entries:"
+	@find $(MIGRATION_TEST_DIR)/logs -name "*.log" -type f -exec tail -n 5 {} + 2>/dev/null || echo "  No log files found"
+	@echo "✅ Diagnostic complete!"
+
+migration-status:                          ## Show current version configuration and supported versions
+	@echo "📊 Migration Test Version Configuration:"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		cd $(MIGRATION_TEST_DIR) && python3 version_status.py"
