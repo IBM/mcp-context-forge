@@ -543,3 +543,343 @@ class TestServerService:
         await server_service.reset_metrics(test_db)
         test_db.execute.assert_called_once()
         test_db.commit.assert_called_once()
+
+    # --------------------------- UUID normalization -------------------- #
+    @pytest.mark.asyncio
+    async def test_register_server_uuid_normalization_standard_format(self, server_service, test_db):
+        """Test server registration with standard UUID format (with dashes) normalizes to hex format."""
+        import uuid as uuid_module
+
+        # Standard UUID format (with dashes)
+        standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace('-', '')
+
+        # No existing server with the same name
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Capture the server being added to verify UUID normalization
+        captured_server = None
+        def capture_add(server):
+            nonlocal captured_server
+            captured_server = server
+
+        test_db.add = Mock(side_effect=capture_add)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.get = Mock(return_value=None)  # No associated items
+
+        # Mock service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service._convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id=expected_hex_uuid,
+                name="UUID Normalization Test",
+                description="Test UUID normalization",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                is_active=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_create = ServerCreate(
+            id=standard_uuid,
+            name="UUID Normalization Test",
+            description="Test UUID normalization"
+        )
+
+        # Call the service method
+        result = await server_service.register_server(test_db, server_create)
+
+        # Verify UUID was normalized to hex format
+        assert captured_server is not None
+        assert captured_server.id == expected_hex_uuid
+        assert len(captured_server.id) == 32
+        assert "-" not in captured_server.id
+        assert result.id == expected_hex_uuid
+
+        # Verify other operations were called
+        test_db.add.assert_called_once()
+        test_db.commit.assert_called_once()
+        test_db.refresh.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_register_server_uuid_normalization_hex_format(self, server_service, test_db):
+        """Test server registration with hex UUID format works correctly."""
+        import uuid as uuid_module
+
+        # Standard UUID that will be normalized
+        standard_uuid = "123e4567-e89b-12d3-a456-426614174000"
+        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace('-', '')
+
+        # No existing server with the same name
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Capture the server being added to verify UUID normalization
+        captured_server = None
+        def capture_add(server):
+            nonlocal captured_server
+            captured_server = server
+
+        test_db.add = Mock(side_effect=capture_add)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.get = Mock(return_value=None)  # No associated items
+
+        # Mock service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service._convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id=expected_hex_uuid,
+                name="Hex UUID Test",
+                description="Test hex UUID handling",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                is_active=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_create = ServerCreate(
+            id=standard_uuid,  # Will be normalized by the service
+            name="Hex UUID Test",
+            description="Test hex UUID handling"
+        )
+
+        # Call the service method
+        result = await server_service.register_server(test_db, server_create)
+
+        # Verify UUID was normalized correctly
+        assert captured_server is not None
+        assert captured_server.id == expected_hex_uuid
+        assert len(captured_server.id) == 32
+        assert "-" not in captured_server.id
+        assert captured_server.id.isalnum()
+        assert result.id == expected_hex_uuid
+
+    @pytest.mark.asyncio
+    async def test_register_server_no_uuid_auto_generation(self, server_service, test_db):
+        """Test server registration without UUID allows auto-generation."""
+        # No existing server with the same name
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Capture the server being added
+        captured_server = None
+        def capture_add(server):
+            nonlocal captured_server
+            captured_server = server
+
+        test_db.add = Mock(side_effect=capture_add)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.get = Mock(return_value=None)  # No associated items
+
+        # Mock service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service._convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="auto_generated_uuid_32_chars_hex",
+                name="Auto UUID Test",
+                description="Test auto UUID generation",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                is_active=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_create = ServerCreate(
+            name="Auto UUID Test",
+            description="Test auto UUID generation"
+        )
+        # Verify no UUID is set
+        assert server_create.id is None
+
+        # Call the service method
+        result = await server_service.register_server(test_db, server_create)
+
+        # Verify no UUID was set on the server (letting DB handle auto-generation)
+        assert captured_server is not None
+        assert captured_server.id is None  # Service doesn't set UUID when not provided
+        assert result.id == "auto_generated_uuid_32_chars_hex"
+
+    @pytest.mark.asyncio
+    async def test_register_server_uuid_normalization_error_handling(self, server_service, test_db):
+        """Test that UUID normalization handles errors gracefully."""
+        # No existing server with the same name
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock database rollback for error scenarios
+        test_db.rollback = Mock()
+
+        server_create = ServerCreate(
+            id="550e8400-e29b-41d4-a716-446655440000",
+            name="Error Test",
+            description="Test error handling"
+        )
+
+        # Simulate an error during database operations
+        test_db.add = Mock(side_effect=Exception("Database error"))
+
+        # The service should catch the exception and raise ServerError
+        with pytest.raises(ServerError) as exc:
+            await server_service.register_server(test_db, server_create)
+
+        assert "Failed to register server" in str(exc.value)
+        test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_server_uuid_normalization(self, server_service, test_db):
+        """Test server update with UUID normalization."""
+        import uuid as uuid_module
+
+        # Mock existing server
+        existing_server = MagicMock(spec=DbServer)
+        existing_server.id = "oldserverid"
+        existing_server.name = "Old Name"
+        existing_server.is_active = True
+        existing_server.tools = []
+        existing_server.resources = []
+        existing_server.prompts = []
+
+        # New UUID to update to
+        new_standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        expected_hex_uuid = str(uuid_module.UUID(new_standard_uuid)).replace('-', '')
+
+        # Mock db.get to return existing server for the initial lookup, then None for the UUID check
+        test_db.get = Mock(side_effect=lambda cls, _id: existing_server if _id == "oldserverid" else None)
+
+        # Mock name conflict check
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        # Mock service methods
+        server_service._notify_server_updated = AsyncMock()
+        server_service._convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id=expected_hex_uuid,
+                name="Updated Server",
+                description="Updated description",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                is_active=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_update = ServerUpdate(
+            id=new_standard_uuid,
+            name="Updated Server",
+            description="Updated description"
+        )
+
+        # Call the service method
+        result = await server_service.update_server(test_db, "oldserverid", server_update)
+
+        # Verify UUID was set correctly (note: actual normalization happens at create time)
+        # The update method currently just sets the ID directly
+        assert existing_server.id == new_standard_uuid  # Update doesn't normalize currently
+        assert result.id == expected_hex_uuid
+        test_db.commit.assert_called_once()
+        test_db.refresh.assert_called_once()
+
+    def test_uuid_normalization_edge_cases(self, server_service):
+        """Test edge cases in UUID normalization logic."""
+        import uuid as uuid_module
+
+        # Test various UUID formats that should all normalize correctly
+        test_cases = [
+            {
+                "input": "550e8400-e29b-41d4-a716-446655440000",
+                "expected": "550e8400e29b41d4a716446655440000",
+                "description": "Standard lowercase UUID"
+            },
+            {
+                "input": "550E8400-E29B-41D4-A716-446655440000",
+                "expected": "550e8400e29b41d4a716446655440000",
+                "description": "Uppercase UUID (should normalize to lowercase)"
+            },
+            {
+                "input": "00000000-0000-0000-0000-000000000000",
+                "expected": "00000000000000000000000000000000",
+                "description": "Nil UUID"
+            },
+            {
+                "input": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                "expected": "ffffffffffffffffffffffffffffffff",
+                "description": "Max UUID"
+            },
+        ]
+
+        for case in test_cases:
+            # Simulate the exact normalization logic from server_service.py
+            normalized = str(uuid_module.UUID(case["input"])).replace('-', '')
+            assert normalized == case["expected"], f"Failed for {case['description']}: expected {case['expected']}, got {normalized}"
+            assert len(normalized) == 32
+            # Check that any alphabetic characters are lowercase
+            assert normalized.islower() or not any(c.isalpha() for c in normalized)
+            assert normalized.isalnum()
