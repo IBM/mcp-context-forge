@@ -51,6 +51,13 @@ services:
       - BASIC_AUTH_PASSWORD=changeme
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true
+      # Multi-User Authentication (uncomment to enable)
+      # - MULTI_USER_ENABLED=true
+      # - LEGACY_AUTH_MODE=false
+      # - JWT_ISSUER=mcpgateway
+      # - JWT_AUDIENCE=mcpgateway-api
+      # - PASSWORD_MIN_LENGTH=12
+      # - ENABLE_AUTH_LOGGING=true
       # Security configuration (using defaults)
       - ENVIRONMENT=development
       - SECURITY_HEADERS_ENABLED=true

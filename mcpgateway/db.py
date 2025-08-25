@@ -193,6 +193,239 @@ server_a2a_association = Table(
 )
 
 
+# User Management Models
+
+
+class User(Base):
+    """
+    ORM model for application users.
+
+    Supports user management with password authentication,
+    team membership, and resource ownership.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # Status fields
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Email verification
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Password reset functionality
+    password_reset_token: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    password_reset_expires: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Account security
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    sessions: Mapped[List["UserSession"]] = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
+    api_tokens: Mapped[List["ApiToken"]] = relationship("ApiToken", back_populates="user", cascade="all, delete-orphan")
+    team_memberships: Mapped[List["TeamMember"]] = relationship("TeamMember", back_populates="user", foreign_keys="TeamMember.user_id", cascade="all, delete-orphan")
+    created_teams: Mapped[List["Team"]] = relationship("Team", back_populates="created_by_user", foreign_keys="Team.created_by")
+    auth_events: Mapped[List["AuthEvent"]] = relationship("AuthEvent", back_populates="user", foreign_keys="AuthEvent.user_id", cascade="all, delete-orphan")
+
+    # Resource ownership relationships
+    owned_tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="owner", foreign_keys="Tool.user_id")
+    owned_resources: Mapped[List["Resource"]] = relationship("Resource", back_populates="owner", foreign_keys="Resource.user_id")
+    owned_prompts: Mapped[List["Prompt"]] = relationship("Prompt", back_populates="owner", foreign_keys="Prompt.user_id")
+    owned_servers: Mapped[List["Server"]] = relationship("Server", back_populates="owner", foreign_keys="Server.user_id")
+    owned_gateways: Mapped[List["Gateway"]] = relationship("Gateway", back_populates="owner", foreign_keys="Gateway.user_id")
+    owned_a2a_agents: Mapped[List["A2AAgent"]] = relationship("A2AAgent", back_populates="owner", foreign_keys="A2AAgent.user_id")
+
+
+class UserSession(Base):
+    """
+    ORM model for user authentication sessions.
+
+    Tracks active user sessions with expiration and activity monitoring.
+    """
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_token: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_activity: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    # Session metadata
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="sessions")
+
+
+class ApiToken(Base):
+    """
+    ORM model for API tokens.
+
+    Enables programmatic access with individual token management and tracking.
+    """
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    jti: Mapped[str] = mapped_column(String, unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Status and scope
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    scopes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="api_tokens")
+
+    # Unique constraint for user token names
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_user_token_name"),)
+
+
+class AuthEvent(Base):
+    """
+    ORM model for authentication audit events.
+
+    Logs all authentication-related activities for security monitoring.
+    """
+
+    __tablename__ = "auth_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    user_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)  # login, logout, token_created, auth_failed, etc.
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    details: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    failure_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Relationships
+    user: Mapped[Optional["User"]] = relationship("User", back_populates="auth_events")
+
+
+class Team(Base):
+    """
+    ORM model for teams/groups.
+
+    Supports team-based resource sharing and collaboration.
+    """
+
+    __tablename__ = "teams"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Relationships
+    created_by_user: Mapped["User"] = relationship("User", back_populates="created_teams", foreign_keys=[created_by])
+    members: Mapped[List["TeamMember"]] = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
+    invitations: Mapped[List["TeamInvitation"]] = relationship("TeamInvitation", back_populates="team", cascade="all, delete-orphan")
+
+    # Team-scoped resources
+    team_tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="scope_team", foreign_keys="Tool.scope_team_id")
+    team_resources: Mapped[List["Resource"]] = relationship("Resource", back_populates="scope_team", foreign_keys="Resource.scope_team_id")
+    team_prompts: Mapped[List["Prompt"]] = relationship("Prompt", back_populates="scope_team", foreign_keys="Prompt.scope_team_id")
+    team_servers: Mapped[List["Server"]] = relationship("Server", back_populates="scope_team", foreign_keys="Server.scope_team_id")
+    team_gateways: Mapped[List["Gateway"]] = relationship("Gateway", back_populates="scope_team", foreign_keys="Gateway.scope_team_id")
+    team_a2a_agents: Mapped[List["A2AAgent"]] = relationship("A2AAgent", back_populates="scope_team", foreign_keys="A2AAgent.scope_team_id")
+
+
+class TeamMember(Base):
+    """
+    ORM model for team membership with roles.
+
+    Links users to teams with role-based permissions.
+    """
+
+    __tablename__ = "team_members"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    team_id: Mapped[str] = mapped_column(String, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="member")  # 'owner', 'admin', 'member'
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    invited_by: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+
+    # Relationships
+    team: Mapped["Team"] = relationship("Team", back_populates="members")
+    user: Mapped["User"] = relationship("User", back_populates="team_memberships", foreign_keys=[user_id])
+    invited_by_user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[invited_by])
+
+    # Unique constraint for team membership
+    __table_args__ = (UniqueConstraint("team_id", "user_id", name="uq_team_user_membership"),)
+
+
+class TeamInvitation(Base):
+    """
+    ORM model for team invitations.
+
+    Manages pending team invitations with expiration and token-based acceptance.
+    """
+
+    __tablename__ = "team_invitations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    team_id: Mapped[str] = mapped_column(String, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="member")
+    invited_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+
+    # Timestamps
+    invited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_by: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+
+    # Invitation token and status
+    token: Mapped[Optional[str]] = mapped_column(String(500), unique=True, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Relationships
+    team: Mapped["Team"] = relationship("Team", back_populates="invitations")
+    invited_by_user: Mapped["User"] = relationship("User", foreign_keys=[invited_by])
+    accepted_by_user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[accepted_by])
+
+    # Unique constraint for team email invitations
+    __table_args__ = (UniqueConstraint("team_id", "email", name="uq_team_email_invitation"),)
+
+
 class GlobalConfig(Base):
     """Global configuration settings.
 
@@ -415,10 +648,19 @@ class Tool(Base):
     custom_name_slug: Mapped[Optional[str]] = mapped_column(String, nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    # User ownership and scoping
+    user_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    scope_type: Mapped[str] = mapped_column(String(50), default="global")  # 'private', 'team', 'global'
+    scope_team_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("teams.id"), nullable=True)
+
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
     # gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
     gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_id == Gateway.id", foreign_keys=[gateway_id], back_populates="tools")
+
+    # User and team relationships
+    owner: Mapped[Optional["User"]] = relationship("User", back_populates="owned_tools", foreign_keys=[user_id])
+    scope_team: Mapped[Optional["Team"]] = relationship("Team", back_populates="team_tools", foreign_keys=[scope_team_id])
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
 
     # Many-to-many relationship with Servers
@@ -672,6 +914,11 @@ class Resource(Base):
     federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
+    # User ownership and scoping
+    user_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    scope_type: Mapped[str] = mapped_column(String(50), default="global")  # 'private', 'team', 'global'
+    scope_team_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("teams.id"), nullable=True)
+
     metrics: Mapped[List["ResourceMetric"]] = relationship("ResourceMetric", back_populates="resource", cascade="all, delete-orphan")
 
     # Content storage - can be text or binary
@@ -684,6 +931,10 @@ class Resource(Base):
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="resources")
     # federated_with = relationship("Gateway", secondary=resource_gateway_table, back_populates="federated_resources")
+
+    # User and team relationships
+    owner: Mapped[Optional["User"]] = relationship("User", back_populates="owned_resources", foreign_keys=[user_id])
+    scope_team: Mapped[Optional["Team"]] = relationship("Team", back_populates="team_resources", foreign_keys=[scope_team_id])
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
@@ -899,10 +1150,19 @@ class Prompt(Base):
     federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
+    # User ownership and scoping
+    user_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    scope_type: Mapped[str] = mapped_column(String(50), default="global")  # 'private', 'team', 'global'
+    scope_team_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("teams.id"), nullable=True)
+
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
 
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="prompts")
+
+    # User and team relationships
+    owner: Mapped[Optional["User"]] = relationship("User", back_populates="owned_prompts", foreign_keys=[user_id])
+    scope_team: Mapped[Optional["Team"]] = relationship("Team", back_populates="team_prompts", foreign_keys=[scope_team_id])
     # federated_with = relationship("Gateway", secondary=prompt_gateway_table, back_populates="federated_prompts")
 
     # Many-to-many relationship with Servers
@@ -1083,7 +1343,16 @@ class Server(Base):
     federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
+    # User ownership and scoping
+    user_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    scope_type: Mapped[str] = mapped_column(String(50), default="global")  # 'private', 'team', 'global'
+    scope_team_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("teams.id"), nullable=True)
+
     metrics: Mapped[List["ServerMetric"]] = relationship("ServerMetric", back_populates="server", cascade="all, delete-orphan")
+
+    # User and team relationships
+    owner: Mapped[Optional["User"]] = relationship("User", back_populates="owned_servers", foreign_keys=[user_id])
+    scope_team: Mapped[Optional["Team"]] = relationship("Team", back_populates="team_servers", foreign_keys=[scope_team_id])
 
     # Many-to-many relationships for associated items
     tools: Mapped[List["Tool"]] = relationship("Tool", secondary=server_tool_association, back_populates="servers")
@@ -1235,8 +1504,17 @@ class Gateway(Base):
     federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
+    # User ownership and scoping
+    user_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    scope_type: Mapped[str] = mapped_column(String(50), default="global")  # 'private', 'team', 'global'
+    scope_team_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("teams.id"), nullable=True)
+
     # Header passthrough configuration
     passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array
+
+    # User and team relationships
+    owner: Mapped[Optional["User"]] = relationship("User", back_populates="owned_gateways", foreign_keys=[user_id])
+    scope_team: Mapped[Optional["Team"]] = relationship("Team", back_populates="team_gateways", foreign_keys=[scope_team_id])
 
     # Relationship with local tools this gateway provides
     tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan")
@@ -1355,7 +1633,14 @@ class A2AAgent(Base):
     federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
+    # User ownership and scoping
+    user_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    scope_type: Mapped[str] = mapped_column(String(50), default="global")  # 'private', 'team', 'global'
+    scope_team_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("teams.id"), nullable=True)
+
     # Relationships
+    owner: Mapped[Optional["User"]] = relationship("User", back_populates="owned_a2a_agents", foreign_keys=[user_id])
+    scope_team: Mapped[Optional["Team"]] = relationship("Team", back_populates="team_a2a_agents", foreign_keys=[scope_team_id])
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
 

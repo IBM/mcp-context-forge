@@ -233,13 +233,15 @@ class TestDocsAndRedoc:
 
     async def test_docs_with_basic_auth(self, client: AsyncClient):
         """Test /docs endpoint with Basic Auth (should return 200 if credentials are valid)."""
-        headers = basic_auth_header("admin", "changeme")
+        from mcpgateway.config import settings
+        headers = basic_auth_header(settings.basic_auth_user, settings.basic_auth_password)
         response = await client.get("/docs", headers=headers)
         assert response.status_code == 200
 
     async def test_redoc_with_basic_auth(self, client: AsyncClient):
         """Test /redoc endpoint with Basic Auth (should return 200 if credentials are valid)."""
-        headers = basic_auth_header("admin", "changeme")
+        from mcpgateway.config import settings
+        headers = basic_auth_header(settings.basic_auth_user, settings.basic_auth_password)
         response = await client.get("/redoc", headers=headers)
         assert response.status_code == 200
 

@@ -27,14 +27,62 @@ MCPGATEWAY_ENABLE_PROMPTS=false  # If not using prompts
 MCPGATEWAY_ENABLE_RESOURCES=false # If not using resources
 ```
 
-### 2. Enable Authentication & Security
+### 2. Configure Authentication (Choose One Mode)
+
+#### Option A: Multi-User Mode (Recommended)
 
 ```bash
-# Configure strong authentication
-MCPGATEWAY_AUTH_ENABLED=true
-MCPGATEWAY_AUTH_USERNAME=custom-username  # Change from default
-MCPGATEWAY_AUTH_PASSWORD=strong-password-here  # Use secrets manager
+# Enable multi-user authentication
+MULTI_USER_ENABLED=true
+LEGACY_AUTH_MODE=false
+AUTH_REQUIRED=true
 
+# JWT Security Configuration
+JWT_SECRET_KEY=your-very-secure-random-secret-key-here  # Use secrets manager
+JWT_ISSUER=mcpgateway
+JWT_AUDIENCE=mcpgateway-api
+JWT_ALGORITHM=HS256
+
+# Strong Password Policy
+PASSWORD_MIN_LENGTH=16
+PASSWORD_REQUIRE_UPPERCASE=true
+PASSWORD_REQUIRE_LOWERCASE=true
+PASSWORD_REQUIRE_NUMBERS=true
+PASSWORD_REQUIRE_SPECIAL=true
+PASSWORD_BCRYPT_ROUNDS=12
+
+# Session Security
+SESSION_TIMEOUT_HOURS=8
+TOKEN_DEFAULT_EXPIRY_DAYS=30
+MAX_FAILED_LOGIN_ATTEMPTS=3
+ACCOUNT_LOCKOUT_DURATION_MINUTES=60
+
+# Security Monitoring
+ENABLE_AUTH_LOGGING=true
+AUTH_LOG_RETENTION_DAYS=365
+
+# Default admin user (change password after first login)
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASSWORD=your-initial-admin-password-here
+```
+
+#### Option B: Legacy Single-User Mode
+
+```bash
+# Legacy authentication (backward compatibility)
+MULTI_USER_ENABLED=false
+LEGACY_AUTH_MODE=true
+AUTH_REQUIRED=true
+
+# Configure strong authentication
+BASIC_AUTH_USER=custom-username  # Change from default
+BASIC_AUTH_PASSWORD=strong-password-here  # Use secrets manager
+JWT_SECRET_KEY=your-secure-jwt-secret-here  # Use secrets manager
+```
+
+#### Common Security Settings
+
+```bash
 # Set environment for security defaults
 ENVIRONMENT=production
 

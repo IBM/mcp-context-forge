@@ -66,22 +66,53 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 
 ---
 
-## 🔐 Security
+## 🔐 Security & Authentication
 
-??? tip "Auth mechanisms"
+??? success "Multi-User Authentication System (NEW)"
 
+    * **User Management** - Individual accounts with secure password policies
+    * **API Token Management** - Per-user token creation, revocation, and tracking
+    * **Team Collaboration** - Team-based resource sharing and access control
+    * **Resource Scoping** - Private, team, and global resource visibility
+    * **Security Features** - Account lockout, audit logging, CSRF protection
+    * **Enterprise Ready** - Bcrypt hashing, JWT security, compliance logging
+
+??? tip "Authentication Modes"
+
+    **Multi-User Mode (Recommended):**
+    * Individual user accounts and authentication
+    * Team collaboration and resource sharing
+    * Enhanced JWT tokens with revocation support
+    * Comprehensive audit logging and security
+
+    **Legacy Mode (Backward Compatible):**
     * **JWT bearer** (default, signed with `JWT_SECRET_KEY`)
     * **HTTP Basic** for the Admin UI
-    * **Custom headers** (e.g., API keys) per tool or gateway
+    * Single-user authentication
 
 ??? info "Rate limiting"
 
     Set `MAX_TOOL_CALLS_PER_MINUTE` to throttle abusive clients.
     Exceeding the limit returns **HTTP 429** with a `Retry-After` header.
 
-??? example "Generate a 24 h token"
+??? example "Authentication Examples"
 
+    **Multi-User Mode:**
     ```bash
+    # Login and get access token
+    curl -X POST http://localhost:4444/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{"username": "admin", "password": "changeme"}'
+
+    # Create API token
+    curl -X POST http://localhost:4444/tokens \
+      -H "Authorization: Bearer $ACCESS_TOKEN" \
+      -d '{"name": "my-token", "expires_in_days": 30}'
+    ```
+
+    **Legacy Mode:**
+    ```bash
+    # Generate token with utility
     python3 -m mcpgateway.utils.create_jwt_token \
       --username alice --exp 1440 --secret "$JWT_SECRET_KEY"
     ```

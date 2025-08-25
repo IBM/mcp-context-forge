@@ -155,14 +155,40 @@ async def get_well_known_status(user: str = Depends(require_auth)):
     configured_files = []
 
     # Always available
-    configured_files.append({"path": "/.well-known/robots.txt", "enabled": True, "description": "Robot exclusion standard", "cache_max_age": settings.well_known_cache_max_age})
+    configured_files.append(
+        {
+            "path": "/.well-known/robots.txt",
+            "enabled": True,
+            "description": "Robot exclusion standard",
+            "cache_max_age": settings.well_known_cache_max_age,
+        }
+    )
 
     # Conditionally available
     if settings.well_known_security_txt_enabled:
-        configured_files.append({"path": "/.well-known/security.txt", "enabled": True, "description": "Security contact information", "cache_max_age": settings.well_known_cache_max_age})
+        configured_files.append(
+            {
+                "path": "/.well-known/security.txt",
+                "enabled": True,
+                "description": "Security contact information",
+                "cache_max_age": settings.well_known_cache_max_age,
+            }
+        )
 
     # Custom files
     for filename in settings.custom_well_known_files:
-        configured_files.append({"path": f"/.well-known/{filename}", "enabled": True, "description": "Custom well-known file", "cache_max_age": settings.well_known_cache_max_age})
+        configured_files.append(
+            {
+                "path": f"/.well-known/{filename}",
+                "enabled": True,
+                "description": "Custom well-known file",
+                "cache_max_age": settings.well_known_cache_max_age,
+            }
+        )
 
-    return {"enabled": settings.well_known_enabled, "configured_files": configured_files, "supported_files": list(WELL_KNOWN_REGISTRY.keys()), "cache_max_age": settings.well_known_cache_max_age}
+    return {
+        "enabled": settings.well_known_enabled,
+        "configured_files": configured_files,
+        "supported_files": list(WELL_KNOWN_REGISTRY.keys()),
+        "cache_max_age": settings.well_known_cache_max_age,
+    }

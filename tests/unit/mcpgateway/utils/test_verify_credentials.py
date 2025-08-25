@@ -344,7 +344,8 @@ async def test_integration_docs_endpoint_both_auth_methods(test_client, monkeypa
     monkeypatch.setattr("mcpgateway.config.settings.jwt_secret_key", SECRET)
     monkeypatch.setattr("mcpgateway.config.settings.jwt_algorithm", ALGO)
     # Test with Basic Auth
-    basic_creds = base64.b64encode(b"admin:changeme").decode()
+    from mcpgateway.config import settings
+    basic_creds = base64.b64encode(f"{settings.basic_auth_user}:{settings.basic_auth_password}".encode()).decode()
     response1 = test_client.get("/docs", headers={"Authorization": f"Basic {basic_creds}"})
     assert response1.status_code == 200
     # Test with Bearer token

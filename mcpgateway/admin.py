@@ -40,8 +40,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, GlobalConfig
+from mcpgateway.db import get_db, GlobalConfig, Team, TeamMember
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import User
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -75,6 +76,8 @@ from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayN
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService
+
+# from mcpgateway.services.jwt_service import JWTService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
@@ -82,6 +85,8 @@ from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
+
+# from mcpgateway.services.user_service import UserService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -1598,6 +1603,16 @@ async def admin_ui(
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
+            "multi_user_enabled": settings.multi_user_enabled and not settings.legacy_auth_mode,
+            "auth_required": settings.auth_required,
+            "jwt_algorithm": settings.jwt_algorithm,
+            "password_min_length": settings.password_min_length,
+            "session_timeout_hours": settings.session_timeout_hours,
+            "enable_auth_logging": settings.enable_auth_logging,
+            "environment": settings.environment,
+            "cache_type": settings.cache_type,
+            "database_type": "SQLite" if "sqlite" in settings.database_url.lower() else "PostgreSQL" if "postgres" in settings.database_url.lower() else "Other",
+            "version": "0.6.0",
         },
     )
 
@@ -5690,3 +5705,156 @@ async def admin_test_a2a_agent(
     except Exception as e:
         LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
         return JSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
+
+
+# ===================================
+# User Management Admin UI Endpoints
+# ===================================
+
+
+@admin_router.get("/users/stats")
+async def admin_user_stats(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Get user statistics for admin dashboard."""
+    try:
+        if not settings.multi_user_enabled or settings.legacy_auth_mode:
+            return {"total_users": 0, "active_users": 0, "admin_users": 0, "total_api_tokens": 0}
+
+        # Get statistics using direct database queries
+        total_users = db.query(User).count()
+        active_users = db.query(User).filter(User.is_active.is_(True)).count()
+        admin_users = db.query(User).filter(User.is_admin.is_(True)).count()
+
+        # Count API tokens
+        # First-Party
+        from mcpgateway.db import ApiToken
+
+        total_api_tokens = db.query(ApiToken).filter(ApiToken.is_active.is_(True)).count()
+
+        return {
+            "total_users": total_users,
+            "active_users": active_users,
+            "admin_users": admin_users,
+            "total_api_tokens": total_api_tokens,
+        }
+
+    except Exception as e:
+        LOGGER.error(f"Error getting user stats: {e}")
+        return {"total_users": 0, "active_users": 0, "admin_users": 0, "total_api_tokens": 0}
+
+
+@admin_router.get("/users/stats-html")
+async def admin_user_stats_html(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> HTMLResponse:
+    """Get user statistics HTML fragment for dashboard cards."""
+    try:
+        if not settings.multi_user_enabled or settings.legacy_auth_mode:
+            return HTMLResponse('<div class="col-span-4 text-center py-4 text-gray-500">User statistics not available in legacy mode</div>')
+
+        # Get statistics
+        total_users = db.query(User).count()
+        active_users = db.query(User).filter(User.is_active.is_(True)).count()
+        admin_users = db.query(User).filter(User.is_admin.is_(True)).count()
+
+        # First-Party
+        from mcpgateway.db import ApiToken
+
+        total_api_tokens = db.query(ApiToken).filter(ApiToken.is_active.is_(True)).count()
+
+        # Build statistics HTML
+        html = f"""
+            <div class="bg-blue-50 dark:bg-blue-900 p-4 rounded-lg">
+              <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{total_users}</div>
+              <div class="text-sm text-blue-800 dark:text-blue-300">Total Users</div>
+            </div>
+            <div class="bg-green-50 dark:bg-green-900 p-4 rounded-lg">
+              <div class="text-2xl font-bold text-green-600 dark:text-green-400">{active_users}</div>
+              <div class="text-sm text-green-800 dark:text-green-300">Active Users</div>
+            </div>
+            <div class="bg-purple-50 dark:bg-purple-900 p-4 rounded-lg">
+              <div class="text-2xl font-bold text-purple-600 dark:text-purple-400">{admin_users}</div>
+              <div class="text-sm text-purple-800 dark:text-purple-300">Admin Users</div>
+            </div>
+            <div class="bg-yellow-50 dark:bg-yellow-900 p-4 rounded-lg">
+              <div class="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{total_api_tokens}</div>
+              <div class="text-sm text-yellow-800 dark:text-yellow-300">Active Tokens</div>
+            </div>
+        """
+
+        return HTMLResponse(html)
+
+    except Exception as e:
+        LOGGER.error(f"Error getting user stats HTML: {e}")
+        return HTMLResponse('<div class="col-span-4 text-center py-4 text-red-500">Error loading statistics</div>')
+
+
+@admin_router.get("/teams/list-html")
+async def admin_teams_list_html(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: str = Depends(require_auth),
+) -> HTMLResponse:
+    """Return HTML fragment for teams list (admin view)."""
+    try:
+        if not settings.multi_user_enabled or settings.legacy_auth_mode:
+            return HTMLResponse("<div class='text-center py-8 text-gray-500'>Team management not available in legacy mode</div>")
+
+        teams = db.query(Team).filter(Team.is_active.is_(True)).all()
+
+        if not teams:
+            return HTMLResponse("<div class='text-center py-8 text-gray-500'>No teams found</div>")
+
+        # Build HTML for team list
+        html_parts = []
+        for team in teams:
+            member_count = db.query(TeamMember).filter(TeamMember.team_id == team.id).count()
+
+            # Get team owners
+            owners = db.query(TeamMember).join(User).filter(TeamMember.team_id == team.id, TeamMember.role == "owner").all()
+            owner_names = [owner.user.username for owner in owners]
+
+            html_parts.append(
+                f"""
+            <div class="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+              <div class="flex items-center justify-between">
+                <div class="flex-1">
+                  <div class="flex items-center space-x-3">
+                    <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">{team.name}</h3>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">{member_count} members</span>
+                  </div>
+                  <div class="mt-1 space-y-1">
+                    <p class="text-sm text-gray-600 dark:text-gray-400">📝 {team.description or 'No description'}</p>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">👑 Owners: {", ".join(owner_names) if owner_names else 'None'}</p>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {team.created_at.strftime("%Y-%m-%d")}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            """
+            )
+
+        return HTMLResponse("".join(html_parts))
+
+    except Exception as e:
+        LOGGER.error(f"Error generating teams list HTML: {e}")
+        return HTMLResponse(f"<div class='text-center py-8 text-red-500'>Error loading teams: {str(e)}</div>")
+
+
+def escape_html(text):
+    """Escape HTML to prevent XSS attacks.
+
+    Args:
+        text: Text to escape
+
+    Returns:
+        str: HTML-escaped text
+    """
+    if text is None:
+        return ""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#x27;")

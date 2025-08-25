@@ -3531,3 +3531,367 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
         """
         SecurityValidator.validate_json_depth(v)
         return v
+
+
+# ===================================
+# Multi-User Authentication Schemas
+# ===================================
+
+
+class UserRole(str, Enum):
+    """User role enumeration."""
+
+    ADMIN = "admin"
+    USER = "user"
+
+
+class TeamRole(str, Enum):
+    """Team role enumeration."""
+
+    OWNER = "owner"
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
+class ScopeType(str, Enum):
+    """Resource scope type enumeration."""
+
+    PRIVATE = "private"
+    TEAM = "team"
+    GLOBAL = "global"
+
+
+# Authentication Schemas
+
+
+class LoginRequest(BaseModel):
+    """Login request schema."""
+
+    username: str = Field(..., description="Username or email")
+    password: str = Field(..., description="Password")
+    remember_me: bool = Field(default=False, description="Remember login for extended session")
+
+
+class LoginResponse(BaseModel):
+    """Login response schema."""
+
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: Optional[int] = Field(None, description="Token expiration in seconds")
+    user: "UserResponse" = Field(..., description="User information")
+
+
+class ChangePasswordRequest(BaseModel):
+    """Change password request schema."""
+
+    current_password: str = Field(..., description="Current password")
+    new_password: str = Field(..., min_length=8, description="New password")
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_password_strength(cls, v):
+        """Basic password validation (detailed validation in service layer)."""
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        return v
+
+
+class PasswordResetRequest(BaseModel):
+    """Password reset request schema."""
+
+    email: str = Field(..., description="Email address for password reset")
+
+
+class PasswordResetConfirm(BaseModel):
+    """Password reset confirmation schema."""
+
+    token: str = Field(..., description="Password reset token")
+    new_password: str = Field(..., min_length=8, description="New password")
+
+
+# User Management Schemas
+
+
+class UserCreate(BaseModel):
+    """User creation request schema."""
+
+    username: str = Field(..., min_length=3, max_length=50, description="Username")
+    email: Optional[str] = Field(None, description="Email address")
+    password: str = Field(..., min_length=8, description="Password")
+    full_name: Optional[str] = Field(None, max_length=200, description="Full name")
+    is_admin: bool = Field(default=False, description="Admin privileges")
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v):
+        """Validate username format."""
+        if not v.replace("_", "").replace("-", "").replace(".", "").isalnum():
+            raise ValueError("Username can only contain letters, numbers, underscores, hyphens, and dots")
+        return v
+
+
+class UserUpdate(BaseModel):
+    """User update request schema."""
+
+    email: Optional[str] = Field(None, description="Email address")
+    full_name: Optional[str] = Field(None, max_length=200, description="Full name")
+    is_active: Optional[bool] = Field(None, description="Account active status")
+    is_admin: Optional[bool] = Field(None, description="Admin privileges")
+
+
+class UserResponse(BaseModel):
+    """User response schema."""
+
+    id: str = Field(..., description="User ID")
+    username: str = Field(..., description="Username")
+    email: Optional[str] = Field(None, description="Email address")
+    full_name: Optional[str] = Field(None, description="Full name")
+    is_active: bool = Field(..., description="Account active status")
+    is_admin: bool = Field(..., description="Admin privileges")
+    email_verified: bool = Field(..., description="Email verification status")
+    created_at: datetime = Field(..., description="Account creation time")
+    updated_at: datetime = Field(..., description="Last update time")
+    last_login: Optional[datetime] = Field(None, description="Last login time")
+
+    class Config:
+        """Pydantic configuration for ORM integration."""
+
+        from_attributes = True
+
+
+class UserListResponse(BaseModel):
+    """User list response schema."""
+
+    users: List[UserResponse] = Field(..., description="List of users")
+    total: int = Field(..., description="Total number of users")
+    page: int = Field(..., description="Current page number")
+    per_page: int = Field(..., description="Items per page")
+
+
+# API Token Management Schemas
+
+
+class TokenCreate(BaseModel):
+    """API token creation request schema."""
+
+    name: str = Field(..., min_length=1, max_length=100, description="Token name")
+    description: Optional[str] = Field(None, max_length=500, description="Token description")
+    expires_in_days: Optional[int] = Field(None, ge=1, le=365, description="Token expiration in days")
+    scopes: Optional[Dict[str, Any]] = Field(None, description="Token scopes (for future use)")
+
+
+class TokenResponse(BaseModel):
+    """API token response schema."""
+
+    token: Optional[str] = Field(None, description="Raw JWT token (only returned on creation)")
+    id: str = Field(..., description="Token ID")
+    name: str = Field(..., description="Token name")
+    description: Optional[str] = Field(None, description="Token description")
+    jti: str = Field(..., description="JWT ID")
+    created_at: datetime = Field(..., description="Token creation time")
+    expires_at: Optional[datetime] = Field(None, description="Token expiration time")
+    last_used: Optional[datetime] = Field(None, description="Last use time")
+    is_active: bool = Field(..., description="Token active status")
+    scopes: Optional[Dict[str, Any]] = Field(None, description="Token scopes")
+
+
+class TokenListResponse(BaseModel):
+    """Token list response schema."""
+
+    tokens: List[TokenResponse] = Field(..., description="List of tokens")
+
+
+# Team Management Schemas
+
+
+class TeamCreate(BaseModel):
+    """Team creation request schema."""
+
+    name: str = Field(..., min_length=1, max_length=100, description="Team name")
+    description: Optional[str] = Field(None, max_length=1000, description="Team description")
+
+
+class TeamUpdate(BaseModel):
+    """Team update request schema."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="Team name")
+    description: Optional[str] = Field(None, max_length=1000, description="Team description")
+    is_active: Optional[bool] = Field(None, description="Team active status")
+
+
+class TeamResponse(BaseModel):
+    """Team response schema."""
+
+    id: str = Field(..., description="Team ID")
+    name: str = Field(..., description="Team name")
+    slug: str = Field(..., description="Team slug")
+    description: Optional[str] = Field(None, description="Team description")
+    created_by: str = Field(..., description="Creator user ID")
+    created_at: datetime = Field(..., description="Team creation time")
+    updated_at: datetime = Field(..., description="Last update time")
+    is_active: bool = Field(..., description="Team active status")
+    member_count: int = Field(..., description="Number of team members")
+
+    class Config:
+        """Pydantic configuration for ORM integration."""
+
+        from_attributes = True
+
+
+class TeamMemberResponse(BaseModel):
+    """Team member response schema."""
+
+    id: str = Field(..., description="Membership ID")
+    user_id: str = Field(..., description="User ID")
+    username: str = Field(..., description="Username")
+    email: Optional[str] = Field(None, description="Email address")
+    full_name: Optional[str] = Field(None, description="Full name")
+    role: TeamRole = Field(..., description="Team role")
+    joined_at: datetime = Field(..., description="Join time")
+    invited_by: Optional[str] = Field(None, description="Inviter user ID")
+
+
+class TeamInviteRequest(BaseModel):
+    """Team invitation request schema."""
+
+    email: str = Field(..., description="Email address to invite")
+    role: TeamRole = Field(default=TeamRole.MEMBER, description="Team role for invitee")
+
+
+class TeamInviteResponse(BaseModel):
+    """Team invitation response schema."""
+
+    id: str = Field(..., description="Invitation ID")
+    team_id: str = Field(..., description="Team ID")
+    email: str = Field(..., description="Invited email")
+    role: TeamRole = Field(..., description="Invited role")
+    invited_by: str = Field(..., description="Inviter user ID")
+    invited_at: datetime = Field(..., description="Invitation time")
+    expires_at: datetime = Field(..., description="Invitation expiration")
+    is_active: bool = Field(..., description="Invitation active status")
+    token: Optional[str] = Field(None, description="Invitation token")
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    """Update team member role request schema."""
+
+    role: TeamRole = Field(..., description="New team role")
+
+
+# Authentication Events and Audit Schemas
+
+
+class AuthEventResponse(BaseModel):
+    """Authentication event response schema."""
+
+    id: int = Field(..., description="Event ID")
+    timestamp: datetime = Field(..., description="Event timestamp")
+    user_id: Optional[str] = Field(None, description="User ID")
+    username: Optional[str] = Field(None, description="Username")
+    event_type: str = Field(..., description="Event type")
+    success: bool = Field(..., description="Event success status")
+    ip_address: Optional[str] = Field(None, description="IP address")
+    user_agent: Optional[str] = Field(None, description="User agent")
+    failure_reason: Optional[str] = Field(None, description="Failure reason")
+    details: Optional[Dict[str, Any]] = Field(None, description="Additional event details")
+
+
+class AuthEventListResponse(BaseModel):
+    """Authentication events list response schema."""
+
+    events: List[AuthEventResponse] = Field(..., description="List of auth events")
+    total: int = Field(..., description="Total number of events")
+    page: int = Field(..., description="Current page number")
+    per_page: int = Field(..., description="Items per page")
+
+
+# Resource Scoping Schemas
+
+
+class ScopeInfo(BaseModel):
+    """Resource scope information schema."""
+
+    scope_type: ScopeType = Field(..., description="Scope type")
+    scope_owner_id: Optional[str] = Field(None, description="Owner user ID for private scope")
+    scope_team_id: Optional[str] = Field(None, description="Team ID for team scope")
+    scope_team_name: Optional[str] = Field(None, description="Team name for team scope")
+
+
+class ResourceOwnership(BaseModel):
+    """Resource ownership information schema."""
+
+    user_id: Optional[str] = Field(None, description="Owner user ID")
+    username: Optional[str] = Field(None, description="Owner username")
+    scope_type: ScopeType = Field(default=ScopeType.GLOBAL, description="Resource scope")
+    scope_team_id: Optional[str] = Field(None, description="Team ID if team-scoped")
+    scope_team_name: Optional[str] = Field(None, description="Team name if team-scoped")
+    can_edit: bool = Field(default=False, description="Current user can edit this resource")
+    can_delete: bool = Field(default=False, description="Current user can delete this resource")
+
+
+# CSRF Protection Schema
+
+
+class CSRFTokenResponse(BaseModel):
+    """CSRF token response schema."""
+
+    csrf_token: str = Field(..., description="CSRF token for form submissions")
+
+
+# User Profile and Preferences Schemas
+
+
+class UserProfileResponse(BaseModel):
+    """User profile response schema."""
+
+    user: UserResponse = Field(..., description="User information")
+    teams: List[Dict[str, Any]] = Field(..., description="User's team memberships")
+    active_tokens: int = Field(..., description="Number of active API tokens")
+    last_login_ip: Optional[str] = Field(None, description="Last login IP address")
+    account_locked: bool = Field(default=False, description="Account lock status")
+
+
+class UserPreferencesUpdate(BaseModel):
+    """User preferences update schema."""
+
+    email_notifications: Optional[bool] = Field(None, description="Email notification preference")
+    theme: Optional[str] = Field(None, description="UI theme preference")
+    timezone: Optional[str] = Field(None, description="Timezone preference")
+    language: Optional[str] = Field(None, description="Language preference")
+
+
+# Statistics and Dashboard Schemas
+
+
+class UserStatsResponse(BaseModel):
+    """User statistics response schema."""
+
+    total_users: int = Field(..., description="Total number of users")
+    active_users: int = Field(..., description="Number of active users")
+    admin_users: int = Field(..., description="Number of admin users")
+    new_users_last_30_days: int = Field(..., description="New users in last 30 days")
+    total_teams: int = Field(..., description="Total number of teams")
+    total_api_tokens: int = Field(..., description="Total active API tokens")
+    login_events_last_24h: int = Field(..., description="Login events in last 24 hours")
+
+
+# Error Response Schemas
+
+
+class ErrorResponse(BaseModel):
+    """Error response schema."""
+
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Application-specific error code")
+
+
+class ValidationErrorResponse(BaseModel):
+    """Validation error response schema."""
+
+    detail: str = Field(..., description="Error detail message")
+    errors: List[Dict[str, Any]] = Field(..., description="Field validation errors")
+
+
+# Update forward references for self-referencing models
+UserResponse.model_rebuild()
+LoginResponse.model_rebuild()

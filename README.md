@@ -237,6 +237,14 @@ MCP Gateway is published on [PyPI](https://pypi.org/project/mcp-contextforge-gat
 (single command using [uv](https://docs.astral.sh/uv/))
 
 ```bash
+# Legacy single-user mode (default for quick start)
+BASIC_AUTH_PASSWORD=pass \
+MCPGATEWAY_UI_ENABLED=true \
+MCPGATEWAY_ADMIN_API_ENABLED=true \
+uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
+
+# Multi-user mode (recommended for production)
+MULTI_USER_ENABLED=true \
 BASIC_AUTH_PASSWORD=pass \
 MCPGATEWAY_UI_ENABLED=true \
 MCPGATEWAY_ADMIN_API_ENABLED=true \
@@ -1015,6 +1023,8 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 ### Authentication
 
+#### Legacy Authentication (Single-User)
+
 | Setting               | Description                                                      | Default       | Options    |
 | --------------------- | ---------------------------------------------------------------- | ------------- | ---------- |
 | `BASIC_AUTH_USER`     | Username for Admin UI login and HTTP Basic authentication        | `admin`       | string     |
@@ -1025,21 +1035,82 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | `TOKEN_EXPIRY`        | Expiry of generated JWTs in minutes                              | `10080`       | int > 0    |
 | `AUTH_ENCRYPTION_SECRET` | Passphrase used to derive AES key for encrypting tool auth headers | `my-test-salt` | string |
 
-> 🔐 `BASIC_AUTH_USER`/`PASSWORD` are used for:
+#### Multi-User Authentication (Recommended)
+
+| Setting               | Description                                                      | Default       | Options    |
+| --------------------- | ---------------------------------------------------------------- | ------------- | ---------- |
+| `MULTI_USER_ENABLED`  | Enable multi-user authentication system                         | `true`        | bool       |
+| `LEGACY_AUTH_MODE`    | Use legacy single-user authentication (backward compatibility)  | `false`       | bool       |
+| `JWT_ISSUER`          | JWT issuer claim for token validation                           | `mcpgateway`  | string     |
+| `JWT_AUDIENCE`        | JWT audience claim for token validation                         | `mcpgateway-api` | string  |
+| `JWT_MAX_AGE_HOURS`   | Maximum token age in hours                                      | `24`          | int        |
+
+#### Password Policy
+
+| Setting                      | Description                           | Default | Options |
+| ---------------------------- | ------------------------------------- | ------- | ------- |
+| `PASSWORD_MIN_LENGTH`        | Minimum password length               | `12`    | int     |
+| `PASSWORD_REQUIRE_UPPERCASE` | Require uppercase letters             | `true`  | bool    |
+| `PASSWORD_REQUIRE_LOWERCASE` | Require lowercase letters             | `true`  | bool    |
+| `PASSWORD_REQUIRE_NUMBERS`   | Require numbers                       | `true`  | bool    |
+| `PASSWORD_REQUIRE_SPECIAL`   | Require special characters            | `true`  | bool    |
+| `PASSWORD_BCRYPT_ROUNDS`     | Bcrypt cost factor                    | `12`    | int     |
+
+#### Session & Token Management
+
+| Setting                      | Description                           | Default | Options |
+| ---------------------------- | ------------------------------------- | ------- | ------- |
+| `SESSION_TIMEOUT_HOURS`      | User session timeout in hours        | `24`    | int     |
+| `TOKEN_DEFAULT_EXPIRY_DAYS`  | Default API token expiry in days     | `30`    | int     |
+| `ENABLE_AUTH_LOGGING`        | Enable authentication audit logs     | `true`  | bool    |
+| `AUTH_LOG_RETENTION_DAYS`    | Days to retain auth logs              | `90`    | int     |
+| `REQUIRE_TOKEN_EXPIRATION`   | Require all JWT tokens to have expiration claims | `false` | bool |
+| `ADMIN_REGISTRATION_ENABLED` | Allow admin user self-registration    | `false` | bool    |
+| `EMAIL_VERIFICATION_REQUIRED`| Require email verification for new users | `false` | bool |
+
+#### Account Security
+
+| Setting                              | Description                                    | Default | Options |
+| ------------------------------------ | ---------------------------------------------- | ------- | ------- |
+| `MAX_FAILED_LOGIN_ATTEMPTS`          | Maximum failed login attempts before lockout  | `5`     | int     |
+| `ACCOUNT_LOCKOUT_DURATION_MINUTES`   | Account lockout duration in minutes           | `30`    | int     |
+| `CSRF_TOKEN_NAME`                    | CSRF cookie name                               | `csrf-token` | string |
+| `CSRF_HEADER_NAME`                   | CSRF header name                               | `X-CSRF-Token` | string |
+| `OAUTH_REQUEST_TIMEOUT`              | OAuth request timeout in seconds               | `30`    | int     |
+| `OAUTH_MAX_RETRIES`                  | Maximum retries for OAuth token requests      | `3`     | int     |
+
+> ✅ **Multi-User Mode** (Fully Implemented): When `MULTI_USER_ENABLED=true`:
 >
-> * Logging into the web-based Admin UI
-> * Accessing APIs via Basic Auth (`curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"`)
+> * Complete user management via `/users` API
+> * Individual API token creation via `/tokens` API
+> * Team collaboration via `/teams` API
+> * Secure password policies and account lockout protection
+> * Comprehensive authentication audit logging
+> * CSRF protection for web interfaces
+> * Resource scoping (private, team, global) for multi-tenancy
 >
-> 🔑 `JWT_SECRET_KEY` is used to:
+> 🔐 **Legacy Mode**: When `LEGACY_AUTH_MODE=true` or `MULTI_USER_ENABLED=false`:
 >
-> * Sign JSON Web Tokens (`Authorization: Bearer <token>`)
-> * Generate tokens via:
+> * `BASIC_AUTH_USER`/`PASSWORD` for Admin UI login
+> * Global JWT secret for API access
+> * Single-user authentication (existing behavior)
 >
->   ```bash
->   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
->   echo $MCPGATEWAY_BEARER_TOKEN
->   ```
-> * Tokens allow non-interactive API clients to authenticate securely.
+> 🔑 **JWT Authentication**: Both modes support JWT tokens:
+>
+> ```bash
+> # Legacy mode: Generate token with utils
+> export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+>
+> # Multi-user mode: Login and create tokens via API
+> curl -X POST http://localhost:4444/auth/login \
+>   -H "Content-Type: application/json" \
+>   -d '{"username": "admin", "password": "changeme"}'
+>
+> # Create API token for programmatic access
+> curl -X POST http://localhost:4444/tokens \
+>   -H "Authorization: Bearer $ACCESS_TOKEN" \
+>   -d '{"name": "my-api-token", "expires_in_days": 30}'
+> ```
 >
 > 🧪 Set `AUTH_REQUIRED=false` during development if you want to disable all authentication (e.g. for local testing or open APIs) or clients that don't support SSE authentication.
 > In production, you should use the SSE to stdio `mcpgateway-wrapper` for such tools that don't support authenticated SSE, while still ensuring the gateway uses authentication.
@@ -1047,6 +1118,8 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 > 🔐 `AUTH_ENCRYPTION_SECRET` is used to encrypt and decrypt tool authentication credentials (`auth_value`).
 > You must set the same value across environments to decode previously stored encrypted auth values.
 > Recommended: use a long, random string.
+>
+> 📋 **Configuration Reference**: See [`.env.example`](.env.example) for a comprehensive configuration template with all authentication and multi-user settings, including detailed comments and examples.
 
 ### UI Features
 
