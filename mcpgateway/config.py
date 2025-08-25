@@ -125,6 +125,9 @@ class Settings(BaseSettings):
     # Protocol
     protocol_version: str = "2025-03-26"
 
+    # API Version
+    api_version: str = "v1"
+
     # Authentication
     basic_auth_user: str = "admin"
     basic_auth_password: str = "changeme"

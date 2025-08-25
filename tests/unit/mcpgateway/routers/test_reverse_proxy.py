@@ -26,7 +26,7 @@ from mcpgateway.routers.reverse_proxy import (
     ReverseProxyManager,
     ReverseProxySession,
     manager,
-    router,
+    reverse_proxy_router as router,
 )
 from mcpgateway.utils.verify_credentials import require_auth
 

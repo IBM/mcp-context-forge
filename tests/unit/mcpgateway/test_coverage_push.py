@@ -13,7 +13,7 @@ from unittest.mock import patch, MagicMock
 # Third-Party
 import pytest
 from fastapi.testclient import TestClient
-from fastapi import HTTPException
+from fastapi import HTTPException  
 
 # First-Party
 from mcpgateway.main import app, require_api_key
@@ -58,16 +58,11 @@ def test_app_basic_properties():
 
 def test_error_handlers():
     """Test error handler functions exist."""
-    from mcpgateway.main import (
-        validation_exception_handler,
-        request_validation_exception_handler,
-        database_exception_handler
-    )
-
-    # Test handlers exist and are callable
-    assert callable(validation_exception_handler)
-    assert callable(request_validation_exception_handler)
-    assert callable(database_exception_handler)
+    # Exception handlers are now defined inside configure_exception_handlers function
+    from mcpgateway.main import configure_exception_handlers
+    
+    # Test that configure function exists and is callable
+    assert callable(configure_exception_handlers)
 
 
 def test_middleware_classes():
@@ -114,11 +109,14 @@ def test_service_instances():
 
 def test_router_instances():
     """Test that router instances exist."""
-    from mcpgateway.main import (
-        protocol_router, tool_router, resource_router,
-        prompt_router, gateway_router, root_router,
-        export_import_router
-    )
+    from mcpgateway.routers.current import protocol_router
+    from mcpgateway.routers.current import resource_router
+    from mcpgateway.routers.current import root_router
+    from mcpgateway.routers.current import tool_router
+    from mcpgateway.routers.current import export_import_router
+    from mcpgateway.routers.current import prompt_router
+    from mcpgateway.routers.current import gateway_router
+    from mcpgateway.routers.current import prompt_router
 
     # Test all routers exist
     assert protocol_router is not None
@@ -156,10 +154,10 @@ def test_template_and_static_setup():
 
 def test_feature_flags():
     """Test feature flag variables."""
-    from mcpgateway.main import UI_ENABLED, ADMIN_API_ENABLED
+    from mcpgateway.config import settings
 
-    assert isinstance(UI_ENABLED, bool)
-    assert isinstance(ADMIN_API_ENABLED, bool)
+    assert isinstance(settings.mcpgateway_ui_enabled, bool)
+    assert isinstance(settings.mcpgateway_admin_api_enabled, bool)
 
 
 def test_lifespan_function_exists():
@@ -171,7 +169,8 @@ def test_lifespan_function_exists():
 
 def test_cache_instances():
     """Test cache instances exist."""
-    from mcpgateway.main import resource_cache, session_registry
+    from mcpgateway.main import resource_cache
+    from mcpgateway.registry import session_registry
 
     assert resource_cache is not None
     assert session_registry is not None

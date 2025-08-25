@@ -63,7 +63,8 @@ from sqlalchemy.pool import StaticPool
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Base
-from mcpgateway.main import app, get_db
+from mcpgateway.main import app
+from mcpgateway.db import get_db
 
 # pytest.skip("Temporarily disabling this suite", allow_module_level=True)
 
@@ -321,7 +322,7 @@ class TestProtocolAPIs:
         }
 
         # Mock the session registry since it requires complex setup
-        with patch("mcpgateway.main.session_registry.handle_initialize_logic") as mock_init:
+        with patch("mcpgateway.registry.session_registry.handle_initialize_logic") as mock_init:
             mock_init.return_value = {"protocolVersion": "1.0.0", "capabilities": {"tools": {}, "resources": {}}, "serverInfo": {"name": "mcp-gateway", "version": "1.0.0"}}
 
             response = await client.post("/protocol/initialize", json=request_body, headers=TEST_AUTH_HEADER)

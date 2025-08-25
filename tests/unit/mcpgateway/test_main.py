@@ -35,6 +35,11 @@ from mcpgateway.schemas import (
 # --------------------------------------------------------------------------- #
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
 
+# API version for routing (v1, v2, etc.)
+API_VERSION = os.getenv("API_VERSION", "v1")
+
+from mcpgateway.config import settings
+
 # Mock data templates with complete field structures
 MOCK_METRICS = {
     "total_executions": 10,
@@ -173,7 +178,7 @@ def test_client(app):
     accessible without needing to furnish JWTs in every request.
     """
     # First-Party
-    from mcpgateway.main import require_auth
+    from mcpgateway.utils.verify_credentials import require_auth
 
     app.dependency_overrides[require_auth] = lambda: "test_user"
     client = TestClient(app)
@@ -249,7 +254,7 @@ class TestProtocolEndpoints:
     """Tests for MCP protocol operations: initialize, ping, notifications, etc."""
 
     # @patch("mcpgateway.main.validate_request")
-    @patch("mcpgateway.main.session_registry.handle_initialize_logic")
+    @patch("mcpgateway.registry.session_registry.handle_initialize_logic")
     def test_initialize_endpoint(self, mock_handle_initialize, test_client, auth_headers):
         """Test MCP protocol initialization."""
         mock_capabilities = ServerCapabilities(
@@ -480,7 +485,7 @@ class TestToolEndpoints:
         response = test_client.put("/tools/999", json=req, headers=auth_headers)
         assert response.status_code == 404
 
-    @patch("mcpgateway.main.create_tool")
+    @patch(f"mcpgateway.routers.{API_VERSION}.tool.create_tool")
     def test_create_tool_validation_error(self, mock_create, test_client, auth_headers):
         """Test create_tool returns 422 for missing required fields."""
         mock_create.side_effect = None  # Let validation error happen
@@ -1049,7 +1054,7 @@ class TestRPCEndpoints:
         assert isinstance(body["result"]["tools"], list)
         mock_list_tools.assert_called_once()
 
-    @patch("mcpgateway.main.RPCRequest")
+    @patch(f"mcpgateway.routers.{API_VERSION}.utility.RPCRequest")
     def test_rpc_invalid_request(self, mock_rpc_request, test_client, auth_headers):
         """Test RPC error handling for invalid requests."""
         mock_rpc_request.side_effect = ValueError("Invalid method")
@@ -1085,8 +1090,8 @@ class TestRPCEndpoints:
 class TestRealtimeEndpoints:
     """Tests for real-time communication: WebSocket, SSE, message handling, etc."""
 
-    @patch("mcpgateway.main.settings")
-    @patch("mcpgateway.main.ResilientHttpClient")  # stub network calls
+    @patch(f"mcpgateway.routers.{API_VERSION}.utility.settings")
+    @patch(f"mcpgateway.routers.{API_VERSION}.utility.ResilientHttpClient")  # stub network calls
     def test_websocket_endpoint(self, mock_client, mock_settings, test_client):
         # Standard
         from types import SimpleNamespace
@@ -1098,6 +1103,8 @@ class TestRealtimeEndpoints:
         mock_settings.federation_timeout = 30
         mock_settings.skip_ssl_verify = False
         mock_settings.port = 4444
+        mock_settings.trust_proxy_auth = False
+        mock_settings.proxy_user_header = "X-Authenticated-User"
 
         # ----- set up async context-manager dummy -----
         mock_instance = mock_client.return_value
@@ -1117,10 +1124,11 @@ class TestRealtimeEndpoints:
             response = json.loads(data)
             assert response == {"jsonrpc": "2.0", "id": 1, "result": {}}
 
-    @patch("mcpgateway.main.update_url_protocol", new=lambda url: url)
-    @patch("mcpgateway.main.session_registry.add_session")
-    @patch("mcpgateway.main.session_registry.respond")
-    @patch("mcpgateway.main.SSETransport")
+
+    @patch("mcpgateway.utils.url_utils.update_url_protocol", new=lambda url: url)
+    @patch("mcpgateway.registry.session_registry.add_session")
+    @patch("mcpgateway.registry.session_registry.respond")
+    @patch(f"mcpgateway.routers.{API_VERSION}.servers.SSETransport")
     def test_sse_endpoint(self, mock_transport_class, mock_respond, mock_add_session, test_client, auth_headers):
         """Test SSE connection establishment."""
         mock_transport = MagicMock()
@@ -1128,13 +1136,13 @@ class TestRealtimeEndpoints:
         mock_transport.create_sse_response.return_value = MagicMock()
         mock_transport_class.return_value = mock_transport
 
-        response = test_client.get("/sse", headers=auth_headers)
+        response = test_client.get("/servers/123/sse", headers=auth_headers)
 
         # Note: This test may need adjustment based on actual SSE implementation
         # The exact assertion will depend on how SSE responses are structured
         mock_transport_class.assert_called_once()
 
-    @patch("mcpgateway.main.session_registry.broadcast")
+    @patch("mcpgateway.registry.session_registry.broadcast")
     def test_message_endpoint(self, mock_broadcast, test_client, auth_headers):
         """Test message broadcasting to SSE sessions."""
         message = {"type": "test", "data": "hello"}
