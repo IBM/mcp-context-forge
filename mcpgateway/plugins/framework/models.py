@@ -60,13 +60,16 @@ class PluginMode(str, Enum):
     """Plugin modes of operation.
 
     Attributes:
-       enforce: enforces the plugin result.
+       enforce: enforces the plugin result, and blocks execution when there is an error.
+       enforce_ignore_error: enforces the plugin result, but allows execution when there is an error.
        permissive: audits the result.
        disabled: plugin disabled.
 
     Examples:
         >>> PluginMode.ENFORCE
         <PluginMode.ENFORCE: 'enforce'>
+        >>> PluginMode.ENFORCE_IGNORE_ERROR
+        <PluginMode.ENFORCE_IGNORE_ERROR: 'enforce_ignore_error'>
         >>> PluginMode.PERMISSIVE.value
         'permissive'
         >>> PluginMode('disabled')
@@ -76,6 +79,7 @@ class PluginMode(str, Enum):
     """
 
     ENFORCE = "enforce"
+    ENFORCE_IGNORE_ERROR = "enforce_ignore_error"
     PERMISSIVE = "permissive"
     DISABLED = "disabled"
 
@@ -639,6 +643,8 @@ class GlobalContext(BaseModel):
             user (str): user ID associated with the request.
             tenant_id (str): tenant ID.
             server_id (str): server ID.
+            metadata (Optional[dict[str,Any]]): a global shared metadata across plugins.
+            state (Optional[dict[str,Any]]): a global shared state across plugins.
 
     Examples:
         >>> ctx = GlobalContext(request_id="req-123")
@@ -662,17 +668,32 @@ class GlobalContext(BaseModel):
     user: Optional[str] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
+    state: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
 
 
-class PluginContext(GlobalContext):
+class PluginContext(BaseModel):
     """The plugin's context, which lasts a request lifecycle.
 
     Attributes:
-       metadata: context metadata.
        state:  the inmemory state of the request.
+       global_context: the context that is shared across plugins.
+       metadata: plugin meta data.
+
+    Examples:
+        >>> gctx = GlobalContext(request_id="req-123")
+        >>> ctx = PluginContext(global_context=gctx)
+        >>> ctx.global_context.request_id
+        'req-123'
+        >>> ctx.global_context.user is None
+        True
+        >>> ctx.state["somekey"] = "some value"
+        >>> ctx.state["somekey"]
+        'some value'
     """
 
     state: dict[str, Any] = {}
+    global_context: GlobalContext
     metadata: dict[str, Any] = {}
 
     def get_state(self, key: str, default: Any = None) -> Any:
