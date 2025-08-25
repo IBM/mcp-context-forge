@@ -18,8 +18,10 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 # First-Party
+from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.plugins.framework import PluginViolationError
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     TextContent,
@@ -1877,3 +1879,502 @@ class TestToolService:
             event = mock_publish.call_args[0][0]
             assert event["type"] == "tool_removed"
             assert event["data"]["id"] == mock_tool.id
+
+    async def test_get_top_tools(self, tool_service, test_db):
+        """Test get_top_tools method."""
+        # Mock database query result
+        mock_results = [
+            (1, "tool1", 10, 1.5, 90.0, "2024-01-01T12:00:00"),
+            (2, "tool2", 5, 2.0, 80.0, "2024-01-02T12:00:00"),
+        ]
+
+        # Create a proper mock chain for the query
+        mock_query_chain = Mock()
+        mock_query_chain.outerjoin.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = mock_results
+        test_db.query = Mock(return_value=mock_query_chain)
+
+        with patch("mcpgateway.services.tool_service.build_top_performers") as mock_build:
+            mock_build.return_value = ["top_performer1", "top_performer2"]
+            result = await tool_service.get_top_tools(test_db, limit=5)
+
+            assert result == ["top_performer1", "top_performer2"]
+            mock_build.assert_called_once_with(mock_results)
+            test_db.query.assert_called_once()
+
+    async def test_list_tools_with_tags(self, tool_service, mock_tool, test_db):
+        """Test listing tools with tag filtering."""
+        # Mock DB to return a list of tools
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [mock_tool]
+        mock_scalar_result = MagicMock()
+        mock_scalar_result.scalars.return_value = mock_scalars
+        mock_execute = Mock(return_value=mock_scalar_result)
+        test_db.execute = mock_execute
+
+        # Mock conversion
+        tool_read = ToolRead(
+            id="1",
+            original_name="test_tool",
+            custom_name="test_tool",
+            custom_name_slug="test-tool",
+            gateway_slug="test-gateway",
+            name="test-gateway-test-tool",
+            url="http://example.com/tools/test",
+            description="A test tool",
+            integration_type="MCP",
+            request_type="POST",
+            headers={"Content-Type": "application/json"},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
+            jsonpath_filter="",
+            created_at="2023-01-01T00:00:00",
+            updated_at="2023-01-01T00:00:00",
+            enabled=True,
+            reachable=True,
+            gateway_id=None,
+            execution_count=0,
+            auth=None,
+            annotations={},
+            metrics={
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            },
+        )
+        tool_service._convert_tool_to_read = Mock(return_value=tool_read)
+
+        # Call method with tags
+        result = await tool_service.list_tools(test_db, tags=["python", "automation"])
+
+        # Verify DB query was called and tags were processed
+        test_db.execute.assert_called_once()
+
+        # Verify result
+        assert len(result) == 1
+        assert result[0] == tool_read
+
+    async def test_invoke_tool_rest_oauth_success(self, tool_service, mock_tool, test_db):
+        """Test invoking REST tool with successful OAuth authentication."""
+        # Configure tool with OAuth
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_type = "oauth"
+        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}
+
+        # Mock DB to return the tool
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock OAuth manager
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="test_access_token")
+
+        # Mock HTTP client response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "OAuth success"})
+        tool_service._http_client.request.return_value = mock_response
+
+        # Mock metrics recording
+        tool_service._record_tool_metric = AsyncMock()
+
+        with patch("mcpgateway.config.extract_using_jq", return_value={"result": "OAuth success"}):
+            # Invoke tool
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        # Verify OAuth token was obtained
+        tool_service.oauth_manager.get_access_token.assert_called_once_with(mock_tool.oauth_config)
+
+        # Verify HTTP request included Bearer token
+        tool_service._http_client.request.assert_called_once()
+        call_args = tool_service._http_client.request.call_args
+        headers = call_args[1]["headers"]
+        assert "Authorization" in headers
+        assert headers["Authorization"] == "Bearer test_access_token"
+
+        # Verify result
+        assert result.content[0].text == '{\n  "result": "OAuth success"\n}'
+
+    async def test_invoke_tool_rest_oauth_failure(self, tool_service, mock_tool, test_db):
+        """Test invoking REST tool with failed OAuth authentication."""
+        # Configure tool with OAuth
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_type = "oauth"
+        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}
+
+        # Mock DB to return the tool
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock OAuth manager to fail
+        tool_service.oauth_manager.get_access_token = AsyncMock(side_effect=Exception("OAuth failed"))
+
+        # Mock metrics recording
+        tool_service._record_tool_metric = AsyncMock()
+
+        # Should raise ToolInvocationError
+        with pytest.raises(ToolInvocationError) as exc_info:
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        assert "OAuth authentication failed: OAuth failed" in str(exc_info.value)
+
+    async def test_invoke_tool_mcp_oauth_client_credentials(self, tool_service, mock_tool, mock_gateway, test_db):
+        """Test invoking MCP tool with OAuth client credentials flow."""
+        # Configure tool and gateway for MCP with OAuth
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "sse"
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.oauth_config = {"grant_type": "client_credentials", "client_id": "test", "client_secret": "secret"}
+
+        # Mock DB queries
+        mock_scalar1 = Mock()
+        mock_scalar1.scalar_one_or_none.return_value = mock_tool
+        mock_scalar2 = Mock()
+        mock_scalar2.scalar_one_or_none.return_value = mock_gateway
+        mock_scalar3 = Mock()
+        mock_scalar3.scalar_one_or_none.return_value = mock_gateway
+
+        test_db.execute = Mock(side_effect=[mock_scalar1, mock_scalar2, mock_scalar3])
+
+        # Mock OAuth manager
+        tool_service.oauth_manager.get_access_token = AsyncMock(return_value="oauth_access_token")
+
+        # Mock MCP connection
+        expected_result = ToolResult(content=[TextContent(type="text", text="MCP OAuth response")])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        sse_ctx = AsyncMock()
+        sse_ctx.__aenter__.return_value = ("read", "write")
+
+        with (
+            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        # Verify OAuth was called
+        tool_service.oauth_manager.get_access_token.assert_called_once_with(mock_gateway.oauth_config)
+
+        # Verify MCP session was initialized and tool called
+        session_mock.initialize.assert_awaited_once()
+        session_mock.call_tool.assert_awaited_once()
+
+
+    async def test_invoke_tool_with_passthrough_headers_rest(self, tool_service, mock_tool, test_db):
+        """Test invoking REST tool with passthrough headers."""
+        # Configure tool as REST
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock HTTP client response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "success with headers"})
+        tool_service._http_client.request.return_value = mock_response
+
+        # Mock get_passthrough_headers to return modified headers
+        def mock_passthrough(req_headers, tool_headers, db_session):
+            combined = tool_headers.copy()
+            combined["X-Request-ID"] = req_headers.get("X-Request-ID", "test-123")
+            return combined
+
+        request_headers = {"X-Request-ID": "custom-123", "Authorization": "Bearer test"}
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.get_passthrough_headers", side_effect=mock_passthrough),
+            patch("mcpgateway.config.extract_using_jq", return_value={"result": "success with headers"}),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
+
+        # Verify passthrough headers were used
+        tool_service._http_client.request.assert_called_once()
+        call_args = tool_service._http_client.request.call_args
+        headers = call_args[1]["headers"]
+        assert "X-Request-ID" in headers
+        assert headers["X-Request-ID"] == "custom-123"
+
+    async def test_invoke_tool_with_passthrough_headers_mcp(self, tool_service, mock_tool, mock_gateway, test_db):
+        """Test invoking MCP tool with passthrough headers."""
+        # Configure tool and gateway for MCP
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "sse"
+        mock_gateway.auth_value = None
+
+        # Mock DB queries
+        mock_scalar1 = Mock()
+        mock_scalar1.scalar_one_or_none.return_value = mock_tool
+        mock_scalar2 = Mock()
+        mock_scalar2.scalar_one_or_none.return_value = mock_gateway
+        mock_scalar3 = Mock()
+        mock_scalar3.scalar_one_or_none.return_value = mock_gateway
+
+        test_db.execute = Mock(side_effect=[mock_scalar1, mock_scalar2, mock_scalar3])
+
+        # Mock MCP connection
+        expected_result = ToolResult(content=[TextContent(type="text", text="MCP with headers")])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        sse_ctx = AsyncMock()
+        sse_ctx.__aenter__.return_value = ("read", "write")
+
+        # Mock get_passthrough_headers to return modified headers
+        def mock_passthrough(req_headers, tool_headers, db_session, gateway=None):
+            combined = tool_headers.copy()
+            combined["X-Custom-Header"] = req_headers.get("X-Custom-Header", "default")
+            return combined
+
+        request_headers = {"X-Custom-Header": "custom-value", "Authorization": "Bearer test"}
+
+        with (
+            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.get_passthrough_headers", side_effect=mock_passthrough),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
+
+        # Verify MCP session was initialized and tool called
+        session_mock.initialize.assert_awaited_once()
+        session_mock.call_tool.assert_awaited_once()
+
+    async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, test_db):
+        """Test invoking tool with successful plugin post-invoke hook."""
+        # Configure tool as REST
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock HTTP client response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "original response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        # Mock plugin manager and post-invoke hook
+        mock_post_result = Mock()
+        mock_post_result.continue_processing = True
+        mock_post_result.violation = None
+        mock_post_result.modified_payload = None
+
+        tool_service._plugin_manager = Mock()
+        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
+        tool_service._plugin_manager.tool_post_invoke = AsyncMock(return_value=(mock_post_result, None))
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        # Verify plugin post-invoke was called
+        tool_service._plugin_manager.tool_post_invoke.assert_called_once()
+
+        # Verify result
+        assert result.content[0].text == '{\n  "result": "original response"\n}'
+
+
+    async def test_invoke_tool_with_plugin_post_invoke_modified_payload(self, tool_service, mock_tool, test_db):
+        """Test invoking tool with plugin post-invoke hook modifying payload."""
+        # Configure tool as REST
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock HTTP client response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "original response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        # Mock plugin manager and post-invoke hook with modified payload
+        mock_modified_payload = Mock()
+        mock_modified_payload.result = {"content": [{"type": "text", "text": "Modified by plugin"}]}
+
+        mock_post_result = Mock()
+        mock_post_result.continue_processing = True
+        mock_post_result.violation = None
+        mock_post_result.modified_payload = mock_modified_payload
+
+        tool_service._plugin_manager = Mock()
+        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
+        tool_service._plugin_manager.tool_post_invoke = AsyncMock(return_value=(mock_post_result, None))
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        # Verify plugin post-invoke was called
+        tool_service._plugin_manager.tool_post_invoke.assert_called_once()
+
+        # Verify result was modified by plugin
+        assert result.content[0].text == "Modified by plugin"
+
+    async def test_invoke_tool_with_plugin_post_invoke_invalid_modified_payload(self, tool_service, mock_tool, test_db):
+        """Test invoking tool with plugin post-invoke hook providing invalid modified payload."""
+        # Configure tool as REST
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock HTTP client response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "original response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        # Mock plugin manager and post-invoke hook with invalid modified payload
+        mock_modified_payload = Mock()
+        mock_modified_payload.result = "Invalid format - not a dict"
+
+        mock_post_result = Mock()
+        mock_post_result.continue_processing = True
+        mock_post_result.violation = None
+        mock_post_result.modified_payload = mock_modified_payload
+
+        tool_service._plugin_manager = Mock()
+        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
+        tool_service._plugin_manager.tool_post_invoke = AsyncMock(return_value=(mock_post_result, None))
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        # Verify plugin post-invoke was called
+        tool_service._plugin_manager.tool_post_invoke.assert_called_once()
+
+        # Verify result was converted to string since format was invalid
+        assert result.content[0].text == "Invalid format - not a dict"
+
+    async def test_invoke_tool_with_plugin_post_invoke_error_fail_on_error(self, tool_service, mock_tool, test_db):
+        """Test invoking tool with plugin post-invoke hook error when fail_on_plugin_error is True."""
+        # Configure tool as REST
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock HTTP client response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "original response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        # Mock plugin manager and post-invoke hook with error
+        tool_service._plugin_manager = Mock()
+        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
+        tool_service._plugin_manager.tool_post_invoke = AsyncMock(side_effect=Exception("Plugin error"))
+
+        # Mock plugin config to fail on errors
+        mock_plugin_settings = Mock()
+        mock_plugin_settings.fail_on_plugin_error = True
+        mock_config = Mock()
+        mock_config.plugin_settings = mock_plugin_settings
+        tool_service._plugin_manager.config = mock_config
+
+        # Mock metrics recording
+        tool_service._record_tool_metric = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+        ):
+            with pytest.raises(Exception) as exc_info:
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        assert "Plugin error" in str(exc_info.value)
+
+    async def test_invoke_tool_with_plugin_post_invoke_error_continue_on_error(self, tool_service, mock_tool, test_db):
+        """Test invoking tool with plugin post-invoke hook error when fail_on_plugin_error is False."""
+        # Configure tool as REST
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        # Mock DB to return the tool
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock HTTP client response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "original response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        # Mock plugin manager and post-invoke hook with error
+        tool_service._plugin_manager = Mock()
+        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
+        tool_service._plugin_manager.tool_post_invoke = AsyncMock(side_effect=Exception("Plugin error"))
+
+        # Mock plugin config to continue on errors
+        mock_plugin_settings = Mock()
+        mock_plugin_settings.fail_on_plugin_error = False
+        mock_config = Mock()
+        mock_config.plugin_settings = mock_plugin_settings
+        tool_service._plugin_manager.config = mock_config
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        # Verify result still succeeded despite plugin error
+        assert result.content[0].text == '{\n  "result": "original response"\n}'

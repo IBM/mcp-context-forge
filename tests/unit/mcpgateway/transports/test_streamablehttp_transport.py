@@ -304,8 +304,8 @@ async def test_list_tools_no_server_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_tools_exception(monkeypatch, caplog):
-    """Test list_tools returns [] and logs exception on error."""
+async def test_list_tools_exception_no_server_id(monkeypatch, caplog):
+    """Test list_tools returns [] and logs exception on error when no server_id."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service
 
@@ -324,6 +324,504 @@ async def test_list_tools_exception(monkeypatch, caplog):
         assert result == []
         assert "Error listing tools:fail!" in caplog.text
     server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_tools_exception_with_server_id(monkeypatch, caplog):
+    """Test list_tools returns [] and logs exception on error when server_id is set."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "list_server_tools", AsyncMock(side_effect=Exception("server fail!")))
+
+    token = server_id_var.set("test-server-id")
+    with caplog.at_level("ERROR"):
+        result = await list_tools()
+        assert result == []
+        assert "Error listing tools:server fail!" in caplog.text
+    server_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# list_prompts tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_with_server_id(monkeypatch):
+    """Test list_prompts returns prompts for a server_id."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service
+    # Third-Party
+    from mcp.types import PromptArgument
+
+    mock_db = MagicMock()
+    mock_prompt = MagicMock()
+    mock_prompt.name = "prompt1"
+    mock_prompt.description = "test prompt"
+    mock_prompt.arguments = [PromptArgument(name="arg1", description="desc1", required=None)]
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(prompt_service, "list_server_prompts", AsyncMock(return_value=[mock_prompt]))
+
+    token = server_id_var.set("test-server")
+    result = await list_prompts()
+    server_id_var.reset(token)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].name == "prompt1"
+    assert result[0].description == "test prompt"
+    assert len(result[0].arguments) == 1
+    assert result[0].arguments[0].name == "arg1"
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_no_server_id(monkeypatch):
+    """Test list_prompts returns prompts when no server_id is set."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service
+
+    mock_db = MagicMock()
+    mock_prompt = MagicMock()
+    mock_prompt.name = "global_prompt"
+    mock_prompt.description = "global test prompt"
+    mock_prompt.arguments = []
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(prompt_service, "list_prompts", AsyncMock(return_value=[mock_prompt]))
+
+    token = server_id_var.set(None)
+    result = await list_prompts()
+    server_id_var.reset(token)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].name == "global_prompt"
+    assert result[0].description == "global test prompt"
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_exception_with_server_id(monkeypatch, caplog):
+    """Test list_prompts returns [] and logs exception when server_id is set."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(prompt_service, "list_server_prompts", AsyncMock(side_effect=Exception("server prompt fail!")))
+
+    token = server_id_var.set("test-server")
+    with caplog.at_level("ERROR"):
+        result = await list_prompts()
+        assert result == []
+        assert "Error listing Prompts:server prompt fail!" in caplog.text
+    server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_prompts_exception_no_server_id(monkeypatch, caplog):
+    """Test list_prompts returns [] and logs exception when no server_id."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(prompt_service, "list_prompts", AsyncMock(side_effect=Exception("global prompt fail!")))
+
+    token = server_id_var.set(None)
+    with caplog.at_level("ERROR"):
+        result = await list_prompts()
+        assert result == []
+        assert "Error listing prompts:global prompt fail!" in caplog.text
+    server_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# get_prompt tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_success(monkeypatch):
+    """Test get_prompt returns prompt result on success."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, types
+    # Third-Party
+    from mcp.types import PromptMessage, TextContent
+
+    mock_db = MagicMock()
+    # Create proper PromptMessage structure
+    mock_message = PromptMessage(role="user", content=TextContent(type="text", text="test message"))
+    mock_result = MagicMock()
+    mock_result.messages = [mock_message]
+    mock_result.description = "test prompt description"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
+
+    result = await get_prompt("test_prompt", {"arg1": "value1"})
+
+    assert isinstance(result, types.GetPromptResult)
+    assert len(result.messages) == 1
+    assert result.description == "test prompt description"
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_no_content(monkeypatch, caplog):
+    """Test get_prompt returns [] and logs warning if no content."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_result.messages = []
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
+
+    with caplog.at_level("WARNING"):
+        result = await get_prompt("empty_prompt")
+        assert result == []
+        assert "No content returned by prompt: empty_prompt" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_no_result(monkeypatch, caplog):
+    """Test get_prompt returns [] and logs warning if no result."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=None))
+
+    with caplog.at_level("WARNING"):
+        result = await get_prompt("missing_prompt")
+        assert result == []
+        assert "No content returned by prompt: missing_prompt" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_service_exception(monkeypatch, caplog):
+    """Test get_prompt returns [] and logs exception from service."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=Exception("service error!")))
+
+    with caplog.at_level("ERROR"):
+        result = await get_prompt("error_prompt")
+        assert result == []
+        assert "Error getting prompt 'error_prompt': service error!" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_outer_exception(monkeypatch, caplog):
+    """Test get_prompt returns [] and logs exception from outer try-catch."""
+    # Standard
+    from contextlib import asynccontextmanager
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt
+
+    # Cause an exception during get_db context management
+    @asynccontextmanager
+    async def failing_get_db():
+        raise Exception("db error!")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", failing_get_db)
+
+    with caplog.at_level("ERROR"):
+        result = await get_prompt("db_error_prompt")
+        assert result == []
+        assert "Error getting prompt 'db_error_prompt': db error!" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# list_resources tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_resources_with_server_id(monkeypatch):
+    """Test list_resources returns resources for a server_id."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service
+
+    mock_db = MagicMock()
+    mock_resource = MagicMock()
+    mock_resource.uri = "file:///test.txt"
+    mock_resource.name = "test resource"
+    mock_resource.description = "test description"
+    mock_resource.mime_type = "text/plain"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(resource_service, "list_server_resources", AsyncMock(return_value=[mock_resource]))
+
+    token = server_id_var.set("test-server")
+    result = await list_resources()
+    server_id_var.reset(token)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert str(result[0].uri) == "file:///test.txt"
+    assert result[0].name == "test resource"
+    assert result[0].description == "test description"
+
+
+@pytest.mark.asyncio
+async def test_list_resources_no_server_id(monkeypatch):
+    """Test list_resources returns resources when no server_id is set."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service
+
+    mock_db = MagicMock()
+    mock_resource = MagicMock()
+    mock_resource.uri = "http://example.com/resource"
+    mock_resource.name = "global resource"
+    mock_resource.description = "global description"
+    mock_resource.mime_type = "application/json"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(resource_service, "list_resources", AsyncMock(return_value=[mock_resource]))
+
+    token = server_id_var.set(None)
+    result = await list_resources()
+    server_id_var.reset(token)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert str(result[0].uri) == "http://example.com/resource"
+    assert result[0].name == "global resource"
+
+
+@pytest.mark.asyncio
+async def test_list_resources_exception_with_server_id(monkeypatch, caplog):
+    """Test list_resources returns [] and logs exception when server_id is set."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(resource_service, "list_server_resources", AsyncMock(side_effect=Exception("server resource fail!")))
+
+    token = server_id_var.set("test-server")
+    with caplog.at_level("ERROR"):
+        result = await list_resources()
+        assert result == []
+        assert "Error listing Resources:server resource fail!" in caplog.text
+    server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_resources_exception_no_server_id(monkeypatch, caplog):
+    """Test list_resources returns [] and logs exception when no server_id."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(resource_service, "list_resources", AsyncMock(side_effect=Exception("global resource fail!")))
+
+    token = server_id_var.set(None)
+    with caplog.at_level("ERROR"):
+        result = await list_resources()
+        assert result == []
+        assert "Error listing resources:global resource fail!" in caplog.text
+    server_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# read_resource tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_resource_success(monkeypatch):
+    """Test read_resource returns resource content on success."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
+    # Third-Party
+    from pydantic import AnyUrl
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_result.text = "resource content here"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=mock_result))
+
+    test_uri = AnyUrl("file:///test.txt")
+    result = await read_resource(test_uri)
+
+    assert result == "resource content here"
+
+
+@pytest.mark.asyncio
+async def test_read_resource_no_content(monkeypatch, caplog):
+    """Test read_resource returns [] and logs warning if no content."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
+    # Third-Party
+    from pydantic import AnyUrl
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_result.text = ""
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=mock_result))
+
+    test_uri = AnyUrl("file:///empty.txt")
+    with caplog.at_level("WARNING"):
+        result = await read_resource(test_uri)
+        assert result == []
+        assert "No content returned by resource: file:///empty.txt" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_read_resource_no_result(monkeypatch, caplog):
+    """Test read_resource returns [] and logs warning if no result."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
+    # Third-Party
+    from pydantic import AnyUrl
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=None))
+
+    test_uri = AnyUrl("file:///missing.txt")
+    with caplog.at_level("WARNING"):
+        result = await read_resource(test_uri)
+        assert result == []
+        assert "No content returned by resource: file:///missing.txt" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_read_resource_service_exception(monkeypatch, caplog):
+    """Test read_resource returns [] and logs exception from service."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
+    # Third-Party
+    from pydantic import AnyUrl
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=Exception("service error!")))
+
+    test_uri = AnyUrl("file:///error.txt")
+    with caplog.at_level("ERROR"):
+        result = await read_resource(test_uri)
+        assert result == []
+        assert "Error reading resource 'file:///error.txt': service error!" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_read_resource_outer_exception(monkeypatch, caplog):
+    """Test read_resource returns [] and logs exception from outer try-catch."""
+    # Standard
+    from contextlib import asynccontextmanager
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource
+    # Third-Party
+    from pydantic import AnyUrl
+
+    # Cause an exception during get_db context management
+    @asynccontextmanager
+    async def failing_get_db():
+        raise Exception("db error!")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", failing_get_db)
+
+    test_uri = AnyUrl("file:///db_error.txt")
+    with caplog.at_level("ERROR"):
+        result = await read_resource(test_uri)
+        assert result == []
+        assert "Error reading resource 'file:///db_error.txt': db error!" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +998,51 @@ async def test_session_manager_wrapper_initialization(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_session_manager_wrapper_initialization_stateful(monkeypatch):
+    """Test SessionManagerWrapper initialization with stateful sessions enabled."""
+    # Standard
+    from contextlib import asynccontextmanager
+
+    class DummySessionManager:
+        def __init__(self, **kwargs):
+            self.config = kwargs
+
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def handle_request(self, scope, receive, send):
+            self.called = True
+
+    captured_config = {}
+
+    def capture_manager(**kwargs):
+        captured_config.update(kwargs)
+        return DummySessionManager(**kwargs)
+
+    # Mock settings to enable stateful sessions
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", False)
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
+
+    wrapper = SessionManagerWrapper()
+
+    # Verify that stateful configuration was used
+    assert captured_config["stateless"] is False
+    assert captured_config["event_store"] is not None
+    assert isinstance(captured_config["event_store"], tr.InMemoryEventStore)
+
+    await wrapper.initialize()
+    await wrapper.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
     """Test handle_streamable_http sets server_id and calls handle_request."""
     # Standard
@@ -531,6 +1074,45 @@ async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
     await wrapper.handle_streamable_http(scope, None, send)
     await wrapper.shutdown()
     assert sent == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_handle_streamable_http_no_server_id(monkeypatch):
+    """Test handle_streamable_http without server_id match in path."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import server_id_var
+    # Standard
+    from contextlib import asynccontextmanager
+
+    async def send(msg):
+        sent.append(msg)
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def handle_request(self, scope, receive, send_func):
+            self.called = True
+            # Check that server_id was set to None
+            assert server_id_var.get() is None
+            await send_func("ok_no_server")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    # Use a path that doesn't match the server_id pattern
+    scope = _make_scope("/some/other/path")
+    sent = []
+    await wrapper.handle_streamable_http(scope, None, send)
+    await wrapper.shutdown()
+    assert sent == ["ok_no_server"]
 
 
 @pytest.mark.asyncio
