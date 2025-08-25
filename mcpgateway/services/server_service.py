@@ -316,7 +316,12 @@ class ServerService:
 
             # Set custom UUID if provided
             if server_in.id:
-                db_server.id = server_in.id
+                # Normalize UUID to hex format (no dashes) to match database storage
+                # Standard
+                import uuid as uuid_module
+
+                normalized_uuid = str(uuid_module.UUID(server_in.id)).replace("-", "")
+                db_server.id = normalized_uuid
             db.add(db_server)
 
             # Associate tools, verifying each exists.
