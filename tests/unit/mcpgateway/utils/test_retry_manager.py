@@ -620,7 +620,7 @@ async def test_stream_max_retries_no_exception(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stream_sleep_with_jitter_single_argument(monkeypatch):
-    """Test that _sleep_with_jitter is called with single argument in stream method."""
+    """Test that _sleep_with_jitter is called with arguments in stream method."""
     client = ResilientHttpClient(max_retries=2, base_backoff=0.1, max_delay=1, jitter_max=0.1)
 
     class AsyncContextManager:
@@ -653,12 +653,13 @@ async def test_stream_sleep_with_jitter_single_argument(monkeypatch):
         async with client.stream("GET", "http://always-503.com") as resp:
             pass
 
-    # Should have called _sleep_with_jitter with single argument (backoff)
+    # Should have called _sleep_with_jitter with arguments (backoff + jitter range)
     assert len(sleep_calls) == 2  # Two retry attempts
     for call_args in sleep_calls:
-        assert len(call_args) == 1  # Single argument (backoff)
+        assert len(call_args) == 2  # arguments (backoff + jitter range)
         # Verify the argument is a number (the backoff value)
         assert isinstance(call_args[0], (int, float))
+        assert isinstance(call_args[1], (int, float))
 
 
 @pytest.mark.asyncio
