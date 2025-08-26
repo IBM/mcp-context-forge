@@ -48,7 +48,6 @@ from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.utils.create_slug import slugify
-from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -199,7 +198,7 @@ class ToolService:
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
 
-    async def get_top_tools(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+    async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
         Queries the database to get tools with their metrics, ordered by the number of executions
@@ -208,7 +207,8 @@ class ToolService:
 
         Args:
             db (Session): Database session for querying tool metrics.
-            limit (int): Maximum number of tools to return. Defaults to 5.
+            limit (Optional[int]): Maximum number of tools to return. Defaults to 5.
+                If None, returns all tools.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -219,7 +219,7 @@ class ToolService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        results = (
+        query = (
             db.query(
                 DbTool.id,
                 DbTool.name,
@@ -237,9 +237,12 @@ class ToolService:
             .outerjoin(ToolMetric)
             .group_by(DbTool.id, DbTool.name)
             .order_by(desc("execution_count"))
-            .limit(limit)
-            .all()
         )
+        
+        if limit is not None:
+            query = query.limit(limit)
+            
+        results = query.all()
 
         return build_top_performers(results)
 
@@ -284,14 +287,10 @@ class ToolService:
             tool_dict["auth"] = None
 
         tool_dict["name"] = tool.name
-        # Handle displayName with fallback and None checks
-        display_name = getattr(tool, "display_name", None)
-        custom_name = getattr(tool, "custom_name", tool.original_name)
-        tool_dict["displayName"] = display_name or custom_name
-        tool_dict["custom_name"] = custom_name
-        tool_dict["gateway_slug"] = getattr(tool, "gateway_slug", "") or ""
-        tool_dict["custom_name_slug"] = getattr(tool, "custom_name_slug", "") or ""
-        tool_dict["tags"] = getattr(tool, "tags", []) or []
+        tool_dict["custom_name"] = tool.custom_name
+        tool_dict["gateway_slug"] = tool.gateway_slug if tool.gateway_slug else ""
+        tool_dict["custom_name_slug"] = tool.custom_name_slug
+        tool_dict["tags"] = tool.tags or []
 
         return ToolRead.model_validate(tool_dict)
 
@@ -386,7 +385,6 @@ class ToolService:
                 original_name=tool.name,
                 custom_name=tool.name,
                 custom_name_slug=slugify(tool.name),
-                display_name=tool.displayName or tool.name,
                 url=str(tool.url),
                 description=tool.description,
                 integration_type=tool.integration_type,
@@ -1013,8 +1011,6 @@ class ToolService:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
-            if tool_update.displayName is not None:
-                tool.display_name = tool_update.displayName
             if tool_update.url is not None:
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:
@@ -1341,7 +1337,6 @@ class ToolService:
         # Create tool entry for the A2A agent
         tool_data = ToolCreate(
             name=tool_name,
-            displayName=generate_display_name(agent.name),
             url=agent.endpoint_url,
             description=f"A2A Agent: {agent.description or agent.name}",
             integration_type="A2A",  # Special integration type for A2A agents
