@@ -1012,10 +1012,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 gateway.enabled = activate
                 gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
-
                 # Update tracking
                 if activate and reachable:
                     self._active_gateways.add(gateway.url)
+
                     # Try to initialize if activating
                     try:
                         capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config)
@@ -1030,9 +1030,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 gateway.tools.append(
                                     DbTool(
                                         original_name=tool.name,
-                                        custom_name=tool.custom_name,
-                                        custom_name_slug=slugify(tool.custom_name),
-                                        display_name=generate_display_name(tool.custom_name),
+                                        display_name=generate_display_name(tool.name),
                                         url=gateway.url,
                                         description=tool.description,
                                         integration_type="MCP",  # Gateway-discovered tools are MCP type
@@ -1904,7 +1902,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     tools = [ToolCreate.model_validate(tool) for tool in tools]
                     if tools:
                         logger.info(f"Fetched {len(tools)} tools from gateway")
-
                     # Fetch resources if supported
                     resources = []
                     logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
