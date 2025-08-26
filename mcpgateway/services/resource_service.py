@@ -191,6 +191,11 @@ class ResourceService:
             .group_by(DbResource.id, DbResource.uri)
             .order_by(desc("execution_count"))
         )
+        
+        if limit is not None:
+            query = query.limit(limit)
+            
+        results = query.all()
 
         if limit is not None:
             query = query.limit(limit)

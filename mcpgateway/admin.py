@@ -7078,6 +7078,10 @@ async def get_aggregated_metrics(
             - 'topPerformers': A nested dictionary with top 5 tools, resources, prompts,
               and servers.
     """
+<<<<<<< HEAD
+=======
+
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     # Get ALL entities with metrics for UI display (same logic as CSV export)
     from sqlalchemy import func, case, Float
     from sqlalchemy.sql import desc
@@ -7171,7 +7175,11 @@ async def get_aggregated_metrics(
         .order_by(desc("execution_count"), Server.name)
     )
     all_servers = build_top_performers(servers_query.all())
+<<<<<<< HEAD
     
+=======
+        
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
@@ -7406,7 +7414,10 @@ async def export_metrics_csv(
     )
 
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
 async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, object]:
     """

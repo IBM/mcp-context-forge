@@ -17,6 +17,7 @@ from mcpgateway.schemas import TopPerformer
 def calculate_success_rate(successful: Union[int, float], total: Union[int, float]) -> Optional[float]:
     """
     Calculate success rate as a percentage.
+<<<<<<< HEAD
 
     This function handles division by zero and ensures the result is always a valid
     percentage or None if the calculation is not possible.
@@ -28,6 +29,19 @@ def calculate_success_rate(successful: Union[int, float], total: Union[int, floa
     Returns:
         Optional[float]: Success rate as a percentage (0-100) or None if total is zero
 
+=======
+    
+    This function handles division by zero and ensures the result is always a valid
+    percentage or None if the calculation is not possible.
+    
+    Args:
+        successful: Number of successful operations
+        total: Total number of operations
+        
+    Returns:
+        Optional[float]: Success rate as a percentage (0-100) or None if total is zero
+        
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     Examples:
         >>> calculate_success_rate(75, 100)
         75.0
@@ -40,7 +54,11 @@ def calculate_success_rate(successful: Union[int, float], total: Union[int, floa
     """
     if total is None or successful is None:
         return None
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     try:
         total_float = float(total)
         if total_float <= 0:
@@ -53,6 +71,7 @@ def calculate_success_rate(successful: Union[int, float], total: Union[int, floa
 def format_response_time(response_time: Optional[float]) -> Optional[str]:
     """
     Format response time to display with 3 decimal places.
+<<<<<<< HEAD
 
     Args:
         response_time: Response time in seconds
@@ -60,6 +79,15 @@ def format_response_time(response_time: Optional[float]) -> Optional[str]:
     Returns:
         Optional[str]: Formatted response time with 3 decimal places or None
 
+=======
+    
+    Args:
+        response_time: Response time in seconds
+        
+    Returns:
+        Optional[str]: Formatted response time with 3 decimal places or None
+        
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     Examples:
         >>> format_response_time(1.2345)
         '1.235'
@@ -70,7 +98,11 @@ def format_response_time(response_time: Optional[float]) -> Optional[str]:
     """
     if response_time is None:
         return None
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     try:
         return f"{float(response_time):.3f}"
     except (ValueError, TypeError):

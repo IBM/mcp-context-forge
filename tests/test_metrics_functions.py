@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 # -*- coding: utf-8 -*-
+=======
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
 """
 Simple test script to directly test the metrics calculation functions in issue #699.
 """
@@ -16,7 +19,11 @@ except ImportError:
 def test_calculate_success_rate():
     """Test the calculate_success_rate function."""
     print("\n--- Testing calculate_success_rate function ---")
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     test_cases = [
         # (successes, total, expected_result)
         (8, 10, 80.0),  # 80% success rate
@@ -25,7 +32,11 @@ def test_calculate_success_rate():
         (0, 0, None),   # No data (should return None)
         (None, None, None),  # None inputs (should return None)
     ]
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     for i, (successes, total, expected) in enumerate(test_cases):
         result = calculate_success_rate(successes, total)
         if result == expected:
@@ -36,7 +47,11 @@ def test_calculate_success_rate():
 def test_format_response_time():
     """Test the format_response_time function."""
     print("\n--- Testing format_response_time function ---")
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     test_cases = [
         # (response_time, expected_result)
         (1.23456, "1.235"),  # Standard case, rounds to 3 decimal places
@@ -45,7 +60,11 @@ def test_format_response_time():
         (None, None),        # None input - returns None (admin.py converts to "N/A")
         (0, "0.000"),        # Zero input
     ]
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     for i, (response_time, expected) in enumerate(test_cases):
         result = format_response_time(response_time)
         if result == expected:
@@ -56,11 +75,19 @@ def test_format_response_time():
 def main():
     """Run all tests."""
     print("Starting tests for issue #699 metrics calculation functions...")
+<<<<<<< HEAD
 
     # Test core metrics functions
     test_calculate_success_rate()
     test_format_response_time()
 
+=======
+    
+    # Test core metrics functions
+    test_calculate_success_rate()
+    test_format_response_time()
+    
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     print("\nAll tests completed!")
 
 if __name__ == "__main__":

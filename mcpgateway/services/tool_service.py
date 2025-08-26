@@ -19,7 +19,6 @@ import asyncio
 import base64
 from datetime import datetime, timezone
 import json
-import os
 import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -31,7 +30,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import case, delete, desc, Float, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -48,9 +47,7 @@ from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginVio
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
-from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
-from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -139,15 +136,9 @@ class ToolInvocationError(ToolError):
 
     Examples:
         >>> from mcpgateway.services.tool_service import ToolInvocationError
-        >>> err = ToolInvocationError("Tool execution failed")
+        >>> err = ToolInvocationError("Failed to invoke tool")
         >>> str(err)
-        'Tool execution failed'
-        >>> isinstance(err, ToolError)
-        True
-        >>> # Test with detailed error
-        >>> detailed_err = ToolInvocationError("Network timeout after 30 seconds")
-        >>> "timeout" in str(detailed_err)
-        True
+        'Failed to invoke tool'
         >>> isinstance(err, ToolError)
         True
     """
@@ -179,15 +170,7 @@ class ToolService:
         """
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
-        # Initialize plugin manager with env overrides to ease testing
-        env_flag = os.getenv("PLUGINS_ENABLED")
-        if env_flag is not None:
-            env_enabled = env_flag.strip().lower() in {"1", "true", "yes", "on"}
-            plugins_enabled = env_enabled
-        else:
-            plugins_enabled = settings.plugins_enabled
-        config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
-        self._plugin_manager: PluginManager | None = PluginManager(config_file) if plugins_enabled else None
+        self._plugin_manager: PluginManager | None = PluginManager() if settings.plugins_enabled else None
         self.oauth_manager = OAuthManager(
             request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
@@ -257,11 +240,18 @@ class ToolService:
             .order_by(desc("execution_count"))
         )
         
+<<<<<<< HEAD
 
         if limit is not None:
             query = query.limit(limit)
 
         results = query.all()        
+=======
+        if limit is not None:
+            query = query.limit(limit)
+            
+        results = query.all()
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
 
         return build_top_performers(results)
 
@@ -306,14 +296,10 @@ class ToolService:
             tool_dict["auth"] = None
 
         tool_dict["name"] = tool.name
-        # Handle displayName with fallback and None checks
-        display_name = getattr(tool, "display_name", None)
-        custom_name = getattr(tool, "custom_name", tool.original_name)
-        tool_dict["displayName"] = display_name or custom_name
-        tool_dict["custom_name"] = custom_name
-        tool_dict["gateway_slug"] = getattr(tool, "gateway_slug", "") or ""
-        tool_dict["custom_name_slug"] = getattr(tool, "custom_name_slug", "") or ""
-        tool_dict["tags"] = getattr(tool, "tags", []) or []
+        tool_dict["custom_name"] = tool.custom_name
+        tool_dict["gateway_slug"] = tool.gateway_slug if tool.gateway_slug else ""
+        tool_dict["custom_name_slug"] = tool.custom_name_slug
+        tool_dict["tags"] = tool.tags or []
 
         return ToolRead.model_validate(tool_dict)
 
@@ -353,11 +339,14 @@ class ToolService:
         created_user_agent: Optional[str] = None,
         import_batch_id: Optional[str] = None,
         federation_source: Optional[str] = None,
+<<<<<<< HEAD
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: str = None,
+=======
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     ) -> ToolRead:
-        """Register a new tool with team support.
+        """Register a new tool.
 
         Args:
             db: Database session.
@@ -368,9 +357,6 @@ class ToolService:
             created_user_agent: User agent of creation request.
             import_batch_id: UUID for bulk import operations.
             federation_source: Source gateway for federated tools.
-            team_id: Optional team ID to assign tool to.
-            owner_email: Optional owner email for tool ownership.
-            visibility: Tool visibility (private, team, public).
 
         Returns:
             Created tool information.
@@ -423,7 +409,6 @@ class ToolService:
                 original_name=tool.name,
                 custom_name=tool.name,
                 custom_name_slug=slugify(tool.name),
-                display_name=tool.displayName or tool.name,
                 url=str(tool.url),
                 description=tool.description,
                 integration_type=tool.integration_type,
@@ -444,10 +429,6 @@ class ToolService:
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
                 version=1,
-                # Team scoping fields
-                team_id=team_id,
-                owner_email=owner_email or created_by,
-                visibility=visibility,
             )
             db.add(db_tool)
             db.commit()
@@ -503,7 +484,16 @@ class ToolService:
 
         # Add tag filtering if tags are provided
         if tags:
+<<<<<<< HEAD
             query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
+=======
+            # Filter tools that have any of the specified tags
+            tag_conditions = []
+            for tag in tags:
+                tag_conditions.append(func.json_contains(DbTool.tags, f'"{tag}"'))
+            if tag_conditions:
+                query = query.where(func.or_(*tag_conditions))
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
 
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
@@ -546,6 +536,7 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 
+<<<<<<< HEAD
     async def list_tools_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[ToolRead]:
@@ -618,6 +609,8 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 
+=======
+>>>>>>> 394d8139 (Implement metrics enhancements and testing scripts for issue #699)
     async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
         """
         Retrieve a tool by its ID.
@@ -1121,8 +1114,6 @@ class ToolService:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
-            if tool_update.displayName is not None:
-                tool.display_name = tool_update.displayName
             if tool_update.url is not None:
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:
@@ -1451,7 +1442,6 @@ class ToolService:
         # Create tool entry for the A2A agent
         tool_data = ToolCreate(
             name=tool_name,
-            displayName=generate_display_name(agent.name),
             url=agent.endpoint_url,
             description=f"A2A Agent: {agent.description or agent.name}",
             integration_type="A2A",  # Special integration type for A2A agents

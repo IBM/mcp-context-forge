@@ -192,6 +192,11 @@ class PromptService:
             .group_by(DbPrompt.id, DbPrompt.name)
             .order_by(desc("execution_count"))
         )
+        
+        if limit is not None:
+            query = query.limit(limit)
+            
+        results = query.all()
 
         if limit is not None:
             query = query.limit(limit)
