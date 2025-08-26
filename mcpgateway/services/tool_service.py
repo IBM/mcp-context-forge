@@ -19,7 +19,6 @@ import asyncio
 import base64
 from datetime import datetime, timezone
 import json
-import os
 import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -31,7 +30,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import case, delete, desc, Float, func, not_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -48,9 +47,7 @@ from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginVio
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
-from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
-from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -138,15 +135,9 @@ class ToolInvocationError(ToolError):
 
     Examples:
         >>> from mcpgateway.services.tool_service import ToolInvocationError
-        >>> err = ToolInvocationError("Tool execution failed")
+        >>> err = ToolInvocationError("Failed to invoke tool")
         >>> str(err)
-        'Tool execution failed'
-        >>> isinstance(err, ToolError)
-        True
-        >>> # Test with detailed error
-        >>> detailed_err = ToolInvocationError("Network timeout after 30 seconds")
-        >>> "timeout" in str(detailed_err)
-        True
+        'Failed to invoke tool'
         >>> isinstance(err, ToolError)
         True
     """
@@ -178,15 +169,7 @@ class ToolService:
         """
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
-        # Initialize plugin manager with env overrides to ease testing
-        env_flag = os.getenv("PLUGINS_ENABLED")
-        if env_flag is not None:
-            env_enabled = env_flag.strip().lower() in {"1", "true", "yes", "on"}
-            plugins_enabled = env_enabled
-        else:
-            plugins_enabled = settings.plugins_enabled
-        config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
-        self._plugin_manager: PluginManager | None = PluginManager(config_file) if plugins_enabled else None
+        self._plugin_manager: PluginManager | None = PluginManager() if settings.plugins_enabled else None
         self.oauth_manager = OAuthManager(
             request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
@@ -215,7 +198,7 @@ class ToolService:
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
 
-    async def get_top_tools(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+    async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
         Queries the database to get tools with their metrics, ordered by the number of executions
@@ -224,7 +207,8 @@ class ToolService:
 
         Args:
             db (Session): Database session for querying tool metrics.
-            limit (int): Maximum number of tools to return. Defaults to 5.
+            limit (Optional[int]): Maximum number of tools to return. Defaults to 5.
+                If None, returns all tools.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -235,7 +219,7 @@ class ToolService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        results = (
+        query = (
             db.query(
                 DbTool.id,
                 DbTool.name,
@@ -253,9 +237,12 @@ class ToolService:
             .outerjoin(ToolMetric)
             .group_by(DbTool.id, DbTool.name)
             .order_by(desc("execution_count"))
-            .limit(limit)
-            .all()
         )
+        
+        if limit is not None:
+            query = query.limit(limit)
+            
+        results = query.all()
 
         return build_top_performers(results)
 
@@ -300,14 +287,10 @@ class ToolService:
             tool_dict["auth"] = None
 
         tool_dict["name"] = tool.name
-        # Handle displayName with fallback and None checks
-        display_name = getattr(tool, "display_name", None)
-        custom_name = getattr(tool, "custom_name", tool.original_name)
-        tool_dict["displayName"] = display_name or custom_name
-        tool_dict["custom_name"] = custom_name
-        tool_dict["gateway_slug"] = getattr(tool, "gateway_slug", "") or ""
-        tool_dict["custom_name_slug"] = getattr(tool, "custom_name_slug", "") or ""
-        tool_dict["tags"] = getattr(tool, "tags", []) or []
+        tool_dict["custom_name"] = tool.custom_name
+        tool_dict["gateway_slug"] = tool.gateway_slug if tool.gateway_slug else ""
+        tool_dict["custom_name_slug"] = tool.custom_name_slug
+        tool_dict["tags"] = tool.tags or []
 
         return ToolRead.model_validate(tool_dict)
 
@@ -347,11 +330,8 @@ class ToolService:
         created_user_agent: Optional[str] = None,
         import_batch_id: Optional[str] = None,
         federation_source: Optional[str] = None,
-        team_id: Optional[str] = None,
-        owner_email: Optional[str] = None,
-        visibility: str = "private",
     ) -> ToolRead:
-        """Register a new tool with team support.
+        """Register a new tool.
 
         Args:
             db: Database session.
@@ -362,9 +342,6 @@ class ToolService:
             created_user_agent: User agent of creation request.
             import_batch_id: UUID for bulk import operations.
             federation_source: Source gateway for federated tools.
-            team_id: Optional team ID to assign tool to.
-            owner_email: Optional owner email for tool ownership.
-            visibility: Tool visibility (private, team, public).
 
         Returns:
             Created tool information.
@@ -408,7 +385,6 @@ class ToolService:
                 original_name=tool.name,
                 custom_name=tool.name,
                 custom_name_slug=slugify(tool.name),
-                display_name=tool.displayName or tool.name,
                 url=str(tool.url),
                 description=tool.description,
                 integration_type=tool.integration_type,
@@ -429,10 +405,6 @@ class ToolService:
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
                 version=1,
-                # Team scoping fields
-                team_id=team_id,
-                owner_email=owner_email or created_by,
-                visibility=visibility,
             )
             db.add(db_tool)
             db.commit()
@@ -493,7 +465,7 @@ class ToolService:
             for tag in tags:
                 tag_conditions.append(func.json_contains(DbTool.tags, f'"{tag}"'))
             if tag_conditions:
-                query = query.where(*tag_conditions)
+                query = query.where(func.or_(*tag_conditions))
 
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
@@ -533,75 +505,6 @@ class ToolService:
         logger.debug(f"Listing server tools for server_id={server_id} with include_inactive={include_inactive}, cursor={cursor}")
         if not include_inactive:
             query = query.where(DbTool.enabled)
-        tools = db.execute(query).scalars().all()
-        return [self._convert_tool_to_read(t) for t in tools]
-
-    async def list_tools_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
-    ) -> List[ToolRead]:
-        """
-        List tools user has access to with team filtering.
-
-        Args:
-            db: Database session
-            user_email: Email of the user requesting tools
-            team_id: Optional team ID to filter by specific team
-            visibility: Optional visibility filter (private, team, public)
-            include_inactive: Whether to include inactive tools
-            skip: Number of tools to skip for pagination
-            limit: Maximum number of tools to return
-
-        Returns:
-            List[ToolRead]: Tools the user has access to
-        """
-
-        # Build query following existing patterns from list_tools()
-        query = select(DbTool)
-
-        # Apply active/inactive filter
-        if not include_inactive:
-            query = query.where(DbTool.enabled.is_(True))
-
-        if team_id:
-            # Filter by specific team
-            query = query.where(DbTool.team_id == team_id)
-
-            # Validate user has access to team
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
-            if team_id not in team_ids:
-                return []  # No access to team
-        else:
-            # Get user's accessible teams
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
-            # Build access conditions following existing patterns
-
-            access_conditions = []
-
-            # 1. User's personal resources (owner_email matches)
-            access_conditions.append(DbTool.owner_email == user_email)
-
-            # 2. Team resources where user is member
-            if team_ids:
-                access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
-
-            # 3. Public resources (if visibility allows)
-            access_conditions.append(DbTool.visibility == "public")
-
-            query = query.where(or_(*access_conditions))
-
-        # Apply visibility filter if specified
-        if visibility:
-            query = query.where(DbTool.visibility == visibility)
-
-        # Apply pagination following existing patterns
-        query = query.offset(skip).limit(limit)
-
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 
@@ -1108,8 +1011,6 @@ class ToolService:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
-            if tool_update.displayName is not None:
-                tool.display_name = tool_update.displayName
             if tool_update.url is not None:
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:
@@ -1436,7 +1337,6 @@ class ToolService:
         # Create tool entry for the A2A agent
         tool_data = ToolCreate(
             name=tool_name,
-            displayName=generate_display_name(agent.name),
             url=agent.endpoint_url,
             description=f"A2A Agent: {agent.description or agent.name}",
             integration_type="A2A",  # Special integration type for A2A agents

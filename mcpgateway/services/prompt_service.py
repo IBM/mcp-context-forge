@@ -151,7 +151,7 @@ class PromptService:
         self._event_subscribers.clear()
         logger.info("Prompt service shutdown complete")
 
-    async def get_top_prompts(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+    async def get_top_prompts(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing prompts based on execution count.
 
         Queries the database to get prompts with their metrics, ordered by the number of executions
@@ -160,7 +160,8 @@ class PromptService:
 
         Args:
             db (Session): Database session for querying prompt metrics.
-            limit (int): Maximum number of prompts to return. Defaults to 5.
+            limit (Optional[int]): Maximum number of prompts to return. Defaults to 5.
+                If None, returns all prompts.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -171,7 +172,7 @@ class PromptService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        results = (
+        query = (
             db.query(
                 DbPrompt.id,
                 DbPrompt.name,
@@ -189,9 +190,12 @@ class PromptService:
             .outerjoin(PromptMetric)
             .group_by(DbPrompt.id, DbPrompt.name)
             .order_by(desc("execution_count"))
-            .limit(limit)
-            .all()
         )
+        
+        if limit is not None:
+            query = query.limit(limit)
+            
+        results = query.all()
 
         return build_top_performers(results)
 
