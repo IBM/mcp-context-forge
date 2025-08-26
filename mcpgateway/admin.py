@@ -23,6 +23,7 @@ import csv
 from datetime import datetime
 from functools import wraps
 import io
+from io import StringIO
 import json
 from pathlib import Path
 import time
@@ -30,7 +31,7 @@ from typing import Any, cast, Dict, List, Optional, Union
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
 from pydantic import ValidationError
@@ -670,7 +671,6 @@ async def admin_edit_server(
     update operation.
 
     Expects form fields:
-      - id (optional): Updated UUID for the server
       - name (optional): The updated name of the server
       - description (optional): An updated description of the server's purpose
       - icon (optional): Updated URL or path to the server's icon
@@ -779,7 +779,6 @@ async def admin_edit_server(
     try:
         LOGGER.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
-            id=form.get("id"),
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
@@ -1981,7 +1980,6 @@ async def admin_add_tool(
 
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
-        "displayName": form.get("displayName"),
         "url": form.get("url"),
         "description": form.get("description"),
         "request_type": request_type,
@@ -2047,7 +2045,6 @@ async def admin_edit_tool(
 
     Expects form fields:
       - name
-      - displayName (optional)
       - url
       - description (optional)
       - requestType (to be mapped to request_type)
@@ -2222,7 +2219,6 @@ async def admin_edit_tool(
 
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
-        "displayName": form.get("displayName"),
         "custom_name": form.get("customName"),
         "url": form.get("url"),
         "description": form.get("description"),
@@ -4155,6 +4151,8 @@ async def admin_delete_root(uri: str, request: Request, user: str = Depends(requ
 # Metrics
 MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, PromptMetrics]]
 
+# Import the response time formatting function
+from mcpgateway.utils.metrics_common import format_response_time
 
 # @admin_router.get("/metrics", response_model=MetricsDict)
 # async def admin_get_metrics(
@@ -4231,6 +4229,120 @@ async def get_aggregated_metrics(
         },
     }
     return metrics
+
+
+@admin_router.get("/metrics/export", response_class=Response)
+async def export_metrics_csv(
+    db: Session = Depends(get_db),
+    entity_type: str = Query(..., description="Entity type to export (tools, resources, prompts, servers)"),
+    limit: Optional[int] = Query(None, description="Maximum number of results to return. If not provided, all results are returned."),
+    user: str = Depends(require_auth),
+) -> Response:
+    """Export metrics for a specific entity type to CSV format.
+
+    This endpoint retrieves performance metrics for the specified entity type and
+    exports them to CSV format for download. All rows are exported, not just the top 5.
+    Response times are formatted to 3 decimal places.
+
+    Args:
+        db (Session): Database session dependency for querying metrics.
+        entity_type (str): Type of entity to export (tools, resources, prompts, servers).
+        limit (Optional[int]): Maximum number of results to return. If None, all results are returned.
+        user (str): Authenticated user.
+
+    Returns:
+        Response: CSV file download response containing the metrics data.
+        
+    Raises:
+        HTTPException: If the entity type is invalid.
+    """
+    LOGGER.debug(f"User {user} requested CSV export of {entity_type} metrics")
+    
+    # Validate entity type
+    valid_types = ["tools", "resources", "prompts", "servers"]
+    if entity_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity type. Must be one of: {', '.join(valid_types)}")
+    
+    # Get the top performers for the requested entity type without limit to get all rows
+    try:
+        if entity_type == "tools":
+            if limit:
+                performers = await tool_service.get_top_tools(db, limit=limit)
+            else:
+                performers = await tool_service.get_top_tools(db, limit=None)
+        elif entity_type == "resources":
+            if limit:
+                performers = await resource_service.get_top_resources(db, limit=limit)
+            else:
+                performers = await resource_service.get_top_resources(db, limit=None)
+        elif entity_type == "prompts":
+            if limit:
+                performers = await prompt_service.get_top_prompts(db, limit=limit)
+            else:
+                performers = await prompt_service.get_top_prompts(db, limit=None)
+        elif entity_type == "servers":
+            if limit:
+                performers = await server_service.get_top_servers(db, limit=limit)
+            else:
+                performers = await server_service.get_top_servers(db, limit=None)
+    except Exception as e:
+        LOGGER.error(f"Error exporting {entity_type} metrics to CSV: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to export metrics: {str(e)}")
+    
+    # Handle empty data case
+    if not performers:
+        # Return empty CSV with headers
+        csv_content = "ID,Name,Execution Count,Average Response Time (s),Success Rate (%),Last Execution\n"
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={entity_type}_metrics.csv"}
+        )
+    
+    # Create CSV content
+    output = StringIO()
+    writer = csv.writer(output)
+    
+    # Write header row
+    writer.writerow([
+        "ID", 
+        "Name", 
+        "Execution Count", 
+        "Average Response Time (s)", 
+        "Success Rate (%)", 
+        "Last Execution"
+    ])
+    
+    # Write data rows with formatted values
+    for performer in performers:
+        # Format response time to 3 decimal places
+        formatted_response_time = format_response_time(performer.avg_response_time) if performer.avg_response_time is not None else "N/A"
+        
+        # Format success rate
+        success_rate = f"{performer.success_rate:.1f}" if performer.success_rate is not None else "N/A"
+        
+        # Format timestamp
+        last_execution = performer.last_execution.isoformat() if performer.last_execution else "N/A"
+        
+        writer.writerow([
+            performer.id,
+            performer.name,
+            performer.execution_count,
+            formatted_response_time,
+            success_rate,
+            last_execution
+        ])
+    
+    # Get the CSV content as a string
+    csv_content = output.getvalue()
+    output.close()
+    
+    # Return CSV response
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={entity_type}_metrics.csv"}
+    )
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])

@@ -128,7 +128,7 @@ class ServerService:
         logger.info("Server service shutdown complete")
 
     # get_top_server
-    async def get_top_servers(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+    async def get_top_servers(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing servers based on execution count.
 
         Queries the database to get servers with their metrics, ordered by the number of executions
@@ -137,7 +137,8 @@ class ServerService:
 
         Args:
             db (Session): Database session for querying server metrics.
-            limit (int): Maximum number of servers to return. Defaults to 5.
+            limit (Optional[int]): Maximum number of servers to return. Defaults to 5.
+                If None, returns all servers.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -148,7 +149,7 @@ class ServerService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        results = (
+        query = (
             db.query(
                 DbServer.id,
                 DbServer.name,
@@ -166,9 +167,14 @@ class ServerService:
             .outerjoin(ServerMetric)
             .group_by(DbServer.id, DbServer.name)
             .order_by(desc("execution_count"))
-            .limit(limit)
-            .all()
         )
+        
+        if limit is not None:
+            query = query.limit(limit)
+            
+        results = query.all()
+
+        return build_top_performers(results)
 
         return build_top_performers(results)
 
@@ -313,10 +319,6 @@ class ServerService:
                 is_active=True,
                 tags=server_in.tags or [],
             )
-
-            # Set custom UUID if provided
-            if server_in.id:
-                db_server.id = server_in.id
             db.add(db_server)
 
             # Associate tools, verifying each exists.
@@ -501,17 +503,14 @@ class ServerService:
             >>> service = ServerService()
             >>> db = MagicMock()
             >>> server = MagicMock()
-            >>> server.id = 'server_id'
             >>> db.get.return_value = server
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> service._convert_server_to_read = MagicMock(return_value='server_read')
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
-            >>> server_update = MagicMock()
-            >>> server_update.id = None  # No UUID change
             >>> import asyncio
-            >>> asyncio.run(service.update_server(db, 'server_id', server_update))
+            >>> asyncio.run(service.update_server(db, 'server_id', MagicMock()))
             'server_read'
         """
         try:
@@ -530,12 +529,6 @@ class ServerService:
                     )
 
             # Update simple fields
-            if server_update.id is not None and server_update.id != server.id:
-                # Check if the new UUID is already in use
-                existing = db.get(DbServer, server_update.id)
-                if existing:
-                    raise ServerError(f"Server with ID {server_update.id} already exists")
-                server.id = server_update.id
             if server_update.name is not None:
                 server.name = server_update.name
             if server_update.description is not None:
