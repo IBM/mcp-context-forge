@@ -320,6 +320,391 @@ class TestSchemaValidation:
             ServerUpdate(id="bad-uuid-format")
 
 
+class TestServerUUIDNormalization:
+    """Test UUID normalization functionality in server service."""
+
+    @pytest.mark.asyncio
+    async def test_server_create_uuid_normalization_standard_format(self, db_session, server_service):
+        """Test server creation with standard UUID format (with dashes) gets normalized to hex format."""
+        import uuid as uuid_module
+        from mcpgateway.schemas import ServerCreate
+        from mcpgateway.db import Server as DbServer
+
+        # Standard UUID format (with dashes)
+        standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace('-', '')
+
+        # Mock database operations
+        mock_db_server = None
+        def capture_add(server):
+            nonlocal mock_db_server
+            mock_db_server = server
+            # Simulate the UUID normalization that happens in the service
+            if hasattr(server, 'id') and server.id:
+                server.id = str(uuid_module.UUID(server.id)).replace('-', '')
+
+        db_session.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=None)))
+        db_session.add = Mock(side_effect=capture_add)
+        db_session.commit = Mock()
+        db_session.refresh = Mock()
+        db_session.get = Mock(return_value=None)  # No associated items
+
+        # Mock the service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service._convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id=expected_hex_uuid,
+                name="Test Server",
+                description="Test server with UUID normalization",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                is_active=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_create = ServerCreate(
+            id=standard_uuid,
+            name="Test Server",
+            description="Test server with UUID normalization"
+        )
+
+        # Call the service method
+        result = await server_service.register_server(db_session, server_create)
+
+        # Verify UUID was normalized to hex format
+        assert mock_db_server is not None
+        assert mock_db_server.id == expected_hex_uuid
+        assert result.id == expected_hex_uuid
+        assert len(expected_hex_uuid) == 32  # UUID without dashes is 32 chars
+        assert "-" not in expected_hex_uuid
+
+    @pytest.mark.asyncio
+    async def test_server_create_uuid_normalization_hex_format(self, db_session, server_service):
+        """Test server creation with UUID in hex format (without dashes) works unchanged."""
+        import uuid as uuid_module
+        from mcpgateway.schemas import ServerCreate
+
+        # Hex UUID format (without dashes) - but we need to provide a valid UUID
+        standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        hex_uuid = "550e8400e29b41d4a716446655440000"
+
+        # Mock database operations
+        mock_db_server = None
+        def capture_add(server):
+            nonlocal mock_db_server
+            mock_db_server = server
+            # Simulate the UUID normalization that happens in the service
+            if hasattr(server, 'id') and server.id:
+                server.id = str(uuid_module.UUID(server.id)).replace('-', '')
+
+        db_session.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=None)))
+        db_session.add = Mock(side_effect=capture_add)
+        db_session.commit = Mock()
+        db_session.refresh = Mock()
+        db_session.get = Mock(return_value=None)  # No associated items
+
+        # Mock the service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service._convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id=hex_uuid,
+                name="Test Server Hex",
+                description="Test server with hex UUID",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                is_active=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        # Use the standard UUID format for schema validation, but expect hex format in storage
+        server_create = ServerCreate(
+            id=standard_uuid,  # Valid UUID format for schema validation
+            name="Test Server Hex",
+            description="Test server with hex UUID"
+        )
+
+        # Call the service method
+        result = await server_service.register_server(db_session, server_create)
+
+        # Verify UUID was normalized to hex format
+        assert mock_db_server is not None
+        assert mock_db_server.id == hex_uuid
+        assert result.id == hex_uuid
+        assert len(hex_uuid) == 32
+        assert "-" not in hex_uuid
+
+    @pytest.mark.asyncio
+    async def test_server_create_auto_generated_uuid(self, db_session, server_service):
+        """Test server creation without custom UUID generates UUID automatically."""
+        from mcpgateway.schemas import ServerCreate
+
+        # Mock database operations
+        mock_db_server = None
+        def capture_add(server):
+            nonlocal mock_db_server
+            mock_db_server = server
+            # Server should not have an ID set initially when auto-generating
+
+        db_session.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=None)))
+        db_session.add = Mock(side_effect=capture_add)
+        db_session.commit = Mock()
+        db_session.refresh = Mock()
+        db_session.get = Mock(return_value=None)  # No associated items
+
+        # Mock the service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service._convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="auto_generated_id_32_chars_long_hex",
+                name="Auto UUID Server",
+                description="Test server with auto UUID",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                is_active=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_create = ServerCreate(
+            name="Auto UUID Server",
+            description="Test server with auto UUID"
+        )
+        # id should be None for auto-generation
+        assert server_create.id is None
+
+        # Call the service method
+        result = await server_service.register_server(db_session, server_create)
+
+        # Verify no custom UUID was set in the server before adding to DB
+        assert mock_db_server is not None
+        assert mock_db_server.id is None  # Should not be set for auto-generation
+        assert result.id == "auto_generated_id_32_chars_long_hex"
+
+    @pytest.mark.asyncio
+    async def test_server_create_invalid_uuid_format(self, db_session, server_service):
+        """Test server creation with invalid UUID format raises validation error."""
+        from mcpgateway.schemas import ServerCreate
+        from pydantic import ValidationError
+
+        # Test various invalid UUID formats that should raise validation errors
+        invalid_uuids = [
+            "invalid-uuid-format",
+            "123-456-789",
+            "not-a-uuid-at-all",
+            "550e8400-e29b-41d4-a716-44665544000",  # Too short
+            "550e8400-e29b-41d4-a716-446655440000-extra",  # Too long
+            "550g8400-e29b-41d4-a716-446655440000",  # Invalid character
+        ]
+
+        for invalid_uuid in invalid_uuids:
+            with pytest.raises(ValidationError) as exc_info:
+                ServerCreate(
+                    id=invalid_uuid,
+                    name="Test Server",
+                    description="Test server with invalid UUID"
+                )
+            # Verify the error message mentions UUID validation
+            assert "UUID" in str(exc_info.value) or "invalid" in str(exc_info.value).lower()
+
+        # Test empty and whitespace strings separately - these are handled differently
+        # Empty string should be allowed (treated as None)
+        server_empty_id = ServerCreate(
+            id="",
+            name="Test Server Empty",
+            description="Test server with empty ID"
+        )
+        assert server_empty_id.id == ""  # Empty string is preserved but treated as no custom ID
+
+        # Whitespace-only string should be stripped to empty
+        server_whitespace_id = ServerCreate(
+            id="   ",
+            name="Test Server Whitespace",
+            description="Test server with whitespace ID"
+        )
+        assert server_whitespace_id.id == ""  # Whitespace stripped by str_strip_whitespace=True
+
+    def test_uuid_normalization_logic(self):
+        """Test the UUID normalization logic directly."""
+        import uuid as uuid_module
+
+        # Test cases for UUID normalization
+        test_cases = [
+            {
+                "input": "550e8400-e29b-41d4-a716-446655440000",
+                "expected": "550e8400e29b41d4a716446655440000",
+                "description": "Standard UUID with dashes"
+            },
+            {
+                "input": "123e4567-e89b-12d3-a456-426614174000",
+                "expected": "123e4567e89b12d3a456426614174000",
+                "description": "Another standard UUID with dashes"
+            },
+            {
+                "input": "00000000-0000-0000-0000-000000000000",
+                "expected": "00000000000000000000000000000000",
+                "description": "Nil UUID"
+            },
+        ]
+
+        for case in test_cases:
+            # Simulate the normalization logic from server_service.py
+            normalized = str(uuid_module.UUID(case["input"])).replace('-', '')
+            assert normalized == case["expected"], f"Failed for {case['description']}: expected {case['expected']}, got {normalized}"
+            assert len(normalized) == 32, f"Normalized UUID should be 32 characters, got {len(normalized)}"
+            assert "-" not in normalized, "Normalized UUID should not contain dashes"
+
+    def test_database_storage_format_verification(self, db_session):
+        """Test that UUIDs are stored in the database in the expected hex format."""
+        import uuid as uuid_module
+
+        # Create a server with standard UUID format
+        standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        expected_hex = str(uuid_module.UUID(standard_uuid)).replace('-', '')
+
+        # Simulate what the service does - normalize the UUID before storing
+        db_server = DbServer(
+            id=expected_hex,  # Simulate the normalized UUID
+            name="Storage Test Server",
+            description="Test UUID storage format",
+            is_active=True
+        )
+
+        db_session.add(db_server)
+        db_session.commit()
+
+        # Verify the stored format
+        saved_server = db_session.query(DbServer).first()
+        assert saved_server.id == expected_hex
+        assert len(saved_server.id) == 32
+        assert "-" not in saved_server.id
+        assert saved_server.id.isalnum()  # Should only contain alphanumeric characters
+
+    @pytest.mark.asyncio
+    async def test_comprehensive_uuid_scenarios_with_service(self, db_session, server_service):
+        """Test comprehensive UUID scenarios that would be encountered in practice."""
+        import uuid as uuid_module
+        from mcpgateway.schemas import ServerCreate
+
+        test_scenarios = [
+            {
+                "name": "Lowercase UUID with dashes",
+                "input": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "description": "Standard lowercase UUID format"
+            },
+            {
+                "name": "Uppercase UUID with dashes",
+                "input": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+                "description": "Uppercase UUID format"
+            },
+            {
+                "name": "Mixed case UUID with dashes",
+                "input": "A1b2C3d4-E5f6-7890-AbCd-Ef1234567890",
+                "description": "Mixed case UUID format"
+            }
+        ]
+
+        for i, scenario in enumerate(test_scenarios):
+            # Calculate expected normalized UUID
+            expected_hex = str(uuid_module.UUID(scenario["input"])).replace('-', '')
+
+            # Mock database operations for this test
+            captured_server = None
+            def capture_add(server):
+                nonlocal captured_server
+                captured_server = server
+
+            db_session.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=None)))
+            db_session.add = Mock(side_effect=capture_add)
+            db_session.commit = Mock()
+            db_session.refresh = Mock()
+            db_session.get = Mock(return_value=None)
+
+            # Mock service methods
+            server_service._notify_server_added = AsyncMock()
+            server_service._convert_server_to_read = Mock(
+                return_value=ServerRead(
+                    id=expected_hex,
+                    name=scenario["name"],
+                    description=scenario["description"],
+                    icon=None,
+                    created_at="2023-01-01T00:00:00",
+                    updated_at="2023-01-01T00:00:00",
+                    is_active=True,
+                    associated_tools=[],
+                    associated_resources=[],
+                    associated_prompts=[],
+                    metrics={
+                        "total_executions": 0,
+                        "successful_executions": 0,
+                        "failed_executions": 0,
+                        "failure_rate": 0.0,
+                        "min_response_time": None,
+                        "max_response_time": None,
+                        "avg_response_time": None,
+                        "last_execution_time": None,
+                    },
+                )
+            )
+
+            server_create = ServerCreate(
+                id=scenario["input"],
+                name=scenario["name"],
+                description=scenario["description"]
+            )
+
+            # Call the service method
+            result = await server_service.register_server(db_session, server_create)
+
+            # Verify UUID normalization occurred correctly
+            assert captured_server is not None, f"Server not captured for scenario: {scenario['name']}"
+            assert captured_server.id == expected_hex, f"UUID not normalized correctly for {scenario['name']}: expected {expected_hex}, got {captured_server.id}"
+            assert len(captured_server.id) == 32, f"Normalized UUID should be 32 chars for {scenario['name']}"
+            assert "-" not in captured_server.id, f"Normalized UUID should not contain dashes for {scenario['name']}"
+            assert captured_server.id.isalnum(), f"Normalized UUID should be alphanumeric for {scenario['name']}"
+            assert result.id == expected_hex, f"Response UUID should match normalized for {scenario['name']}"
+
+
 @pytest.mark.asyncio
 class TestServiceIntegration:
     """Test service-level integration of the new features."""

@@ -1,0 +1,165 @@
+{
+  "metadata": {
+    "version": "0.5.0",
+    "description": "Sample test data for MCP Gateway v0.5.0",
+    "created_by": "migration_test_suite",
+    "total_records": 12
+  },
+  "data": {
+    "tools": [
+      {
+        "name": "file_reader_v050",
+        "description": "File reading tool for migration testing",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path to read"
+            }
+          },
+          "required": ["path"]
+        },
+        "annotations": {
+          "category": "filesystem",
+          "version": "0.5.0",
+          "created_by": "migration_test"
+        }
+      },
+      {
+        "name": "data_processor_v050",
+        "description": "Data processing tool with complex schema",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "input_data": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {"type": "string"},
+                  "value": {"type": "number"}
+                }
+              }
+            },
+            "processing_options": {
+              "type": "object",
+              "properties": {
+                "method": {"type": "string", "enum": ["average", "sum", "max", "min"]},
+                "filter_null": {"type": "boolean", "default": true}
+              }
+            }
+          },
+          "required": ["input_data"]
+        },
+        "annotations": {
+          "category": "data",
+          "complexity": "high",
+          "version": "0.5.0"
+        }
+      },
+      {
+        "name": "system_monitor_v050",
+        "description": "System monitoring and health check tool",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "metrics": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "interval": {"type": "integer", "minimum": 1, "maximum": 3600}
+          }
+        },
+        "annotations": {
+          "category": "monitoring",
+          "priority": "high"
+        }
+      }
+    ],
+    "servers": [
+      {
+        "name": "test_server_sse_v050",
+        "description": "SSE test server for v0.5.0 migration testing",
+        "transport": "sse",
+        "connection_string": "http://test-sse.example.com:8080/sse",
+        "annotations": {
+          "environment": "test",
+          "transport": "sse",
+          "version": "0.5.0"
+        }
+      },
+      {
+        "name": "test_server_ws_v050",
+        "description": "WebSocket test server for migration testing",
+        "transport": "websocket",
+        "connection_string": "ws://test-ws.example.com:8080/ws",
+        "annotations": {
+          "environment": "test",
+          "transport": "websocket",
+          "version": "0.5.0"
+        }
+      }
+    ],
+    "gateways": [
+      {
+        "name": "test_gateway_v050",
+        "base_url": "http://test-gateway-050.example.com:4444",
+        "description": "Test gateway for v0.5.0 migration validation",
+        "health_check_url": "http://test-gateway-050.example.com:4444/health",
+        "health_check_interval": 60,
+        "annotations": {
+          "type": "test",
+          "version": "0.5.0",
+          "region": "us-east-1"
+        }
+      }
+    ],
+    "resources": [
+      {
+        "name": "config_file_v050",
+        "uri": "file:///app/config/v0.5.0/settings.yaml",
+        "description": "Configuration file for v0.5.0 testing",
+        "mimeType": "application/yaml",
+        "annotations": {
+          "category": "config",
+          "version": "0.5.0",
+          "size": "2048"
+        }
+      },
+      {
+        "name": "test_data_csv_v050",
+        "uri": "file:///app/data/v0.5.0/test_dataset.csv",
+        "description": "Test dataset for migration validation",
+        "mimeType": "text/csv",
+        "annotations": {
+          "category": "data",
+          "rows": "1000",
+          "version": "0.5.0"
+        }
+      }
+    ],
+    "prompts": [
+      {
+        "name": "greeting_prompt_v050",
+        "description": "Simple greeting prompt for testing",
+        "template": "Hello {{name}}, welcome to MCP Gateway v0.5.0! How can I help you with {{task}}?",
+        "annotations": {
+          "category": "greeting",
+          "variables": "2",
+          "version": "0.5.0"
+        }
+      },
+      {
+        "name": "analysis_prompt_v050",
+        "description": "Data analysis prompt with complex template",
+        "template": "Please analyze the following {{data_type}} data:\n\n{{content}}\n\nProvide insights on:\n1. {{aspect_1}}\n2. {{aspect_2}}\n3. {{aspect_3}}\n\nFormat: {{output_format}}",
+        "annotations": {
+          "category": "analysis",
+          "complexity": "high",
+          "variables": "6"
+        }
+      }
+    ]
+  }
+}
