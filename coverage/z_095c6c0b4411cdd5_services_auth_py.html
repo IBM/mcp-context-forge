@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/utils/services_auth.py: 100%</title>
+    <title>Coverage for mcpgateway/utils/services_auth.py: 23%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_58284776.png">
     <link rel="stylesheet" href="style_cb_6b508a39.css" type="text/css">
     <script src="coverage_html_cb_6fb7b396.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway/utils/services_auth.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">23%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -56,18 +56,18 @@
         </aside>
         <h2>
             <span class="text">33 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">33<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">9<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">24<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
             <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
         </h2>
         <p class="text">
-            <a id="prevFileLink" class="nav" href="z_095c6c0b4411cdd5_security_cookies_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="prevFileLink" class="nav" href="z_095c6c0b4411cdd5_retry_manager_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_verify_credentials_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.4">coverage.py v7.10.4</a>,
-            created at 2025-08-22 11:05 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.5">coverage.py v7.10.5</a>,
+            created at 2025-08-26 18:29 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -154,10 +154,10 @@
     <p class="pln"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t"><span class="str">    ...     print('error')</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t"><span class="str">    error</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">    <span class="nam">passphrase</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">passphrase</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">"AUTH_ENCRYPTION_SECRET not set in environment."</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t">    <span class="key">return</span> <span class="nam">hashlib</span><span class="op">.</span><span class="nam">sha256</span><span class="op">(</span><span class="nam">passphrase</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">.</span><span class="nam">digest</span><span class="op">(</span><span class="op">)</span>  <span class="com"># 32-byte key</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">    <span class="nam">passphrase</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">passphrase</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">"AUTH_ENCRYPTION_SECRET not set in environment."</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t">    <span class="key">return</span> <span class="nam">hashlib</span><span class="op">.</span><span class="nam">sha256</span><span class="op">(</span><span class="nam">passphrase</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">.</span><span class="nam">digest</span><span class="op">(</span><span class="op">)</span>  <span class="com"># 32-byte key</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t"><span class="key">def</span> <span class="nam">encode_auth</span><span class="op">(</span><span class="nam">auth_value</span><span class="op">:</span> <span class="nam">dict</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -181,16 +181,16 @@
     <p class="pln"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t"><span class="str">    >>> services_auth.encode_auth(None) is None</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t"><span class="str">    True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t99" href="#t99">99</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t100" href="#t100">100</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">auth_value</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t">        <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">    <span class="nam">plaintext</span> <span class="op">=</span> <span class="nam">json</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="nam">auth_value</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">    <span class="nam">key</span> <span class="op">=</span> <span class="nam">get_key</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t">    <span class="nam">aesgcm</span> <span class="op">=</span> <span class="nam">AESGCM</span><span class="op">(</span><span class="nam">key</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">    <span class="nam">nonce</span> <span class="op">=</span> <span class="nam">os</span><span class="op">.</span><span class="nam">urandom</span><span class="op">(</span><span class="num">12</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t">    <span class="nam">ciphertext</span> <span class="op">=</span> <span class="nam">aesgcm</span><span class="op">.</span><span class="nam">encrypt</span><span class="op">(</span><span class="nam">nonce</span><span class="op">,</span> <span class="nam">plaintext</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">    <span class="nam">combined</span> <span class="op">=</span> <span class="nam">nonce</span> <span class="op">+</span> <span class="nam">ciphertext</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">    <span class="nam">encoded</span> <span class="op">=</span> <span class="nam">base64</span><span class="op">.</span><span class="nam">urlsafe_b64encode</span><span class="op">(</span><span class="nam">combined</span><span class="op">)</span><span class="op">.</span><span class="nam">rstrip</span><span class="op">(</span><span class="str">b"="</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">    <span class="key">return</span> <span class="nam">encoded</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t100" href="#t100">100</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">auth_value</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t">        <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">    <span class="nam">plaintext</span> <span class="op">=</span> <span class="nam">json</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="nam">auth_value</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">    <span class="nam">key</span> <span class="op">=</span> <span class="nam">get_key</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t">    <span class="nam">aesgcm</span> <span class="op">=</span> <span class="nam">AESGCM</span><span class="op">(</span><span class="nam">key</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">    <span class="nam">nonce</span> <span class="op">=</span> <span class="nam">os</span><span class="op">.</span><span class="nam">urandom</span><span class="op">(</span><span class="num">12</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t">    <span class="nam">ciphertext</span> <span class="op">=</span> <span class="nam">aesgcm</span><span class="op">.</span><span class="nam">encrypt</span><span class="op">(</span><span class="nam">nonce</span><span class="op">,</span> <span class="nam">plaintext</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">    <span class="nam">combined</span> <span class="op">=</span> <span class="nam">nonce</span> <span class="op">+</span> <span class="nam">ciphertext</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">    <span class="nam">encoded</span> <span class="op">=</span> <span class="nam">base64</span><span class="op">.</span><span class="nam">urlsafe_b64encode</span><span class="op">(</span><span class="nam">combined</span><span class="op">)</span><span class="op">.</span><span class="nam">rstrip</span><span class="op">(</span><span class="str">b"="</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">    <span class="key">return</span> <span class="nam">encoded</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t"><span class="key">def</span> <span class="nam">decode_auth</span><span class="op">(</span><span class="nam">encoded_value</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">dict</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -215,27 +215,27 @@
     <p class="pln"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t"><span class="str">    >>> services_auth.decode_auth(None) == {}</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t"><span class="str">    True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">encoded_value</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">        <span class="key">return</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t">    <span class="nam">key</span> <span class="op">=</span> <span class="nam">get_key</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t">    <span class="nam">aesgcm</span> <span class="op">=</span> <span class="nam">AESGCM</span><span class="op">(</span><span class="nam">key</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">encoded_value</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">        <span class="key">return</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t">    <span class="nam">key</span> <span class="op">=</span> <span class="nam">get_key</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t">    <span class="nam">aesgcm</span> <span class="op">=</span> <span class="nam">AESGCM</span><span class="op">(</span><span class="nam">key</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t">    <span class="com"># Fix base64 padding</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t">    <span class="nam">padded</span> <span class="op">=</span> <span class="nam">encoded_value</span> <span class="op">+</span> <span class="str">"="</span> <span class="op">*</span> <span class="op">(</span><span class="op">-</span><span class="nam">len</span><span class="op">(</span><span class="nam">encoded_value</span><span class="op">)</span> <span class="op">%</span> <span class="num">4</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t">    <span class="nam">combined</span> <span class="op">=</span> <span class="nam">base64</span><span class="op">.</span><span class="nam">urlsafe_b64decode</span><span class="op">(</span><span class="nam">padded</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">    <span class="nam">nonce</span> <span class="op">=</span> <span class="nam">combined</span><span class="op">[</span><span class="op">:</span><span class="num">12</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">    <span class="nam">ciphertext</span> <span class="op">=</span> <span class="nam">combined</span><span class="op">[</span><span class="num">12</span><span class="op">:</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">    <span class="nam">plaintext</span> <span class="op">=</span> <span class="nam">aesgcm</span><span class="op">.</span><span class="nam">decrypt</span><span class="op">(</span><span class="nam">nonce</span><span class="op">,</span> <span class="nam">ciphertext</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">    <span class="key">return</span> <span class="nam">json</span><span class="op">.</span><span class="nam">loads</span><span class="op">(</span><span class="nam">plaintext</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t">    <span class="nam">padded</span> <span class="op">=</span> <span class="nam">encoded_value</span> <span class="op">+</span> <span class="str">"="</span> <span class="op">*</span> <span class="op">(</span><span class="op">-</span><span class="nam">len</span><span class="op">(</span><span class="nam">encoded_value</span><span class="op">)</span> <span class="op">%</span> <span class="num">4</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t">    <span class="nam">combined</span> <span class="op">=</span> <span class="nam">base64</span><span class="op">.</span><span class="nam">urlsafe_b64decode</span><span class="op">(</span><span class="nam">padded</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">    <span class="nam">nonce</span> <span class="op">=</span> <span class="nam">combined</span><span class="op">[</span><span class="op">:</span><span class="num">12</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">    <span class="nam">ciphertext</span> <span class="op">=</span> <span class="nam">combined</span><span class="op">[</span><span class="num">12</span><span class="op">:</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">    <span class="nam">plaintext</span> <span class="op">=</span> <span class="nam">aesgcm</span><span class="op">.</span><span class="nam">decrypt</span><span class="op">(</span><span class="nam">nonce</span><span class="op">,</span> <span class="nam">ciphertext</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">    <span class="key">return</span> <span class="nam">json</span><span class="op">.</span><span class="nam">loads</span><span class="op">(</span><span class="nam">plaintext</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
         <p>
-            <a class="nav" href="z_095c6c0b4411cdd5_security_cookies_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="z_095c6c0b4411cdd5_retry_manager_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_095c6c0b4411cdd5_verify_credentials_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.4">coverage.py v7.10.4</a>,
-            created at 2025-08-22 11:05 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.5">coverage.py v7.10.5</a>,
+            created at 2025-08-26 18:29 +0100
         </p>
     </div>
 </footer>
