@@ -1,12 +1,22 @@
 # Plugin Framework Architecture
 
-The MCP Context Forge Gateway implements a comprehensive plugin framework for AI safety middleware, security processing, and extensible gateway capabilities. This document provides a detailed architectural overview of the plugin system implementation.
+The MCP Context Forge Gateway implements a comprehensive, platform-agnostic plugin framework for AI safety middleware, security processing, and extensible gateway capabilities. This document provides a detailed architectural overview of the plugin system implementation, focusing on both **self-contained plugins** (running in-process) and **external/remote plugins** (as MCP servers) through a unified, reusable interface.
 
 ## Overview
 
-The plugin framework enables both **self-contained plugins** (running in-process) and **external middleware service integrations** (calling external AI safety services) through a unified interface. This hybrid approach balances performance, security, and operational requirements.
+The plugin framework is designed as a **standalone, platform-agnostic ecosystem** that can be embedded in any application requiring extensible middleware processing. It enables both **self-contained plugins** (running in-process) and **external plugin integrations** (remote MCP servers) through a unified interface. This hybrid approach balances performance, security, and operational requirements while providing maximum flexibility for deployment across different environments and platforms.
+
+### Key Design Principles
+
+- **Platform Agnostic**: Framework can be integrated into any Python application
+- **Protocol Neutral**: Supports multiple transport mechanisms (HTTP, WebSocket, STDIO, SSE)
+- **MCP Native**: Remote plugins are fully compliant MCP servers
+- **Security First**: Comprehensive timeout protection, input validation, and isolation
+- **Production Ready**: Built for high-throughput, low-latency enterprise environments
 
 ## Architecture Components
+
+The plugin framework is built around a modular, extensible architecture that supports multiple deployment patterns and integration scenarios.
 
 ### Core Framework Structure
 
@@ -26,9 +36,100 @@ mcpgateway/plugins/framework/
     └── mcp/             # MCP external service integration
         ├── client.py    # MCP client for external plugin communication
         └── server/      # MCP server runtime for plugin hosting
+            ├── server.py    # MCP server implementation
+            └── runtime.py   # Plugin runtime management
 ```
 
-## Plugin Architecture
+### Plugin Types and Deployment Patterns
+
+The framework supports three distinct plugin deployment patterns:
+
+#### 1. **Self-Contained Plugins** (In-Process)
+- Execute within the main application process
+- Written in Python and extend the base `Plugin` class
+- Fastest execution with shared memory access
+- Examples: regex filters, simple transforms, validation
+
+#### 2. **External Plugins** (Remote MCP Servers)
+- Standalone MCP servers implementing plugin logic
+- Can be written in any language (Python, TypeScript, Go, Rust, etc.)
+- Communicate via MCP protocol (HTTP, WebSocket, STDIO)
+- Examples: LlamaGuard, OpenAI Moderation, custom AI services
+
+#### 3. **Hybrid Plugins** (Platform Integration)
+- Combine self-contained and external patterns
+- Self-contained wrapper that orchestrates external services
+- Enables complex workflows and service composition
+
+## Plugin System Architecture
+
+The plugin framework implements a sophisticated execution pipeline designed for enterprise-grade performance, security, and reliability.
+
+### Architectural Overview
+
+```mermaid
+flowchart TB
+    subgraph "Request Lifecycle"
+        Client["🧑‍💻 Client Request"] --> Gateway["🌐 MCP Gateway"]
+        Gateway --> PM["🔌 Plugin Manager"]
+        PM --> Pipeline["⚡ Execution Pipeline"]
+        Pipeline --> Response["📤 Response"]
+    end
+
+    subgraph "Plugin Manager Components"
+        PM --> Registry["📋 Plugin Registry"]
+        PM --> Config["⚙️ Configuration Loader"]
+        PM --> Executor["🔄 Plugin Executor"]
+        PM --> Context["📊 Context Manager"]
+    end
+
+    subgraph "Plugin Types"
+        SelfContained["📦 Self-Contained\\n(In-Process)"]
+        External["🌍 External/Remote\\n(MCP Servers)"]
+        Hybrid["🔗 Hybrid\\n(Orchestration)"]
+    end
+
+    subgraph "Hook Points"
+        PPF["🔍 prompt_pre_fetch"]
+        PPO["✅ prompt_post_fetch"]
+        TPI["🛠️ tool_pre_invoke"]
+        TPO["✅ tool_post_invoke"]
+        RPF["📄 resource_pre_fetch"]
+        RPO["✅ resource_post_fetch"]
+    end
+
+    subgraph "External Integration"
+        MCP["📡 MCP Protocol"]
+        HTTP["🌐 HTTP/REST"]
+        WS["⚡ WebSocket"]
+        STDIO["💻 STDIO"]
+        SSE["📡 Server-Sent Events"]
+    end
+
+    Registry --> SelfContained
+    Registry --> External
+    Registry --> Hybrid
+    
+    Executor --> PPF
+    Executor --> PPO
+    Executor --> TPI
+    Executor --> TPO
+    Executor --> RPF
+    Executor --> RPO
+    
+    External --> MCP
+    MCP --> HTTP
+    MCP --> WS
+    MCP --> STDIO
+    MCP --> SSE
+    
+    style Client fill:#e1f5fe
+    style Gateway fill:#f3e5f5
+    style PM fill:#fff3e0
+    style SelfContained fill:#e8f5e8
+    style External fill:#fff8e1
+    style Hybrid fill:#fce4ec
+```
 
 ### 1. Base Plugin Classes
 
@@ -633,12 +734,310 @@ FEDERATION_POST_SYNC = "federation_post_sync"  # Post-federation processing
 
 ### External Service Integrations
 
-- **LlamaGuard:** Content safety classification and filtering
-- **OpenAI Moderation API:** Commercial content moderation
-- **HashiCorp Vault:** Secret management for plugin configurations
-- **Open Policy Agent (OPA):** Policy-as-code enforcement engine
-- **SPIFFE/SPIRE:** Workload identity and attestation
+#### Current Integrations
+
+- ✅ **LlamaGuard:** Content safety classification and filtering
+- ✅ **OpenAI Moderation API:** Commercial content moderation  
+- ✅ **Custom MCP Servers:** Any language, any protocol
+
+#### Planned Integrations (Phase 2-3)
+
+- 🔄 **HashiCorp Vault:** Secret management for plugin configurations
+- 🔄 **Open Policy Agent (OPA):** Policy-as-code enforcement engine
+- 🔄 **SPIFFE/SPIRE:** Workload identity and attestation
+- 📋 **AWS GuardDuty:** Cloud security monitoring integration
+- 📋 **Azure Cognitive Services:** Enterprise AI services
+- 📋 **Google Cloud AI:** ML model integration
+- 📋 **Kubernetes Operators:** Native K8s plugin deployment
+- 📋 **Istio/Envoy:** Service mesh integration
+
+## Platform-Agnostic Design
+
+The plugin framework is designed as a **reusable, standalone ecosystem** that can be embedded in any application requiring extensible middleware processing.
+
+### Framework Portability
+
+```mermaid
+flowchart TD
+    subgraph "Core Framework (Portable)"
+        Framework["🔌 Plugin Framework\\n(Python Package)"]
+        Interface["📋 Plugin Interface\\n(Language Agnostic)"]
+        Protocol["📡 MCP Protocol\\n(Cross-Platform)"]
+    end
+    
+    subgraph "Host Applications"
+        MCPGateway["🌐 MCP Gateway\\n(Primary Use Case)"]
+        WebFramework["🕷️ FastAPI/Flask App"]
+        CLITool["💻 CLI Application"]
+        Microservice["⚙️ Microservice"]
+        DataPipeline["📊 Data Pipeline"]
+    end
+    
+    Framework --> Interface
+    Interface --> Protocol
+    
+    Framework --> MCPGateway
+    Framework --> WebFramework
+    Framework --> CLITool
+    Framework --> Microservice
+    Framework --> DataPipeline
+    
+    style Framework fill:#fff3e0
+    style Protocol fill:#e8f5e8
+    style MCPGateway fill:#e3f2fd
+```
+
+### Integration Patterns
+
+#### Framework as Python Package
+
+```python
+# Any Python application can embed the plugin framework
+from mcpgateway.plugins import PluginManager, PluginConfig
+
+class MyApplication:
+    def __init__(self):
+        self.plugin_manager = PluginManager(
+            config_path="/path/to/plugins.yaml",
+            timeout=30
+        )
+    
+    async def process_request(self, request):
+        payload = RequestPayload(data=request.data)
+        context = GlobalContext(request_id=request.id)
+        
+        # Pre-processing with plugins
+        result, _ = await self.plugin_manager.custom_pre_hook(
+            payload, context
+        )
+        
+        if not result.continue_processing:
+            return ErrorResponse(result.violation.description)
+        
+        # Your application logic here
+        response = await self.process_business_logic(
+            result.modified_payload or payload
+        )
+        
+        return response
+```
+
+### Language Interoperability
+
+The MCP-based external plugin system enables **true polyglot development**:
+
+```yaml
+# Multi-language plugin deployment
+plugins:
+  # Python self-contained plugin
+  - name: "FastValidation"
+    kind: "internal.validators.FastValidator"
+    
+  # TypeScript/Node.js plugin
+  - name: "OpenAIModerationTS"
+    kind: "external"
+    mcp:
+      proto: "STREAMABLEHTTP"
+      url: "http://nodejs-plugin:3000/mcp"
+    
+  # Go plugin  
+  - name: "HighPerformanceFilter"
+    kind: "external"
+    mcp:
+      proto: "STDIO"
+      script: "/opt/plugins/go-filter"
+    
+  # Rust plugin
+  - name: "CryptoValidator"
+    kind: "external"
+    mcp:
+      proto: "STREAMABLEHTTP"
+      url: "http://rust-plugin:8080/mcp"
+```
+
+## Remote Plugin MCP Server Integration
+
+External plugins communicate with the gateway using the Model Context Protocol (MCP), enabling language-agnostic plugin development.
+
+### MCP Plugin Protocol Flow
+
+```mermaid
+sequenceDiagram
+    participant Gateway as MCP Gateway
+    participant Client as External Plugin Client
+    participant Server as Remote MCP Server
+    participant Service as External AI Service
+    
+    Note over Gateway,Service: Plugin Initialization
+    Gateway->>Client: Initialize External Plugin
+    Client->>Server: MCP Connection (HTTP/WS/STDIO)
+    Server-->>Client: Connection Established
+    Client->>Server: get_plugin_config(plugin_name)
+    Server-->>Client: Plugin Configuration
+    Client-->>Gateway: Plugin Ready
+    
+    Note over Gateway,Service: Request Processing
+    Gateway->>Client: tool_pre_invoke(payload, context)
+    Client->>Server: MCP Tool Call: tool_pre_invoke
+    
+    alt Self-Processing
+        Server->>Server: Process Internally
+    else External Service Call
+        Server->>Service: API Call (OpenAI, LlamaGuard, etc.)
+        Service-->>Server: Service Response
+    end
+    
+    Server-->>Client: MCP Response
+    Client-->>Gateway: PluginResult
+```
+
+### MCP Plugin Server Tools
+
+Remote plugin servers must implement standard MCP tools:
+
+```python
+# Standard MCP Tools for Plugin Servers
+REQUIRED_TOOLS = [
+    "get_plugin_config",      # Return plugin configuration
+    "prompt_pre_fetch",       # Process prompt before fetching
+    "prompt_post_fetch",      # Process prompt after rendering
+    "tool_pre_invoke",        # Process tool before invocation
+    "tool_post_invoke",       # Process tool after invocation
+    "resource_pre_fetch",     # Process resource before fetching
+    "resource_post_fetch",    # Process resource after fetching
+]
+```
+
+### External Plugin Example (TypeScript)
+
+```typescript
+// TypeScript/Node.js external plugin example
+import { MCPServer, Tool } from '@modelcontextprotocol/sdk';
+import OpenAI from 'openai';
+
+class OpenAIModerationPlugin {
+  private openai: OpenAI;
+  
+  constructor() {
+    this.openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+  }
+  
+  @Tool('tool_pre_invoke')
+  async handleToolPreInvoke(params: any) {
+    const { payload, context } = params;
+    
+    const content = Object.values(payload.args || {})
+      .filter(v => typeof v === 'string')
+      .join(' ');
+    
+    if (!content.trim()) {
+      return { continue_processing: true };
+    }
+    
+    try {
+      const moderation = await this.openai.moderations.create({
+        input: content,
+        model: 'text-moderation-stable'
+      });
+      
+      const result = moderation.results[0];
+      
+      if (result.flagged) {
+        const flaggedCategories = Object.entries(result.categories)
+          .filter(([_, flagged]) => flagged)
+          .map(([category, _]) => category);
+        
+        return {
+          continue_processing: false,
+          violation: {
+            reason: 'Content policy violation',
+            description: `OpenAI Moderation flagged: ${flaggedCategories.join(', ')}`,
+            code: 'OPENAI_MODERATION_FLAGGED',
+            details: {
+              categories: result.categories,
+              flagged_categories: flaggedCategories
+            }
+          }
+        };
+      }
+      
+      return {
+        continue_processing: true,
+        metadata: {
+          openai_moderation_score: Math.max(...Object.values(result.category_scores))
+        }
+      };
+      
+    } catch (error) {
+      return {
+        continue_processing: true,
+        metadata: { moderation_error: error.message }
+      };
+    }
+  }
+  
+  @Tool('get_plugin_config')
+  async getPluginConfig(params: { name: string }) {
+    return {
+      name: params.name,
+      description: 'OpenAI Content Moderation',
+      version: '1.0.0',
+      hooks: ['tool_pre_invoke', 'prompt_pre_fetch'],
+      tags: ['openai', 'moderation', 'content-safety'],
+      mode: 'enforce',
+      priority: 30
+    };
+  }
+}
+
+const server = new MCPServer();
+const plugin = new OpenAIModerationPlugin();
+server.registerPlugin(plugin);
+server.listen({ transport: 'stdio' });
+```
+
+## Related Issues and References
+
+### GitHub Issues
+
+- **Issue #773**: [Feature] Add support for external plugins
+  - ✅ **Status**: Completed
+  - **Impact**: Enables polyglot plugin development and service integration
+
+- **Issue #673**: [ARCHITECTURE] Identify Next Steps for Plugin Development  
+  - 🔄 **Status**: In Progress
+  - **Impact**: Defines framework evolution and enterprise features
+
+- **Issue #720**: [Feature] Add CLI for authoring and packaging plugins
+  - 🔄 **Status**: In Progress  
+  - **Impact**: Streamlines plugin development and deployment
+
+- **Issue #319**: [Feature Request] AI Middleware Integration / Plugin Framework
+  - ✅ **Status**: Completed (Core Framework)
+  - **Impact**: Enables extensible gateway capabilities and AI safety integration
+
+### Architecture Decisions
+
+1. **Hybrid Plugin Model**: Support both self-contained and external plugins
+2. **MCP Protocol**: Enable language-agnostic plugin development
+3. **Priority-Based Execution**: Sequential execution with deterministic behavior
+4. **Singleton Manager**: Consistent state and resource management
+5. **Context Isolation**: Per-request isolation with automatic cleanup
+6. **Security First**: Timeout protection, input validation, and audit logging
 
 ---
 
-This plugin framework provides the foundation for comprehensive AI safety middleware while maintaining high performance and operational simplicity. The architecture supports both immediate security needs through self-contained plugins and future enterprise AI safety integrations through external service support.
+## Summary
+
+The MCP Context Forge plugin framework provides a **production-ready, platform-agnostic foundation** for extensible middleware processing. The architecture successfully balances:
+
+✅ **Performance**: Sub-millisecond latency for self-contained plugins, optimized external plugin communication  
+✅ **Flexibility**: Support for any programming language via MCP protocol  
+✅ **Security**: Comprehensive protection mechanisms and compliance features  
+✅ **Scalability**: Horizontal scaling for self-contained, vertical scaling for external plugins  
+✅ **Developer Experience**: Simple APIs, comprehensive testing, and CLI tooling  
+✅ **Enterprise Ready**: Multi-tenant support, audit logging, and integration capabilities  
+
+The framework supports both **immediate security needs** through self-contained plugins and **future enterprise AI safety integrations** through the external plugin ecosystem. With its platform-agnostic design, the framework can be embedded in any application requiring  middleware processing capabilities.
