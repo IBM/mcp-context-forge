@@ -207,8 +207,8 @@ class ServerService:
         }
         # Also update associated IDs (if not already done)
         server_dict["associated_tools"] = [tool.name for tool in server.tools] if server.tools else []
-        server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
-        server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
+        server_dict["associated_resources"] = [res.name for res in server.resources] if server.resources else []
+        server_dict["associated_prompts"] = [prompt.name for prompt in server.prompts] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
         server_dict["tags"] = server.tags or []
         return ServerRead.model_validate(server_dict)
@@ -338,7 +338,7 @@ class ServerService:
                 for resource_id in server_in.associated_resources:
                     if resource_id.strip() == "":
                         continue
-                    resource_obj = db.get(DbResource, int(resource_id))
+                    resource_obj = db.get(DbResource, resource_id)
                     if not resource_obj:
                         raise ServerError(f"Resource with id {resource_id} does not exist.")
                     db_server.resources.append(resource_obj)
@@ -348,7 +348,7 @@ class ServerService:
                 for prompt_id in server_in.associated_prompts:
                     if prompt_id.strip() == "":
                         continue
-                    prompt_obj = db.get(DbPrompt, int(prompt_id))
+                    prompt_obj = db.get(DbPrompt, prompt_id)
                     if not prompt_obj:
                         raise ServerError(f"Prompt with id {prompt_id} does not exist.")
                     db_server.prompts.append(prompt_obj)
@@ -475,8 +475,8 @@ class ServerService:
             "updated_at": server.updated_at,
             "is_active": server.is_active,
             "associated_tools": [tool.name for tool in server.tools],
-            "associated_resources": [res.id for res in server.resources],
-            "associated_prompts": [prompt.id for prompt in server.prompts],
+            "associated_resources": [res.name for res in server.resources],
+            "associated_prompts": [prompt.name for prompt in server.prompts],
         }
         logger.debug(f"Server Data: {server_data}")
         return self._convert_server_to_read(server)
@@ -559,7 +559,7 @@ class ServerService:
             if server_update.associated_resources is not None:
                 server.resources = []
                 for resource_id in server_update.associated_resources:
-                    resource_obj = db.get(DbResource, int(resource_id))
+                    resource_obj = db.get(DbResource, resource_id)
                     if resource_obj:
                         server.resources.append(resource_obj)
 
@@ -567,7 +567,7 @@ class ServerService:
             if server_update.associated_prompts is not None:
                 server.prompts = []
                 for prompt_id in server_update.associated_prompts:
-                    prompt_obj = db.get(DbPrompt, int(prompt_id))
+                    prompt_obj = db.get(DbPrompt, prompt_id)
                     if prompt_obj:
                         server.prompts.append(prompt_obj)
 

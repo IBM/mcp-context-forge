@@ -1742,7 +1742,7 @@ async def list_resource_templates(
 
 @resource_router.post("/{resource_id}/toggle")
 async def toggle_resource_status(
-    resource_id: int,
+    resource_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -1751,7 +1751,7 @@ async def toggle_resource_status(
     Activate or deactivate a resource by its ID.
 
     Args:
-        resource_id (int): The ID of the resource.
+        resource_id (str): The ID of the resource.
         activate (bool): True to activate, False to deactivate.
         db (Session): Database session.
         user (str): Authenticated user.
@@ -1983,7 +1983,7 @@ async def subscribe_resource(uri: str, user: str = Depends(require_auth)) -> Str
 ###############
 @prompt_router.post("/{prompt_id}/toggle")
 async def toggle_prompt_status(
-    prompt_id: int,
+    prompt_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),

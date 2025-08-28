@@ -757,8 +757,8 @@ class TestServerSchemas:
             updated_at=now,
             is_active=True,
             associated_tools=["1", "2", "3"],
-            associated_resources=[4, 5],
-            associated_prompts=[6],
+            associated_resources=["4", "5"],
+            associated_prompts=["6"],
             metrics=ServerMetrics(
                 total_executions=100,
                 successful_executions=95,
@@ -779,8 +779,8 @@ class TestServerSchemas:
         assert server.updated_at == now
         assert server.is_active is True
         assert server.associated_tools == ["1", "2", "3"]
-        assert server.associated_resources == [4, 5]
-        assert server.associated_prompts == [6]
+        assert server.associated_resources == ["4", "5"]
+        assert server.associated_prompts == ["6"]
         assert server.metrics.total_executions == 100
         assert server.metrics.successful_executions == 95
 
@@ -794,8 +794,8 @@ class TestServerSchemas:
             updated_at=now,
             is_active=True,
             associated_tools=[Mock(id="10"), Mock(id="11")],
-            associated_resources=[Mock(id=12)],
-            associated_prompts=[Mock(id=13)],
+            associated_resources=[Mock(id="12")],
+            associated_prompts=[Mock(id="13")],
             metrics=ServerMetrics(
                 total_executions=10,
                 successful_executions=10,
@@ -805,8 +805,8 @@ class TestServerSchemas:
         )
 
         assert server_with_objects.associated_tools == ["10", "11"]
-        assert server_with_objects.associated_resources == [12]
-        assert server_with_objects.associated_prompts == [13]
+        assert server_with_objects.associated_resources == ["12"]
+        assert server_with_objects.associated_prompts == ["13"]
 
 
 class TestToggleAndListSchemas:

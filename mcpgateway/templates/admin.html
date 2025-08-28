@@ -959,16 +959,16 @@
                   <td
                     class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-300"
                   >
-                    {% if server.associatedResources %} {{
-                    server.associatedResources | join(', ') }} {% else %}
+                    {% if server.associatedResources %} {{ server.associatedResources |
+                    map('string') | join(', ') }} {% else %}
                     <span class="text-gray-500 dark:text-gray-300">N/A</span>
                     {% endif %}
                   </td>
                   <td
                     class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-300"
                   >
-                    {% if server.associatedPrompts %} {{
-                    server.associatedPrompts | join(', ') }} {% else %}
+                    {% if server.associatedPrompts %} {{ server.associatedPrompts |
+                    map('string') | join(', ') }} {% else %}
                     <span class="text-gray-500 dark:text-gray-300">N/A</span>
                     {% endif %}
                   </td>
@@ -1066,7 +1066,7 @@
           <form
             method="POST"
             id="add-server-form"
-            onreset="document.getElementById('associatedTools').selectedIndex = -1;"
+            onreset="document.getElementById('associatedTools').selectedIndex = -1;document.getElementById('associatedResources').selectedIndex = -1;document.getElementById('associatedPrompts').selectedIndex = -1;"
           >
             <div class="grid grid-cols-1 gap-6">
               <div>
@@ -1154,7 +1154,7 @@
                     class="text-gray-700 dark:text-gray-300"
                     style="display: none"
                   >
-                    No tool found containing "<span id="searchQuery"></span>"
+                    No tool found containing "<span id="toolSearchQuery"></span>"
                   </p>
                 </div>
                 <div class="flex justify-end mt-3 gap-2">
@@ -1190,29 +1190,125 @@
                   aria-live="polite"
                 ></div>
               </div>
-              <div>
+              <div
+                class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
+              >
                 <label
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Associated Resources (comma-separated IDs)</label
+                  class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
+                  for="associatedResources"
                 >
+                  Associated Resources
+                </label>
                 <input
                   type="text"
-                  name="associatedResources"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                  placeholder="e.g., resource1, resource2"
+                  id="searchResources"
+                  placeholder="Search for resources..."
+                  class="mb-4 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm p-2 dark:bg-gray-900 dark:text-gray-300"
                 />
+                <div
+                  id="associatedResources"
+                  class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                >
+                  {% for resource in resources %}
+                  <label
+                    class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 resource-item"
+                  >
+                    <input
+                      type="checkbox"
+                      name="associatedResources"
+                      value="{{ resource.id }}"
+                      class="resource-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <span class="select-none">{{ resource.displayName or resource.customName or resource.name }}</span>
+                  </label>
+                  {% endfor %}
+                  <p
+                    id="noResourcesMessage"
+                    class="text-gray-700 dark:text-gray-300"
+                    style="display: none"
+                  >
+                    No resource found containing "<span id="resourceSearchQuery"></span>"
+                  </p>
+                </div>
+                <div class="flex justify-end mt-3 gap-2">
+                  <button
+                    type="button"
+                    id="selectAllResourcesBtn"
+                    class="px-3 py-1 text-sm font-semibold text-green-600 border border-green-600 rounded-md hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-300 focus:ring-offset-1"
+                    aria-label="Select all resources"
+                  >
+                    Select All
+                  </button>
+
+                  <button
+                    type="button"
+                    id="clearAllResourcesBtn"
+                    class="px-3 py-1 text-sm font-semibold text-red-600 border border-red-600 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
+                    aria-label="Clear all selected resources"
+                  >
+                    Clear All
+                  </button>
+                </div>
               </div>
-              <div>
+              <div
+                class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
+              >
                 <label
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Associated Prompts (comma-separated IDs)</label
+                  class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
+                  for="associatedPrompts"
                 >
+                  Associated Prompts
+                </label>
                 <input
                   type="text"
-                  name="associatedPrompts"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                  placeholder="e.g., prompt1, prompt2"
+                  id="searchPrompts"
+                  placeholder="Search for prompts..."
+                  class="mb-4 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm p-2 dark:bg-gray-900 dark:text-gray-300"
                 />
+                <div
+                  id="associatedPrompts"
+                  class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                >
+                  {% for prompt in prompts %}
+                  <label
+                    class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 prompt-item"
+                  >
+                    <input
+                      type="checkbox"
+                      name="associatedPrompts"
+                      value="{{ prompt.id }}"
+                      class="prompt-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <span class="select-none">{{ prompt.displayName or prompt.customName or prompt.name }}</span>
+                  </label>
+                  {% endfor %}
+                  <p
+                    id="noPromptsMessage"
+                    class="text-gray-700 dark:text-gray-300"
+                    style="display: none"
+                  >
+                    No prompt found containing "<span id="promptSearchQuery"></span>"
+                  </p>
+                </div>
+                <div class="flex justify-end mt-3 gap-2">
+                  <button
+                    type="button"
+                    id="selectAllPromptsBtn"
+                    class="px-3 py-1 text-sm font-semibold text-green-600 border border-green-600 rounded-md hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-300 focus:ring-offset-1"
+                    aria-label="Select all prompts"
+                  >
+                    Select All
+                  </button>
+
+                  <button
+                    type="button"
+                    id="clearAllPromptsBtn"
+                    class="px-3 py-1 text-sm font-semibold text-red-600 border border-red-600 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
+                    aria-label="Clear all selected prompts"
+                  >
+                    Clear All
+                  </button>
+                </div>
               </div>
             </div>
             <!-- 🔻 Error Display Span -->
@@ -2265,7 +2361,12 @@
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
-                    ID
+                    S. No.
+                  </th>
+                  <th
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                  >
+                    Gateway Name
                   </th>
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
@@ -2312,7 +2413,12 @@
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
-                    {{ resource.id }}
+                    {{ loop.index }}
+                  </td>
+                  <td
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-36"
+                  >
+                    {{ resource.gatewaySlug }}
                   </td>
                   <td
                     class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900 dark:text-gray-100"
@@ -2581,7 +2687,12 @@
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
-                    ID
+                    S. No.
+                  </th>
+                  <th
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                  >
+                    Gateway Name
                   </th>
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider"
@@ -2623,7 +2734,12 @@
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >
-                    {{ prompt.id }}
+                    {{ loop.index }}
+                  </td>
+                  <td
+                    class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-36"
+                  >
+                    {{ prompt.gatewaySlug }}
                   </td>
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
@@ -5518,31 +5634,125 @@
                       ></div>
                     </div>
 
-                    <div>
+                    <div
+                      class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
+                    >
                       <label
-                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                        >Associated Resources (comma-separated IDs)</label
+                        for="edit-server-resources"
+                        class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
                       >
-                      <input
-                        type="text"
-                        name="associatedResources"
+                        Associated Resources
+                      </label>
+                      <div
                         id="edit-server-resources"
-                        class="mt-1 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                        placeholder="e.g., 3,4"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                        >Associated Prompts (comma-separated IDs)</label
+                        class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
                       >
-                      <input
-                        type="text"
-                        name="associatedPrompts"
+                        {% for resource in resources %}
+                        <label
+                          class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1"
+                        >
+                          <input
+                            type="checkbox"
+                            name="associatedResources"
+                            value="{{ resource.id }}"
+                            class="resource-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                          />
+                          <span class="select-none">{{ resource.displayName or resource.customName or resource.name }}</span>
+                        </label>
+                        {% endfor %}
+                      </div>
+                      <div class="flex justify-end gap-3 mt-3">
+                        <button
+                          type="button"
+                          id="selectAllEditResourcesBtn"
+                          class="px-3 py-1 text-sm font-semibold text-green-600 border border-green-600 rounded-md hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-300 focus:ring-offset-1"
+                          aria-label="Select all resources"
+                        >
+                          Select All
+                        </button>
+
+                        <button
+                          type="button"
+                          id="clearAllEditResourcesBtn"
+                          class="px-3 py-1 text-sm font-semibold text-red-600 border border-red-600 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
+                          aria-label="Clear all selected resources"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+
+                      <!-- Selected pills -->
+                      <div
+                        id="selectedEditResourcesPills"
+                        class="mt-4 flex flex-wrap gap-2"
+                      ></div>
+
+                      <!-- Warning message -->
+                      <div
+                        id="selectedEditResourcesWarning"
+                        class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
+                        aria-live="polite"
+                      ></div>
+                    </div>
+                    <div
+                      class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
+                    >
+                      <label
+                        for="edit-server-prompts"
+                        class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
+                      >
+                        Associated Prompts
+                      </label>
+                      <div
                         id="edit-server-prompts"
-                        class="mt-1 block w-full rounded-md border border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                        placeholder="e.g., 5,6"
-                      />
+                        class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                      >
+                        {% for prompt in prompts %}
+                        <label
+                          class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1"
+                        >
+                          <input
+                            type="checkbox"
+                            name="associatedPrompts"
+                            value="{{ prompt.id }}"
+                            class="prompt-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                          />
+                          <span class="select-none">{{ prompt.displayName or prompt.customName or prompt.name }}</span>
+                        </label>
+                        {% endfor %}
+                      </div>
+                      <div class="flex justify-end gap-3 mt-3">
+                        <button
+                          type="button"
+                          id="selectAllEditPromptsBtn"
+                          class="px-3 py-1 text-sm font-semibold text-green-600 border border-green-600 rounded-md hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-300 focus:ring-offset-1"
+                          aria-label="Select all prompts"
+                        >
+                          Select All
+                        </button>
+
+                        <button
+                          type="button"
+                          id="clearAllEditPromptsBtn"
+                          class="px-3 py-1 text-sm font-semibold text-red-600 border border-red-600 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
+                          aria-label="Clear all selected prompts"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+
+                      <!-- Selected pills -->
+                      <div
+                        id="selectedEditPromptsPills"
+                        class="mt-4 flex flex-wrap gap-2"
+                      ></div>
+
+                      <!-- Warning message -->
+                      <div
+                        id="selectedEditPromptsWarning"
+                        class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
+                        aria-live="polite"
+                      ></div>
                     </div>
                   </div>
                   <div
@@ -5793,12 +6003,23 @@
 
       // Add search functionality for filtering tools
       document.addEventListener('DOMContentLoaded', function() {
-        const searchBox = document.getElementById('searchTools');
+        const toolSearchBox = document.getElementById('searchTools');
+        const resourceSearchBox = document.getElementById('searchResources');
+        const promptSearchBox = document.getElementById('searchPrompts');
+        
         const toolItems = document.querySelectorAll('#associatedTools .tool-item');
-        const noToolsMessage = document.getElementById('noToolsMessage');
-        const searchQuerySpan = document.getElementById('searchQuery');
+        const resourceItems = document.querySelectorAll('#associatedResources .resource-item');
+        const promptItems = document.querySelectorAll('#associatedPrompts .prompt-item');
 
-        searchBox.addEventListener('input', function() {
+        const noToolsMessage = document.getElementById('noToolsMessage');
+        const noResourcesMessage = document.getElementById('noResourcesMessage');
+        const noPromptsMessage = document.getElementById('noPromptsMessage');
+
+        const toolSearchQuerySpan = document.getElementById('toolSearchQuery');
+        const resourceSearchQuerySpan = document.getElementById('resourceSearchQuery');
+        const promptSearchQuerySpan = document.getElementById('promptSearchQuery');
+
+        toolSearchBox.addEventListener('input', function() {
           const filter = this.value.toLowerCase();
           let hasVisibleItems = false;
 
@@ -5815,8 +6036,52 @@
           if (hasVisibleItems) {
             noToolsMessage.style.display = 'none';
           } else {
-            searchQuerySpan.textContent = filter;
+            toolSearchQuerySpan.textContent = filter;
             noToolsMessage.style.display = 'block';
+          }
+        });
+
+        resourceSearchBox.addEventListener('input', function() {
+          const filter = this.value.toLowerCase();
+          let hasVisibleItems = false;
+
+          resourceItems.forEach(function(resourceItem) {
+            const resourceName = resourceItem.querySelector('span').textContent.toLowerCase();
+            if (resourceName.includes(filter)) {
+              resourceItem.style.display = '';
+              hasVisibleItems = true;
+            } else {
+              resourceItem.style.display = 'none';
+            }
+          });
+
+          if (hasVisibleItems) {
+            noResourcesMessage.style.display = 'none';
+          } else {
+            resourceSearchQuerySpan.textContent = filter;
+            noResourcesMessage.style.display = 'block';
+          }
+        });
+
+        promptSearchBox.addEventListener('input', function() {
+          const filter = this.value.toLowerCase();
+          let hasVisibleItems = false;
+
+          promptItems.forEach(function(promptItem) {
+            const promptName = promptItem.querySelector('span').textContent.toLowerCase();
+            if (promptName.includes(filter)) {
+              promptItem.style.display = '';
+              hasVisibleItems = true;
+            } else {
+              promptItem.style.display = 'none';
+            }
+          });
+
+          if (hasVisibleItems) {
+            noPromptsMessage.style.display = 'none';
+          } else {
+            promptSearchQuerySpan.textContent = filter;
+            noPromptsMessage.style.display = 'block';
           }
         });
       });

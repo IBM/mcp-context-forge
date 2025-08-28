@@ -373,7 +373,7 @@ class ToolCreate(BaseModel):
             str: Value if validated as safe
 
         Raises:
-            ValueError: When displayName contains unsafe content or exceeds length limits
+            ValueError: When name contains unsafe content or exceeds length limits
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -398,7 +398,7 @@ class ToolCreate(BaseModel):
             str: Value if validated as safe
 
         Raises:
-            ValueError: When displayName contains unsafe content or exceeds length limits
+            ValueError: When url contains unsafe content or exceeds length limits
 
         Examples:
             >>> from mcpgateway.schemas import ToolCreate
@@ -1141,6 +1141,7 @@ class ResourceCreate(BaseModel):
 
     uri: str = Field(..., description="Unique URI for the resource")
     name: str = Field(..., description="Human-readable resource name")
+    displayName: Optional[str] = Field(None, description="Display name for the resource (shown in UI)")  # noqa: N815
     description: Optional[str] = Field(None, description="Resource description")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
     template: Optional[str] = Field(None, description="URI template for parameterized resources")
@@ -1206,6 +1207,35 @@ class ResourceCreate(BaseModel):
             raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
         return SecurityValidator.sanitize_display_text(v, "Description")
 
+    @field_validator("displayName")
+    @classmethod
+    def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure display names display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
+        Examples:
+            >>> from mcpgateway.schemas import ResourceCreate
+            >>> ResourceCreate.validate_display_name('My Custom Resource')
+            'My Custom Resource'
+            >>> ResourceCreate.validate_display_name('<script>alert("xss")</script>')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+            raise ValueError(f"Display name exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Display name")
+
     @field_validator("mime_type")
     @classmethod
     def validate_mime_type(cls, v: Optional[str]) -> Optional[str]:
@@ -1261,6 +1291,8 @@ class ResourceUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Human-readable resource name")
+    displayName: Optional[str] = Field(None, description="Display name for the resource (shown in UI)")  # noqa: N815
+    custom_name: Optional[str] = Field(None, description="Custom name for the resource")
     description: Optional[str] = Field(None, description="Resource description")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
     template: Optional[str] = Field(None, description="URI template for parameterized resources")
@@ -1362,6 +1394,35 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
         return v
 
+    @field_validator("displayName")
+    @classmethod
+    def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure display names display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
+        Examples:
+            >>> from mcpgateway.schemas import ResourceUpdate
+            >>> ResourceUpdate.validate_display_name('My Custom Resource')
+            'My Custom Resource'
+            >>> ResourceUpdate.validate_display_name('<script>alert("xss")</script>')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+            raise ValueError(f"Display name exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Display name")
+
 
 class ResourceRead(BaseModelWithConfigDict):
     """Schema for reading resource information.
@@ -1374,7 +1435,7 @@ class ResourceRead(BaseModelWithConfigDict):
     - Metrics: Aggregated metrics for the resource invocations.
     """
 
-    id: int
+    id: str
     uri: str
     name: str
     description: Optional[str]
@@ -1384,6 +1445,10 @@ class ResourceRead(BaseModelWithConfigDict):
     updated_at: datetime
     is_active: bool
     metrics: ResourceMetrics
+    displayName: Optional[str] = Field(None, description="Display name for the resource (shown in UI)")  # noqa: N815
+    gateway_slug: str
+    custom_name: str
+    custom_name_slug: str
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the resource")
 
     # Comprehensive metadata for audit tracking
@@ -1641,6 +1706,7 @@ class PromptCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the prompt")
+    displayName: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")  # noqa: N815
     description: Optional[str] = Field(None, description="Prompt description")
     template: str = Field(..., description="Prompt template text")
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
@@ -1691,6 +1757,35 @@ class PromptCreate(BaseModel):
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             raise ValueError(f"Description exceeds maximum length of {SecurityValidator.MAX_DESCRIPTION_LENGTH}")
         return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("displayName")
+    @classmethod
+    def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure display names display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
+        Examples:
+            >>> from mcpgateway.schemas import PromptCreate
+            >>> PromptCreate.validate_display_name('My Custom Prompt')
+            'My Custom Prompt'
+            >>> PromptCreate.validate_display_name('<script>alert("xss")</script>')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+            raise ValueError(f"Display name exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Display name")
 
     @field_validator("template")
     @classmethod
@@ -1755,6 +1850,8 @@ class PromptUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the prompt")
+    displayName: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")  # noqa: N815
+    custom_name: Optional[str] = Field(None, description="Custom name for the prompt")
     description: Optional[str] = Field(None, description="Prompt description")
     template: Optional[str] = Field(None, description="Prompt template text")
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
@@ -1836,6 +1933,35 @@ class PromptUpdate(BaseModelWithConfigDict):
         SecurityValidator.validate_json_depth(v)
         return v
 
+    @field_validator("displayName")
+    @classmethod
+    def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure display names display safely
+
+        Args:
+            v (str): Value to validate
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When displayName contains unsafe content or exceeds length limits
+
+        Examples:
+            >>> from mcpgateway.schemas import PromptUpdate
+            >>> PromptUpdate.validate_display_name('My Custom Prompt')
+            'My Custom Prompt'
+            >>> PromptUpdate.validate_display_name('<script>alert("xss")</script>')
+            Traceback (most recent call last):
+                ...
+            ValueError: ...
+        """
+        if v is None:
+            return v
+        if len(v) > SecurityValidator.MAX_NAME_LENGTH:
+            raise ValueError(f"Display name exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
+        return SecurityValidator.sanitize_display_text(v, "Display name")
+
 
 class PromptRead(BaseModelWithConfigDict):
     """Schema for reading prompt information.
@@ -1847,7 +1973,7 @@ class PromptRead(BaseModelWithConfigDict):
     - Metrics: Aggregated metrics for the prompt invocations.
     """
 
-    id: int
+    id: str
     name: str
     description: Optional[str]
     template: str
@@ -1855,6 +1981,10 @@ class PromptRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     is_active: bool
+    displayName: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")  # noqa: N815
+    gateway_slug: str
+    custom_name: str
+    custom_name_slug: str
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the prompt")
     metrics: PromptMetrics
 
@@ -2879,7 +3009,7 @@ class ServerCreate(BaseModel):
             str: Value if validated as safe
 
         Raises:
-            ValueError: When displayName contains unsafe content or exceeds length limits
+            ValueError: When id contains unsafe content or exceeds length limits
 
         Examples:
             >>> from mcpgateway.schemas import ServerCreate
@@ -3107,8 +3237,8 @@ class ServerRead(BaseModelWithConfigDict):
     updated_at: datetime
     is_active: bool
     associated_tools: List[str] = []
-    associated_resources: List[int] = []
-    associated_prompts: List[int] = []
+    associated_resources: List[str] = []
+    associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
     metrics: ServerMetrics
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the server")

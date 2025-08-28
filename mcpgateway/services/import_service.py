@@ -1073,7 +1073,14 @@ class ImportService:
             for prop_name, prop_data in properties.items():
                 arguments.append({"name": prop_name, "description": prop_data.get("description", ""), "required": prop_name in required_fields})
 
-        return PromptCreate(name=prompt_data["name"], template=prompt_data["template"], description=prompt_data.get("description"), arguments=arguments, tags=prompt_data.get("tags", []))
+        return PromptCreate(
+            name=prompt_data["name"],
+            displayName=prompt_data.get("displayName"),
+            template=prompt_data["template"],
+            description=prompt_data.get("description"),
+            arguments=arguments,
+            tags=prompt_data.get("tags", []),
+        )
 
     def _convert_to_prompt_update(self, prompt_data: Dict[str, Any]) -> PromptUpdate:
         """Convert import data to PromptUpdate schema.
@@ -1094,7 +1101,12 @@ class ImportService:
                 arguments.append({"name": prop_name, "description": prop_data.get("description", ""), "required": prop_name in required_fields})
 
         return PromptUpdate(
-            name=prompt_data.get("name"), template=prompt_data.get("template"), description=prompt_data.get("description"), arguments=arguments if arguments else None, tags=prompt_data.get("tags")
+            name=prompt_data.get("name"),
+            displayName=prompt_data.get("displayName"),
+            template=prompt_data.get("template"),
+            description=prompt_data.get("description"),
+            arguments=arguments if arguments else None,
+            tags=prompt_data.get("tags"),
         )
 
     def _convert_to_resource_create(self, resource_data: Dict[str, Any]) -> ResourceCreate:
@@ -1108,6 +1120,7 @@ class ImportService:
         """
         return ResourceCreate(
             uri=resource_data["uri"],
+            displayName=resource_data.get("displayName"),
             name=resource_data["name"],
             description=resource_data.get("description"),
             mime_type=resource_data.get("mime_type"),
@@ -1125,7 +1138,12 @@ class ImportService:
             ResourceUpdate schema object
         """
         return ResourceUpdate(
-            name=resource_data.get("name"), description=resource_data.get("description"), mime_type=resource_data.get("mime_type"), content=resource_data.get("content"), tags=resource_data.get("tags")
+            name=resource_data.get("name"),
+            displayName=resource_data.get("displayName"),
+            description=resource_data.get("description"),
+            mime_type=resource_data.get("mime_type"),
+            content=resource_data.get("content"),
+            tags=resource_data.get("tags"),
         )
 
     def get_import_status(self, import_id: str) -> Optional[ImportStatus]:

@@ -326,6 +326,7 @@ class ExportService:
         for prompt in prompts:
             prompt_data = {
                 "name": prompt.name,
+                "displayName": prompt.displayName,
                 "template": prompt.template,
                 "description": prompt.description,
                 "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -366,6 +367,7 @@ class ExportService:
         for resource in resources:
             resource_data = {
                 "name": resource.name,
+                "displayName": resource.displayName,
                 "uri": resource.uri,
                 "description": resource.description,
                 "mime_type": resource.mime_type,
